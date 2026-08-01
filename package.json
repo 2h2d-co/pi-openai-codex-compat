@@ -1,0 +1,55 @@
+{
+  "name": "pi-openai-codex-compat",
+  "version": "0.0.1-alpha.0",
+  "description": "OpenAI Codex compatibility for Pi with native compaction, fast mode, and Codex-optimized capabilities",
+  "keywords": [
+    "pi-package"
+  ],
+  "homepage": "https://github.com/2h2d-co/pi-openai-codex-compat#readme",
+  "bugs": {
+    "url": "https://github.com/2h2d-co/pi-openai-codex-compat/issues"
+  },
+  "license": "MIT",
+  "author": {
+    "name": "Kaan Ozdokmeci",
+    "email": "kaan@ozdokmeci.com",
+    "url": ""
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/2h2d-co/pi-openai-codex-compat.git"
+  },
+  "files": [
+    "extensions/openai-codex-compat/index.ts",
+    "README.md",
+    "CHANGELOG.md",
+    "LICENSE"
+  ],
+  "type": "module",
+  "scripts": {
+    "check": "hk check --all --check",
+    "test": "node --test --test-concurrency=1 test/*.test.ts",
+    "fmt": "oxfmt",
+    "lint": "oxlint",
+    "lint:fix": "oxlint --fix"
+  },
+  "devDependencies": {
+    "@earendil-works/pi-coding-agent": "0.83.0",
+    "@types/node": "22.20.1",
+    "oxfmt": "0.60.0",
+    "oxlint": "1.75.0",
+    "oxlint-tsgolint": "7.0.2001",
+    "typescript": "7.0.2"
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-coding-agent": ">=0.83.0 <0.84.0"
+  },
+  "engines": {
+    "node": ">=22.19.0"
+  },
+  "pi": {
+    "extensions": [
+      "./extensions/openai-codex-compat/index.ts"
+    ]
+  }
+}

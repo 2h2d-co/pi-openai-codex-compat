@@ -1,0 +1,29 @@
+# Dependencies
+node_modules/
+
+# Build artifacts
+dist/
+*.tsbuildinfo
+*.tgz
+coverage/
+
+# Package manager logs
+npm-debug.log*
+pnpm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Environment and local configuration
+.env
+mise.local.toml
+
+# Local backups
+.backup/
+
+# OS files
+.DS_Store
+
+# Local agent/project notes
+DESIRES.md
+LEARNINGS.md
+MISTAKES.md

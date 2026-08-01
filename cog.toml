@@ -1,0 +1,8 @@
+# :schema https://docs.cocogitto.io/cog-schema.json
+
+ignore_fixup_commits = true
+ignore_merge_commits = true
+tag_prefix = "v"
+
+[commit_types]
+release = { changelog_title = "Releases", omit_from_changelog = true }

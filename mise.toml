@@ -1,0 +1,20 @@
+[settings]
+lockfile = true
+locked = true
+minimum_release_age = "7d"
+
+[tools]
+node = "22.23.1"
+npm = "11.18.0"
+hk = { version = "1.53.0", postinstall = "hk install --mise" }
+betterleaks = "latest"
+cocogitto = "7.0.0"
+actionlint = "1.7.12"
+zizmor = "1.28.0"
+
+[env]
+_.path = ["{{config_root}}/node_modules/.bin"]
+
+[shell_alias]
+"pi:local" = "command pi --no-extensions -e {{config_root}}"
+"pi:npm" = "command pi --no-extensions -e npm:pi-openai-codex-compat"
