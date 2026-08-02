@@ -275,43 +275,39 @@ void test("rejects invalid UTF-8 like Codex", async (t) => {
   );
 });
 
-void test("retains repository-mandated workspace, Git metadata, and symlink protections", async (t) => {
-  const cwd = await workspace(t);
-  const outside = await workspace(t);
+void test("matches Codex unrestricted path and symlink semantics", async (t) => {
+  const root = await workspace(t);
+  const cwd = join(root, "workspace");
+  const outside = join(root, "outside");
+  const absolutePath = join(root, "absolute.txt");
+  await mkdir(cwd);
+  await mkdir(outside);
   await mkdir(join(cwd, ".git"));
-  await writeFile(join(cwd, ".git/config"), "protected\n");
+  await writeFile(join(cwd, ".git/config"), "old config\n");
   await writeFile(join(outside, "secret.txt"), "secret\n");
   await symlink(join(outside, "secret.txt"), join(cwd, "outside.txt"));
-  await writeFile(join(cwd, "target.txt"), "old\n");
-  await symlink(join(cwd, "target.txt"), join(cwd, "alias.txt"));
 
-  await assert.rejects(
-    applyPatch(cwd, "*** Begin Patch\n*** Add File: ../escape.txt\n+blocked\n*** End Patch"),
-    /escapes the working directory/,
-  );
-  await assert.rejects(
-    applyPatch(cwd, "*** Begin Patch\n*** Add File: .git/config\n+blocked\n*** End Patch"),
-    /Git metadata/,
-  );
-  await assert.rejects(
-    applyPatch(
-      cwd,
-      `*** Begin Patch
+  const details = await applyPatch(
+    cwd,
+    `*** Begin Patch
+*** Add File: ../relative.txt
++relative
+*** Add File: ${absolutePath}
++absolute
+*** Add File: .git/config
++new config
 *** Update File: outside.txt
 @@
 -secret
 +exposed
 *** End Patch`,
-    ),
-    /resolves outside the working directory/,
   );
 
-  const details = await applyPatch(
-    cwd,
-    "*** Begin Patch\n*** Add File: alias.txt\n+new\n*** End Patch",
-  );
+  assert.equal(await readFile(join(root, "relative.txt"), "utf8"), "relative\n");
+  assert.equal(await readFile(absolutePath, "utf8"), "absolute\n");
+  assert.equal(await readFile(join(cwd, ".git/config"), "utf8"), "new config\n");
+  assert.equal(await readFile(join(outside, "secret.txt"), "utf8"), "exposed\n");
   assert.equal(details.exact, false);
-  assert.equal(await readFile(join(cwd, "target.txt"), "utf8"), "new\n");
 });
 
 void test("registers the Codex freeform tool with model, UI, and failed-history parity", async (t) => {

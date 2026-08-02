@@ -1,5 +1,5 @@
-import { lstat, mkdir, readFile, realpath, stat, unlink, writeFile } from "node:fs/promises";
-import { basename, dirname, isAbsolute, relative, resolve, sep } from "node:path";
+import { lstat, mkdir, readFile, stat, unlink, writeFile } from "node:fs/promises";
+import { dirname, isAbsolute, resolve } from "node:path";
 import { generateDiffString, withFileMutationQueue } from "@earendil-works/pi-coding-agent";
 
 const BEGIN_PATCH = "*** Begin Patch";
@@ -587,70 +587,25 @@ function isNotFound(error: unknown): boolean {
   return hasErrorCode(error, "ENOENT");
 }
 
-function isUnresolvablePath(error: unknown): boolean {
-  return isNotFound(error) || hasErrorCode(error, "ENOTDIR");
+function resolvePatchPath(cwd: string, patchPath: string): string {
+  return isAbsolute(patchPath) ? resolve(patchPath) : resolve(cwd, patchPath);
 }
 
-function isWithin(root: string, candidate: string): boolean {
-  const pathFromRoot = relative(root, candidate);
-  return pathFromRoot === "" || (!pathFromRoot.startsWith(`..${sep}`) && pathFromRoot !== "..");
-}
-
-async function canonicalMutationPath(path: string): Promise<string> {
-  let candidate = path;
-  const missingSegments: string[] = [];
-  while (true) {
-    try {
-      return resolve(await realpath(candidate), ...missingSegments);
-    } catch (error) {
-      if (!isUnresolvablePath(error)) throw error;
-      const parent = dirname(candidate);
-      if (parent === candidate) throw error;
-      missingSegments.unshift(basename(candidate));
-      candidate = parent;
-    }
-  }
-}
-
-async function resolvePatchPath(cwd: string, patchPath: string): Promise<string> {
-  if (patchPath.includes("\0")) throw new Error("Patch paths cannot contain NUL bytes.");
-  const root = await realpath(cwd);
-  const absolutePath = isAbsolute(patchPath) ? resolve(patchPath) : resolve(root, patchPath);
-  if (!isWithin(root, absolutePath)) {
-    throw new Error(`Patch path escapes the working directory: ${patchPath}`);
-  }
-  const relativePath = relative(root, absolutePath);
-  if (relativePath.split(sep).includes(".git")) {
-    throw new Error(`apply_patch cannot modify Git metadata: ${patchPath}`);
-  }
-
-  const canonicalPath = await canonicalMutationPath(absolutePath);
-  if (!isWithin(root, canonicalPath)) {
-    throw new Error(`Patch path resolves outside the working directory: ${patchPath}`);
-  }
-  if (relative(root, canonicalPath).split(sep).includes(".git")) {
-    throw new Error(`apply_patch cannot modify Git metadata: ${patchPath}`);
-  }
-  return absolutePath;
-}
-
-async function resolveOperations(
+function resolveOperations(
   cwd: string,
   operations: readonly PatchOperation[],
-): Promise<ResolvedOperation[]> {
-  return Promise.all(
-    operations.map(async (operation) => {
-      const absolutePath = await resolvePatchPath(cwd, operation.path);
-      if (operation.kind !== "update" || !operation.moveTo) {
-        return { ...operation, absolutePath };
-      }
-      return {
-        ...operation,
-        absolutePath,
-        moveAbsolutePath: await resolvePatchPath(cwd, operation.moveTo),
-      };
-    }),
-  );
+): ResolvedOperation[] {
+  return operations.map((operation) => {
+    const absolutePath = resolvePatchPath(cwd, operation.path);
+    if (operation.kind !== "update" || !operation.moveTo) {
+      return { ...operation, absolutePath };
+    }
+    return {
+      ...operation,
+      absolutePath,
+      moveAbsolutePath: resolvePatchPath(cwd, operation.moveTo),
+    };
+  });
 }
 
 const UTF8_DECODER = new TextDecoder("utf-8", { fatal: true });
@@ -920,7 +875,7 @@ export async function previewPatch(cwd: string, patch: string): Promise<ApplyPat
   if (parsed.operations.length === 0) {
     throw new ApplyPatchInputError("patch rejected: empty patch");
   }
-  const operations = await resolveOperations(cwd, parsed.operations);
+  const operations = resolveOperations(cwd, parsed.operations);
   await verifyOperations(operations);
   const details = emptyDetails();
   const changes = new Map<string, AppliedPatchChange>();
@@ -987,7 +942,7 @@ export async function applyPatch(
     if (parsed.operations.length === 0) {
       throw new ApplyPatchInputError("patch rejected: empty patch");
     }
-    operations = await resolveOperations(cwd, parsed.operations);
+    operations = resolveOperations(cwd, parsed.operations);
   } catch (error) {
     if (error instanceof ApplyPatchInputError) throw error;
     throw new ApplyPatchVerificationError(
@@ -995,15 +950,16 @@ export async function applyPatch(
     );
   }
 
-  const canonicalPaths = await Promise.all(
-    operations.flatMap((operation) => [
-      canonicalMutationPath(operation.absolutePath),
-      ...(operation.kind === "update" && operation.moveAbsolutePath
-        ? [canonicalMutationPath(operation.moveAbsolutePath)]
-        : []),
-    ]),
-  );
-  const queuePaths = [...new Set(canonicalPaths)].sort();
+  const queuePaths = [
+    ...new Set(
+      operations.flatMap((operation) => [
+        operation.absolutePath,
+        ...(operation.kind === "update" && operation.moveAbsolutePath
+          ? [operation.moveAbsolutePath]
+          : []),
+      ]),
+    ),
+  ].sort();
 
   return withMutationQueues(queuePaths, async () => {
     throwIfAborted(signal);

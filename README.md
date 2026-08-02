@@ -6,7 +6,7 @@ OpenAI Codex compatibility for [Pi](https://github.com/earendil-works/pi-mono), 
 
 - **Request-level fast mode**: keeps Pi's built-in `openai-codex` provider selected and adds `service_tier: "priority"` at the request boundary.
 - **Native compaction**: uses Codex `remote_compaction_v2` for `/compact`, Pi threshold compaction, context-overflow recovery, and an optional percentage threshold.
-- **Codex `apply_patch`**: provides an optional workspace-scoped patch tool with the Codex grammar, parser, fuzzy matcher, overwrite semantics, model-facing result format, structured history, and diff-oriented TUI rendering. Pi sends it as an OpenAI custom grammar tool when the model supports that protocol and as a normal function tool otherwise.
+- **Codex `apply_patch`**: provides an optional patch tool with the Codex grammar, parser, fuzzy matcher, overwrite semantics, filesystem behavior, model-facing result format, structured history, and diff-oriented TUI rendering. Pi sends it as an OpenAI custom grammar tool when the model supports that protocol and as a normal function tool otherwise.
 - **Hosted web search**: optionally injects the native Codex `web_search` tool with cached, indexed, or live modes.
 - **Native request controls**: configures Responses API text verbosity, reasoning summaries, and GPT-5.6 standard/pro reasoning mode.
 - **Session-local settings pane**: `/codex-settings` changes every compatibility setting for the current session; `Ctrl+S` explicitly persists the current values.
@@ -144,10 +144,11 @@ Compatibility behavior:
 - Tool-result history stores per-file old/new content, display diffs, move destinations, overwrite information, and committed-prefix details after runtime failures.
 - The TUI renders Codex-style `Added`, `Edited`, and `Deleted` diff blocks instead of the raw model-facing result.
 
-Safety behavior:
+Filesystem behavior:
 
-- Paths must remain inside Pi's current working directory, including after symlink resolution.
-- `.git` metadata cannot be modified.
+- Relative paths resolve from Pi's current working directory; absolute paths and `..` traversal are honored.
+- `.git` paths and symlinks follow normal host filesystem semantics.
+- The extension does not add path filtering, sandboxing, or approval prompts.
 - Every hunk is parsed and validated before filesystem writes begin.
 - Mutations participate in Pi's per-file mutation queue and `apply_patch` calls execute sequentially.
 

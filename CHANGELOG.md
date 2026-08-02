@@ -5,7 +5,7 @@
 ### Added
 
 - Add native OpenAI Codex remote compaction.
-- Add a grammar-constrained Codex `apply_patch` tool with workspace path protections.
+- Add a grammar-constrained Codex `apply_patch` tool.
 - Add configurable hosted web search, text verbosity, reasoning summaries, and GPT-5.6 standard/pro reasoning mode.
 - Add a dedicated `/codex-settings` pane backed by `openai-codex-compat.json`, including controls for the extension's additional tools.
 
@@ -17,7 +17,7 @@
 - Keep unsampled user input outside provider-bound compaction and preserve native grammar-tool history across Codex checkpoints.
 - Construct checkpoint history with a focused, attributed copy of Pi AI's relevant OpenAI Responses serialization methods.
 - Use `apply_patch` in place of Pi's active `edit` and `write` tools, restoring only the tools suppressed by the setting when it is disabled.
-- Match Codex `apply_patch` parsing, fuzzy context matching, add/move overwrite semantics, model-facing results, structured committed-delta history, and diff-oriented TUI rendering.
+- Match Codex `apply_patch` parsing, fuzzy context matching, unrestricted path resolution, symlink behavior, add/move overwrite semantics, model-facing results, structured committed-delta history, and diff-oriented TUI rendering.
 
 ### Removed
 
