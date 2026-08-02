@@ -89,7 +89,7 @@ Defaults:
 | Setting                | Values                                               | Default    | Behavior                                                                                                                                                                                     |
 | ---------------------- | ---------------------------------------------------- | ---------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `fastMode`             | boolean                                              | `false`    | Adds `service_tier: "priority"` to requests while retaining the current `openai-codex` provider and model.                                                                                   |
-| `applyPatch`           | boolean                                              | `true`     | Uses the extension's `apply_patch` tool instead of Pi's active `edit` and `write` tools. Disabling it restores only the tools that the extension suppressed.                                 |
+| `applyPatch`           | boolean                                              | `true`     | On selected `openai-codex` models, uses the extension's `apply_patch` tool instead of Pi's active `edit` and `write` tools. Other providers always use their normal Pi tool set.             |
 | `autoCompactAtPercent` | number greater than `0` and at most `100`, or `null` | unset      | Adds provider-boundary compaction independently of Pi's normal reserve-token threshold. A project value of `null` disables a global percentage threshold.                                    |
 | `webSearch`            | `disabled`, `cached`, `indexed`, `live`              | `cached`   | Controls the hosted Codex web-search tool. Cached mode disallows live external access; indexed mode permits external access while preferring indexed content; live mode permits live access. |
 | `textVerbosity`        | `low`, `medium`, `high`                              | `low`      | Sets Responses API `text.verbosity`.                                                                                                                                                         |
@@ -109,9 +109,11 @@ The extension handles native compaction for `openai-codex`. It follows the Codex
 
 Ordinary responses and compaction use the same extension-managed SSE/WebSocket transport. The provider stores a native response override only when Pi's canonical assistant representation cannot round-trip the provider output exactly; normal text, reasoning, and tool responses therefore do not duplicate session data. Native overrides are associated with canonical assistants by response id and replayed only when they are present on the active Pi branch.
 
-Switching to another model id while a checkpoint is active is rejected because checkpoints are model-specific. Toggling fast mode does not change the model id or invalidate the checkpoint.
+Any model switch is rejected while the active branch contains a native Codex checkpoint because checkpoints are model-specific. Navigate to a branch before the checkpoint or start a new session before switching. Toggling fast mode does not change the model id or invalidate the checkpoint.
 
 Native compaction fails closed for Codex models: a failed compaction is cancelled instead of silently replacing the opaque state with a local text summary. Other providers continue to use Pi's default compaction behavior. `/tree` branch summarization is intentionally not intercepted.
+
+When the active branch has no native Codex checkpoint, Pi model switching remains available. Selecting a provider other than `openai-codex` disables this extension's tools and restores the Pi `edit` and `write` tools that `apply_patch` suppressed. Switching back to an `openai-codex` model reapplies the current session settings.
 
 ## `apply_patch`
 
@@ -126,7 +128,7 @@ The package registers an `apply_patch` tool using the Codex patch format:
 *** End Patch
 ```
 
-While `applyPatch` is enabled, the extension temporarily disables Pi's active `edit` and `write` tools. Turning the setting off restores only the tools that were active before `apply_patch` replaced them.
+While `applyPatch` is enabled and an `openai-codex` model is selected, the extension temporarily disables Pi's active `edit` and `write` tools. Turning the setting off or selecting another provider restores only the tools that were active before `apply_patch` replaced them.
 
 Supported operations:
 

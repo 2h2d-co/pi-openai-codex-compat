@@ -2,10 +2,11 @@ import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-a
 import { loadConfig, writableConfigPath, type CodexCompatConfig } from "./config.ts";
 import { registerCodexProvider } from "./codex-provider.ts";
 import { installCodexFooter } from "./footer.ts";
+import registerCodexModelPolicy from "./model-policy.ts";
 import registerRemoteCompaction from "./remote-compaction.ts";
 import registerCodexRequestOptions from "./request-options.ts";
 import registerCodexSettings from "./settings-pane.ts";
-import registerCodexTools, { setApplyPatchEnabled } from "./tools.ts";
+import registerCodexTools, { syncCodexTools } from "./tools.ts";
 
 const DISPLAY_NAME = "OpenAI Codex Compat";
 
@@ -33,7 +34,6 @@ export default function registerOpenAICodexCompat(pi: ExtensionAPI): void {
 
   pi.on("session_start", (event, ctx) => {
     activeConfig = loadConfig(ctx.cwd, ctx.isProjectTrusted());
-    setApplyPatchEnabled(pi, activeConfig.applyPatch);
     installCodexFooter(ctx, resolveConfig);
     if (event.reason !== "reload" && ctx.mode === "tui") {
       ctx.ui.notify(settingsSummary(ctx, activeConfig), "info");
@@ -44,11 +44,12 @@ export default function registerOpenAICodexCompat(pi: ExtensionAPI): void {
   const codexProvider = registerCodexProvider(pi, resolveConfig);
   registerCodexRequestOptions(pi, resolveConfig);
   registerRemoteCompaction(pi, codexProvider, resolveConfig);
+  registerCodexModelPolicy(pi, resolveConfig);
   registerCodexSettings(pi, {
     getConfig: resolveConfig,
-    onChange(config, _ctx) {
+    onChange(config, ctx) {
       activeConfig = config;
-      setApplyPatchEnabled(pi, config.applyPatch);
+      syncCodexTools(pi, ctx.model, config);
     },
   });
 }

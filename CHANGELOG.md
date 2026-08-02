@@ -19,6 +19,7 @@
 - Match Codex middle truncation markers and UTF-8 byte-boundary behavior for the oldest retained message.
 - Persist percentage-triggered compaction as usage-bearing Pi compaction entries and continue the intercepted request from the installed opaque checkpoint.
 - Replay sparse native response overrides by response id on the active Pi session branch instead of duplicating round-trippable assistant output.
+- Reject model switches while the active branch contains a native Codex checkpoint, and scope extension-owned tools to selected `openai-codex` models.
 - Construct checkpoint history with a focused, attributed copy of Pi AI's relevant OpenAI Responses serialization methods.
 - Use `apply_patch` in place of Pi's active `edit` and `write` tools, restoring only the tools suppressed by the setting when it is disabled.
 - Match Codex `apply_patch` parsing, fuzzy context matching, unrestricted path resolution, symlink behavior, add/move overwrite semantics, model-facing results, structured committed-delta history, and diff-oriented TUI rendering.

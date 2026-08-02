@@ -184,6 +184,17 @@ export function searchCheckpoint(branch: readonly SessionEntry[]): CheckpointSea
   return { kind: "absent" };
 }
 
+/** Return whether the active branch contains any native Codex checkpoint entry. */
+export function hasNativeCheckpointEntry(branch: readonly SessionEntry[]): boolean {
+  return branch.some(
+    (entry) =>
+      (entry.type === "compaction" &&
+        isObject(entry.details) &&
+        entry.details.kind === CHECKPOINT_ENTRY_TYPE) ||
+      (entry.type === "custom" && entry.customType === CHECKPOINT_ENTRY_TYPE),
+  );
+}
+
 export function checkpointData(
   modelId: string,
   inputHistory: readonly ResponsesItem[],
