@@ -118,3 +118,30 @@ void test("copied Pi AI Responses serialization matches the dependency", () => {
   const copied = copiedConvertResponsesMessages(model, context, allowedProviders, options);
   assert.deepEqual(copied, reference);
 });
+
+void test("replays native assistant items by response id", () => {
+  const responseId = "resp_native";
+  const nativeItem = {
+    type: "web_search_call",
+    id: "ws_native",
+    status: "completed",
+    action: { type: "search", query: "Pi" },
+  };
+  const nativeContext: Context = {
+    messages: [
+      {
+        ...assistantMessage,
+        responseId,
+        content: [{ type: "text", text: "Native response" }],
+      },
+    ],
+    tools: [applyPatchTool],
+  };
+
+  const converted = copiedConvertResponsesMessages(model, nativeContext, allowedProviders, {
+    ...options,
+    nativeAssistantItems: new Map([[responseId, [nativeItem]]]),
+  });
+
+  assert.deepEqual(converted, [nativeItem]);
+});

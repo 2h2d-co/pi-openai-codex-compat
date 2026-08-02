@@ -26,7 +26,7 @@ import type {
  * openai-responses-shared package subpath to extensions.
  */
 
-type ResponsesItem = Record<string, unknown>;
+export type ResponsesItem = Record<string, unknown>;
 type ToolResultOutput =
   | string
   | Array<
@@ -39,6 +39,7 @@ type ConvertResponsesMessagesOptions = {
   grammarToolInputProperties?: ReadonlyMap<string, string>;
   deferredTools?: ReadonlyMap<string, Tool>;
   toolOptions?: ConvertResponsesToolsOptions;
+  nativeAssistantItems?: ReadonlyMap<string, readonly ResponsesItem[]>;
 };
 
 type ConvertResponsesToolsOptions = {
@@ -457,6 +458,15 @@ export function convertResponsesMessages(
         messages.push({ role: "user", content });
       }
     } else if (message.role === "assistant") {
+      const nativeItems = message.responseId
+        ? options?.nativeAssistantItems?.get(message.responseId)
+        : undefined;
+      if (nativeItems) {
+        messages.push(...nativeItems.map((item) => structuredClone(item)));
+        messageIndex++;
+        continue;
+      }
+
       const output: ResponsesItem[] = [];
       const assistantMessage = message as AssistantMessage;
       const isDifferentModel =
