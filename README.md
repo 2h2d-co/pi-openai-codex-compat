@@ -89,7 +89,7 @@ Defaults:
 | Setting                | Values                                               | Default    | Behavior                                                                                                                                                                                     |
 | ---------------------- | ---------------------------------------------------- | ---------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `fastMode`             | boolean                                              | `false`    | Adds `service_tier: "priority"` to requests while retaining the current `openai-codex` provider and model.                                                                                   |
-| `applyPatch`           | boolean                                              | `true`     | Activates or deactivates the extension's `apply_patch` tool.                                                                                                                                 |
+| `applyPatch`           | boolean                                              | `true`     | Uses the extension's `apply_patch` tool instead of Pi's active `edit` and `write` tools. Disabling it restores only the tools that the extension suppressed.                                 |
 | `autoCompactAtPercent` | number greater than `0` and at most `100`, or `null` | unset      | Adds provider-boundary compaction independently of Pi's normal reserve-token threshold. A project value of `null` disables a global percentage threshold.                                    |
 | `webSearch`            | `disabled`, `cached`, `indexed`, `live`              | `cached`   | Controls the hosted Codex web-search tool. Cached mode disallows live external access; indexed mode permits external access while preferring indexed content; live mode permits live access. |
 | `textVerbosity`        | `low`, `medium`, `high`                              | `low`      | Sets Responses API `text.verbosity`.                                                                                                                                                         |
@@ -123,6 +123,8 @@ The package registers an `apply_patch` tool using the Codex patch format:
 +new value
 *** End Patch
 ```
+
+While `applyPatch` is enabled, the extension temporarily disables Pi's active `edit` and `write` tools. Turning the setting off restores only the tools that were active before `apply_patch` replaced them.
 
 Supported operations:
 

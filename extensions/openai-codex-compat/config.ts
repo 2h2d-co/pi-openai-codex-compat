@@ -12,7 +12,7 @@ export type ReasoningMode = "standard" | "pro";
 export interface CodexCompatConfig {
   /** Send OpenAI Codex requests through the priority service tier. */
   fastMode: boolean;
-  /** Make the extension's apply_patch tool active in Pi. */
+  /** Replace Pi's active edit and write tools with the extension's apply_patch tool. */
   applyPatch: boolean;
   /**
    * Compact at a provider request boundary when context usage reaches this

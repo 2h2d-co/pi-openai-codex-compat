@@ -78,7 +78,7 @@ export function settingItems(config: CodexCompatConfig): SettingItem[] {
     {
       id: "applyPatch",
       label: "apply_patch tool",
-      description: "Enable the workspace-scoped Codex apply_patch tool in Pi.",
+      description: "Use Codex apply_patch instead of Pi's edit and write tools.",
       currentValue: toggleValue(config.applyPatch),
       values: ["off", "on"],
     },

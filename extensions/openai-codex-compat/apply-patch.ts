@@ -512,7 +512,7 @@ export default function registerApplyPatch(pi: ExtensionAPI): void {
       "Edit workspace files with the Codex apply_patch format. Paths must remain inside the working directory.",
     promptSnippet: "Apply a Codex-format patch to one or more workspace files",
     promptGuidelines: [
-      "Use apply_patch for cohesive multi-file edits when a Codex-format patch is clearer than separate edit calls.",
+      "Use apply_patch for local file edits; formatting commands and bulk mechanical rewrites may use the shell.",
     ],
     parameters: Type.Object({
       patch: Type.String({ description: "Patch text beginning with *** Begin Patch" }),

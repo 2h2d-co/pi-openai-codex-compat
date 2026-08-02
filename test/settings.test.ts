@@ -195,8 +195,8 @@ void test("keeps settings changes session-local until Ctrl+S", async (t) => {
   assert.equal(loadConfig(cwd, false).fastMode, true);
 });
 
-void test("toggles apply_patch without changing other active tools", () => {
-  let active = ["read", "apply_patch"];
+void test("uses apply_patch instead of Pi's active edit and write tools", () => {
+  let active = ["read", "edit", "write"];
   const pi = {
     getActiveTools: () => active,
     setActiveTools(names: string[]) {
@@ -204,10 +204,27 @@ void test("toggles apply_patch without changing other active tools", () => {
     },
   } as unknown as ExtensionAPI;
 
-  setApplyPatchEnabled(pi, false);
-  assert.deepEqual(active, ["read"]);
   setApplyPatchEnabled(pi, true);
   assert.deepEqual(active, ["read", "apply_patch"]);
+  setApplyPatchEnabled(pi, true);
+  assert.deepEqual(active, ["read", "apply_patch"]);
+  setApplyPatchEnabled(pi, false);
+  assert.deepEqual(active, ["read", "edit", "write"]);
+});
+
+void test("does not restore Pi edit tools that were inactive before apply_patch", () => {
+  let active = ["read"];
+  const pi = {
+    getActiveTools: () => active,
+    setActiveTools(names: string[]) {
+      active = names;
+    },
+  } as unknown as ExtensionAPI;
+
+  setApplyPatchEnabled(pi, true);
+  assert.deepEqual(active, ["read", "apply_patch"]);
+  setApplyPatchEnabled(pi, false);
+  assert.deepEqual(active, ["read"]);
 });
 
 void test("refuses to replace invalid existing settings", async (t) => {
