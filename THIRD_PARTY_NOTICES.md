@@ -12,7 +12,7 @@ Source: <https://github.com/openai/codex>
 
 ## Pi AI
 
-The OpenAI Responses history serializer and its TypeScript dependency closure are vendored from `@earendil-works/pi-ai`.
+Selected OpenAI Responses history serialization methods are adapted from `@earendil-works/pi-ai`.
 
 Pi AI, Copyright (c) 2025 Mario Zechner
 

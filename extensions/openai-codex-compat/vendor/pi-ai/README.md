@@ -1,20 +1,10 @@
-# Vendored Pi AI Responses serialization
+# Focused Pi AI code copies
 
-This directory is generated from `@earendil-works/pi-ai@0.83.0`. Do not edit it manually.
+This directory intentionally contains only the Pi AI methods needed to serialize checkpoint history for OpenAI's Responses API. It does not contain Pi AI's complete source dependency graph.
 
-It contains the 40-file TypeScript dependency closure rooted at `src/api/openai-responses-shared.ts`, extracted from the installed package's source maps. Each file has one generated `@ts-nocheck` header followed by the verbatim upstream source.
+[`openai-responses-serialization.ts`](openai-responses-serialization.ts) adapts the relevant methods from `@earendil-works/pi-ai@0.83.0`. Its header lists the upstream source files. Keep the behavioral equivalence test in [`test/pi-ai-serialization.test.ts`](../../../../test/pi-ai-serialization.test.ts) passing when updating the Pi dependencies.
 
-Update it after changing the Pi dependencies:
-
-```sh
-npm run vendor:pi-ai
-```
-
-Check that it is complete and current:
-
-```sh
-npm run vendor:pi-ai:check
-```
+The local copy is necessary because Pi's extension loader does not expose `@earendil-works/pi-ai/api/openai-responses-shared` to extensions.
 
 Upstream: <https://github.com/earendil-works/pi/tree/main/packages/ai>
 

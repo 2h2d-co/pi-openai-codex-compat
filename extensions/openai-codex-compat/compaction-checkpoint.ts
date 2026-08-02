@@ -13,7 +13,7 @@ import {
   isResponsesItem,
   type ResponsesItem,
 } from "./codex-protocol.ts";
-import { convertResponsesMessages } from "./vendor/pi-ai/src/api/openai-responses-shared.ts";
+import { convertResponsesMessages } from "./vendor/pi-ai/openai-responses-serialization.ts";
 
 export const CHECKPOINT_ENTRY_TYPE = "openai-codex-compat-remote-compaction";
 export const CHECKPOINT_FORMAT_VERSION = 1;
