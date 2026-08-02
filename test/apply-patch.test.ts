@@ -476,8 +476,8 @@ void test("registers the Codex freeform tool with model, UI, and failed-history 
   );
   const renderedResult = component.render(120).join("\n");
   assert.match(renderedResult, /• Added rendered\.txt \(\+1 -0\)/);
-  assert.ok(renderedResult.includes("\u001b[48;2;33;58;43m"));
-  assert.match(stripAnsi(renderedResult), /1 \+hello/);
+  assert.ok(!renderedResult.includes("\u001b[48;2;33;58;43m"));
+  assert.doesNotMatch(stripAnsi(renderedResult), /1 \+hello/);
 
   const shellComponent = new ToolExecutionComponent(
     "apply_patch",
@@ -495,9 +495,15 @@ void test("registers the Codex freeform tool with model, UI, and failed-history 
   const shellText = stripAnsi(shellRender);
   assert.match(shellText, /apply_patch/);
   assert.match(shellText, /• Added rendered\.txt \(\+1 -0\)/);
-  assert.match(shellText, /1 \+hello/);
+  assert.doesNotMatch(shellText, /1 \+hello/);
   assert.doesNotMatch(shellText, /Exit code:/);
   assert.ok(!shellRender.includes("\u001b[48;2;40;50;40m"));
+
+  shellComponent.setExpanded(true);
+  const expandedShellRender = shellComponent.render(120).join("\n");
+  const expandedShellText = stripAnsi(expandedShellRender);
+  assert.match(expandedShellText, /1 \+hello/);
+  assert.ok(expandedShellRender.includes("\u001b[48;2;33;58;43m"));
 
   const sortedText = formatApplyPatchRenderText(
     {
@@ -558,7 +564,15 @@ void test("registers the Codex freeform tool with model, UI, and failed-history 
     modified: ["new.ts"],
     deleted: ["obsolete.txt"],
   };
-  const richLines = new ApplyPatchDiffComponent(richDetails, theme, cwd).render(80);
+  const collapsedRichLines = new ApplyPatchDiffComponent(richDetails, theme, cwd, false).render(80);
+  const collapsedRichText = stripAnsi(collapsedRichLines.join("\n"));
+  assert.match(collapsedRichText, /• Edited 2 files \(\+1 -2\)/);
+  assert.match(collapsedRichText, /old\.ts → new\.ts \(\+1 -1\)/);
+  assert.match(collapsedRichText, /obsolete\.txt \(\+0 -1\)/);
+  assert.doesNotMatch(collapsedRichText, /const before/);
+  assert.doesNotMatch(collapsedRichText, /remove/);
+
+  const richLines = new ApplyPatchDiffComponent(richDetails, theme, cwd, true).render(80);
   const richText = stripAnsi(richLines.join("\n"));
   assert.match(richText, /• Edited 2 files \(\+1 -2\)/);
   assert.match(richText, /old\.ts → new\.ts \(\+1 -1\)/);
@@ -622,6 +636,6 @@ void test("registers the Codex freeform tool with model, UI, and failed-history 
     },
   );
   const failedText = failedComponent.render(120).join("\n");
-  assert.match(failedText, /again/);
+  assert.doesNotMatch(failedText, /again/);
   assert.match(failedText, /✘ Failed to apply patch/);
 });

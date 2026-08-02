@@ -70,7 +70,9 @@ export function renderApplyPatchCall(
     }
 
     if (state.preview) {
-      container.addChild(new ApplyPatchDiffComponent(state.preview, theme, context.cwd));
+      container.addChild(
+        new ApplyPatchDiffComponent(state.preview, theme, context.cwd, context.expanded),
+      );
     }
   }
 
@@ -96,7 +98,7 @@ export function renderApplyPatchResult(
       : details;
 
   if (renderDetails) {
-    return new ApplyPatchDiffComponent(renderDetails, theme, context.cwd);
+    return new ApplyPatchDiffComponent(renderDetails, theme, context.cwd, context.expanded);
   }
   const text = context.isError ? theme.bold(theme.fg("error", "✘ Failed to apply patch")) : "";
   if (!text) return new Container();

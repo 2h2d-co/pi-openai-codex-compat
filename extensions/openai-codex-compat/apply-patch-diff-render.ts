@@ -387,11 +387,13 @@ export class ApplyPatchDiffComponent implements Component {
   private readonly details: ApplyPatchDetails;
   private readonly theme: Theme;
   private readonly cwd: string;
+  private readonly expanded: boolean;
 
-  constructor(details: ApplyPatchDetails, theme: Theme, cwd: string) {
+  constructor(details: ApplyPatchDetails, theme: Theme, cwd: string, expanded: boolean) {
     this.details = details;
     this.theme = theme;
     this.cwd = cwd;
+    this.expanded = expanded;
   }
 
   render(width: number): string[] {
@@ -403,18 +405,20 @@ export class ApplyPatchDiffComponent implements Component {
     if (changes.length > 0) {
       lines.push(...wrapTextWithAnsi(renderHeader(changes, this.theme, this.cwd), effectiveWidth));
       for (const [index, change] of changes.entries()) {
-        if (index > 0) lines.push("");
+        if (this.expanded && index > 0) lines.push("");
         if (changes.length > 1) {
           const header = `  ${this.theme.fg("dim", "└ ")}${changePath(change, this.cwd)} ${countSummary(change.additions, change.deletions, this.theme)}`;
           lines.push(...wrapTextWithAnsi(header, effectiveWidth));
         }
-        const inset = Math.min(4, Math.max(0, effectiveWidth - 1));
-        const contentWidth = Math.max(1, effectiveWidth - inset);
-        lines.push(
-          ...renderChange(change, contentWidth, this.theme, palette).map(
-            (line) => `${" ".repeat(inset)}${line}`,
-          ),
-        );
+        if (this.expanded) {
+          const inset = Math.min(4, Math.max(0, effectiveWidth - 1));
+          const contentWidth = Math.max(1, effectiveWidth - inset);
+          lines.push(
+            ...renderChange(change, contentWidth, this.theme, palette).map(
+              (line) => `${" ".repeat(inset)}${line}`,
+            ),
+          );
+        }
       }
     }
 
