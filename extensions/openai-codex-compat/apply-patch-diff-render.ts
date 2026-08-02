@@ -1,4 +1,5 @@
-import { isAbsolute, relative, resolve } from "node:path";
+import { homedir } from "node:os";
+import { isAbsolute, join, relative, resolve, sep } from "node:path";
 import { getLanguageFromPath, highlightCode, type Theme } from "@earendil-works/pi-coding-agent";
 import {
   type Component,
@@ -50,9 +51,22 @@ const TRUECOLOR_BACKGROUND_PATTERN = new RegExp(String.raw`\u001b\[48;2;(\d+);(\
 const INDEXED_BACKGROUND_PATTERN = new RegExp(String.raw`\u001b\[48;5;(\d+)m`);
 const BACKGROUND_RESET_PATTERN = new RegExp(String.raw`\u001b\[(?:0|49)m`, "g");
 
+function relativePathWithin(basePath: string, targetPath: string): string | undefined {
+  const path = relative(resolve(basePath), targetPath);
+  if (path === "") return path;
+  if (path === ".." || path.startsWith(`..${sep}`) || isAbsolute(path)) return undefined;
+  return path;
+}
+
 function displayPath(path: string, cwd: string): string {
   const absolutePath = isAbsolute(path) ? resolve(path) : resolve(cwd, path);
-  return relative(cwd, absolutePath) || path;
+  const cwdRelativePath = relativePathWithin(cwd, absolutePath);
+  if (cwdRelativePath !== undefined) return cwdRelativePath || ".";
+
+  const homeRelativePath = relativePathWithin(homedir(), absolutePath);
+  if (homeRelativePath !== undefined) return homeRelativePath ? join("~", homeRelativePath) : "~";
+
+  return absolutePath;
 }
 
 function changePath(change: AppliedPatchChange, cwd: string): string {

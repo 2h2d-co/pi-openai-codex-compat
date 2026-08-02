@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { homedir, tmpdir } from "node:os";
+import { join, parse } from "node:path";
 import test, { type TestContext } from "node:test";
 import {
   initTheme,
@@ -34,6 +34,49 @@ async function workspace(t: TestContext): Promise<string> {
   t.after(async () => rm(cwd, { recursive: true, force: true }));
   return cwd;
 }
+
+void test("renders paths relative to cwd, home-abbreviated, or absolute", async (t) => {
+  const cwd = await workspace(t);
+  const localPath = join(cwd, "nested", "local.ts");
+  const homePath = join(homedir(), ".pi-codex-render-home.ts");
+  const externalPath = join(parse(cwd).root, "pi-codex-render-external.ts");
+  const details: ApplyPatchDetails = {
+    status: "completed",
+    exact: true,
+    changes: [
+      {
+        kind: "add",
+        path: localPath,
+        content: "local\n",
+        displayDiff: "+1 local",
+        additions: 1,
+        deletions: 0,
+      },
+      {
+        kind: "update",
+        path: homePath,
+        moveTo: externalPath,
+        oldContent: "before\n",
+        newContent: "after\n",
+        displayDiff: "-1 before\n+1 after",
+        additions: 1,
+        deletions: 1,
+      },
+    ],
+    added: [localPath],
+    modified: [externalPath],
+    deleted: [],
+  };
+  const theme = {
+    fg: (_color: string, text: string) => text,
+    bold: (text: string) => text,
+  } as unknown as Theme;
+
+  const rendered = formatApplyPatchRenderText(details, theme, cwd);
+
+  assert.ok(rendered.includes(join("nested", "local.ts")));
+  assert.ok(rendered.includes(`${join("~", ".pi-codex-render-home.ts")} → ${externalPath}`));
+});
 
 void test("applies add, update, and delete hunks with Codex result details", async (t) => {
   const cwd = await workspace(t);

@@ -22,6 +22,7 @@
 - Start `apply_patch` wall-time measurement after preflight verification, immediately before mutation execution, matching Codex's timer scope.
 - Render `apply_patch` results with Codex-style per-file summaries, line-number gutters, move paths, syntax highlighting, and full-width added/removed line backgrounds without changing model-facing tool output.
 - Render `apply_patch` on a transparent self-managed shell so its Codex diff highlights do not blend into Pi's successful-tool background.
+- Render `apply_patch` paths relative to the working directory, home-abbreviated with `~` when applicable, and absolute otherwise.
 
 ### Removed
 
