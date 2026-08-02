@@ -1,0 +1,110 @@
+import { calculateCost, type AssistantMessage, type Model } from "@earendil-works/pi-ai";
+import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { loadConfig, type CodexCompatConfig, type WebSearchMode } from "./config.ts";
+import { isObject, type JsonRecord } from "./codex-protocol.ts";
+
+const CODEX_PROVIDER = "openai-codex";
+const CODEX_API = "openai-codex-responses";
+
+export function isCodexModel(model: Model<any> | undefined): boolean {
+  return Boolean(model && model.provider === CODEX_PROVIDER && model.api === CODEX_API);
+}
+
+export function supportsReasoningMode(modelId: string): boolean {
+  return /^gpt-5\.6(?:-|$)/.test(modelId);
+}
+
+function isWebSearchTool(value: unknown): boolean {
+  return isObject(value) && value.type === "web_search";
+}
+
+function webSearchTool(mode: Exclude<WebSearchMode, "disabled">, images: boolean): JsonRecord {
+  return {
+    type: "web_search",
+    external_web_access: mode !== "cached",
+    ...(mode === "indexed" ? { indexed_web_access: true } : {}),
+    ...(images ? { search_content_types: ["text", "image"] } : {}),
+  };
+}
+
+export function applyCodexRequestOptions(
+  payload: JsonRecord,
+  config: CodexCompatConfig,
+  options: { modelId: string; supportsImageSearch: boolean },
+): JsonRecord {
+  const result = structuredClone(payload);
+
+  if (config.fastMode) result.service_tier = "priority";
+
+  const text = isObject(result.text) ? result.text : {};
+  result.text = { ...text, verbosity: config.textVerbosity };
+
+  const reasoning = result["reasoning"];
+  if (isObject(reasoning)) {
+    const updatedReasoning = { ...reasoning };
+    if (config.reasoningSummary === "off") {
+      Reflect.deleteProperty(updatedReasoning, "summary");
+    } else {
+      updatedReasoning["summary"] = config.reasoningSummary;
+    }
+    if (supportsReasoningMode(options.modelId)) {
+      updatedReasoning["mode"] = config.reasoningMode;
+    } else {
+      Reflect.deleteProperty(updatedReasoning, "mode");
+    }
+    result["reasoning"] = updatedReasoning;
+  }
+
+  const tools = Array.isArray(result.tools) ? result.tools : [];
+  const toolsWithoutSearch = tools.filter((tool) => !isWebSearchTool(tool));
+  if (config.webSearch === "disabled") {
+    if (Array.isArray(result.tools)) result.tools = toolsWithoutSearch;
+  } else {
+    result.tools = [
+      ...toolsWithoutSearch,
+      webSearchTool(config.webSearch, options.supportsImageSearch),
+    ];
+  }
+
+  return result;
+}
+
+/** Recompute cost from canonical rates so payload-only priority mode cannot be undercounted. */
+export function applyPriorityPricing(
+  message: AssistantMessage,
+  model: Model<any>,
+): AssistantMessage {
+  const usage = structuredClone(message.usage);
+  calculateCost(model, usage);
+  const multiplier = model.id === "gpt-5.5" ? 2.5 : 2;
+  usage.cost.input *= multiplier;
+  usage.cost.output *= multiplier;
+  usage.cost.cacheRead *= multiplier;
+  usage.cost.cacheWrite *= multiplier;
+  usage.cost.total =
+    usage.cost.input + usage.cost.output + usage.cost.cacheRead + usage.cost.cacheWrite;
+  return { ...message, usage };
+}
+
+export default function registerCodexRequestOptions(pi: ExtensionAPI): void {
+  pi.on("before_provider_request", (event, ctx) => {
+    if (!isCodexModel(ctx.model) || !isObject(event.payload)) return undefined;
+
+    const config = loadConfig(ctx.cwd, ctx.isProjectTrusted());
+    return applyCodexRequestOptions(event.payload, config, {
+      modelId: ctx.model!.id,
+      supportsImageSearch: ctx.model!.input.includes("image"),
+    });
+  });
+
+  pi.on("message_end", (event, ctx) => {
+    if (event.message.role !== "assistant" || event.message.provider !== CODEX_PROVIDER) {
+      return undefined;
+    }
+    if (!loadConfig(ctx.cwd, ctx.isProjectTrusted()).fastMode) return undefined;
+
+    const model = ctx.modelRegistry.find(CODEX_PROVIDER, event.message.model);
+    if (!model) return undefined;
+    return { message: applyPriorityPricing(event.message, model) };
+  });
+}

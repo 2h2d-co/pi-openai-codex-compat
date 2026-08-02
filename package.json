@@ -20,10 +20,12 @@
     "url": "git+https://github.com/2h2d-co/pi-openai-codex-compat.git"
   },
   "files": [
-    "extensions/openai-codex-compat/index.ts",
+    "extensions/openai-codex-compat",
     "README.md",
     "CHANGELOG.md",
-    "LICENSE"
+    "LICENSE",
+    "LICENSES",
+    "THIRD_PARTY_NOTICES.md"
   ],
   "type": "module",
   "scripts": {
@@ -34,7 +36,9 @@
     "lint:fix": "oxlint --fix"
   },
   "devDependencies": {
+    "@earendil-works/pi-ai": "0.83.0",
     "@earendil-works/pi-coding-agent": "0.83.0",
+    "@earendil-works/pi-tui": "0.83.0",
     "@types/node": "22.20.1",
     "oxfmt": "0.60.0",
     "oxlint": "1.75.0",
@@ -42,7 +46,9 @@
     "typescript": "7.0.2"
   },
   "peerDependencies": {
-    "@earendil-works/pi-coding-agent": ">=0.83.0 <0.84.0"
+    "@earendil-works/pi-ai": ">=0.83.0 <0.84.0",
+    "@earendil-works/pi-coding-agent": ">=0.83.0 <0.84.0",
+    "@earendil-works/pi-tui": ">=0.83.0 <0.84.0"
   },
   "engines": {
     "node": ">=22.19.0"
