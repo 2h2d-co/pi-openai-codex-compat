@@ -1,4 +1,3 @@
-import { createHash } from "node:crypto";
 import {
   buildSessionContext,
   convertToLlm,
@@ -6,15 +5,15 @@ import {
   type SessionEntry,
   type ToolInfo,
 } from "@earendil-works/pi-coding-agent";
-import type { Message, Model } from "@earendil-works/pi-ai";
+import type { Message, Model, OpenAIResponsesCompat, Tool } from "@earendil-works/pi-ai";
 import { APPLY_PATCH_LARK_GRAMMAR, APPLY_PATCH_TOOL_NAME } from "./apply-patch.ts";
 import {
   installCompactionItem,
   isObject,
   isResponsesItem,
-  type JsonRecord,
   type ResponsesItem,
 } from "./codex-protocol.ts";
+import { convertResponsesMessages } from "./vendor/pi-ai/src/api/openai-responses-shared.ts";
 
 export const CHECKPOINT_ENTRY_TYPE = "openai-codex-compat-remote-compaction";
 export const CHECKPOINT_FORMAT_VERSION = 1;
@@ -36,7 +35,6 @@ export type GrammarToolInputProperties = ReadonlyMap<string, string>;
 function asResponsesTool(
   tool: ToolInfo,
   grammarToolInputProperties: GrammarToolInputProperties,
-  deferred = false,
 ): ResponsesItem {
   if (tool.name === APPLY_PATCH_TOOL_NAME && grammarToolInputProperties.has(tool.name)) {
     return {
@@ -48,7 +46,6 @@ function asResponsesTool(
         syntax: "lark",
         definition: APPLY_PATCH_LARK_GRAMMAR,
       },
-      ...(deferred ? { defer_loading: true } : {}),
     };
   }
   return {
@@ -57,7 +54,6 @@ function asResponsesTool(
     description: tool.description,
     parameters: tool.parameters as unknown,
     strict: null,
-    ...(deferred ? { defer_loading: true } : {}),
   };
 }
 
@@ -73,262 +69,47 @@ export function activeResponsesTools(
     : undefined;
 }
 
-function textParts(content: unknown): unknown[] {
-  if (typeof content === "string") {
-    return content ? [{ type: "input_text", text: content }] : [];
-  }
-  if (!Array.isArray(content)) return [];
+const CODEX_TOOL_CALL_PROVIDERS: ReadonlySet<string> = new Set([
+  "openai",
+  "openai-codex",
+  "opencode",
+]);
 
-  return content.flatMap((part): unknown[] => {
-    if (!isObject(part)) return [];
-    if (part.type === "text" && typeof part.text === "string") {
-      return [{ type: "input_text", text: part.text }];
-    }
-    if (
-      part.type === "image" &&
-      typeof part.data === "string" &&
-      typeof part.mimeType === "string"
-    ) {
-      return [
-        {
-          type: "input_image",
-          detail: "auto",
-          image_url: `data:${part.mimeType};base64,${part.data}`,
-        },
-      ];
-    }
-    return [];
-  });
+function asPiTool(tool: ToolInfo, grammarToolInputProperties: GrammarToolInputProperties): Tool {
+  return {
+    name: tool.name,
+    description: tool.description,
+    parameters: tool.parameters,
+    ...(tool.name === APPLY_PATCH_TOOL_NAME && grammarToolInputProperties.has(tool.name)
+      ? {
+          constrainedSampling: {
+            type: "grammar" as const,
+            variants: { openai_lark: APPLY_PATCH_LARK_GRAMMAR },
+          },
+        }
+      : {}),
+  };
 }
 
-function outputForToolResult(message: JsonRecord, model: Model<any>): unknown {
-  const content = Array.isArray(message.content) ? message.content : [];
-  const text = content
-    .flatMap((part) =>
-      isObject(part) && part.type === "text" && typeof part.text === "string" ? [part.text] : [],
-    )
-    .join("\n");
-  const images = content.filter((part) => isObject(part) && part.type === "image");
-
-  if (images.length === 0 || !model.input.includes("image")) {
-    if (text) return text;
-    return images.length > 0 ? "(see attached image)" : "(no tool output)";
-  }
-
-  return [
-    ...(text ? [{ type: "input_text", text }] : []),
-    ...images.flatMap((image) =>
-      typeof image.data === "string" && typeof image.mimeType === "string"
-        ? [
-            {
-              type: "input_image",
-              detail: "auto",
-              image_url: `data:${image.mimeType};base64,${image.data}`,
-            },
-          ]
-        : [],
-    ),
-  ];
-}
-
-function decodeTextSignature(signature: unknown): {
-  id?: string;
-  phase?: "commentary" | "final_answer";
-} {
-  if (typeof signature !== "string" || !signature) return {};
-  if (!signature.startsWith("{")) return { id: signature };
-
-  try {
-    const parsed = JSON.parse(signature) as JsonRecord;
-    if (parsed.v !== 1 || typeof parsed.id !== "string") return {};
-    const phase =
-      parsed.phase === "commentary" || parsed.phase === "final_answer" ? parsed.phase : undefined;
-    return {
-      id: parsed.id,
-      ...(phase ? { phase } : {}),
-    };
-  } catch {
-    return {};
-  }
-}
-
-function assistantMessageId(
-  signature: string | undefined,
-  messageIndex: number,
-  textIndex: number,
-): string {
-  const fallback =
-    textIndex === 0 ? `msg_pi_${messageIndex}` : `msg_pi_${messageIndex}_${textIndex}`;
-  if (!signature) return fallback;
-  return signature.length <= 64
-    ? signature
-    : `msg_${createHash("sha256").update(signature).digest("hex").slice(0, 16)}`;
-}
-
-function reasoningFromSignature(signature: unknown): ResponsesItem | undefined {
-  if (typeof signature !== "string") return undefined;
-  try {
-    const parsed = JSON.parse(signature);
-    return isResponsesItem(parsed) && parsed.type === "reasoning" ? parsed : undefined;
-  } catch {
-    return undefined;
-  }
-}
-
-function grammarToolInput(
-  toolName: string,
-  argumentsValue: unknown,
-  inputProperty: string,
-): string {
-  const arguments_ = isObject(argumentsValue) ? argumentsValue : {};
-  const input = arguments_[inputProperty];
-  if (typeof input !== "string") {
-    throw new Error(
-      `Grammar tool call "${toolName}" requires argument "${inputProperty}" to be a string.`,
-    );
-  }
-  return input;
-}
-
-/** Encode Pi's canonical messages into the OpenAI Responses history format. */
+/** Encode Pi's canonical messages using Pi AI's OpenAI Responses serializer. */
 function encodeMessages(
   model: Model<any>,
   messages: Message[],
   allTools: readonly ToolInfo[],
   grammarToolInputProperties: GrammarToolInputProperties,
 ): ResponsesItem[] {
-  const encoded: ResponsesItem[] = [];
-  const outstandingCalls = new Map<string, { callId: string; custom: boolean }>();
-  const tools = new Map(allTools.map((tool) => [tool.name, tool]));
-  const emittedDeferredTools = new Set<string>();
-
-  const finishUnansweredCalls = () => {
-    for (const call of outstandingCalls.values()) {
-      encoded.push({
-        type: call.custom ? "custom_tool_call_output" : "function_call_output",
-        call_id: call.callId,
-        output: "No result provided",
-      });
-    }
-    outstandingCalls.clear();
-  };
-
-  for (let messageIndex = 0; messageIndex < messages.length; messageIndex++) {
-    const message = messages[messageIndex] as unknown as JsonRecord;
-
-    if (message.role === "user") {
-      finishUnansweredCalls();
-      const content = textParts(message.content);
-      if (content.length > 0) encoded.push({ role: "user", content });
-      continue;
-    }
-
-    if (message.role === "assistant") {
-      finishUnansweredCalls();
-      if (message.stopReason === "error" || message.stopReason === "aborted") continue;
-      if (!Array.isArray(message.content)) continue;
-
-      let textIndex = 0;
-      for (const block of message.content) {
-        if (!isObject(block)) continue;
-
-        if (block.type === "thinking") {
-          const reasoning = reasoningFromSignature(block.thinkingSignature);
-          if (reasoning) encoded.push(reasoning);
-          continue;
-        }
-
-        if (block.type === "text" && typeof block.text === "string") {
-          const signature = decodeTextSignature(block.textSignature);
-          encoded.push({
-            type: "message",
-            role: "assistant",
-            id: assistantMessageId(signature.id, messageIndex, textIndex),
-            status: "completed",
-            content: [{ type: "output_text", text: block.text, annotations: [] }],
-            ...(signature.phase ? { phase: signature.phase } : {}),
-          });
-          textIndex++;
-          continue;
-        }
-
-        if (block.type === "toolCall" && typeof block.id === "string") {
-          const [callId, itemId] = block.id.split("|");
-          const name = typeof block.name === "string" ? block.name : "";
-          const inputProperty = grammarToolInputProperties.get(name);
-          const custom = inputProperty !== undefined;
-          outstandingCalls.set(block.id, { callId: callId!, custom });
-          if (custom) {
-            encoded.push({
-              type: "custom_tool_call",
-              call_id: callId,
-              ...(itemId ? { id: itemId } : {}),
-              name,
-              input: grammarToolInput(name, block.arguments, inputProperty),
-            });
-          } else {
-            encoded.push({
-              type: "function_call",
-              call_id: callId,
-              ...(itemId?.startsWith("fc_") ? { id: itemId } : {}),
-              name,
-              arguments: JSON.stringify(block.arguments ?? {}),
-            });
-          }
-        }
-      }
-      continue;
-    }
-
-    if (message.role === "toolResult" && typeof message.toolCallId === "string") {
-      const [callId] = message.toolCallId.split("|");
-      const outstanding = outstandingCalls.get(message.toolCallId);
-      outstandingCalls.delete(message.toolCallId);
-      const custom =
-        outstanding?.custom === true ||
-        (typeof message["toolName"] === "string" &&
-          grammarToolInputProperties.has(message["toolName"]));
-      encoded.push({
-        type: custom ? "custom_tool_call_output" : "function_call_output",
-        call_id: callId,
-        output: outputForToolResult(message, model),
-      });
-
-      if (Array.isArray(message.addedToolNames)) {
-        const added = message.addedToolNames.flatMap((name) => {
-          if (typeof name !== "string" || !tools.has(name) || emittedDeferredTools.has(name)) {
-            return [];
-          }
-          emittedDeferredTools.add(name);
-          return [tools.get(name)!];
-        });
-        if (added.length > 0) {
-          const names = added.map((tool) => tool.name);
-          const deferredCallId = `pi_tool_load_${createHash("sha256")
-            .update(`${message.toolCallId}:${names.join(",")}`)
-            .digest("hex")
-            .slice(0, 16)}`;
-          encoded.push({
-            type: "tool_search_call",
-            call_id: deferredCallId,
-            execution: "client",
-            status: "completed",
-            arguments: { query: names.join(" "), limit: names.length },
-          });
-          encoded.push({
-            type: "tool_search_output",
-            call_id: deferredCallId,
-            execution: "client",
-            status: "completed",
-            tools: added.map((tool) => asResponsesTool(tool, grammarToolInputProperties, true)),
-          });
-        }
-      }
-    }
-  }
-
-  finishUnansweredCalls();
-  return encoded;
+  const tools = allTools.map((tool) => asPiTool(tool, grammarToolInputProperties));
+  const compat = model.compat as OpenAIResponsesCompat | undefined;
+  return convertResponsesMessages(model, { messages, tools }, CODEX_TOOL_CALL_PROVIDERS, {
+    includeSystemPrompt: false,
+    grammarToolInputProperties,
+    deferredTools: new Map(tools.map((tool) => [tool.name, tool])),
+    toolOptions: {
+      strict: null,
+      supportsStrictMode: compat?.supportsStrictMode ?? true,
+      supportsOpenAIGrammarTools: compat?.supportsOpenAIGrammarTools ?? false,
+    },
+  }) as unknown as ResponsesItem[];
 }
 
 export function encodeSessionEntries(

@@ -15,6 +15,7 @@
 - Make `/codex-settings` changes session-local by default and persist them only on `Ctrl+S`.
 - Print effective settings once at session start and move non-default fast, pro, verbosity, and reasoning-summary indicators onto the second footer line.
 - Keep unsampled user input outside provider-bound compaction and preserve native grammar-tool history across Codex checkpoints.
+- Construct checkpoint history with a reproducibly vendored copy of Pi AI's OpenAI Responses serializer.
 
 ### Removed
 

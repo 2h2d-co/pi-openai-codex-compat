@@ -33,7 +33,9 @@
     "test": "node --test --test-concurrency=1 test/*.test.ts",
     "fmt": "oxfmt",
     "lint": "oxlint",
-    "lint:fix": "oxlint --fix"
+    "lint:fix": "oxlint --fix",
+    "vendor:pi-ai": "node scripts/vendor-pi-ai-responses.ts",
+    "vendor:pi-ai:check": "node scripts/vendor-pi-ai-responses.ts --check"
   },
   "devDependencies": {
     "@earendil-works/pi-ai": "0.83.0",

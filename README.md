@@ -152,13 +152,15 @@ npm run check
 npm test
 ```
 
+After changing the Pi dependencies, run `npm run vendor:pi-ai` to refresh the vendored Responses serializer from the installed `pi-ai` package. `npm run vendor:pi-ai:check` verifies its complete dependency closure and exact generated contents without writing files.
+
 ## Release staging
 
 The GitHub Actions workflow stages npm releases when a `v*` tag is pushed. The tag must match `package.json` version and point at a commit whose subject is `release: v<version>`.
 
 ## Acknowledgements
 
-The remote-compaction implementation follows the current OpenAI Codex `remote_compaction_v2` protocol. The `apply_patch` grammar is adapted from OpenAI Codex under Apache-2.0; see [third-party notices](THIRD_PARTY_NOTICES.md).
+The remote-compaction implementation follows the current OpenAI Codex `remote_compaction_v2` protocol. The `apply_patch` grammar is adapted from OpenAI Codex under Apache-2.0. OpenAI Responses history serialization is vendored from Pi AI under MIT; see [third-party notices](THIRD_PARTY_NOTICES.md).
 
 ## License
 
