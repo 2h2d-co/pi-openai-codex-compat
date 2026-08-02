@@ -16,6 +16,8 @@ function settingsSummary(ctx: ExtensionContext, config: CodexCompatConfig): stri
     `fast mode: ${config.fastMode ? "on" : "off"}`,
     `reasoning mode: ${config.reasoningMode}`,
     `apply_patch: ${config.applyPatch ? "on" : "off"}`,
+    `image_gen.imagegen: ${config.imageGeneration ? "on" : "off"}`,
+    `web.run: ${config.webRun ? "on" : "off"}`,
     `web search: ${config.webSearch}`,
     `text verbosity: ${config.textVerbosity}`,
     `reasoning summary: ${config.reasoningSummary}`,
@@ -40,7 +42,7 @@ export default function registerOpenAICodexCompat(pi: ExtensionAPI): void {
     }
   });
 
-  registerCodexTools(pi);
+  registerCodexTools(pi, resolveConfig);
   const codexProvider = registerCodexProvider(pi, resolveConfig);
   registerCodexRequestOptions(pi, resolveConfig);
   registerRemoteCompaction(pi, codexProvider, resolveConfig);

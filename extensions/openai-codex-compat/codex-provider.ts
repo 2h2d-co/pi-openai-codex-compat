@@ -38,6 +38,7 @@ import { processCodexStream } from "./codex-stream.ts";
 import { CodexTransport } from "./codex-transport.ts";
 import type { CodexCompatConfig } from "./config.ts";
 import { nativeResponseData, NATIVE_RESPONSE_ENTRY_TYPE } from "./native-history.ts";
+import { CODEX_NAMESPACED_TOOL_NAMES } from "./namespaced-tools.ts";
 import { normalizeReplayItem, stableResponsesJson } from "./responses-replay.ts";
 import {
   convertResponsesTools,
@@ -356,6 +357,7 @@ export class CodexProviderRuntime {
           supportsStrictMode: compat?.supportsStrictMode ?? true,
           supportsOpenAIGrammarTools: compat?.supportsOpenAIGrammarTools ?? false,
         },
+        namespacedToolNames: CODEX_NAMESPACED_TOOL_NAMES,
         nativeAssistantItems: nativeItems,
       }) as ResponsesItem[];
     }
@@ -399,6 +401,7 @@ export class CodexProviderRuntime {
         strict: null,
         supportsStrictMode: compat?.supportsStrictMode ?? true,
         supportsOpenAIGrammarTools: compat?.supportsOpenAIGrammarTools ?? false,
+        namespacedToolNames: CODEX_NAMESPACED_TOOL_NAMES,
       });
     }
     if (options.reasoningEffort !== undefined) {
@@ -644,7 +647,11 @@ export class CodexProviderRuntime {
               supportsStrictMode: compat?.supportsStrictMode ?? true,
               supportsOpenAIGrammarTools: compat?.supportsOpenAIGrammarTools ?? false,
             },
+            namespacedToolNames: CODEX_NAMESPACED_TOOL_NAMES,
           },
+        ).filter(
+          (item) =>
+            item["type"] !== "function_call_output" && item["type"] !== "custom_tool_call_output",
         );
         if (rawItems.length > 0 && nativeOverrideRequired(rawItems, canonicalItems)) {
           if (!output.responseId) throw new Error("Codex response is missing a response id.");

@@ -14,6 +14,7 @@ import {
   type ResponsesItem,
 } from "./codex-protocol.ts";
 import { nativeResponseOverrides } from "./native-history.ts";
+import { CODEX_NAMESPACED_TOOL_NAMES, splitNamespacedToolName } from "./namespaced-tools.ts";
 import { convertResponsesMessages } from "./vendor/pi-ai/openai-responses-serialization.ts";
 
 export const CHECKPOINT_ENTRY_TYPE = "openai-codex-compat-remote-compaction";
@@ -47,6 +48,23 @@ function asResponsesTool(
         syntax: "lark",
         definition: APPLY_PATCH_LARK_GRAMMAR,
       },
+    };
+  }
+  const namespaced = splitNamespacedToolName(tool.name);
+  if (namespaced) {
+    return {
+      type: "namespace",
+      name: namespaced.namespace,
+      description: `Tools in the ${namespaced.namespace} namespace.`,
+      tools: [
+        {
+          type: "function",
+          name: namespaced.name,
+          description: tool.description,
+          parameters: tool.parameters as unknown,
+          strict: false,
+        },
+      ],
     };
   }
   return {
@@ -111,6 +129,7 @@ function encodeMessages(
       supportsStrictMode: compat?.supportsStrictMode ?? true,
       supportsOpenAIGrammarTools: compat?.supportsOpenAIGrammarTools ?? false,
     },
+    namespacedToolNames: CODEX_NAMESPACED_TOOL_NAMES,
     ...(nativeAssistantItems ? { nativeAssistantItems } : {}),
   }) as unknown as ResponsesItem[];
 }

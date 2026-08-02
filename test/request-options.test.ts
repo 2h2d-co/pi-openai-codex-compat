@@ -13,10 +13,14 @@ import {
 } from "../extensions/openai-codex-compat/request-options.ts";
 
 void test("validates and layers Codex compatibility configuration", () => {
+  assert.equal(DEFAULT_CONFIG.imageGeneration, true);
+  assert.equal(DEFAULT_CONFIG.webRun, true);
   assert.deepEqual(
     parseConfig({
       fastMode: true,
       applyPatch: false,
+      imageGeneration: false,
+      webRun: true,
       autoCompactAtPercent: 85,
       webSearch: "live",
       textVerbosity: "high",
@@ -26,6 +30,8 @@ void test("validates and layers Codex compatibility configuration", () => {
     {
       fastMode: true,
       applyPatch: false,
+      imageGeneration: false,
+      webRun: true,
       autoCompactAtPercent: 85,
       webSearch: "live",
       textVerbosity: "high",
@@ -37,6 +43,8 @@ void test("validates and layers Codex compatibility configuration", () => {
     parseConfig({
       fastMode: "yes",
       applyPatch: null,
+      imageGeneration: "yes",
+      webRun: null,
       autoCompactAtPercent: 0,
       webSearch: "invalid",
       textVerbosity: false,
@@ -130,6 +138,33 @@ void test("disables request tools and omits unsupported reasoning mode and summa
     indexed_web_access: true,
   });
   assert.deepEqual(indexed.text, { verbosity: "medium" });
+});
+
+void test("uses standalone web.run instead of hosted web_search when available", () => {
+  const result = applyCodexRequestOptions(
+    {
+      tools: [
+        {
+          type: "namespace",
+          name: "web",
+          description: "Tools in the web namespace.",
+          tools: [{ type: "function", name: "run" }],
+        },
+        { type: "web_search", external_web_access: false },
+      ],
+    },
+    { ...DEFAULT_CONFIG, webSearch: "live" },
+    { modelId: "gpt-5.6-sol", supportsImageSearch: true },
+  );
+
+  assert.deepEqual(result.tools, [
+    {
+      type: "namespace",
+      name: "web",
+      description: "Tools in the web namespace.",
+      tools: [{ type: "function", name: "run" }],
+    },
+  ]);
 });
 
 void test("recomputes canonical priority-tier costs after payload modification", () => {

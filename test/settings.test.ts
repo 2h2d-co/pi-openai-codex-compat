@@ -8,8 +8,10 @@ import {
   type ExtensionAPI,
   type ExtensionCommandContext,
 } from "@earendil-works/pi-coding-agent";
+import type { Model } from "@earendil-works/pi-ai";
 import {
   CONFIG_FILE,
+  DEFAULT_CONFIG,
   configLayer,
   loadConfig,
   saveConfig,
@@ -19,7 +21,7 @@ import registerCodexSettings, {
   settingItems,
   settingPatch,
 } from "../extensions/openai-codex-compat/settings-pane.ts";
-import { setApplyPatchEnabled } from "../extensions/openai-codex-compat/tools.ts";
+import { setApplyPatchEnabled, syncCodexTools } from "../extensions/openai-codex-compat/tools.ts";
 
 void test("persists dedicated settings without discarding unknown configuration", async (t) => {
   const root = await mkdtemp(join(tmpdir(), "pi-codex-settings-"));
@@ -44,12 +46,16 @@ void test("persists dedicated settings without discarding unknown configuration"
   );
   const savedPath = await saveConfig(cwd, false, {
     fastMode: true,
+    imageGeneration: false,
+    webRun: false,
     reasoningMode: "pro",
   });
   const stored = JSON.parse(await readFile(savedPath, "utf8")) as Record<string, unknown>;
 
   assert.deepEqual(stored["customFutureSetting"], { keep: true });
   assert.equal(stored["fastMode"], true);
+  assert.equal(stored["imageGeneration"], false);
+  assert.equal(stored["webRun"], false);
   assert.equal(stored["reasoningMode"], "pro");
   assert.equal(loadConfig(cwd, false).fastMode, true);
 });
@@ -70,6 +76,8 @@ void test("exposes every request and tool control in the settings pane", () => {
   const config = {
     fastMode: true,
     applyPatch: false,
+    imageGeneration: true,
+    webRun: false,
     webSearch: "live",
     textVerbosity: "high",
     reasoningSummary: "detailed",
@@ -86,12 +94,20 @@ void test("exposes every request and tool control in the settings pane", () => {
       ["reasoningSummary", "detailed"],
       ["reasoningMode", "pro"],
       ["applyPatch", "off"],
+      ["imageGeneration", "on"],
+      ["webRun", "off"],
       ["webSearch", "live"],
       ["autoCompactAtPercent", "90%"],
     ],
   );
   assert.deepEqual(settingPatch("reasoningMode", "standard"), {
     reasoningMode: "standard",
+  });
+  assert.deepEqual(settingPatch("imageGeneration", "off"), {
+    imageGeneration: false,
+  });
+  assert.deepEqual(settingPatch("webRun", "on"), {
+    webRun: true,
   });
   assert.deepEqual(settingPatch("autoCompactAtPercent", "Pi default"), {
     autoCompactAtPercent: null,
@@ -225,6 +241,54 @@ void test("does not restore Pi edit tools that were inactive before apply_patch"
   assert.deepEqual(active, ["read", "apply_patch"]);
   setApplyPatchEnabled(pi, false);
   assert.deepEqual(active, ["read"]);
+});
+
+void test("toggles image_gen.imagegen and web.run independently on Codex models", () => {
+  let active = ["read", "edit", "write"];
+  const pi = {
+    getActiveTools: () => active,
+    setActiveTools(names: string[]) {
+      active = names;
+    },
+  } as unknown as ExtensionAPI;
+  const model = {
+    id: "gpt-test",
+    name: "GPT Test",
+    api: "openai-codex-responses",
+    provider: "openai-codex",
+    baseUrl: "https://example.test",
+    reasoning: true,
+    input: ["text", "image"],
+    cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+    contextWindow: 100_000,
+    maxTokens: 10_000,
+  } as Model<any>;
+
+  syncCodexTools(pi, model, {
+    ...DEFAULT_CONFIG,
+    applyPatch: false,
+    imageGeneration: true,
+    webRun: false,
+  });
+  assert.deepEqual(active, ["read", "edit", "write", "image_gen.imagegen"]);
+
+  syncCodexTools(pi, model, {
+    ...DEFAULT_CONFIG,
+    applyPatch: false,
+    imageGeneration: false,
+    webRun: true,
+    webSearch: "cached",
+  });
+  assert.deepEqual(active, ["read", "edit", "write", "web.run"]);
+
+  syncCodexTools(pi, model, {
+    ...DEFAULT_CONFIG,
+    applyPatch: false,
+    imageGeneration: false,
+    webRun: true,
+    webSearch: "disabled",
+  });
+  assert.deepEqual(active, ["read", "edit", "write", "web.run"]);
 });
 
 void test("refuses to replace invalid existing settings", async (t) => {

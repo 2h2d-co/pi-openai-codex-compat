@@ -1,9 +1,19 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { Type } from "typebox";
+import type { ToolInfo } from "@earendil-works/pi-coding-agent";
 import type { AssistantMessage, Context, Model, Tool } from "@earendil-works/pi-ai";
 import { convertResponsesMessages as referenceConvertResponsesMessages } from "@earendil-works/pi-ai/api/openai-responses-shared";
-import { convertResponsesMessages as copiedConvertResponsesMessages } from "../extensions/openai-codex-compat/vendor/pi-ai/openai-responses-serialization.ts";
+import { activeResponsesTools } from "../extensions/openai-codex-compat/compaction-checkpoint.ts";
+import {
+  CODEX_NAMESPACED_TOOL_NAMES,
+  IMAGE_GENERATION_TOOL_NAME,
+  WEB_RUN_TOOL_NAME,
+} from "../extensions/openai-codex-compat/namespaced-tools.ts";
+import {
+  convertResponsesMessages as copiedConvertResponsesMessages,
+  convertResponsesTools,
+} from "../extensions/openai-codex-compat/vendor/pi-ai/openai-responses-serialization.ts";
 
 const model = {
   id: "gpt-test",
@@ -33,6 +43,18 @@ const deferredTool: Tool = {
   name: "deferred",
   description: "A deferred tool",
   parameters: Type.Object({ value: Type.String() }),
+};
+
+const webRunTool: Tool = {
+  name: WEB_RUN_TOOL_NAME,
+  description: "Browse the web",
+  parameters: Type.Object({ query: Type.String() }),
+};
+
+const imageGenerationTool: Tool = {
+  name: IMAGE_GENERATION_TOOL_NAME,
+  description: "Generate an image",
+  parameters: Type.Object({ prompt: Type.String() }),
 };
 
 const assistantMessage = {
@@ -144,4 +166,143 @@ void test("replays native assistant items by response id", () => {
   });
 
   assert.deepEqual(converted, [nativeItem]);
+});
+
+void test("serializes allowlisted dotted tools as Responses namespaces", () => {
+  assert.deepEqual(
+    convertResponsesTools([webRunTool, imageGenerationTool], {
+      strict: null,
+      supportsStrictMode: true,
+      namespacedToolNames: CODEX_NAMESPACED_TOOL_NAMES,
+    }),
+    [
+      {
+        type: "namespace",
+        name: "web",
+        description: "Tools in the web namespace.",
+        tools: [
+          {
+            type: "function",
+            name: "run",
+            description: "Browse the web",
+            parameters: webRunTool.parameters,
+            strict: false,
+          },
+        ],
+      },
+      {
+        type: "namespace",
+        name: "image_gen",
+        description: "Tools in the image_gen namespace.",
+        tools: [
+          {
+            type: "function",
+            name: "imagegen",
+            description: "Generate an image",
+            parameters: imageGenerationTool.parameters,
+            strict: false,
+          },
+        ],
+      },
+    ],
+  );
+});
+
+void test("round-trips namespaced calls and deferred namespaced definitions", () => {
+  const namespacedAssistant = {
+    ...assistantMessage,
+    content: [
+      {
+        type: "toolCall",
+        id: "call_web|fc_web",
+        name: WEB_RUN_TOOL_NAME,
+        arguments: { query: "Pi" },
+      },
+    ],
+  } as AssistantMessage;
+  const namespacedContext: Context = {
+    messages: [
+      namespacedAssistant,
+      {
+        role: "toolResult",
+        toolCallId: "call_web|fc_web",
+        toolName: WEB_RUN_TOOL_NAME,
+        content: [{ type: "text", text: "result" }],
+        isError: false,
+        timestamp: 2,
+        addedToolNames: [IMAGE_GENERATION_TOOL_NAME],
+      },
+    ],
+    tools: [webRunTool, imageGenerationTool],
+  };
+
+  const converted = copiedConvertResponsesMessages(model, namespacedContext, allowedProviders, {
+    includeSystemPrompt: false,
+    deferredTools: new Map([[IMAGE_GENERATION_TOOL_NAME, imageGenerationTool]]),
+    namespacedToolNames: CODEX_NAMESPACED_TOOL_NAMES,
+    toolOptions: {
+      strict: null,
+      supportsStrictMode: true,
+      namespacedToolNames: CODEX_NAMESPACED_TOOL_NAMES,
+    },
+  });
+
+  assert.deepEqual(converted[0], {
+    type: "function_call",
+    id: "fc_web",
+    call_id: "call_web",
+    namespace: "web",
+    name: "run",
+    arguments: '{"query":"Pi"}',
+  });
+  assert.equal(converted[1]?.["type"], "function_call_output");
+  assert.equal(converted[2]?.["type"], "tool_search_call");
+  const toolSearchOutput = converted[3];
+  assert.ok(toolSearchOutput);
+  assert.deepEqual((toolSearchOutput["tools"] as Record<string, unknown>[])[0], {
+    type: "namespace",
+    name: "image_gen",
+    description: "Tools in the image_gen namespace.",
+    tools: [
+      {
+        type: "function",
+        name: "imagegen",
+        description: "Generate an image",
+        parameters: imageGenerationTool.parameters,
+        defer_loading: true,
+        strict: false,
+      },
+    ],
+  });
+});
+
+void test("serializes active compaction tools with the same namespace contract", () => {
+  assert.deepEqual(
+    activeResponsesTools(
+      [
+        {
+          name: WEB_RUN_TOOL_NAME,
+          description: webRunTool.description,
+          parameters: webRunTool.parameters,
+        } as ToolInfo,
+      ],
+      [WEB_RUN_TOOL_NAME],
+    ),
+    [
+      {
+        type: "namespace",
+        name: "web",
+        description: "Tools in the web namespace.",
+        tools: [
+          {
+            type: "function",
+            name: "run",
+            description: webRunTool.description,
+            parameters: webRunTool.parameters,
+            strict: false,
+          },
+        ],
+      },
+    ],
+  );
 });

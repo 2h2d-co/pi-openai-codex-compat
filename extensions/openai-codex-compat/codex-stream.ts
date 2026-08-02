@@ -10,6 +10,7 @@ import {
   type ToolCall,
 } from "@earendil-works/pi-ai";
 import { isObject, type JsonRecord } from "./codex-protocol.ts";
+import { CODEX_NAMESPACED_TOOL_NAMES, namespacedToolCallName } from "./namespaced-tools.ts";
 
 /**
  * Focused adaptation of @earendil-works/pi-ai@0.83.0
@@ -191,10 +192,18 @@ export async function processCodexStream(
       return slot;
     }
     if (item.type === "function_call") {
+      const wireName = stringValue(item.name);
+      const name =
+        item["namespace"] === undefined
+          ? wireName
+          : namespacedToolCallName(item["namespace"], wireName);
+      if (item["namespace"] === undefined && CODEX_NAMESPACED_TOOL_NAMES.has(name)) {
+        throw new Error(`Codex returned namespaced tool "${name}" as a flat function call.`);
+      }
       const block: StreamingToolCall = {
         type: "toolCall",
         id: `${stringValue(item["call_id"])}|${stringValue(item.id)}`,
-        name: stringValue(item.name),
+        name,
         arguments: {},
         partialJson: typeof item.arguments === "string" ? item.arguments : "",
       };
@@ -388,6 +397,11 @@ export async function processCodexStream(
         slot?.type === "toolCall" &&
         slot.block.partialJson !== undefined
       ) {
+        if (item["namespace"] !== undefined) {
+          slot.block.name = namespacedToolCallName(item["namespace"], item.name);
+        } else if (typeof item.name === "string" && CODEX_NAMESPACED_TOOL_NAMES.has(item.name)) {
+          throw new Error(`Codex returned namespaced tool "${item.name}" as a flat function call.`);
+        }
         const argumentsJson =
           typeof item.arguments === "string" ? item.arguments : slot.block.partialJson || "{}";
         slot.block.arguments = parseStreamingJson(argumentsJson);

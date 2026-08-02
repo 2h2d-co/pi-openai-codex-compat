@@ -1,16 +1,24 @@
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import type { Model } from "@earendil-works/pi-ai";
 import registerApplyPatch, { APPLY_PATCH_TOOL_NAME } from "./apply-patch.ts";
 import type { CodexCompatConfig } from "./config.ts";
+import registerImageGeneration from "./image-generation.ts";
+import { IMAGE_GENERATION_TOOL_NAME, WEB_RUN_TOOL_NAME } from "./namespaced-tools.ts";
 import { isCodexModel } from "./request-options.ts";
+import registerWebRun from "./web-run.ts";
 
 const PI_EDIT_TOOLS = ["edit", "write"] as const;
-const CODEX_EXTENSION_TOOLS = [APPLY_PATCH_TOOL_NAME] as const;
+const CODEX_EXTENSION_TOOLS = [
+  APPLY_PATCH_TOOL_NAME,
+  IMAGE_GENERATION_TOOL_NAME,
+  WEB_RUN_TOOL_NAME,
+] as const;
 const suppressedEditTools = new WeakMap<ExtensionAPI, Set<string>>();
+type ConfigResolver = (ctx: ExtensionContext) => CodexCompatConfig;
 
 export function setApplyPatchEnabled(pi: ExtensionAPI, enabled: boolean): void {
   const active = new Set(pi.getActiveTools());
-  for (const tool of CODEX_EXTENSION_TOOLS) active.delete(tool);
+  active.delete(APPLY_PATCH_TOOL_NAME);
   if (enabled) {
     let suppressed = suppressedEditTools.get(pi);
     if (!suppressed) {
@@ -35,9 +43,22 @@ export function syncCodexTools(
   model: Model<any> | undefined,
   config: CodexCompatConfig,
 ): void {
-  setApplyPatchEnabled(pi, isCodexModel(model) && config.applyPatch);
+  const codexSelected = isCodexModel(model);
+  setApplyPatchEnabled(pi, codexSelected && config.applyPatch);
+
+  const active = new Set(pi.getActiveTools());
+  for (const tool of CODEX_EXTENSION_TOOLS) {
+    if (tool !== APPLY_PATCH_TOOL_NAME) active.delete(tool);
+  }
+  if (codexSelected) {
+    if (config.imageGeneration) active.add(IMAGE_GENERATION_TOOL_NAME);
+    if (config.webRun) active.add(WEB_RUN_TOOL_NAME);
+  }
+  pi.setActiveTools([...active]);
 }
 
-export default function registerCodexTools(pi: ExtensionAPI): void {
+export default function registerCodexTools(pi: ExtensionAPI, resolveConfig: ConfigResolver): void {
   registerApplyPatch(pi);
+  registerImageGeneration(pi);
+  registerWebRun(pi, resolveConfig);
 }

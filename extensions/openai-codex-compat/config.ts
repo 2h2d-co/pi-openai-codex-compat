@@ -14,6 +14,10 @@ export interface CodexCompatConfig {
   fastMode: boolean;
   /** Replace Pi's active edit and write tools with the extension's apply_patch tool. */
   applyPatch: boolean;
+  /** Expose the standalone Codex image-generation namespace tool. */
+  imageGeneration: boolean;
+  /** Expose the standalone Codex web-search namespace tool. */
+  webRun: boolean;
   /**
    * Compact at a provider request boundary when context usage reaches this
    * percentage. Omit it to rely only on Pi's compaction lifecycle (`/compact`,
@@ -29,6 +33,8 @@ export interface CodexCompatConfig {
 export type ConfigLayer = {
   fastMode?: boolean;
   applyPatch?: boolean;
+  imageGeneration?: boolean;
+  webRun?: boolean;
   autoCompactAtPercent?: number | null;
   webSearch?: WebSearchMode;
   textVerbosity?: TextVerbosity;
@@ -40,6 +46,8 @@ export const CONFIG_FILE = "openai-codex-compat.json";
 export const DEFAULT_CONFIG: CodexCompatConfig = {
   fastMode: false,
   applyPatch: true,
+  imageGeneration: true,
+  webRun: true,
   webSearch: "cached",
   textVerbosity: "low",
   reasoningSummary: "auto",
@@ -65,6 +73,12 @@ export function parseConfig(value: unknown): ConfigLayer {
 
   const applyPatch = value["applyPatch"];
   if (typeof applyPatch === "boolean") layer.applyPatch = applyPatch;
+
+  const imageGeneration = value["imageGeneration"];
+  if (typeof imageGeneration === "boolean") layer.imageGeneration = imageGeneration;
+
+  const webRun = value["webRun"];
+  if (typeof webRun === "boolean") layer.webRun = webRun;
 
   const threshold = value["autoCompactAtPercent"];
   if (threshold === null) {
@@ -124,6 +138,10 @@ export function resolveConfig(
     ...DEFAULT_CONFIG,
     ...(typeof merged.fastMode === "boolean" ? { fastMode: merged.fastMode } : {}),
     ...(typeof merged.applyPatch === "boolean" ? { applyPatch: merged.applyPatch } : {}),
+    ...(typeof merged.imageGeneration === "boolean"
+      ? { imageGeneration: merged.imageGeneration }
+      : {}),
+    ...(typeof merged.webRun === "boolean" ? { webRun: merged.webRun } : {}),
     ...(typeof merged.autoCompactAtPercent === "number"
       ? { autoCompactAtPercent: merged.autoCompactAtPercent }
       : {}),
@@ -158,6 +176,8 @@ export function configLayer(config: CodexCompatConfig): ConfigLayer {
   return {
     fastMode: config.fastMode,
     applyPatch: config.applyPatch,
+    imageGeneration: config.imageGeneration,
+    webRun: config.webRun,
     autoCompactAtPercent: config.autoCompactAtPercent ?? null,
     webSearch: config.webSearch,
     textVerbosity: config.textVerbosity,

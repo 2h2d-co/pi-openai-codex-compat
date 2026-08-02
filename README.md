@@ -7,7 +7,9 @@ OpenAI Codex compatibility for [Pi](https://github.com/earendil-works/pi-mono), 
 - **Request-level fast mode**: keeps the canonical `openai-codex` provider id and models selected while adding `service_tier: "priority"` at the request boundary.
 - **Native compaction**: uses Codex `remote_compaction_v2` for `/compact`, Pi threshold compaction, context-overflow recovery, and an optional percentage threshold.
 - **Codex `apply_patch`**: provides an optional patch tool with the Codex grammar, parser, fuzzy matcher, overwrite semantics, filesystem behavior, model-facing result format, structured history, and diff-oriented TUI rendering. Pi sends it as an OpenAI custom grammar tool when the model supports that protocol and as a normal function tool otherwise.
-- **Hosted web search**: optionally injects the native Codex `web_search` tool with cached, indexed, or live modes.
+- **Standalone image generation**: exposes Pi's dotted `image_gen.imagegen` tool as a native Responses namespace and executes generation or edits through the Codex Images endpoints.
+- **Standalone web search**: exposes Pi's dotted `web.run` tool as a native Responses namespace and executes search and browsing through Codex `alpha/search`.
+- **Hosted web-search fallback**: injects native `web_search` only when `web.run` is inactive, with cached, indexed, or live modes.
 - **Native request controls**: configures Responses API text verbosity, reasoning summaries, and GPT-5.6 standard/pro reasoning mode.
 - **Session-local settings pane**: `/codex-settings` changes every compatibility setting for the current session; `Ctrl+S` explicitly persists the current values.
 - **Compact footer indicators**: non-default Codex request modes are appended to the model side of Pi's normal second footer line.
@@ -76,6 +78,8 @@ Example:
 {
   "fastMode": true,
   "applyPatch": true,
+  "imageGeneration": true,
+  "webRun": true,
   "autoCompactAtPercent": 90,
   "webSearch": "cached",
   "textVerbosity": "low",
@@ -86,15 +90,17 @@ Example:
 
 Defaults:
 
-| Setting                | Values                                               | Default    | Behavior                                                                                                                                                                                     |
-| ---------------------- | ---------------------------------------------------- | ---------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `fastMode`             | boolean                                              | `false`    | Adds `service_tier: "priority"` to requests while retaining the current `openai-codex` provider and model.                                                                                   |
-| `applyPatch`           | boolean                                              | `true`     | On selected `openai-codex` models, uses the extension's `apply_patch` tool instead of Pi's active `edit` and `write` tools. Other providers always use their normal Pi tool set.             |
-| `autoCompactAtPercent` | number greater than `0` and at most `100`, or `null` | unset      | Adds provider-boundary compaction independently of Pi's normal reserve-token threshold. A project value of `null` disables a global percentage threshold.                                    |
-| `webSearch`            | `disabled`, `cached`, `indexed`, `live`              | `cached`   | Controls the hosted Codex web-search tool. Cached mode disallows live external access; indexed mode permits external access while preferring indexed content; live mode permits live access. |
-| `textVerbosity`        | `low`, `medium`, `high`                              | `low`      | Sets Responses API `text.verbosity`.                                                                                                                                                         |
-| `reasoningSummary`     | `auto`, `concise`, `detailed`, `off`                 | `auto`     | Sets `reasoning.summary` when reasoning is enabled; `off` omits the summary parameter.                                                                                                       |
-| `reasoningMode`        | `standard`, `pro`                                    | `standard` | Sets `reasoning.mode` on GPT-5.6 models independently of Pi's reasoning-effort control.                                                                                                      |
+| Setting                | Values                                               | Default    | Behavior                                                                                                                                                                                                                                  |
+| ---------------------- | ---------------------------------------------------- | ---------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `fastMode`             | boolean                                              | `false`    | Adds `service_tier: "priority"` to requests while retaining the current `openai-codex` provider and model.                                                                                                                                |
+| `applyPatch`           | boolean                                              | `true`     | On selected `openai-codex` models, uses the extension's `apply_patch` tool instead of Pi's active `edit` and `write` tools. Other providers always use their normal Pi tool set.                                                          |
+| `imageGeneration`      | boolean                                              | `true`     | Enables the extension-owned `image_gen.imagegen` tool on selected `openai-codex` models.                                                                                                                                                  |
+| `webRun`               | boolean                                              | `true`     | Enables the extension-owned `web.run` tool on selected `openai-codex` models. When active, it replaces hosted `web_search` in the Responses tool list.                                                                                    |
+| `autoCompactAtPercent` | number greater than `0` and at most `100`, or `null` | unset      | Adds provider-boundary compaction independently of Pi's normal reserve-token threshold. A project value of `null` disables a global percentage threshold.                                                                                 |
+| `webSearch`            | `disabled`, `cached`, `indexed`, `live`              | `cached`   | Controls hosted search and standalone-search external access. `disabled` removes hosted search but leaves an independently enabled `web.run` in cached-only mode; `indexed` prefers indexed content; `live` permits live external access. |
+| `textVerbosity`        | `low`, `medium`, `high`                              | `low`      | Sets Responses API `text.verbosity`.                                                                                                                                                                                                      |
+| `reasoningSummary`     | `auto`, `concise`, `detailed`, `off`                 | `auto`     | Sets `reasoning.summary` when reasoning is enabled; `off` omits the summary parameter.                                                                                                                                                    |
+| `reasoningMode`        | `standard`, `pro`                                    | `standard` | Sets `reasoning.mode` on GPT-5.6 models independently of Pi's reasoning-effort control.                                                                                                                                                   |
 
 Invalid values are ignored and invalid JSON does not prevent Pi from starting. The settings pane never writes on ordinary changes, refuses to overwrite invalid JSON when `Ctrl+S` is pressed, and retains unknown keys when saving. Project configuration is read only when the project is trusted.
 
@@ -113,7 +119,7 @@ Any model switch is rejected while the active branch contains a native Codex che
 
 Native compaction fails closed for Codex models: a failed compaction is cancelled instead of silently replacing the opaque state with a local text summary. Other providers continue to use Pi's default compaction behavior. `/tree` branch summarization is intentionally not intercepted.
 
-When the active branch has no native Codex checkpoint, Pi model switching remains available. Selecting a provider other than `openai-codex` disables this extension's tools and restores the Pi `edit` and `write` tools that `apply_patch` suppressed. Switching back to an `openai-codex` model reapplies the current session settings.
+When the active branch has no native Codex checkpoint, Pi model switching remains available. Selecting a provider other than `openai-codex` disables `apply_patch`, `image_gen.imagegen`, and `web.run`, and restores the Pi `edit` and `write` tools that `apply_patch` suppressed. Switching back to an `openai-codex` model reapplies the current session settings.
 
 ## `apply_patch`
 
@@ -158,6 +164,46 @@ Filesystem behavior:
 
 A low-level I/O failure can still leave a multi-file patch partially applied. The failed tool result records the known committed prefix, but inspect the working tree before retrying when that record is marked inexact.
 
+## `image_gen.imagegen`
+
+The package registers the dotted Pi tool name `image_gen.imagegen` and serializes it as a native Responses API namespace:
+
+```json
+{
+  "type": "namespace",
+  "name": "image_gen",
+  "tools": [{ "type": "function", "name": "imagegen" }]
+}
+```
+
+The tool generates new images with `gpt-image-2` or edits up to five local/recent conversation images. Local edit inputs must use absolute paths and are read directly with the Pi process's filesystem permissions. PNG, JPEG, GIF, and WebP edit inputs are accepted. Generated PNGs are returned to Pi as image tool content and stored without overwriting existing files under:
+
+```text
+~/.pi/agent/generated_images/<session-id>/<call-id>.png
+```
+
+The active Pi agent directory replaces `~/.pi/agent` when configured differently. Turning `imageGeneration` off removes the tool immediately for the current session; `Ctrl+S` in `/codex-settings` persists the value.
+
+Pi also persists the returned image content in tool-result history so later image edits and provider replay remain self-contained. Generated-image turns therefore increase the session file by approximately the base64 image size in addition to the saved PNG artifact.
+
+## `web.run`
+
+The package registers the dotted Pi tool name `web.run` and serializes it as a native Responses API `web` namespace. Calls are executed through `codex/alpha/search`; plaintext `output` is returned to the model and structured `results` are retained in the Pi tool-result details.
+
+The exposed command schema includes:
+
+- `search_query`;
+- `image_query`;
+- `open`;
+- `click`;
+- `find`;
+- `screenshot`;
+- `response_length`.
+
+It intentionally does not expose `finance`, `sports`, `weather`, or time-query commands. The tool sends the current user message plus the preceding visible user/assistant turn as search context. When `web.run` is active, hosted `web_search` is omitted; turning `webRun` off restores the hosted tool according to `webSearch`.
+
+Both namespace tools are accepted only from the fixed extension-owned allowlist. Unknown namespaced calls and flat wire calls named `web.run` or `image_gen.imagegen` fail instead of being routed ambiguously.
+
 ## Development
 
 ```bash
@@ -168,7 +214,7 @@ npm run check
 npm test
 ```
 
-The focused Pi AI serializer copy lives under `extensions/openai-codex-compat/vendor/pi-ai/`. The custom Codex provider transport and stream parser are focused adaptations of Pi AI's corresponding implementation. Equivalence and protocol tests cover canonical serialization, raw native replay, SSE request behavior, WebSocket reuse, grammar tools, and compaction continuation.
+The focused Pi AI serializer copy lives under `extensions/openai-codex-compat/vendor/pi-ai/`. The custom Codex provider transport and stream parser are focused adaptations of Pi AI's corresponding implementation. Equivalence and protocol tests cover canonical serialization, native namespace round-trips, raw native replay, sibling Codex JSON endpoints, SSE request behavior, WebSocket reuse, grammar tools, image results, standalone search, and compaction continuation.
 
 ## Release staging
 
@@ -176,7 +222,7 @@ The GitHub Actions workflow stages npm releases when a `v*` tag is pushed. The t
 
 ## Acknowledgements
 
-The remote-compaction implementation follows the current OpenAI Codex `remote_compaction_v2` protocol. The `apply_patch` grammar, parser, matcher, mutation semantics, result format, and compatibility scenarios are adapted from OpenAI Codex under Apache-2.0. The Codex provider transport, stream processing, and OpenAI Responses history serialization adapt selected Pi AI methods under MIT; see [third-party notices](THIRD_PARTY_NOTICES.md).
+The remote-compaction implementation follows the current OpenAI Codex `remote_compaction_v2` protocol. The `apply_patch`, standalone image-generation, and standalone web-search behavior is adapted from OpenAI Codex under Apache-2.0. The Codex provider transport, stream processing, and OpenAI Responses history serialization adapt selected Pi AI methods under MIT; see [third-party notices](THIRD_PARTY_NOTICES.md).
 
 ## License
 

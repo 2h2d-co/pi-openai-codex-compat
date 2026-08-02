@@ -2,11 +2,12 @@ import { calculateCost, type AssistantMessage, type Model } from "@earendil-work
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { loadConfig, type CodexCompatConfig, type WebSearchMode } from "./config.ts";
 import { isObject, type JsonRecord } from "./codex-protocol.ts";
+import { splitNamespacedToolName, WEB_RUN_TOOL_NAME } from "./namespaced-tools.ts";
 
 const CODEX_PROVIDER = "openai-codex";
 const CODEX_API = "openai-codex-responses";
 
-export function isCodexModel(model: Model<any> | undefined): boolean {
+export function isCodexModel(model: Model<any> | undefined): model is Model<any> {
   return Boolean(model && model.provider === CODEX_PROVIDER && model.api === CODEX_API);
 }
 
@@ -16,6 +17,18 @@ export function supportsReasoningMode(modelId: string): boolean {
 
 function isWebSearchTool(value: unknown): boolean {
   return isObject(value) && value.type === "web_search";
+}
+
+function isWebRunNamespace(value: unknown): boolean {
+  if (!isObject(value) || value.type !== "namespace") return false;
+  const webRun = splitNamespacedToolName(WEB_RUN_TOOL_NAME)!;
+  return (
+    value.name === webRun.namespace &&
+    Array.isArray(value.tools) &&
+    value.tools.some(
+      (tool) => isObject(tool) && tool.type === "function" && tool.name === webRun.name,
+    )
+  );
 }
 
 function webSearchTool(mode: Exclude<WebSearchMode, "disabled">, images: boolean): JsonRecord {
@@ -57,7 +70,7 @@ export function applyCodexRequestOptions(
 
   const tools = Array.isArray(result.tools) ? result.tools : [];
   const toolsWithoutSearch = tools.filter((tool) => !isWebSearchTool(tool));
-  if (config.webSearch === "disabled") {
+  if (tools.some(isWebRunNamespace) || config.webSearch === "disabled") {
     if (Array.isArray(result.tools)) result.tools = toolsWithoutSearch;
   } else {
     result.tools = [

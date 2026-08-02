@@ -35,6 +35,14 @@ type CodexTransportOptions = OpenAICodexResponsesOptions & {
   env?: ProviderEnv;
 };
 
+export type CodexJsonRequestOptions = {
+  apiKey: string;
+  headers?: ProviderHeaders;
+  extraHeaders?: Record<string, string>;
+  signal?: AbortSignal;
+  fetch?: typeof fetch;
+};
+
 type WebSocketEventType = "open" | "message" | "error" | "close";
 type WebSocketListener = (event: unknown) => void;
 
@@ -159,6 +167,12 @@ function resolveCodexUrl(baseUrl?: string): string {
   return `${normalized}/codex/responses`;
 }
 
+export function resolveCodexApiUrl(baseUrl: string | undefined, path: string): string {
+  const normalizedPath = path.replace(/^\/+/, "");
+  const responsesUrl = resolveCodexUrl(baseUrl);
+  return `${responsesUrl.slice(0, -"/responses".length)}/${normalizedPath}`;
+}
+
 function resolveCodexWebSocketUrl(baseUrl?: string): string {
   const url = new URL(resolveCodexUrl(baseUrl));
   if (url.protocol === "https:") url.protocol = "wss:";
@@ -203,6 +217,22 @@ function sseHeaders(
     headers.set("session-id", sessionId);
     headers.set("x-client-request-id", sessionId);
   }
+  return headers;
+}
+
+function jsonHeaders(
+  modelHeaders: Record<string, string> | undefined,
+  additionalHeaders: ProviderHeaders | undefined,
+  extraHeaders: Record<string, string> | undefined,
+  accountId: string,
+  token: string,
+): Headers {
+  const headers = baseHeaders(modelHeaders, additionalHeaders, accountId, token);
+  for (const [name, value] of Object.entries(extraHeaders ?? {})) {
+    headers.set(name, value);
+  }
+  headers.set("accept", "application/json");
+  headers.set("content-type", "application/json");
   return headers;
 }
 
@@ -712,6 +742,43 @@ async function* requestWebSocket(
     throw error;
   } finally {
     acquired.release(keep);
+  }
+}
+
+export async function requestCodexJson(
+  model: Model<any>,
+  path: string,
+  body: JsonRecord,
+  options: CodexJsonRequestOptions,
+): Promise<unknown> {
+  const headers = jsonHeaders(
+    model.headers,
+    options.headers,
+    options.extraHeaders,
+    extractAccountId(options.apiKey),
+    options.apiKey,
+  );
+  const response = await (options.fetch ?? globalThis.fetch)(
+    resolveCodexApiUrl(model.baseUrl, path),
+    {
+      method: "POST",
+      headers,
+      body: JSON.stringify(body),
+      ...(options.signal ? { signal: options.signal } : {}),
+    },
+  );
+  const responseText = await response.text();
+  if (!response.ok) {
+    throw new Error(responseText || `Codex request failed with status ${response.status}`);
+  }
+  try {
+    return JSON.parse(responseText) as unknown;
+  } catch (error) {
+    throw new Error(
+      `Codex returned invalid JSON from ${path}: ${
+        error instanceof Error ? error.message : String(error)
+      }`,
+    );
   }
 }
 

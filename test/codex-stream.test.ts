@@ -129,3 +129,88 @@ void test("parses reasoning and grammar tool calls into canonical Pi content", a
   assert.deepEqual(toolCall?.arguments, { patch });
   assert.equal(toolCall?.id, "call_1|ctc_1");
 });
+
+void test("maps allowlisted Responses namespace calls to dotted Pi tool names", async () => {
+  const message = output();
+  const stream = createAssistantMessageEventStream();
+
+  await processCodexStream(
+    events([
+      {
+        type: "response.output_item.added",
+        output_index: 0,
+        item: {
+          type: "function_call",
+          id: "fc_web",
+          call_id: "call_web",
+          name: "run",
+          arguments: "",
+        },
+      },
+      {
+        type: "response.function_call_arguments.done",
+        output_index: 0,
+        arguments: '{"search_query":[{"q":"Pi"}]}',
+      },
+      {
+        type: "response.output_item.done",
+        output_index: 0,
+        item: {
+          type: "function_call",
+          id: "fc_web",
+          call_id: "call_web",
+          namespace: "web",
+          name: "run",
+          arguments: '{"search_query":[{"q":"Pi"}]}',
+        },
+      },
+      {
+        type: "response.completed",
+        response: {
+          id: "resp_web",
+          status: "completed",
+          usage: { input_tokens: 10, output_tokens: 5, total_tokens: 15 },
+        },
+      },
+    ]),
+    message,
+    stream,
+    model,
+    new Map(),
+  );
+
+  const toolCall = message.content.find((block) => block.type === "toolCall");
+  assert.equal(toolCall?.name, "web.run");
+  assert.deepEqual(toolCall?.arguments, { search_query: [{ q: "Pi" }] });
+});
+
+void test("rejects unknown and flat namespace tool calls", async () => {
+  for (const item of [
+    {
+      type: "function_call",
+      id: "fc_unknown",
+      call_id: "call_unknown",
+      namespace: "unknown",
+      name: "run",
+      arguments: "{}",
+    },
+    {
+      type: "function_call",
+      id: "fc_flat",
+      call_id: "call_flat",
+      name: "web.run",
+      arguments: "{}",
+    },
+  ]) {
+    await assert.rejects(
+      processCodexStream(
+        events([{ type: "response.output_item.added", output_index: 0, item }]),
+        output(),
+        createAssistantMessageEventStream(),
+        model,
+        new Map(),
+      ),
+      /namespaced tool|unsupported namespaced tool call/,
+    );
+  }
+});

@@ -7,6 +7,9 @@
 - Add native OpenAI Codex remote compaction.
 - Add an extension-managed `openai-codex` provider runtime that shares transport state between ordinary responses and remote compaction while preserving otherwise lossy native Responses items in Pi sessions.
 - Add a grammar-constrained Codex `apply_patch` tool.
+- Add independently configurable `image_gen.imagegen` and `web.run` tools, enabled by default and transported as native Responses API namespaces.
+- Add Codex Images generation/edit execution with generated PNG persistence under the Pi agent directory.
+- Add standalone `alpha/search` execution with structured result persistence in Pi tool-result details and a restricted schema that omits finance, sports, weather, and time queries.
 - Add configurable hosted web search, text verbosity, reasoning summaries, and GPT-5.6 standard/pro reasoning mode.
 - Add a dedicated `/codex-settings` pane backed by `openai-codex-compat.json`, including controls for the extension's additional tools.
 
@@ -20,6 +23,9 @@
 - Persist percentage-triggered compaction as usage-bearing Pi compaction entries and continue the intercepted request from the installed opaque checkpoint.
 - Replay sparse native response overrides by response id on the active Pi session branch instead of duplicating round-trippable assistant output.
 - Reject model switches while the active branch contains a native Codex checkpoint, and scope extension-owned tools to selected `openai-codex` models.
+- Prefer standalone `web.run` over hosted `web_search` when enabled, while retaining the configured cached, indexed, or live access mode.
+- Serialize, replay, defer, compact, and parse the extension-owned dotted tool allowlist with native Responses namespace/member identities.
+- Avoid persisting synthetic missing-tool-result items when checking whether completed assistant tool calls need native response overrides.
 - Construct checkpoint history with a focused, attributed copy of Pi AI's relevant OpenAI Responses serialization methods.
 - Use `apply_patch` in place of Pi's active `edit` and `write` tools, restoring only the tools suppressed by the setting when it is disabled.
 - Match Codex `apply_patch` parsing, fuzzy context matching, unrestricted path resolution, symlink behavior, add/move overwrite semantics, model-facing results, structured committed-delta history, and diff-oriented TUI rendering.

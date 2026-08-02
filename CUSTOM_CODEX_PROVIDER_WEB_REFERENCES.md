@@ -7,6 +7,10 @@ The design supports both:
 1. hosted Responses API `web_search`, where source data arrives as output-text annotations; and
 2. Codex-style `web.run`, where the search service returns model-facing text plus structured results containing reference IDs and URLs.
 
+## Current implementation status
+
+The extension now implements `web.run` as a native Responses namespace, executes it through Codex `alpha/search`, and persists structured `results` in the corresponding Pi tool-result `details`. The durable cross-call reference store, hosted-search citation capture, citation rendering, and direct-link materialization described below remain future work.
+
 The provider must not depend on opaque text such as `turn0search0` or `citeturn0search0` to reconstruct a source. The mapping must be captured when the provider or web tool receives the structured response.
 
 ## Dictionary

@@ -40,13 +40,15 @@ type ConvertResponsesMessagesOptions = {
   deferredTools?: ReadonlyMap<string, Tool>;
   toolOptions?: ConvertResponsesToolsOptions;
   nativeAssistantItems?: ReadonlyMap<string, readonly ResponsesItem[]>;
+  namespacedToolNames?: ReadonlySet<string>;
 };
 
-type ConvertResponsesToolsOptions = {
+export type ConvertResponsesToolsOptions = {
   strict?: boolean | null;
   supportsStrictMode?: boolean;
   supportsOpenAIGrammarTools?: boolean;
   deferLoading?: boolean;
+  namespacedToolNames?: ReadonlySet<string>;
 };
 
 type JsonSchemaObject = {
@@ -181,7 +183,7 @@ export function convertResponsesTools(
   const supportsStrictMode = options?.supportsStrictMode ?? true;
   const supportsOpenAIGrammarTools = options?.supportsOpenAIGrammarTools ?? false;
 
-  return tools.map((tool) => {
+  const convertTool = (tool: Tool): ResponsesItem => {
     const grammar = resolveGrammarConstrainedSampling(tool, supportsOpenAIGrammarTools);
     if (grammar) {
       return {
@@ -206,7 +208,55 @@ export function convertResponsesTools(
       ...(options?.deferLoading ? { defer_loading: true } : {}),
       ...(supportsStrictMode ? { strict: constrainedStrict ?? defaultStrict } : {}),
     };
-  });
+  };
+
+  const result: ResponsesItem[] = [];
+  const namespaces = new Map<string, ResponsesItem>();
+  for (const tool of tools) {
+    const converted = convertTool(tool);
+    const namespaced = splitNamespacedToolName(tool.name, options?.namespacedToolNames);
+    if (!namespaced) {
+      result.push(converted);
+      continue;
+    }
+    if (converted["type"] !== "function") {
+      throw new Error(`Namespaced tool "${tool.name}" must serialize as a function tool.`);
+    }
+
+    const child = {
+      ...converted,
+      name: namespaced.name,
+      ...(supportsStrictMode ? { strict: false } : {}),
+    };
+    let namespace = namespaces.get(namespaced.namespace);
+    if (!namespace) {
+      namespace = {
+        type: "namespace",
+        name: namespaced.namespace,
+        description: `Tools in the ${namespaced.namespace} namespace.`,
+        tools: [],
+      };
+      namespaces.set(namespaced.namespace, namespace);
+      result.push(namespace);
+    }
+    (namespace["tools"] as ResponsesItem[]).push(child);
+  }
+  return result;
+}
+
+function splitNamespacedToolName(
+  toolName: string,
+  allowedNames: ReadonlySet<string> | undefined,
+): { namespace: string; name: string } | undefined {
+  if (!allowedNames?.has(toolName)) return undefined;
+  const separator = toolName.indexOf(".");
+  if (separator <= 0 || separator === toolName.length - 1) {
+    throw new Error(`Invalid namespaced tool name: ${toolName}`);
+  }
+  return {
+    namespace: toolName.slice(0, separator),
+    name: toolName.slice(separator + 1),
+  };
 }
 
 const NON_VISION_USER_IMAGE_PLACEHOLDER = "(image omitted: model does not support images)";
@@ -514,6 +564,7 @@ export function convertResponsesMessages(
         } else if (block.type === "toolCall") {
           const [callId, itemIdRaw] = block.id.split("|");
           const customInputProperty = options?.grammarToolInputProperties?.get(block.name);
+          const namespaced = splitNamespacedToolName(block.name, options?.namespacedToolNames);
           let itemId = itemIdRaw;
           if (
             (isDifferentModel && itemId?.startsWith("fc_")) ||
@@ -536,7 +587,8 @@ export function convertResponsesMessages(
               type: "function_call",
               id: itemId,
               call_id: callId,
-              name: block.name,
+              name: namespaced?.name ?? block.name,
+              ...(namespaced ? { namespace: namespaced.namespace } : {}),
               arguments: JSON.stringify(block.arguments),
             });
           }
@@ -582,6 +634,9 @@ export function convertResponsesMessages(
           tools: convertResponsesTools(deferredTools, {
             ...options?.toolOptions,
             deferLoading: true,
+            ...(options?.namespacedToolNames
+              ? { namespacedToolNames: options.namespacedToolNames }
+              : {}),
           }),
         });
       }

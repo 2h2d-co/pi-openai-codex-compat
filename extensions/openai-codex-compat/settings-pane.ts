@@ -28,6 +28,8 @@ type SettingId =
   | "reasoningSummary"
   | "reasoningMode"
   | "applyPatch"
+  | "imageGeneration"
+  | "webRun"
   | "webSearch"
   | "autoCompactAtPercent";
 
@@ -83,10 +85,24 @@ export function settingItems(config: CodexCompatConfig): SettingItem[] {
       values: ["off", "on"],
     },
     {
+      id: "imageGeneration",
+      label: "image_gen.imagegen tool",
+      description: "Generate or edit images through the standalone Codex image endpoint.",
+      currentValue: toggleValue(config.imageGeneration),
+      values: ["off", "on"],
+    },
+    {
+      id: "webRun",
+      label: "web.run tool",
+      description: "Search and browse through the standalone Codex search endpoint.",
+      currentValue: toggleValue(config.webRun),
+      values: ["off", "on"],
+    },
+    {
       id: "webSearch",
-      label: "Web search tool",
+      label: "Web search mode",
       description:
-        "Disable hosted search, use cached results only, prefer indexed results, or permit live access.",
+        "Control hosted search and web.run access: disabled removes hosted search but keeps web.run cached-only.",
       currentValue: config.webSearch,
       values: ["disabled", "cached", "indexed", "live"],
     },
@@ -119,6 +135,10 @@ export function settingPatch(id: string, value: string): ConfigLayer | undefined
       return undefined;
     case "applyPatch":
       return value === "on" || value === "off" ? { applyPatch: value === "on" } : undefined;
+    case "imageGeneration":
+      return value === "on" || value === "off" ? { imageGeneration: value === "on" } : undefined;
+    case "webRun":
+      return value === "on" || value === "off" ? { webRun: value === "on" } : undefined;
     case "webSearch":
       if (value === "disabled" || value === "cached" || value === "indexed" || value === "live") {
         return { webSearch: value };
@@ -138,6 +158,10 @@ function applySettingPatch(config: CodexCompatConfig, patch: ConfigLayer): Codex
   const next: CodexCompatConfig = { ...config };
   if (typeof patch.fastMode === "boolean") next.fastMode = patch.fastMode;
   if (typeof patch.applyPatch === "boolean") next.applyPatch = patch.applyPatch;
+  if (typeof patch.imageGeneration === "boolean") {
+    next.imageGeneration = patch.imageGeneration;
+  }
+  if (typeof patch.webRun === "boolean") next.webRun = patch.webRun;
   if (patch.webSearch) next.webSearch = patch.webSearch;
   if (patch.textVerbosity) next.textVerbosity = patch.textVerbosity;
   if (patch.reasoningSummary) next.reasoningSummary = patch.reasoningSummary;

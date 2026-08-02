@@ -30,7 +30,7 @@ void test("registers the combined Codex compatibility extension", () => {
 
   assert.deepEqual(commands, ["codex-settings"]);
   assert.deepEqual(providers, []);
-  assert.deepEqual(tools, ["apply_patch"]);
+  assert.deepEqual(tools, ["apply_patch", "image_gen.imagegen", "web.run"]);
   assert.ok(events.includes("session_before_compact"));
   assert.ok(events.includes("before_provider_request"));
   assert.ok(events.includes("model_select"));

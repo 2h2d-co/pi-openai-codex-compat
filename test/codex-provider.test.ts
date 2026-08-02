@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import type { ExtensionAPI, ExtensionContext, SessionEntry } from "@earendil-works/pi-coding-agent";
-import type { AssistantMessage, Context, Model } from "@earendil-works/pi-ai";
+import type { AssistantMessage, Context, Model, Tool } from "@earendil-works/pi-ai";
+import { Type } from "typebox";
 import { CodexProviderRuntime } from "../extensions/openai-codex-compat/codex-provider.ts";
 import {
   DEFAULT_CONFIG,
@@ -217,6 +218,90 @@ void test("streams ordinary responses without persisting redundant native data",
   assert.equal(message.stopReason, "stop");
   assert.equal(message.responseId, "resp_text");
   assert.equal(requests.length, 1);
+  assert.equal(harness.customEntries.length, 0);
+});
+
+void test("transports dotted Pi tools as native Responses namespaces", async () => {
+  const user = userEntry("user-1", "search");
+  const harness = createHarness([user]);
+  const requests: JsonRecord[] = [];
+  harness.runtime.transport.request = async function* (_model, body) {
+    requests.push(structuredClone(body));
+    yield { type: "response.created", response: { id: "resp_web" } };
+    yield {
+      type: "response.output_item.added",
+      output_index: 0,
+      item: {
+        type: "function_call",
+        id: "fc_web",
+        call_id: "call_web",
+        namespace: "web",
+        name: "run",
+        arguments: "",
+      },
+    };
+    yield {
+      type: "response.output_item.done",
+      output_index: 0,
+      item: {
+        type: "function_call",
+        id: "fc_web",
+        call_id: "call_web",
+        namespace: "web",
+        name: "run",
+        arguments: '{"search_query":[{"q":"Pi"}]}',
+      },
+    };
+    yield {
+      type: "response.completed",
+      response: {
+        id: "resp_web",
+        status: "completed",
+        usage: { input_tokens: 10, output_tokens: 1, total_tokens: 11 },
+      },
+    };
+  };
+  const webRun: Tool = {
+    name: "web.run",
+    description: "Browse the web",
+    parameters: Type.Object({
+      search_query: Type.Array(Type.Object({ q: Type.String() })),
+    }),
+  };
+
+  const message = await harness.runtime
+    .streamSimple(
+      codexModel(),
+      {
+        messages: [user.message as Context["messages"][number]],
+        tools: [webRun],
+      },
+      {
+        apiKey: accessToken(),
+        sessionId: "session-1",
+        transport: "sse",
+      },
+    )
+    .result();
+
+  const firstRequest = requests[0];
+  assert.ok(firstRequest);
+  assert.deepEqual((firstRequest.tools as JsonRecord[])[0], {
+    type: "namespace",
+    name: "web",
+    description: "Tools in the web namespace.",
+    tools: [
+      {
+        type: "function",
+        name: "run",
+        description: "Browse the web",
+        parameters: webRun.parameters,
+        strict: false,
+      },
+    ],
+  });
+  const toolCall = message.content.find((block) => block.type === "toolCall");
+  assert.equal(toolCall?.name, "web.run");
   assert.equal(harness.customEntries.length, 0);
 });
 
