@@ -161,7 +161,19 @@ function resolveGrammarConstrainedSampling(
   }
 }
 
-function convertResponsesTools(
+export function createGrammarToolInputProperties(
+  tools: readonly Tool[] | undefined,
+  supportsOpenAIGrammarTools: boolean,
+): ReadonlyMap<string, string> {
+  const properties = new Map<string, string>();
+  for (const tool of tools ?? []) {
+    const grammar = resolveGrammarConstrainedSampling(tool, supportsOpenAIGrammarTools);
+    if (grammar) properties.set(tool.name, grammar.inputProperty);
+  }
+  return properties;
+}
+
+export function convertResponsesTools(
   tools: readonly Tool[],
   options?: ConvertResponsesToolsOptions,
 ): ResponsesItem[] {

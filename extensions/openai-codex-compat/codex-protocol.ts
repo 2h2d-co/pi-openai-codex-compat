@@ -457,7 +457,11 @@ async function readCompactionStream(
   return { item: compacted[0]!, usage };
 }
 
-function responseUsage(model: Model<any>, value: unknown, priority: boolean): Usage | undefined {
+export function responseUsage(
+  model: Model<any>,
+  value: unknown,
+  priority: boolean,
+): Usage | undefined {
   if (!isObject(value)) return undefined;
   const totalInput = typeof value.input_tokens === "number" ? value.input_tokens : 0;
   const output = typeof value.output_tokens === "number" ? value.output_tokens : 0;
@@ -488,6 +492,61 @@ function responseUsage(model: Model<any>, value: unknown, priority: boolean): Us
       usage.cost.input + usage.cost.output + usage.cost.cacheRead + usage.cost.cacheWrite;
   }
   return usage;
+}
+
+export async function collectRemoteCompaction(
+  events: AsyncIterable<JsonRecord>,
+  accountingModel: Model<any>,
+  priority: boolean,
+): Promise<RemoteCompactionResponse> {
+  const compacted: ResponsesItem[] = [];
+  let finished = false;
+  let usageValue: unknown;
+
+  for await (const event of events) {
+    if (event.type === "response.output_item.done" && isResponsesItem(event.item)) {
+      if (event.item.type === "compaction") compacted.push(structuredClone(event.item));
+    }
+    if (event.type === "response.completed" || event.type === "response.done") {
+      finished = true;
+      if (isObject(event.response)) {
+        usageValue = event.response.usage;
+        if (Array.isArray(event.response["output"])) {
+          for (const item of event.response["output"]) {
+            if (
+              isResponsesItem(item) &&
+              item.type === "compaction" &&
+              !compacted.some(
+                (existing) =>
+                  (typeof existing.id === "string" &&
+                    typeof item.id === "string" &&
+                    existing.id === item.id) ||
+                  JSON.stringify(existing) === JSON.stringify(item),
+              )
+            ) {
+              compacted.push(structuredClone(item));
+            }
+          }
+        }
+      }
+    }
+  }
+
+  if (!finished) throw new Error("Codex stream ended before response.completed.");
+  if (compacted.length !== 1) {
+    throw new Error(
+      `Codex returned ${compacted.length} compaction items; exactly one is required.`,
+    );
+  }
+  if (typeof compacted[0]!.encrypted_content !== "string") {
+    throw new Error("Codex compaction output did not contain encrypted_content.");
+  }
+
+  const usage = responseUsage(accountingModel, usageValue, priority);
+  return {
+    item: compacted[0]!,
+    ...(usage ? { usage } : {}),
+  };
 }
 
 export async function requestRemoteCompaction(options: {

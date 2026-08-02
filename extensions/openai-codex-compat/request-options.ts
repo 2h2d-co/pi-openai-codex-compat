@@ -105,15 +105,4 @@ export default function registerCodexRequestOptions(
       supportsImageSearch: ctx.model!.input.includes("image"),
     });
   });
-
-  pi.on("message_end", (event, ctx) => {
-    if (event.message.role !== "assistant" || event.message.provider !== CODEX_PROVIDER) {
-      return undefined;
-    }
-    if (!resolveConfig(ctx).fastMode) return undefined;
-
-    const model = ctx.modelRegistry.find(CODEX_PROVIDER, event.message.model);
-    if (!model) return undefined;
-    return { message: applyPriorityPricing(event.message, model) };
-  });
 }

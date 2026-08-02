@@ -3,6 +3,7 @@ import test from "node:test";
 import type { Model } from "@earendil-works/pi-ai";
 import {
   approximateTokens,
+  collectRemoteCompaction,
   installCompactionItem,
   messageTextTokens,
   remoteCompactionHeaders,
@@ -10,6 +11,7 @@ import {
   requestRemoteCompaction,
   selectRetainedContext,
   truncateMiddleWithTokenBudget,
+  type JsonRecord,
   type ResponsesItem,
 } from "../extensions/openai-codex-compat/codex-protocol.ts";
 
@@ -148,4 +150,20 @@ void test("authenticates and parses remote compaction streams with priority pric
   assert.equal(result.usage?.input, 80);
   assert.equal(result.usage?.cacheRead, 20);
   assert.ok(Math.abs((result.usage?.cost.total ?? 0) - 0.000204) < 1e-12);
+});
+
+void test("accepts compaction output supplied only on the terminal response", async () => {
+  async function* terminalOnly(): AsyncGenerator<JsonRecord> {
+    yield {
+      type: "response.completed",
+      response: {
+        status: "completed",
+        output: [{ type: "compaction", id: "cmp_terminal", encrypted_content: "opaque" }],
+        usage: { input_tokens: 10, output_tokens: 1, total_tokens: 11 },
+      },
+    };
+  }
+
+  const result = await collectRemoteCompaction(terminalOnly(), codexModel, false);
+  assert.equal(result.item.encrypted_content, "opaque");
 });

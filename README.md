@@ -4,7 +4,7 @@ OpenAI Codex compatibility for [Pi](https://github.com/earendil-works/pi-mono), 
 
 ## Features
 
-- **Request-level fast mode**: keeps Pi's built-in `openai-codex` provider selected and adds `service_tier: "priority"` at the request boundary.
+- **Request-level fast mode**: keeps the canonical `openai-codex` provider id and models selected while adding `service_tier: "priority"` at the request boundary.
 - **Native compaction**: uses Codex `remote_compaction_v2` for `/compact`, Pi threshold compaction, context-overflow recovery, and an optional percentage threshold.
 - **Codex `apply_patch`**: provides an optional patch tool with the Codex grammar, parser, fuzzy matcher, overwrite semantics, filesystem behavior, model-facing result format, structured history, and diff-oriented TUI rendering. Pi sends it as an OpenAI custom grammar tool when the model supports that protocol and as a normal function tool otherwise.
 - **Hosted web search**: optionally injects the native Codex `web_search` tool with cached, indexed, or live modes.
@@ -12,7 +12,7 @@ OpenAI Codex compatibility for [Pi](https://github.com/earendil-works/pi-mono), 
 - **Session-local settings pane**: `/codex-settings` changes every compatibility setting for the current session; `Ctrl+S` explicitly persists the current values.
 - **Compact footer indicators**: non-default Codex request modes are appended to the model side of Pi's normal second footer line.
 
-Pi already provides Codex OAuth, encrypted reasoning replay, prompt caching, request compression, WebSocket transport, deferred tool search, and grammar-tool serialization. This package builds on those implementations instead of replacing them.
+Pi provides the Codex OAuth flow and model catalog. At session start, this package overrides the built-in `openai-codex` runtime under the same provider id so ordinary responses and remote compaction share one transport, parser, native-history store, and sticky WebSocket session.
 
 ## Requirements
 
@@ -48,7 +48,7 @@ pi --no-extensions -e .
 
 ## Fast mode
 
-Keep using an `openai-codex` model and enable **Fast mode** in `/codex-settings`. The extension adds `service_tier: "priority"` to ordinary and native-compaction requests without registering another provider or changing session history.
+Keep using an `openai-codex` model and enable **Fast mode** in `/codex-settings`. The extension adds `service_tier: "priority"` to ordinary and native-compaction requests without introducing another provider id or changing the selected model.
 
 Fast mode applies to whichever built-in `openai-codex` model is selected. Priority-tier costs are reflected in Pi's usage totals, including when Codex echoes `service_tier: "default"` in its response.
 
@@ -107,6 +107,8 @@ The extension handles native compaction for `openai-codex`. It follows the Codex
 3. Retain approximately 64,000 tokens of recent user, developer, and system context.
 4. Persist the opaque checkpoint in the Pi session and replay it on later requests.
 
+Ordinary responses and compaction use the same extension-managed SSE/WebSocket transport. The provider stores a native response override only when Pi's canonical assistant representation cannot round-trip the provider output exactly; normal text, reasoning, and tool responses therefore do not duplicate session data. Native overrides are associated with canonical assistants by response id and replayed only when they are present on the active Pi branch.
+
 Switching to another model id while a checkpoint is active is rejected because checkpoints are model-specific. Toggling fast mode does not change the model id or invalidate the checkpoint.
 
 Native compaction fails closed for Codex models: a failed compaction is cancelled instead of silently replacing the opaque state with a local text summary. Other providers continue to use Pi's default compaction behavior. `/tree` branch summarization is intentionally not intercepted.
@@ -164,7 +166,7 @@ npm run check
 npm test
 ```
 
-The focused Pi AI serializer copy lives under `extensions/openai-codex-compat/vendor/pi-ai/`. Its equivalence test compares representative output with the installed Pi AI dependency.
+The focused Pi AI serializer copy lives under `extensions/openai-codex-compat/vendor/pi-ai/`. The custom Codex provider transport and stream parser are focused adaptations of Pi AI's corresponding implementation. Equivalence and protocol tests cover canonical serialization, raw native replay, SSE request behavior, WebSocket reuse, grammar tools, and compaction continuation.
 
 ## Release staging
 
@@ -172,7 +174,7 @@ The GitHub Actions workflow stages npm releases when a `v*` tag is pushed. The t
 
 ## Acknowledgements
 
-The remote-compaction implementation follows the current OpenAI Codex `remote_compaction_v2` protocol. The `apply_patch` grammar, parser, matcher, mutation semantics, result format, and compatibility scenarios are adapted from OpenAI Codex under Apache-2.0. OpenAI Responses history serialization adapts selected Pi AI methods under MIT; see [third-party notices](THIRD_PARTY_NOTICES.md).
+The remote-compaction implementation follows the current OpenAI Codex `remote_compaction_v2` protocol. The `apply_patch` grammar, parser, matcher, mutation semantics, result format, and compatibility scenarios are adapted from OpenAI Codex under Apache-2.0. The Codex provider transport, stream processing, and OpenAI Responses history serialization adapt selected Pi AI methods under MIT; see [third-party notices](THIRD_PARTY_NOTICES.md).
 
 ## License
 

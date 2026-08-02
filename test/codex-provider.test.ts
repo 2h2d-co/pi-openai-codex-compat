@@ -1,0 +1,388 @@
+import assert from "node:assert/strict";
+import test from "node:test";
+import type { ExtensionAPI, ExtensionContext, SessionEntry } from "@earendil-works/pi-coding-agent";
+import type { AssistantMessage, Context, Model } from "@earendil-works/pi-ai";
+import { CodexProviderRuntime } from "../extensions/openai-codex-compat/codex-provider.ts";
+import {
+  DEFAULT_CONFIG,
+  type CodexCompatConfig,
+} from "../extensions/openai-codex-compat/config.ts";
+import type { JsonRecord } from "../extensions/openai-codex-compat/codex-protocol.ts";
+import { NATIVE_RESPONSE_ENTRY_TYPE } from "../extensions/openai-codex-compat/native-history.ts";
+import { CHECKPOINT_ENTRY_TYPE } from "../extensions/openai-codex-compat/compaction-checkpoint.ts";
+
+type MessageEntry = Extract<SessionEntry, { type: "message" }>;
+
+function codexModel(): Model<any> {
+  return {
+    id: "gpt-test",
+    name: "GPT Test",
+    api: "openai-codex-responses",
+    provider: "openai-codex",
+    baseUrl: "https://chatgpt.com/backend-api",
+    reasoning: true,
+    input: ["text"],
+    cost: { input: 1, output: 2, cacheRead: 0.1, cacheWrite: 1.25 },
+    contextWindow: 100_000,
+    maxTokens: 10_000,
+    compat: { supportsOpenAIGrammarTools: true },
+  } as Model<any>;
+}
+
+function userEntry(id: string, text: string, parentId: string | null = null): MessageEntry {
+  return {
+    type: "message",
+    id,
+    parentId,
+    timestamp: new Date().toISOString(),
+    message: { role: "user", content: [{ type: "text", text }], timestamp: Date.now() },
+  } as MessageEntry;
+}
+
+function assistantEntry(id: string, parentId: string, text: string): MessageEntry {
+  return {
+    type: "message",
+    id,
+    parentId,
+    timestamp: new Date().toISOString(),
+    message: {
+      role: "assistant",
+      content: [{ type: "text", text }],
+      api: "openai-codex-responses",
+      provider: "openai-codex",
+      model: "gpt-test",
+      responseId: `resp_${id}`,
+      usage: {
+        input: 10,
+        output: 5,
+        cacheRead: 0,
+        cacheWrite: 0,
+        totalTokens: 15,
+        cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+      },
+      stopReason: "stop",
+      timestamp: Date.now(),
+    },
+  } as MessageEntry;
+}
+
+function textEvents(text: string, responseId = "resp_text"): JsonRecord[] {
+  return [
+    { type: "response.created", response: { id: responseId } },
+    {
+      type: "response.output_item.added",
+      item: { id: "msg_text", type: "message", role: "assistant", content: [] },
+    },
+    {
+      type: "response.content_part.added",
+      part: { type: "output_text", text: "", annotations: [] },
+    },
+    { type: "response.output_text.delta", delta: text },
+    {
+      type: "response.output_item.done",
+      item: {
+        id: "msg_text",
+        type: "message",
+        role: "assistant",
+        status: "completed",
+        content: [{ type: "output_text", text, annotations: [] }],
+      },
+    },
+    {
+      type: "response.completed",
+      response: {
+        id: responseId,
+        status: "completed",
+        usage: { input_tokens: 10, output_tokens: 5, total_tokens: 15 },
+      },
+    },
+  ];
+}
+
+function compactionEvents(): JsonRecord[] {
+  return [
+    {
+      type: "response.output_item.done",
+      item: { type: "compaction", id: "cmp_1", encrypted_content: "opaque-state" },
+    },
+    {
+      type: "response.completed",
+      response: {
+        id: "resp_compact",
+        status: "completed",
+        usage: { input_tokens: 100, output_tokens: 10, total_tokens: 110 },
+      },
+    },
+  ];
+}
+
+function accessToken(): string {
+  const header = Buffer.from(JSON.stringify({ alg: "none" })).toString("base64url");
+  const claims = Buffer.from(
+    JSON.stringify({
+      "https://api.openai.com/auth": { chatgpt_account_id: "account-1" },
+    }),
+  ).toString("base64url");
+  return `${header}.${claims}.signature`;
+}
+
+function createHarness(initialBranch: SessionEntry[], config: CodexCompatConfig = DEFAULT_CONFIG) {
+  let branch = [...initialBranch];
+  const customEntries: Array<{ customType: string; data: unknown }> = [];
+  const compactions: Array<{ details: unknown; usage: unknown }> = [];
+  const pi = {
+    getAllTools: () => [],
+    getActiveTools: () => [],
+    appendEntry(customType: string, data: unknown) {
+      customEntries.push({ customType, data });
+      branch.push({
+        type: "custom",
+        id: `custom-${branch.length}`,
+        parentId: branch.at(-1)?.id ?? null,
+        timestamp: new Date().toISOString(),
+        customType,
+        data,
+      } as SessionEntry);
+    },
+  } as unknown as ExtensionAPI;
+  const runtime = new CodexProviderRuntime(pi, () => config);
+  const manager = {
+    getSessionId: () => "session-1",
+    getBranch: () => branch,
+    getLeafId: () => branch.at(-1)?.id ?? null,
+    appendCompaction(
+      summary: string,
+      firstKeptEntryId: string,
+      tokensBefore: number,
+      details: unknown,
+      fromHook: boolean,
+      usage: unknown,
+    ) {
+      const id = `compact-${branch.length}`;
+      branch.push({
+        type: "compaction",
+        id,
+        parentId: branch.at(-1)?.id ?? null,
+        timestamp: new Date().toISOString(),
+        summary,
+        firstKeptEntryId,
+        tokensBefore,
+        details,
+        fromHook,
+        usage,
+      } as SessionEntry);
+      compactions.push({ details, usage });
+      return id;
+    },
+  };
+  const extensionContext = {
+    model: codexModel(),
+    cwd: process.cwd(),
+    mode: "tui",
+    hasUI: true,
+    signal: new AbortController().signal,
+    scopedModels: [],
+    sessionManager: manager,
+    ui: { notify() {}, setStatus() {} },
+    isProjectTrusted: () => true,
+    getContextUsage: () => ({ tokens: 80_000, contextWindow: 100_000, percent: 80 }),
+  } as unknown as ExtensionContext;
+  runtime.captureScope(extensionContext);
+  return {
+    runtime,
+    branch: () => branch,
+    customEntries,
+    compactions,
+  };
+}
+
+void test("streams ordinary responses without persisting redundant native data", async () => {
+  const user = userEntry("user-1", "hello");
+  const harness = createHarness([user]);
+  const requests: JsonRecord[] = [];
+  harness.runtime.transport.request = async function* (_model, body) {
+    requests.push(structuredClone(body));
+    yield* textEvents("hello back");
+  };
+  const context: Context = { messages: [user.message as Context["messages"][number]] };
+
+  const message = await harness.runtime
+    .streamSimple(codexModel(), context, {
+      apiKey: accessToken(),
+      sessionId: "session-1",
+      transport: "sse",
+    })
+    .result();
+
+  assert.equal(message.stopReason, "stop");
+  assert.equal(message.responseId, "resp_text");
+  assert.equal(requests.length, 1);
+  assert.equal(harness.customEntries.length, 0);
+});
+
+void test("persists native output only when Pi cannot round-trip it", async () => {
+  const user = userEntry("user-1", "search");
+  const harness = createHarness([user]);
+  harness.runtime.transport.request = async function* () {
+    yield { type: "response.created", response: { id: "resp_search" } };
+    yield {
+      type: "response.output_item.done",
+      item: {
+        type: "web_search_call",
+        id: "ws_1",
+        status: "completed",
+        action: { type: "search", query: "Pi" },
+      },
+    };
+    yield {
+      type: "response.completed",
+      response: {
+        id: "resp_search",
+        status: "completed",
+        usage: { input_tokens: 10, output_tokens: 1, total_tokens: 11 },
+      },
+    };
+  };
+
+  const message = await harness.runtime
+    .streamSimple(
+      codexModel(),
+      { messages: [user.message as Context["messages"][number]] },
+      {
+        apiKey: accessToken(),
+        sessionId: "session-1",
+        transport: "sse",
+      },
+    )
+    .result();
+
+  assert.equal(message.responseId, "resp_search");
+  assert.equal(harness.customEntries.length, 1);
+  assert.equal(harness.customEntries[0]?.customType, NATIVE_RESPONSE_ENTRY_TYPE);
+  assert.match(JSON.stringify(harness.customEntries[0]?.data), /web_search_call/);
+});
+
+void test("performs percentage compaction before sampling the current user input", async () => {
+  const first = userEntry("user-1", "old request");
+  const assistant = assistantEntry("assistant-1", "user-1", "old response");
+  const current = userEntry("user-2", "continue", "assistant-1");
+  const harness = createHarness([first, assistant, current], {
+    ...DEFAULT_CONFIG,
+    autoCompactAtPercent: 80,
+  });
+  const requests: JsonRecord[] = [];
+  harness.runtime.transport.request = async function* (_model, body) {
+    requests.push(structuredClone(body));
+    if (requests.length === 1) yield* compactionEvents();
+    else yield* textEvents("continued", "resp_continued");
+  };
+  const context: Context = {
+    systemPrompt: "system prompt",
+    messages: [
+      first.message as Context["messages"][number],
+      assistant.message as AssistantMessage,
+      current.message as Context["messages"][number],
+    ],
+  };
+
+  const message = await harness.runtime
+    .streamSimple(codexModel(), context, {
+      apiKey: accessToken(),
+      sessionId: "session-1",
+      transport: "sse",
+    })
+    .result();
+
+  assert.equal(message.responseId, "resp_continued");
+  assert.equal(requests.length, 2);
+  assert.doesNotMatch(JSON.stringify(requests[0]?.input), /continue/);
+  assert.match(JSON.stringify(requests[1]?.input), /opaque-state/);
+  assert.match(JSON.stringify(requests[1]?.input), /continue/);
+  assert.equal(harness.compactions.length, 1);
+  assert.ok(harness.compactions[0]?.usage);
+});
+
+void test("reconstructs active-branch native responses after a checkpoint", async () => {
+  const first = userEntry("user-1", "old request");
+  const checkpoint = {
+    type: "compaction",
+    id: "compact-1",
+    parentId: "user-1",
+    timestamp: new Date().toISOString(),
+    summary: "hidden marker",
+    firstKeptEntryId: "user-1",
+    tokensBefore: 50_000,
+    details: {
+      kind: CHECKPOINT_ENTRY_TYPE,
+      version: 1,
+      modelId: "gpt-test",
+      history: [
+        { role: "user", content: [{ type: "input_text", text: "old request" }] },
+        { type: "compaction", encrypted_content: "checkpoint-state" },
+      ],
+    },
+  } as SessionEntry;
+  const next = userEntry("user-2", "search", "compact-1");
+  const native = {
+    type: "custom",
+    id: "native-1",
+    parentId: "user-2",
+    timestamp: new Date().toISOString(),
+    customType: NATIVE_RESPONSE_ENTRY_TYPE,
+    data: {
+      kind: NATIVE_RESPONSE_ENTRY_TYPE,
+      version: 1,
+      modelId: "gpt-test",
+      responseId: "resp_search",
+      items: [
+        {
+          type: "web_search_call",
+          id: "ws_1",
+          status: "completed",
+          action: { type: "search", query: "Pi" },
+        },
+        {
+          type: "message",
+          id: "msg_search",
+          role: "assistant",
+          status: "completed",
+          content: [{ type: "output_text", text: "result", annotations: [] }],
+        },
+      ],
+    },
+  } as SessionEntry;
+  const assistant = assistantEntry("assistant-search", "native-1", "result");
+  (assistant.message as AssistantMessage).responseId = "resp_search";
+  const current = userEntry("user-3", "continue", "assistant-search");
+  const harness = createHarness([first, checkpoint, next, native, assistant, current]);
+  const requests: JsonRecord[] = [];
+  harness.runtime.transport.request = async function* (_model, body) {
+    requests.push(structuredClone(body));
+    yield* textEvents("done", "resp_done");
+  };
+
+  await harness.runtime
+    .streamSimple(
+      codexModel(),
+      {
+        messages: [
+          first.message as Context["messages"][number],
+          next.message as Context["messages"][number],
+          assistant.message as AssistantMessage,
+          current.message as Context["messages"][number],
+        ],
+      },
+      {
+        apiKey: accessToken(),
+        sessionId: "session-1",
+        transport: "sse",
+      },
+    )
+    .result();
+
+  const input = requests[0]?.input as JsonRecord[];
+  assert.equal(input[1]?.type, "compaction");
+  assert.ok(input.some((item) => item.type === "web_search_call"));
+  assert.match(JSON.stringify(input.at(-1)), /continue/);
+  assert.doesNotMatch(JSON.stringify(input), /hidden marker/);
+});

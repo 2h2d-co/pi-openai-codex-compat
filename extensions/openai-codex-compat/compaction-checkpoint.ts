@@ -13,6 +13,7 @@ import {
   isResponsesItem,
   type ResponsesItem,
 } from "./codex-protocol.ts";
+import { nativeResponseOverrides } from "./native-history.ts";
 import { convertResponsesMessages } from "./vendor/pi-ai/openai-responses-serialization.ts";
 
 export const CHECKPOINT_ENTRY_TYPE = "openai-codex-compat-remote-compaction";
@@ -97,6 +98,7 @@ function encodeMessages(
   messages: Message[],
   allTools: readonly ToolInfo[],
   grammarToolInputProperties: GrammarToolInputProperties,
+  nativeAssistantItems?: ReadonlyMap<string, readonly ResponsesItem[]>,
 ): ResponsesItem[] {
   const tools = allTools.map((tool) => asPiTool(tool, grammarToolInputProperties));
   const compat = model.compat as OpenAIResponsesCompat | undefined;
@@ -109,6 +111,7 @@ function encodeMessages(
       supportsStrictMode: compat?.supportsStrictMode ?? true,
       supportsOpenAIGrammarTools: compat?.supportsOpenAIGrammarTools ?? false,
     },
+    ...(nativeAssistantItems ? { nativeAssistantItems } : {}),
   }) as unknown as ResponsesItem[];
 }
 
@@ -117,9 +120,16 @@ export function encodeSessionEntries(
   entries: readonly SessionEntry[],
   allTools: readonly ToolInfo[],
   grammarToolInputProperties: GrammarToolInputProperties = new Map(),
+  nativeAssistantItems?: ReadonlyMap<string, readonly ResponsesItem[]>,
 ): ResponsesItem[] {
   const messages = entries.flatMap((entry) => sessionEntryToContextMessages(entry));
-  return encodeMessages(model, convertToLlm(messages), allTools, grammarToolInputProperties);
+  return encodeMessages(
+    model,
+    convertToLlm(messages),
+    allTools,
+    grammarToolInputProperties,
+    nativeAssistantItems,
+  );
 }
 
 export function parseCheckpoint(value: unknown): CheckpointData | undefined {
@@ -218,6 +228,7 @@ export function providerHistory(options: {
   }
 
   const checkpoint = searchCheckpoint(branch);
+  const nativeAssistantItems = nativeResponseOverrides(branch, options.wireModel.id);
   if (checkpoint.kind === "corrupt") {
     throw new Error("The latest Codex compaction checkpoint is corrupt.");
   }
@@ -234,6 +245,7 @@ export function providerHistory(options: {
         branch.slice(checkpoint.entryIndex + 1),
         options.allTools,
         options.grammarToolInputProperties,
+        nativeAssistantItems,
       ),
     ];
   }
@@ -244,5 +256,6 @@ export function providerHistory(options: {
     convertToLlm(context.messages),
     options.allTools,
     options.grammarToolInputProperties ?? new Map(),
+    nativeAssistantItems,
   );
 }

@@ -1,5 +1,6 @@
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { loadConfig, writableConfigPath, type CodexCompatConfig } from "./config.ts";
+import { registerCodexProvider } from "./codex-provider.ts";
 import { installCodexFooter } from "./footer.ts";
 import registerRemoteCompaction from "./remote-compaction.ts";
 import registerCodexRequestOptions from "./request-options.ts";
@@ -40,8 +41,9 @@ export default function registerOpenAICodexCompat(pi: ExtensionAPI): void {
   });
 
   registerCodexTools(pi);
+  const codexProvider = registerCodexProvider(pi, resolveConfig);
   registerCodexRequestOptions(pi, resolveConfig);
-  registerRemoteCompaction(pi, resolveConfig);
+  registerRemoteCompaction(pi, codexProvider, resolveConfig);
   registerCodexSettings(pi, {
     getConfig: resolveConfig,
     onChange(config, _ctx) {
