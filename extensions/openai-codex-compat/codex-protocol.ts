@@ -98,44 +98,57 @@ export function messageTextTokens(item: ResponsesItem): number {
   return tokens;
 }
 
-function prefixWithinBytes(text: string, limit: number): string {
-  let used = 0;
-  const kept: string[] = [];
+function splitUtf8Bytes(
+  text: string,
+  beginningBytes: number,
+  endBytes: number,
+): { removedCharacters: number; prefix: string; suffix: string } {
+  const encodedLength = new TextEncoder().encode(text).byteLength;
+  const tailStartTarget = Math.max(0, encodedLength - endBytes);
+  let currentByte = 0;
+  let prefix = "";
+  let suffix = "";
+  let removedCharacters = 0;
+  let suffixStarted = false;
+
   for (const character of text) {
     const width = new TextEncoder().encode(character).byteLength;
-    if (used + width > limit) break;
-    kept.push(character);
-    used += width;
+    const characterStart = currentByte;
+    const characterEnd = currentByte + width;
+    currentByte = characterEnd;
+
+    if (characterEnd <= beginningBytes) {
+      prefix += character;
+      continue;
+    }
+    if (characterStart >= tailStartTarget) {
+      suffixStarted = true;
+      suffix += character;
+      continue;
+    }
+    if (!suffixStarted) removedCharacters += 1;
   }
-  return kept.join("");
+
+  const prefixBytes = new TextEncoder().encode(prefix).byteLength;
+  const suffixBytes = new TextEncoder().encode(suffix).byteLength;
+  if (prefixBytes + suffixBytes > encodedLength) {
+    suffix = text.slice(prefix.length);
+    removedCharacters = 0;
+  }
+
+  return { removedCharacters, prefix, suffix };
 }
 
-function suffixWithinBytes(text: string, limit: number): string {
-  let used = 0;
-  const kept: string[] = [];
-  for (const character of Array.from(text).reverse()) {
-    const width = new TextEncoder().encode(character).byteLength;
-    if (used + width > limit) break;
-    kept.push(character);
-    used += width;
-  }
-  return kept.reverse().join("");
-}
+export function truncateMiddleWithTokenBudget(text: string, tokenLimit: number): string {
+  const originalBytes = new TextEncoder().encode(text).byteLength;
+  const byteLimit = Math.max(0, tokenLimit) * UTF8_BYTES_PER_TOKEN;
+  if (originalBytes <= byteLimit) return text;
 
-function shortenText(text: string, tokenLimit: number): string {
-  const byteLimit = Math.max(0, tokenLimit * UTF8_BYTES_PER_TOKEN);
-  if (new TextEncoder().encode(text).byteLength <= byteLimit) return text;
-  if (byteLimit === 0) return "";
-
-  const separator = "…";
-  const separatorWidth = new TextEncoder().encode(separator).byteLength;
-  if (byteLimit <= separatorWidth) return prefixWithinBytes(text, byteLimit);
-
-  const textBudget = byteLimit - separatorWidth;
-  return `${prefixWithinBytes(text, Math.ceil(textBudget / 2))}${separator}${suffixWithinBytes(
-    text,
-    Math.floor(textBudget / 2),
-  )}`;
+  const leftBytes = Math.floor(byteLimit / 2);
+  const rightBytes = byteLimit - leftBytes;
+  const { prefix, suffix } = splitUtf8Bytes(text, leftBytes, rightBytes);
+  const removedTokens = Math.ceil(Math.max(0, originalBytes - byteLimit) / UTF8_BYTES_PER_TOKEN);
+  return `${prefix}…${removedTokens} tokens truncated…${suffix}`;
 }
 
 function shortenMessage(item: ResponsesItem, tokenLimit: number): ResponsesItem | undefined {
@@ -143,7 +156,7 @@ function shortenMessage(item: ResponsesItem, tokenLimit: number): ResponsesItem 
   const result = structuredClone(item);
 
   if (typeof result.content === "string") {
-    result.content = shortenText(result.content, tokenLimit);
+    result.content = truncateMiddleWithTokenBudget(result.content, tokenLimit);
     return result.content ? result : undefined;
   }
   if (!Array.isArray(result.content)) return result;
@@ -166,7 +179,7 @@ function shortenMessage(item: ResponsesItem, tokenLimit: number): ResponsesItem 
       content.push(part);
       remaining -= tokens;
     } else {
-      const text = shortenText(part.text, remaining);
+      const text = truncateMiddleWithTokenBudget(part.text, remaining);
       if (text) content.push({ ...part, text });
       remaining = 0;
     }

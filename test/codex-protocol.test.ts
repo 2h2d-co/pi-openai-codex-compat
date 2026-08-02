@@ -9,6 +9,7 @@ import {
   remoteCompactionPayload,
   requestRemoteCompaction,
   selectRetainedContext,
+  truncateMiddleWithTokenBudget,
   type ResponsesItem,
 } from "../extensions/openai-codex-compat/codex-protocol.ts";
 
@@ -59,8 +60,17 @@ void test("counts and retains context with Codex's four-byte approximation", () 
 
   const boundary = selectRetainedContext([user("abcdefgh"), user("ijklmnop")], 3);
   assert.equal(boundary.length, 2);
-  assert.ok(messageTextTokens(boundary[0]!) <= 1);
+  assert.deepEqual(boundary[0], user("ab…1 tokens truncated…gh"));
   assert.deepEqual(boundary[1], user("ijklmnop"));
+});
+
+void test("matches Codex middle truncation markers and UTF-8 boundaries", () => {
+  assert.equal(truncateMiddleWithTokenBudget("short output", 100), "short output");
+  assert.equal(truncateMiddleWithTokenBudget("abcdef", 0), "…2 tokens truncated…");
+  assert.equal(
+    truncateMiddleWithTokenBudget("😀😀😀😀😀😀😀😀😀😀\nsecond line with text\n", 8),
+    "😀😀😀😀…8 tokens truncated… line with text\n",
+  );
 });
 
 void test("builds the remote-compaction-v2 request and checkpoint history", () => {
