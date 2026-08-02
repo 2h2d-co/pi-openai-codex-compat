@@ -96,7 +96,65 @@ function comparePaths(left: string, right: string): number {
   return Buffer.compare(Buffer.from(left), Buffer.from(right));
 }
 
+function isStringArray(value: unknown): value is string[] {
+  return Array.isArray(value) && value.every((item) => typeof item === "string");
+}
+
+function isAppliedPatchChange(value: unknown): value is AppliedPatchChange {
+  if (typeof value !== "object" || value === null) return false;
+  const change = value as {
+    kind?: unknown;
+    path?: unknown;
+    moveTo?: unknown;
+    content?: unknown;
+    oldContent?: unknown;
+    newContent?: unknown;
+    displayDiff?: unknown;
+    additions?: unknown;
+    deletions?: unknown;
+  };
+  if (
+    typeof change.path !== "string" ||
+    typeof change.displayDiff !== "string" ||
+    typeof change.additions !== "number" ||
+    typeof change.deletions !== "number"
+  ) {
+    return false;
+  }
+  if (change.kind === "add" || change.kind === "delete") {
+    return typeof change.content === "string";
+  }
+  return (
+    change.kind === "update" &&
+    typeof change.oldContent === "string" &&
+    typeof change.newContent === "string" &&
+    (change.moveTo === undefined || typeof change.moveTo === "string")
+  );
+}
+
+export function isApplyPatchDetails(value: unknown): value is ApplyPatchDetails {
+  if (typeof value !== "object" || value === null) return false;
+  const details = value as {
+    status?: unknown;
+    exact?: unknown;
+    changes?: unknown;
+    added?: unknown;
+    modified?: unknown;
+    deleted?: unknown;
+  };
+  return (
+    (details.status === "completed" || details.status === "failed") &&
+    typeof details.exact === "boolean" &&
+    Array.isArray(details.changes) &&
+    details.changes.every(isAppliedPatchChange) &&
+    isStringArray(details.added) &&
+    isStringArray(details.modified) &&
+    isStringArray(details.deleted)
+  );
+}
+
 function sortedChanges(details: ApplyPatchDetails, cwd: string): AppliedPatchChange[] {
+  if (!isApplyPatchDetails(details)) return [];
   return details.changes.toSorted((left, right) =>
     comparePaths(resolve(cwd, left.path), resolve(cwd, right.path)),
   );
@@ -213,7 +271,7 @@ function parseDisplayDiff(displayDiff: string): DiffLine[] {
     if (/^\s+\.\.\.$/.test(line)) {
       return { kind: "context", content: "⋮", separator: true };
     }
-    const match = line.match(/^([+\-\s])(\d+)\s(.*)$/);
+    const match = line.match(/^([+\-\s])\s*(\d+)\s(.*)$/);
     if (!match) return { kind: "context", content: line };
     return {
       kind: match[1] === "+" ? "add" : match[1] === "-" ? "delete" : "context",
@@ -376,7 +434,7 @@ export function formatApplyPatchRenderText(
       if (index !== changes.length - 1) lines.push("");
     }
   }
-  if (details.status === "failed") {
+  if (details?.status === "failed") {
     if (lines.length > 0) lines.push("");
     lines.push(theme.bold(theme.fg("error", "✘ Failed to apply patch")));
   }
@@ -422,7 +480,7 @@ export class ApplyPatchDiffComponent implements Component {
       }
     }
 
-    if (this.details.status === "failed") {
+    if (this.details?.status === "failed") {
       if (lines.length > 0) lines.push("");
       lines.push(
         truncateToWidth(

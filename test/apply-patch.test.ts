@@ -582,6 +582,53 @@ void test("registers the Codex freeform tool with model, UI, and failed-history 
   assert.match(richText, /1 -remove/);
   assert.ok(richLines.every((line) => visibleWidth(line) <= 80));
 
+  const paddedLineDetails: ApplyPatchDetails = {
+    status: "completed",
+    exact: true,
+    changes: [
+      {
+        kind: "update",
+        path: "before.ts",
+        moveTo: "after.ts",
+        oldContent: "",
+        newContent: "",
+        displayDiff: [
+          "  72 if (state.preview) {",
+          "- 73 oldCall();",
+          "+ 73 firstNewCall();",
+          "+ 74 secondNewCall();",
+          "+ 75 thirdNewCall();",
+          "     ...",
+          "  98 if (renderDetails) {",
+          "- 99 return oldResult;",
+          "+101 return newResult;",
+          " 100 }",
+        ].join("\n"),
+        additions: 4,
+        deletions: 2,
+      },
+    ],
+    added: [],
+    modified: ["after.ts"],
+    deleted: [],
+  };
+  const paddedLines = new ApplyPatchDiffComponent(paddedLineDetails, theme, cwd, true).render(120);
+  const paddedAddedLines = paddedLines.filter((line) => line.includes("\u001b[48;2;33;58;43m"));
+  const paddedDeletedLines = paddedLines.filter((line) => line.includes("\u001b[48;2;74;34;29m"));
+  assert.deepEqual(
+    paddedAddedLines.map((line) => stripAnsi(line).trim()),
+    [
+      "73 +firstNewCall();",
+      "74 +secondNewCall();",
+      "75 +thirdNewCall();",
+      "101 +return newResult;",
+    ],
+  );
+  assert.deepEqual(
+    paddedDeletedLines.map((line) => stripAnsi(line).trim()),
+    ["73 -oldCall();", "99 -return oldResult;"],
+  );
+
   await writeFile(join(cwd, "partial.txt"), "before\n");
   const failedPatch = `*** Begin Patch
 *** Update File: partial.txt
@@ -638,4 +685,26 @@ void test("registers the Codex freeform tool with model, UI, and failed-history 
   const failedText = failedComponent.render(120).join("\n");
   assert.doesNotMatch(failedText, /again/);
   assert.match(failedText, /✘ Failed to apply patch/);
+
+  const genericFailureComponent = registered!.renderResult!(
+    { content: [], details: {} },
+    { expanded: true, isPartial: false },
+    theme,
+    {
+      args: { patch: "invalid" },
+      toolCallId: "generic-failure-call",
+      invalidate() {},
+      lastComponent: undefined,
+      state: {},
+      cwd,
+      executionStarted: true,
+      argsComplete: true,
+      isPartial: false,
+      expanded: true,
+      showImages: false,
+      isError: true,
+    },
+  );
+  assert.doesNotThrow(() => genericFailureComponent.render(120));
+  assert.match(genericFailureComponent.render(120).join("\n"), /✘ Failed to apply patch/);
 });

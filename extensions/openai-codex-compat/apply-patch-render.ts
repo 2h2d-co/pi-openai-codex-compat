@@ -1,7 +1,7 @@
 import type { Theme } from "@earendil-works/pi-coding-agent";
 import { type Component, Container, Text } from "@earendil-works/pi-tui";
 import { type ApplyPatchDetails, previewPatch } from "./apply-patch-engine.ts";
-import { ApplyPatchDiffComponent } from "./apply-patch-diff-render.ts";
+import { ApplyPatchDiffComponent, isApplyPatchDetails } from "./apply-patch-diff-render.ts";
 
 export { formatApplyPatchRenderText } from "./apply-patch-diff-render.ts";
 
@@ -32,7 +32,7 @@ type ApplyPatchRenderContext = {
 
 type ApplyPatchResult = {
   content: Array<{ type: string; text?: string }>;
-  details?: ApplyPatchDetails;
+  details?: unknown;
 };
 
 export function renderApplyPatchCall(
@@ -69,7 +69,7 @@ export function renderApplyPatchCall(
       }
     }
 
-    if (state.preview) {
+    if (isApplyPatchDetails(state.preview)) {
       container.addChild(
         new ApplyPatchDiffComponent(state.preview, theme, context.cwd, context.expanded),
       );
@@ -87,11 +87,12 @@ export function renderApplyPatchResult(
 ): Component {
   if (options.isPartial) return new Container();
 
-  const details = result.details;
+  const details = isApplyPatchDetails(result.details) ? result.details : undefined;
+  const preview = isApplyPatchDetails(context.state.preview) ? context.state.preview : undefined;
   const renderDetails =
-    details?.status === "failed" && context.state.preview
+    details?.status === "failed" && preview
       ? {
-          ...context.state.preview,
+          ...preview,
           status: "failed" as const,
           ...(details.error !== undefined ? { error: details.error } : {}),
         }

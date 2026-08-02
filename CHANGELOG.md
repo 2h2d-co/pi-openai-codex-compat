@@ -24,6 +24,8 @@
 - Render `apply_patch` on a transparent self-managed shell so its Codex diff highlights do not blend into Pi's successful-tool background.
 - Render `apply_patch` paths relative to the working directory, home-abbreviated with `~` when applicable, and absolute otherwise.
 - Collapse `apply_patch` rendering to aggregate and per-file change summaries by default, with full hunks available through Pi's `Ctrl+O` tool expansion.
+- Preserve added and removed line highlighting when display diffs contain padded multi-digit line numbers, including moved-file hunks.
+- Fail closed to a compact error state when Pi supplies generic or malformed tool-result details instead of crashing the TUI.
 
 ### Removed
 
