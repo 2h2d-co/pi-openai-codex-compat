@@ -1,7 +1,11 @@
 import type { Theme } from "@earendil-works/pi-coding-agent";
 import { type Component, Container, Text } from "@earendil-works/pi-tui";
 import { type ApplyPatchDetails, previewPatch } from "./apply-patch-engine.ts";
-import { ApplyPatchDiffComponent, isApplyPatchDetails } from "./apply-patch-diff-render.ts";
+import {
+  ApplyPatchDiffComponent,
+  ApplyPatchSurfaceComponent,
+  isApplyPatchDetails,
+} from "./apply-patch-diff-render.ts";
 
 export { formatApplyPatchRenderText } from "./apply-patch-diff-render.ts";
 
@@ -39,7 +43,7 @@ export function renderApplyPatchCall(
   args: ApplyPatchArgs,
   theme: Theme,
   context: ApplyPatchRenderContext,
-): Container {
+): Component {
   const container = new Container();
   container.addChild(new Text(theme.fg("toolTitle", theme.bold("apply_patch")), 0, 0));
 
@@ -76,7 +80,7 @@ export function renderApplyPatchCall(
     }
   }
 
-  return container;
+  return new ApplyPatchSurfaceComponent(container, theme);
 }
 
 export function renderApplyPatchResult(
@@ -99,11 +103,12 @@ export function renderApplyPatchResult(
       : details;
 
   if (renderDetails) {
-    return new ApplyPatchDiffComponent(renderDetails, theme, context.cwd, context.expanded);
+    return new ApplyPatchSurfaceComponent(
+      new ApplyPatchDiffComponent(renderDetails, theme, context.cwd, context.expanded),
+      theme,
+    );
   }
   const text = context.isError ? theme.bold(theme.fg("error", "✘ Failed to apply patch")) : "";
   if (!text) return new Container();
-  const component = (context.lastComponent as Text | undefined) ?? new Text("", 0, 0);
-  component.setText(text);
-  return component;
+  return new ApplyPatchSurfaceComponent(new Text(text, 0, 0), theme);
 }

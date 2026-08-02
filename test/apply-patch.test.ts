@@ -427,7 +427,8 @@ void test("registers the Codex freeform tool with model, UI, and failed-history 
   const theme = {
     fg: (_color: string, text: string) => text,
     bold: (text: string) => text,
-    getBgAnsi: () => "\u001b[48;2;40;50;40m",
+    getBgAnsi: (color: string) =>
+      color === "toolPendingBg" ? "\u001b[48;2;40;40;50m" : "\u001b[48;2;40;50;40m",
     getColorMode: () => "truecolor",
     name: "dark",
   } as unknown as Theme;
@@ -451,7 +452,9 @@ void test("registers the Codex freeform tool with model, UI, and failed-history 
       isError: false,
     },
   );
-  assert.equal(callComponent.render(120).join("\n").trimEnd(), "apply_patch");
+  const renderedCall = callComponent.render(120).join("\n");
+  assert.equal(stripAnsi(renderedCall).trimEnd(), "apply_patch");
+  assert.ok(renderedCall.includes("\u001b[48;2;26;26;33m"));
 
   const component = registered!.renderResult!(
     result,
@@ -477,6 +480,7 @@ void test("registers the Codex freeform tool with model, UI, and failed-history 
   const renderedResult = component.render(120).join("\n");
   assert.match(renderedResult, /• Added rendered\.txt \(\+1 -0\)/);
   assert.ok(!renderedResult.includes("\u001b[48;2;33;58;43m"));
+  assert.ok(renderedResult.includes("\u001b[48;2;26;26;33m"));
   assert.doesNotMatch(stripAnsi(renderedResult), /1 \+hello/);
 
   const shellComponent = new ToolExecutionComponent(
@@ -498,6 +502,7 @@ void test("registers the Codex freeform tool with model, UI, and failed-history 
   assert.doesNotMatch(shellText, /1 \+hello/);
   assert.doesNotMatch(shellText, /Exit code:/);
   assert.ok(!shellRender.includes("\u001b[48;2;40;50;40m"));
+  assert.ok(shellRender.includes("\u001b[48;2;26;26;33m"));
 
   shellComponent.setExpanded(true);
   const expandedShellRender = shellComponent.render(120).join("\n");

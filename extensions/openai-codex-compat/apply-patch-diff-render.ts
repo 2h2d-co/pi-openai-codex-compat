@@ -28,6 +28,8 @@ type DiffPalette = {
   gutterFg: string;
 };
 
+type ToolBackground = "toolPendingBg" | "toolSuccessBg";
+
 const ANSI_RESET_BACKGROUND = "\u001b[49m";
 const ANSI_DIM = "\u001b[2m";
 const ANSI_NORMAL_INTENSITY = "\u001b[22m";
@@ -47,6 +49,8 @@ const LIGHT_256_DELETE_BG = "\u001b[48;5;224m";
 const LIGHT_256_ADD_GUTTER_BG = "\u001b[48;5;157m";
 const LIGHT_256_DELETE_GUTTER_BG = "\u001b[48;5;217m";
 const LIGHT_256_GUTTER_FG = "\u001b[38;5;236m";
+const DARK_256_SURFACE_BG = "\u001b[48;5;234m";
+const LIGHT_256_SURFACE_BG = "\u001b[48;5;255m";
 const TRUECOLOR_BACKGROUND_PATTERN = new RegExp(String.raw`\u001b\[48;2;(\d+);(\d+);(\d+)m`);
 const INDEXED_BACKGROUND_PATTERN = new RegExp(String.raw`\u001b\[48;5;(\d+)m`);
 const BACKGROUND_RESET_PATTERN = new RegExp(String.raw`\u001b\[(?:0|49)m`, "g");
@@ -198,8 +202,11 @@ function xterm256ToRgb(index: number): [number, number, number] {
   return [gray, gray, gray];
 }
 
-function backgroundRgb(theme: Theme): [number, number, number] | undefined {
-  const ansi = theme.getBgAnsi?.("toolSuccessBg");
+function backgroundRgb(
+  theme: Theme,
+  background: ToolBackground,
+): [number, number, number] | undefined {
+  const ansi = theme.getBgAnsi?.(background);
   if (!ansi) return undefined;
   const truecolor = ansi.match(TRUECOLOR_BACKGROUND_PATTERN);
   if (truecolor) {
@@ -210,7 +217,7 @@ function backgroundRgb(theme: Theme): [number, number, number] | undefined {
 }
 
 function usesLightPalette(theme: Theme): boolean {
-  const rgb = backgroundRgb(theme);
+  const rgb = backgroundRgb(theme, "toolSuccessBg");
   if (rgb) {
     const red = rgb[0] / 255;
     const green = rgb[1] / 255;
@@ -219,6 +226,33 @@ function usesLightPalette(theme: Theme): boolean {
     return luminance >= 0.6;
   }
   return theme.name?.toLowerCase().includes("light") ?? false;
+}
+
+function blendRgb(
+  overlay: [number, number, number],
+  background: [number, number, number],
+  alpha: number,
+): [number, number, number] {
+  return [
+    Math.round(overlay[0] * alpha + background[0] * (1 - alpha)),
+    Math.round(overlay[1] * alpha + background[1] * (1 - alpha)),
+    Math.round(overlay[2] * alpha + background[2] * (1 - alpha)),
+  ];
+}
+
+function surfaceBackground(theme: Theme): string {
+  const light = usesLightPalette(theme);
+  if (theme.getColorMode?.() === "256color") {
+    return light ? LIGHT_256_SURFACE_BG : DARK_256_SURFACE_BG;
+  }
+
+  const base =
+    backgroundRgb(theme, "toolPendingBg") ??
+    (light ? ([232, 232, 240] as const) : ([40, 40, 50] as const));
+  const overlay: [number, number, number] = light ? [255, 255, 255] : [0, 0, 0];
+  const alpha = light ? 0.55 : 0.35;
+  const [red, green, blue] = blendRgb(overlay, base, alpha);
+  return `\u001b[48;2;${red};${green};${blue}m`;
 }
 
 function diffPalette(theme: Theme): DiffPalette {
@@ -439,6 +473,28 @@ export function formatApplyPatchRenderText(
     lines.push(theme.bold(theme.fg("error", "✘ Failed to apply patch")));
   }
   return lines.join("\n");
+}
+
+export class ApplyPatchSurfaceComponent implements Component {
+  private readonly component: Component;
+  private readonly theme: Theme;
+
+  constructor(component: Component, theme: Theme) {
+    this.component = component;
+    this.theme = theme;
+  }
+
+  render(width: number): string[] {
+    const effectiveWidth = Math.max(1, width);
+    const background = surfaceBackground(this.theme);
+    return this.component
+      .render(effectiveWidth)
+      .map((line) => fillLine(line, effectiveWidth, background));
+  }
+
+  invalidate(): void {
+    this.component.invalidate();
+  }
 }
 
 export class ApplyPatchDiffComponent implements Component {
