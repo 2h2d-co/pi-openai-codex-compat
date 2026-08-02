@@ -361,7 +361,7 @@ void test("registers the Codex freeform tool with model, UI, and failed-history 
   registerApplyPatch(pi);
   assert.equal(registered?.name, "apply_patch");
   assert.equal(registered?.executionMode, "sequential");
-  assert.equal(registered?.renderShell, undefined);
+  assert.equal(registered?.renderShell, "self");
   assert.deepEqual(registered?.constrainedSampling, {
     type: "grammar",
     variants: { openai_lark: APPLY_PATCH_LARK_GRAMMAR },
@@ -448,11 +448,13 @@ void test("registers the Codex freeform tool with model, UI, and failed-history 
   shellComponent.markExecutionStarted();
   shellComponent.setArgsComplete();
   shellComponent.updateResult({ ...result, isError: false });
-  const shellText = stripAnsi(shellComponent.render(120).join("\n"));
+  const shellRender = shellComponent.render(120).join("\n");
+  const shellText = stripAnsi(shellRender);
   assert.match(shellText, /apply_patch/);
   assert.match(shellText, /• Added rendered\.txt \(\+1 -0\)/);
   assert.match(shellText, /1 \+hello/);
   assert.doesNotMatch(shellText, /Exit code:/);
+  assert.ok(!shellRender.includes("\u001b[48;2;40;50;40m"));
 
   const sortedText = formatApplyPatchRenderText(
     {

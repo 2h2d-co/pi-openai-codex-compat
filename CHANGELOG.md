@@ -18,9 +18,10 @@
 - Construct checkpoint history with a focused, attributed copy of Pi AI's relevant OpenAI Responses serialization methods.
 - Use `apply_patch` in place of Pi's active `edit` and `write` tools, restoring only the tools suppressed by the setting when it is disabled.
 - Match Codex `apply_patch` parsing, fuzzy context matching, unrestricted path resolution, symlink behavior, add/move overwrite semantics, model-facing results, structured committed-delta history, and diff-oriented TUI rendering.
-- Render `apply_patch` inside Pi's standard tool-call shell with a persistent tool header.
+- Render `apply_patch` as a dedicated tool call with a persistent tool header instead of a thinking block.
 - Start `apply_patch` wall-time measurement after preflight verification, immediately before mutation execution, matching Codex's timer scope.
 - Render `apply_patch` results with Codex-style per-file summaries, line-number gutters, move paths, syntax highlighting, and full-width added/removed line backgrounds without changing model-facing tool output.
+- Render `apply_patch` on a transparent self-managed shell so its Codex diff highlights do not blend into Pi's successful-tool background.
 
 ### Removed
 
