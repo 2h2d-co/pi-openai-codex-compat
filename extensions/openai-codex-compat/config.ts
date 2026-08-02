@@ -154,6 +154,18 @@ export function loadConfig(cwd: string, projectTrusted: boolean): CodexCompatCon
   return resolveConfig(globalConfig, projectConfig);
 }
 
+export function configLayer(config: CodexCompatConfig): ConfigLayer {
+  return {
+    fastMode: config.fastMode,
+    applyPatch: config.applyPatch,
+    autoCompactAtPercent: config.autoCompactAtPercent ?? null,
+    webSearch: config.webSearch,
+    textVerbosity: config.textVerbosity,
+    reasoningSummary: config.reasoningSummary,
+    reasoningMode: config.reasoningMode,
+  };
+}
+
 async function readWritableConfig(filePath: string): Promise<Record<string, unknown>> {
   try {
     const value = JSON.parse(await readFile(filePath, "utf8")) as unknown;

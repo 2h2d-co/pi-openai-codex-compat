@@ -9,8 +9,8 @@ OpenAI Codex compatibility for [Pi](https://github.com/earendil-works/pi-mono), 
 - **Codex `apply_patch`**: provides an optional workspace-scoped patch tool with the Codex Lark grammar. Pi sends it as an OpenAI custom grammar tool when the model supports that protocol and as a normal function tool otherwise.
 - **Hosted web search**: optionally injects the native Codex `web_search` tool with cached, indexed, or live modes.
 - **Native request controls**: configures Responses API text verbosity, reasoning summaries, and GPT-5.6 standard/pro reasoning mode.
-- **Dedicated settings pane**: `/codex-settings` changes every compatibility setting and persists it in the extension's own JSON file.
-- **Status command**: `/codex-compat` reports the selected model and effective settings.
+- **Session-local settings pane**: `/codex-settings` changes every compatibility setting for the current session; `Ctrl+S` explicitly persists the current values.
+- **Compact footer indicators**: non-default Codex request modes are appended to the model side of Pi's normal second footer line.
 
 Pi already provides Codex OAuth, encrypted reasoning replay, prompt caching, request compression, WebSocket transport, deferred tool search, and grammar-tool serialization. This package builds on those implementations instead of replacing them.
 
@@ -66,7 +66,9 @@ A trusted project can override it at:
 <project>/.pi/openai-codex-compat.json
 ```
 
-Open `/codex-settings` to edit the effective settings. Changes normally go to the global file; if a trusted project already has its own extension file, the pane updates that project override instead.
+Each session inherits the effective file-backed settings. Open `/codex-settings` to make immediate session-local changes. Press `Ctrl+S` in the pane to persist the current values; the global file is the normal save target, while an existing trusted project override remains the target for that project.
+
+The effective settings are printed once when a TUI session starts. The footer shows `fast` and `pro` only when enabled, and shows text verbosity or reasoning summary only when they differ from their defaults.
 
 Example:
 
@@ -94,7 +96,7 @@ Defaults:
 | `reasoningSummary`     | `auto`, `concise`, `detailed`, `off`                 | `auto`     | Sets `reasoning.summary` when reasoning is enabled; `off` omits the summary parameter.                                                                                                       |
 | `reasoningMode`        | `standard`, `pro`                                    | `standard` | Sets `reasoning.mode` on GPT-5.6 models independently of Pi's reasoning-effort control.                                                                                                      |
 
-Invalid values are ignored and invalid JSON does not prevent Pi from starting. The settings pane refuses to overwrite invalid JSON, and it retains unknown keys when saving. Project configuration is read only when the project is trusted.
+Invalid values are ignored and invalid JSON does not prevent Pi from starting. The settings pane never writes on ordinary changes, refuses to overwrite invalid JSON when `Ctrl+S` is pressed, and retains unknown keys when saving. Project configuration is read only when the project is trusted.
 
 ## Native compaction
 

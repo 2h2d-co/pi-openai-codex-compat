@@ -3,8 +3,16 @@ import {
   type ExtensionAPI,
   type ExtensionCommandContext,
 } from "@earendil-works/pi-coding-agent";
-import { Container, type SettingItem, SettingsList, Text } from "@earendil-works/pi-tui";
 import {
+  Container,
+  Key,
+  matchesKey,
+  type SettingItem,
+  SettingsList,
+  Text,
+} from "@earendil-works/pi-tui";
+import {
+  configLayer,
   loadConfig,
   saveConfig,
   writableConfigPath,
@@ -24,6 +32,7 @@ type SettingId =
   | "autoCompactAtPercent";
 
 export type SettingsCallbacks = {
+  getConfig?: (ctx: ExtensionCommandContext) => CodexCompatConfig;
   onChange?: (config: CodexCompatConfig, ctx: ExtensionCommandContext) => void;
 };
 
@@ -150,9 +159,10 @@ async function showSettings(
     return;
   }
 
-  let config = loadConfig(ctx.cwd, ctx.isProjectTrusted());
+  let config = callbacks.getConfig?.(ctx) ?? loadConfig(ctx.cwd, ctx.isProjectTrusted());
+  let revision = 0;
+  let savedRevision = 0;
   let saveQueue = Promise.resolve();
-  const failures: string[] = [];
   const filePath = writableConfigPath(ctx.cwd, ctx.isProjectTrusted());
 
   await ctx.ui.custom((tui, theme, _keybindings, done) => {
@@ -160,7 +170,15 @@ async function showSettings(
     container.addChild(
       new Text(theme.fg("accent", theme.bold("OpenAI Codex Compatibility Settings")), 1, 1),
     );
-    container.addChild(new Text(theme.fg("dim", `Saved to ${filePath}`), 1, 0));
+    container.addChild(
+      new Text(theme.fg("dim", `Session-only. Ctrl+S saves to ${filePath}`), 1, 0),
+    );
+    const saveStatus = new Text(
+      theme.fg("dim", "Changes apply to this session immediately."),
+      1,
+      0,
+    );
+    container.addChild(saveStatus);
 
     const list = new SettingsList(
       settingItems(config),
@@ -171,14 +189,9 @@ async function showSettings(
         if (!patch) return;
 
         config = applySettingPatch(config, patch);
+        revision++;
         callbacks.onChange?.(config, ctx);
-        saveQueue = saveQueue
-          .then(async () => {
-            await saveConfig(ctx.cwd, ctx.isProjectTrusted(), patch);
-          })
-          .catch((error) => {
-            failures.push(error instanceof Error ? error.message : String(error));
-          });
+        saveStatus.setText(theme.fg("warning", "Unsaved session changes."));
         tui.requestRender();
       },
       () => done(undefined),
@@ -190,6 +203,29 @@ async function showSettings(
       render: (width: number) => container.render(width),
       invalidate: () => container.invalidate(),
       handleInput: (data: string) => {
+        if (matchesKey(data, Key.ctrl("s"))) {
+          const snapshot = configLayer(config);
+          const snapshotRevision = revision;
+          saveStatus.setText(theme.fg("dim", "Saving…"));
+          saveQueue = saveQueue.then(async () => {
+            try {
+              const savedPath = await saveConfig(ctx.cwd, ctx.isProjectTrusted(), snapshot);
+              savedRevision = Math.max(savedRevision, snapshotRevision);
+              saveStatus.setText(
+                savedRevision === revision
+                  ? theme.fg("success", `Saved to ${savedPath}`)
+                  : theme.fg("warning", "Unsaved session changes."),
+              );
+            } catch (error) {
+              const message = error instanceof Error ? error.message : String(error);
+              saveStatus.setText(theme.fg("error", message));
+              ctx.ui.notify(message, "error");
+            }
+            tui.requestRender();
+          });
+          tui.requestRender();
+          return;
+        }
         list.handleInput(data);
         tui.requestRender();
       },
@@ -197,9 +233,6 @@ async function showSettings(
   });
 
   await saveQueue;
-  if (failures.length > 0) {
-    ctx.ui.notify(failures.at(-1)!, "error");
-  }
 }
 
 export default function registerCodexSettings(

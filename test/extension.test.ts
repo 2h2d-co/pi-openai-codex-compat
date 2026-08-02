@@ -28,7 +28,7 @@ void test("registers the combined Codex compatibility extension", () => {
 
   extension(pi);
 
-  assert.deepEqual(commands, ["codex-settings", "codex-compat"]);
+  assert.deepEqual(commands, ["codex-settings"]);
   assert.deepEqual(providers, []);
   assert.deepEqual(tools, ["apply_patch"]);
   assert.ok(events.includes("session_before_compact"));

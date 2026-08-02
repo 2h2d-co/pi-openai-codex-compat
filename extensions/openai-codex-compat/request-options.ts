@@ -1,5 +1,5 @@
 import { calculateCost, type AssistantMessage, type Model } from "@earendil-works/pi-ai";
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { loadConfig, type CodexCompatConfig, type WebSearchMode } from "./config.ts";
 import { isObject, type JsonRecord } from "./codex-protocol.ts";
 
@@ -86,11 +86,20 @@ export function applyPriorityPricing(
   return { ...message, usage };
 }
 
-export default function registerCodexRequestOptions(pi: ExtensionAPI): void {
+type ConfigResolver = (ctx: ExtensionContext) => CodexCompatConfig;
+
+function resolveFileConfig(ctx: ExtensionContext): CodexCompatConfig {
+  return loadConfig(ctx.cwd, ctx.isProjectTrusted());
+}
+
+export default function registerCodexRequestOptions(
+  pi: ExtensionAPI,
+  resolveConfig: ConfigResolver = resolveFileConfig,
+): void {
   pi.on("before_provider_request", (event, ctx) => {
     if (!isCodexModel(ctx.model) || !isObject(event.payload)) return undefined;
 
-    const config = loadConfig(ctx.cwd, ctx.isProjectTrusted());
+    const config = resolveConfig(ctx);
     return applyCodexRequestOptions(event.payload, config, {
       modelId: ctx.model!.id,
       supportsImageSearch: ctx.model!.input.includes("image"),
@@ -101,7 +110,7 @@ export default function registerCodexRequestOptions(pi: ExtensionAPI): void {
     if (event.message.role !== "assistant" || event.message.provider !== CODEX_PROVIDER) {
       return undefined;
     }
-    if (!loadConfig(ctx.cwd, ctx.isProjectTrusted()).fastMode) return undefined;
+    if (!resolveConfig(ctx).fastMode) return undefined;
 
     const model = ctx.modelRegistry.find(CODEX_PROVIDER, event.message.model);
     if (!model) return undefined;

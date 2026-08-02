@@ -19,7 +19,7 @@ import {
   type JsonRecord,
   type ResponsesItem,
 } from "./codex-protocol.ts";
-import { loadConfig } from "./config.ts";
+import { loadConfig, type CodexCompatConfig } from "./config.ts";
 import {
   activeResponsesTools,
   CHECKPOINT_ENTRY_TYPE,
@@ -43,15 +43,24 @@ type RequestTemplate = {
   payload: JsonRecord;
 };
 
+type ConfigResolver = (ctx: ExtensionContext) => CodexCompatConfig;
+
 function selectedCodexModel(model: Model<any> | undefined): model is Model<any> {
   return Boolean(model && model.provider === CODEX_PROVIDER && model.api === CODEX_API);
 }
 
-function resolveRuntime(ctx: ExtensionContext): CodexRuntime | undefined {
+function resolveFileConfig(ctx: ExtensionContext): CodexCompatConfig {
+  return loadConfig(ctx.cwd, ctx.isProjectTrusted());
+}
+
+function resolveRuntime(
+  ctx: ExtensionContext,
+  resolveConfig: ConfigResolver,
+): CodexRuntime | undefined {
   if (!selectedCodexModel(ctx.model)) return undefined;
   return {
     model: ctx.model,
-    priority: loadConfig(ctx.cwd, ctx.isProjectTrusted()).fastMode,
+    priority: resolveConfig(ctx).fastMode,
   };
 }
 
@@ -91,7 +100,10 @@ function explain(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
-export default function registerRemoteCompaction(pi: ExtensionAPI): void {
+export default function registerRemoteCompaction(
+  pi: ExtensionAPI,
+  resolveConfig: ConfigResolver = resolveFileConfig,
+): void {
   const requestTemplates = new Map<string, RequestTemplate>();
 
   async function performCompaction(options: {
@@ -171,7 +183,7 @@ export default function registerRemoteCompaction(pi: ExtensionAPI): void {
   pi.on("before_provider_request", async (event, ctx) => {
     let runtime: CodexRuntime | undefined;
     try {
-      runtime = resolveRuntime(ctx);
+      runtime = resolveRuntime(ctx, resolveConfig);
     } catch (error) {
       ctx.abort();
       if (ctx.hasUI) ctx.ui.notify(`OpenAI Codex request blocked: ${explain(error)}`, "error");
@@ -197,7 +209,7 @@ export default function registerRemoteCompaction(pi: ExtensionAPI): void {
             })
           : providerHistory({ branch, wireModel: runtime.model, allTools: allTools() });
 
-      const configuredThreshold = loadConfig(ctx.cwd, ctx.isProjectTrusted()).autoCompactAtPercent;
+      const configuredThreshold = resolveConfig(ctx).autoCompactAtPercent;
       const currentPercent = ctx.getContextUsage()?.percent;
       const checkpointHasNewAssistant =
         checkpoint.kind !== "found" ||
@@ -244,7 +256,7 @@ export default function registerRemoteCompaction(pi: ExtensionAPI): void {
   pi.on("session_before_compact", async (event: SessionBeforeCompactEvent, ctx) => {
     let runtime: CodexRuntime | undefined;
     try {
-      runtime = resolveRuntime(ctx);
+      runtime = resolveRuntime(ctx, resolveConfig);
     } catch (error) {
       if (ctx.hasUI)
         ctx.ui.notify(`OpenAI Codex native compaction failed: ${explain(error)}`, "error");
