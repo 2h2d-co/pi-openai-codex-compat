@@ -1,10 +1,10 @@
 import { randomUUID } from "node:crypto";
-import type {
-  ExtensionAPI,
-  ExtensionContext,
-  SessionBeforeCompactEvent,
-  SessionEntry,
-  ToolInfo,
+import {
+  type ExtensionAPI,
+  type ExtensionContext,
+  type SessionBeforeCompactEvent,
+  type SessionEntry,
+  type ToolInfo,
 } from "@earendil-works/pi-coding-agent";
 import type { Model, Usage } from "@earendil-works/pi-ai";
 import {
@@ -24,10 +24,13 @@ import {
   activeResponsesTools,
   CHECKPOINT_ENTRY_TYPE,
   checkpointData,
+  encodeSessionEntries,
   providerHistory,
   searchCheckpoint,
   type CheckpointData,
+  type GrammarToolInputProperties,
 } from "./compaction-checkpoint.ts";
+import { APPLY_PATCH_INPUT_PROPERTY, APPLY_PATCH_TOOL_NAME } from "./apply-patch.ts";
 
 const CODEX_PROVIDER = "openai-codex";
 const CODEX_API = "openai-codex-responses";
@@ -41,9 +44,103 @@ type CodexRuntime = {
 type RequestTemplate = {
   modelId: string;
   payload: JsonRecord;
+  grammarToolInputProperties: GrammarToolInputProperties;
 };
 
 type ConfigResolver = (ctx: ExtensionContext) => CodexCompatConfig;
+
+type UnsampledInputSplit =
+  | { kind: "none"; history: ResponsesItem[]; tail: ResponsesItem[] }
+  | { kind: "found"; history: ResponsesItem[]; tail: ResponsesItem[] }
+  | { kind: "unsafe" };
+
+function toolInputProperty(tool: ToolInfo | undefined): string | undefined {
+  if (tool?.name === APPLY_PATCH_TOOL_NAME) return APPLY_PATCH_INPUT_PROPERTY;
+  if (!tool || !isObject(tool.parameters)) return undefined;
+
+  const required = Array.isArray(tool.parameters["required"])
+    ? tool.parameters["required"].filter((name): name is string => typeof name === "string")
+    : [];
+  if (required.length !== 1 || !isObject(tool.parameters["properties"])) return undefined;
+  const property = tool.parameters["properties"][required[0]!];
+  return isObject(property) && property.type === "string" ? required[0] : undefined;
+}
+
+function requestGrammarToolInputProperties(
+  payload: JsonRecord,
+  tools: readonly ToolInfo[],
+): GrammarToolInputProperties {
+  const byName = new Map(tools.map((tool) => [tool.name, tool]));
+  const properties = new Map<string, string>();
+  if (!Array.isArray(payload.tools)) return properties;
+
+  for (const declaration of payload.tools) {
+    if (
+      !isObject(declaration) ||
+      declaration.type !== "custom" ||
+      typeof declaration.name !== "string"
+    ) {
+      continue;
+    }
+    const property = toolInputProperty(byName.get(declaration.name));
+    if (property) properties.set(declaration.name, property);
+  }
+  return properties;
+}
+
+function fallbackGrammarToolInputProperties(
+  activeNames: readonly string[],
+  model: Model<any>,
+): GrammarToolInputProperties {
+  return activeNames.includes(APPLY_PATCH_TOOL_NAME) &&
+    isObject(model.compat) &&
+    model.compat["supportsOpenAIGrammarTools"] === true
+    ? new Map([[APPLY_PATCH_TOOL_NAME, APPLY_PATCH_INPUT_PROPERTY]])
+    : new Map();
+}
+
+function splitUnsampledUserInput(options: {
+  branch: readonly SessionEntry[];
+  history: readonly ResponsesItem[];
+  model: Model<any>;
+  allTools: readonly ToolInfo[];
+  grammarToolInputProperties: GrammarToolInputProperties;
+}): UnsampledInputSplit {
+  const lastSampledEntryIndex = options.branch.findLastIndex(
+    (entry) =>
+      entry.type === "message" &&
+      (entry.message.role === "assistant" || entry.message.role === "toolResult"),
+  );
+  const unsampledEntries = options.branch.slice(lastSampledEntryIndex + 1);
+  const hasUnsampledUser = unsampledEntries.some(
+    (entry) => entry.type === "message" && entry.message.role === "user",
+  );
+  if (!hasUnsampledUser) {
+    return {
+      kind: "none",
+      history: options.history.map((item) => structuredClone(item)),
+      tail: [],
+    };
+  }
+
+  const encoded = encodeSessionEntries(
+    options.model,
+    unsampledEntries,
+    options.allTools,
+    options.grammarToolInputProperties,
+  );
+  if (encoded.length === 0 || encoded.length > options.history.length) return { kind: "unsafe" };
+
+  const splitIndex = options.history.length - encoded.length;
+  const candidate = options.history.slice(splitIndex);
+  if (JSON.stringify(candidate) !== JSON.stringify(encoded)) return { kind: "unsafe" };
+
+  return {
+    kind: "found",
+    history: options.history.slice(0, splitIndex).map((item) => structuredClone(item)),
+    tail: encoded.map((item) => structuredClone(item)),
+  };
+}
 
 function selectedCodexModel(model: Model<any> | undefined): model is Model<any> {
   return Boolean(model && model.provider === CODEX_PROVIDER && model.api === CODEX_API);
@@ -110,7 +207,9 @@ export default function registerRemoteCompaction(
     ctx: ExtensionContext;
     runtime: CodexRuntime;
     history: ResponsesItem[];
+    postCompactionTail?: ResponsesItem[] | undefined;
     instructions: string;
+    grammarToolInputProperties: GrammarToolInputProperties;
     template?: JsonRecord | undefined;
     signal?: AbortSignal | undefined;
   }): Promise<{ checkpoint: CheckpointData; usage?: Usage }> {
@@ -121,7 +220,11 @@ export default function registerRemoteCompaction(
     if (!authentication.apiKey) throw new Error("OpenAI Codex authentication is unavailable.");
 
     const sessionId = options.ctx.sessionManager.getSessionId();
-    const tools = activeResponsesTools(pi.getAllTools(), pi.getActiveTools());
+    const tools = activeResponsesTools(
+      pi.getAllTools(),
+      pi.getActiveTools(),
+      options.grammarToolInputProperties,
+    );
     const payload = remoteCompactionPayload({
       template: options.template,
       modelId: options.runtime.model.id,
@@ -147,7 +250,12 @@ export default function registerRemoteCompaction(
         signal: options.signal,
       });
       return {
-        checkpoint: checkpointData(options.runtime.model.id, options.history, response.item),
+        checkpoint: checkpointData(
+          options.runtime.model.id,
+          options.history,
+          response.item,
+          options.postCompactionTail,
+        ),
         ...(response.usage ? { usage: response.usage } : {}),
       };
     } finally {
@@ -192,8 +300,17 @@ export default function registerRemoteCompaction(
     if (!runtime || !isObject(event.payload)) return undefined;
 
     const sessionId = ctx.sessionManager.getSessionId();
+    const registeredTools = allTools();
+    const grammarToolInputProperties = requestGrammarToolInputProperties(
+      event.payload,
+      registeredTools,
+    );
     const template = withoutConversationInput(event.payload);
-    requestTemplates.set(sessionId, { modelId: runtime.model.id, payload: template });
+    requestTemplates.set(sessionId, {
+      modelId: runtime.model.id,
+      payload: template,
+      grammarToolInputProperties,
+    });
 
     const branch = ctx.sessionManager.getBranch() as SessionEntry[];
     const checkpoint = searchCheckpoint(branch);
@@ -207,7 +324,12 @@ export default function registerRemoteCompaction(
               }
               return structuredClone(item);
             })
-          : providerHistory({ branch, wireModel: runtime.model, allTools: allTools() });
+          : providerHistory({
+              branch,
+              wireModel: runtime.model,
+              allTools: registeredTools,
+              grammarToolInputProperties,
+            });
 
       const configuredThreshold = resolveConfig(ctx).autoCompactAtPercent;
       const currentPercent = ctx.getContextUsage()?.percent;
@@ -224,11 +346,30 @@ export default function registerRemoteCompaction(
         checkpointHasNewAssistant;
 
       if (thresholdReached) {
+        const split = splitUnsampledUserInput({
+          branch,
+          history,
+          model: runtime.model,
+          allTools: registeredTools,
+          grammarToolInputProperties,
+        });
+        if (split.kind === "unsafe") {
+          if (ctx.hasUI) {
+            ctx.ui.notify(
+              "OpenAI Codex percentage compaction was deferred because the current unsampled user input could not be isolated safely.",
+              "warning",
+            );
+          }
+          return checkpoint.kind === "absent" ? undefined : updateInput(event.payload, history);
+        }
+
         const compacted = await performCompaction({
           ctx,
           runtime,
-          history,
+          history: split.history,
+          postCompactionTail: split.tail,
           instructions: ctx.getSystemPrompt(),
+          grammarToolInputProperties,
           template,
           signal: ctx.signal,
         });
@@ -266,19 +407,25 @@ export default function registerRemoteCompaction(
     if (event.signal.aborted) return { cancel: true };
 
     try {
+      const cached = requestTemplates.get(ctx.sessionManager.getSessionId());
+      const matchingTemplate = cached?.modelId === runtime.model.id ? cached : undefined;
+      const grammarToolInputProperties =
+        matchingTemplate?.grammarToolInputProperties ??
+        fallbackGrammarToolInputProperties(pi.getActiveTools(), runtime.model);
       const history = providerHistory({
         branch: event.branchEntries as SessionEntry[],
         wireModel: runtime.model,
         allTools: allTools(),
+        grammarToolInputProperties,
         dropLatestFailedAssistant: event.reason === "overflow" && event.willRetry,
       });
-      const cached = requestTemplates.get(ctx.sessionManager.getSessionId());
       const compacted = await performCompaction({
         ctx,
         runtime,
         history,
         instructions: instructionsForCompaction(ctx.getSystemPrompt(), event.customInstructions),
-        template: cached?.modelId === runtime.model.id ? cached.payload : undefined,
+        grammarToolInputProperties,
+        template: matchingTemplate?.payload,
         signal: event.signal,
       });
 

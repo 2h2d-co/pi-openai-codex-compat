@@ -3,6 +3,9 @@ import { basename, dirname, isAbsolute, relative, resolve, sep } from "node:path
 import { Type } from "typebox";
 import { withFileMutationQueue, type ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
+export const APPLY_PATCH_TOOL_NAME = "apply_patch";
+export const APPLY_PATCH_INPUT_PROPERTY = "patch";
+
 const BEGIN_PATCH = "*** Begin Patch";
 const END_PATCH = "*** End Patch";
 const ADD_FILE = "*** Add File: ";
@@ -503,7 +506,7 @@ function formatResult(details: ApplyPatchDetails): string {
 
 export default function registerApplyPatch(pi: ExtensionAPI): void {
   pi.registerTool({
-    name: "apply_patch",
+    name: APPLY_PATCH_TOOL_NAME,
     label: "Apply Patch",
     description:
       "Edit workspace files with the Codex apply_patch format. Paths must remain inside the working directory.",

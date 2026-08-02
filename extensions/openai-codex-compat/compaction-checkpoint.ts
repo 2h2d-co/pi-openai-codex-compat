@@ -7,6 +7,7 @@ import {
   type ToolInfo,
 } from "@earendil-works/pi-coding-agent";
 import type { Message, Model } from "@earendil-works/pi-ai";
+import { APPLY_PATCH_LARK_GRAMMAR, APPLY_PATCH_TOOL_NAME } from "./apply-patch.ts";
 import {
   installCompactionItem,
   isObject,
@@ -30,7 +31,26 @@ export type CheckpointSearch =
   | { kind: "corrupt"; entryIndex: number; entryId: string }
   | { kind: "found"; entryIndex: number; entryId: string; data: CheckpointData };
 
-function asFunctionTool(tool: ToolInfo, deferred = false): ResponsesItem {
+export type GrammarToolInputProperties = ReadonlyMap<string, string>;
+
+function asResponsesTool(
+  tool: ToolInfo,
+  grammarToolInputProperties: GrammarToolInputProperties,
+  deferred = false,
+): ResponsesItem {
+  if (tool.name === APPLY_PATCH_TOOL_NAME && grammarToolInputProperties.has(tool.name)) {
+    return {
+      type: "custom",
+      name: tool.name,
+      description: tool.description,
+      format: {
+        type: "grammar",
+        syntax: "lark",
+        definition: APPLY_PATCH_LARK_GRAMMAR,
+      },
+      ...(deferred ? { defer_loading: true } : {}),
+    };
+  }
   return {
     type: "function",
     name: tool.name,
@@ -44,10 +64,13 @@ function asFunctionTool(tool: ToolInfo, deferred = false): ResponsesItem {
 export function activeResponsesTools(
   allTools: readonly ToolInfo[],
   activeNames: readonly string[],
+  grammarToolInputProperties: GrammarToolInputProperties = new Map(),
 ): unknown[] | undefined {
   const enabled = new Set(activeNames);
   const tools = allTools.filter((tool) => enabled.has(tool.name));
-  return tools.length > 0 ? tools.map((tool) => asFunctionTool(tool)) : undefined;
+  return tools.length > 0
+    ? tools.map((tool) => asResponsesTool(tool, grammarToolInputProperties))
+    : undefined;
 }
 
 function textParts(content: unknown): unknown[] {
@@ -152,20 +175,40 @@ function reasoningFromSignature(signature: unknown): ResponsesItem | undefined {
   }
 }
 
+function grammarToolInput(
+  toolName: string,
+  argumentsValue: unknown,
+  inputProperty: string,
+): string {
+  const arguments_ = isObject(argumentsValue) ? argumentsValue : {};
+  const input = arguments_[inputProperty];
+  if (typeof input !== "string") {
+    throw new Error(
+      `Grammar tool call "${toolName}" requires argument "${inputProperty}" to be a string.`,
+    );
+  }
+  return input;
+}
+
 /** Encode Pi's canonical messages into the OpenAI Responses history format. */
 function encodeMessages(
   model: Model<any>,
   messages: Message[],
   allTools: readonly ToolInfo[],
+  grammarToolInputProperties: GrammarToolInputProperties,
 ): ResponsesItem[] {
   const encoded: ResponsesItem[] = [];
-  const outstandingCalls = new Map<string, string>();
+  const outstandingCalls = new Map<string, { callId: string; custom: boolean }>();
   const tools = new Map(allTools.map((tool) => [tool.name, tool]));
   const emittedDeferredTools = new Set<string>();
 
   const finishUnansweredCalls = () => {
-    for (const callId of outstandingCalls.values()) {
-      encoded.push({ type: "function_call_output", call_id: callId, output: "No result provided" });
+    for (const call of outstandingCalls.values()) {
+      encoded.push({
+        type: call.custom ? "custom_tool_call_output" : "function_call_output",
+        call_id: call.callId,
+        output: "No result provided",
+      });
     }
     outstandingCalls.clear();
   };
@@ -211,14 +254,27 @@ function encodeMessages(
 
         if (block.type === "toolCall" && typeof block.id === "string") {
           const [callId, itemId] = block.id.split("|");
-          outstandingCalls.set(block.id, callId!);
-          encoded.push({
-            type: "function_call",
-            call_id: callId,
-            ...(itemId?.startsWith("fc_") ? { id: itemId } : {}),
-            name: typeof block.name === "string" ? block.name : "",
-            arguments: JSON.stringify(block.arguments ?? {}),
-          });
+          const name = typeof block.name === "string" ? block.name : "";
+          const inputProperty = grammarToolInputProperties.get(name);
+          const custom = inputProperty !== undefined;
+          outstandingCalls.set(block.id, { callId: callId!, custom });
+          if (custom) {
+            encoded.push({
+              type: "custom_tool_call",
+              call_id: callId,
+              ...(itemId ? { id: itemId } : {}),
+              name,
+              input: grammarToolInput(name, block.arguments, inputProperty),
+            });
+          } else {
+            encoded.push({
+              type: "function_call",
+              call_id: callId,
+              ...(itemId?.startsWith("fc_") ? { id: itemId } : {}),
+              name,
+              arguments: JSON.stringify(block.arguments ?? {}),
+            });
+          }
         }
       }
       continue;
@@ -226,39 +282,45 @@ function encodeMessages(
 
     if (message.role === "toolResult" && typeof message.toolCallId === "string") {
       const [callId] = message.toolCallId.split("|");
+      const outstanding = outstandingCalls.get(message.toolCallId);
       outstandingCalls.delete(message.toolCallId);
+      const custom =
+        outstanding?.custom === true ||
+        (typeof message["toolName"] === "string" &&
+          grammarToolInputProperties.has(message["toolName"]));
       encoded.push({
-        type: "function_call_output",
+        type: custom ? "custom_tool_call_output" : "function_call_output",
         call_id: callId,
         output: outputForToolResult(message, model),
       });
 
       if (Array.isArray(message.addedToolNames)) {
         const added = message.addedToolNames.flatMap((name) => {
-          if (typeof name !== "string" || !tools.has(name) || emittedDeferredTools.has(name))
+          if (typeof name !== "string" || !tools.has(name) || emittedDeferredTools.has(name)) {
             return [];
+          }
           emittedDeferredTools.add(name);
           return [tools.get(name)!];
         });
         if (added.length > 0) {
           const names = added.map((tool) => tool.name);
-          const callId = `pi_tool_load_${createHash("sha256")
+          const deferredCallId = `pi_tool_load_${createHash("sha256")
             .update(`${message.toolCallId}:${names.join(",")}`)
             .digest("hex")
             .slice(0, 16)}`;
           encoded.push({
             type: "tool_search_call",
-            call_id: callId,
+            call_id: deferredCallId,
             execution: "client",
             status: "completed",
             arguments: { query: names.join(" "), limit: names.length },
           });
           encoded.push({
             type: "tool_search_output",
-            call_id: callId,
+            call_id: deferredCallId,
             execution: "client",
             status: "completed",
-            tools: added.map((tool) => asFunctionTool(tool, true)),
+            tools: added.map((tool) => asResponsesTool(tool, grammarToolInputProperties, true)),
           });
         }
       }
@@ -269,13 +331,14 @@ function encodeMessages(
   return encoded;
 }
 
-function encodeEntries(
+export function encodeSessionEntries(
   model: Model<any>,
   entries: readonly SessionEntry[],
   allTools: readonly ToolInfo[],
+  grammarToolInputProperties: GrammarToolInputProperties = new Map(),
 ): ResponsesItem[] {
   const messages = entries.flatMap((entry) => sessionEntryToContextMessages(entry));
-  return encodeMessages(model, convertToLlm(messages), allTools);
+  return encodeMessages(model, convertToLlm(messages), allTools, grammarToolInputProperties);
 }
 
 export function parseCheckpoint(value: unknown): CheckpointData | undefined {
@@ -290,7 +353,7 @@ export function parseCheckpoint(value: unknown): CheckpointData | undefined {
     if (!isResponsesItem(item)) return undefined;
     history.push(structuredClone(item));
   }
-  if (history.length === 0 || history.at(-1)?.type !== "compaction") return undefined;
+  if (history.length === 0) return undefined;
 
   const compactionItems = history.filter((item) => item.type === "compaction");
   if (compactionItems.length !== 1 || typeof compactionItems[0]!.encrypted_content !== "string") {
@@ -334,12 +397,16 @@ export function checkpointData(
   modelId: string,
   inputHistory: readonly ResponsesItem[],
   compactionItem: ResponsesItem,
+  postCompactionTail: readonly ResponsesItem[] = [],
 ): CheckpointData {
   return {
     kind: CHECKPOINT_ENTRY_TYPE,
     version: CHECKPOINT_FORMAT_VERSION,
     modelId,
-    history: installCompactionItem(inputHistory, compactionItem),
+    history: [
+      ...installCompactionItem(inputHistory, compactionItem),
+      ...postCompactionTail.map((item) => structuredClone(item)),
+    ],
   };
 }
 
@@ -351,6 +418,7 @@ export function providerHistory(options: {
   branch: readonly SessionEntry[];
   wireModel: Model<any>;
   allTools: readonly ToolInfo[];
+  grammarToolInputProperties?: GrammarToolInputProperties;
   dropLatestFailedAssistant?: boolean;
 }): ResponsesItem[] {
   const branch = [...options.branch];
@@ -380,14 +448,20 @@ export function providerHistory(options: {
     }
     return [
       ...checkpoint.data.history.map((item) => structuredClone(item)),
-      ...encodeEntries(
+      ...encodeSessionEntries(
         options.wireModel,
         branch.slice(checkpoint.entryIndex + 1),
         options.allTools,
+        options.grammarToolInputProperties,
       ),
     ];
   }
 
   const context = buildSessionContext(branch);
-  return encodeMessages(options.wireModel, convertToLlm(context.messages), options.allTools);
+  return encodeMessages(
+    options.wireModel,
+    convertToLlm(context.messages),
+    options.allTools,
+    options.grammarToolInputProperties ?? new Map(),
+  );
 }
