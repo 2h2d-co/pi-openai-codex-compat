@@ -8,7 +8,9 @@ import {
   type ExtensionAPI,
   type Theme,
   type ToolDefinition,
+  ToolExecutionComponent,
 } from "@earendil-works/pi-coding-agent";
+import { visibleWidth } from "@earendil-works/pi-tui";
 import registerApplyPatch, {
   APPLY_PATCH_LARK_GRAMMAR,
   applyPatch,
@@ -18,7 +20,14 @@ import registerApplyPatch, {
   parsePatchDocument,
   previewPatch,
 } from "../extensions/openai-codex-compat/apply-patch.ts";
+import { ApplyPatchDiffComponent } from "../extensions/openai-codex-compat/apply-patch-diff-render.ts";
 import { formatApplyPatchRenderText } from "../extensions/openai-codex-compat/apply-patch-render.ts";
+
+const ANSI_SEQUENCE_PATTERN = new RegExp(String.raw`\u001b\[[0-?]*[ -/]*[@-~]`, "g");
+
+function stripAnsi(text: string): string {
+  return text.replace(ANSI_SEQUENCE_PATTERN, "");
+}
 
 async function workspace(t: TestContext): Promise<string> {
   const cwd = await mkdtemp(join(tmpdir(), "pi-codex-apply-patch-"));
@@ -375,7 +384,10 @@ void test("registers the Codex freeform tool with model, UI, and failed-history 
   const theme = {
     fg: (_color: string, text: string) => text,
     bold: (text: string) => text,
-  } as Theme;
+    getBgAnsi: () => "\u001b[48;2;40;50;40m",
+    getColorMode: () => "truecolor",
+    name: "dark",
+  } as unknown as Theme;
   const callComponent = registered!.renderCall!(
     { patch: "*** Begin Patch\n*** Add File: rendered.txt\n+hello\n*** End Patch" },
     theme,
@@ -419,7 +431,28 @@ void test("registers the Codex freeform tool with model, UI, and failed-history 
       isError: false,
     },
   );
-  assert.match(component.render(120).join("\n"), /• Added rendered\.txt \(\+1 -0\)/);
+  const renderedResult = component.render(120).join("\n");
+  assert.match(renderedResult, /• Added rendered\.txt \(\+1 -0\)/);
+  assert.ok(renderedResult.includes("\u001b[48;2;33;58;43m"));
+  assert.match(stripAnsi(renderedResult), /1 \+hello/);
+
+  const shellComponent = new ToolExecutionComponent(
+    "apply_patch",
+    "success-call",
+    { patch: "*** Begin Patch\n*** Add File: rendered.txt\n+hello\n*** End Patch" },
+    { showImages: false },
+    registered,
+    { requestRender() {} } as never,
+    cwd,
+  );
+  shellComponent.markExecutionStarted();
+  shellComponent.setArgsComplete();
+  shellComponent.updateResult({ ...result, isError: false });
+  const shellText = stripAnsi(shellComponent.render(120).join("\n"));
+  assert.match(shellText, /apply_patch/);
+  assert.match(shellText, /• Added rendered\.txt \(\+1 -0\)/);
+  assert.match(shellText, /1 \+hello/);
+  assert.doesNotMatch(shellText, /Exit code:/);
 
   const sortedText = formatApplyPatchRenderText(
     {
@@ -452,6 +485,43 @@ void test("registers the Codex freeform tool with model, UI, and failed-history 
   );
   assert.ok(sortedText.indexOf("a.txt") < sortedText.indexOf("z.txt"));
   assert.doesNotMatch(sortedText, /Proposed/);
+
+  const richDetails: ApplyPatchDetails = {
+    status: "completed",
+    exact: true,
+    changes: [
+      {
+        kind: "update",
+        path: "old.ts",
+        moveTo: "new.ts",
+        oldContent: "const before = true;\n",
+        newContent: "const after = true;\n",
+        displayDiff: "-1 const before = true;\n+1 const after = true;",
+        additions: 1,
+        deletions: 1,
+      },
+      {
+        kind: "delete",
+        path: "obsolete.txt",
+        content: "remove\n",
+        displayDiff: "-1 remove",
+        additions: 0,
+        deletions: 1,
+      },
+    ],
+    added: [],
+    modified: ["new.ts"],
+    deleted: ["obsolete.txt"],
+  };
+  const richLines = new ApplyPatchDiffComponent(richDetails, theme, cwd).render(80);
+  const richText = stripAnsi(richLines.join("\n"));
+  assert.match(richText, /• Edited 2 files \(\+1 -2\)/);
+  assert.match(richText, /old\.ts → new\.ts \(\+1 -1\)/);
+  assert.match(richText, /1 -const before = true;/);
+  assert.match(richText, /1 \+const after = true;/);
+  assert.match(richText, /obsolete\.txt \(\+0 -1\)/);
+  assert.match(richText, /1 -remove/);
+  assert.ok(richLines.every((line) => visibleWidth(line) <= 80));
 
   await writeFile(join(cwd, "partial.txt"), "before\n");
   const failedPatch = `*** Begin Patch
