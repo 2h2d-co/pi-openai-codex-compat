@@ -27,6 +27,7 @@
 - Preserve added and removed line highlighting when display diffs contain padded multi-digit line numbers, including moved-file hunks.
 - Fail closed to a compact error state when Pi supplies generic or malformed tool-result details instead of crashing the TUI.
 - Place the complete `apply_patch` tool call on a subtle theme-derived neutral surface while preserving stronger added and removed line backgrounds.
+- Add Pi-style horizontal and vertical padding around the `apply_patch` surface while keeping its title and result visually continuous.
 
 ### Removed
 

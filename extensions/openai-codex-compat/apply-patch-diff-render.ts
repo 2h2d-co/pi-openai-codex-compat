@@ -478,18 +478,30 @@ export function formatApplyPatchRenderText(
 export class ApplyPatchSurfaceComponent implements Component {
   private readonly component: Component;
   private readonly theme: Theme;
+  private readonly topPadding: boolean;
+  private readonly bottomPadding: boolean;
 
-  constructor(component: Component, theme: Theme) {
+  constructor(component: Component, theme: Theme, padding: { top: boolean; bottom: boolean }) {
     this.component = component;
     this.theme = theme;
+    this.topPadding = padding.top;
+    this.bottomPadding = padding.bottom;
   }
 
   render(width: number): string[] {
     const effectiveWidth = Math.max(1, width);
     const background = surfaceBackground(this.theme);
-    return this.component
-      .render(effectiveWidth)
-      .map((line) => fillLine(line, effectiveWidth, background));
+    const horizontalPadding = effectiveWidth > 2 ? 1 : 0;
+    const contentWidth = Math.max(1, effectiveWidth - horizontalPadding * 2);
+    const lines = this.component
+      .render(contentWidth)
+      .map((line) =>
+        fillLine(`${" ".repeat(horizontalPadding)}${line}`, effectiveWidth, background),
+      );
+    const blankLine = fillLine("", effectiveWidth, background);
+    if (this.topPadding) lines.unshift(blankLine);
+    if (this.bottomPadding) lines.push(blankLine);
+    return lines;
   }
 
   invalidate(): void {

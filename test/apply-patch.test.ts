@@ -453,7 +453,8 @@ void test("registers the Codex freeform tool with model, UI, and failed-history 
     },
   );
   const renderedCall = callComponent.render(120).join("\n");
-  assert.equal(stripAnsi(renderedCall).trimEnd(), "apply_patch");
+  assert.equal(stripAnsi(renderedCall).trim(), "apply_patch");
+  assert.equal(renderedCall.split("\n").length, 2);
   assert.ok(renderedCall.includes("\u001b[48;2;26;26;33m"));
 
   const component = registered!.renderResult!(
@@ -503,6 +504,7 @@ void test("registers the Codex freeform tool with model, UI, and failed-history 
   assert.doesNotMatch(shellText, /Exit code:/);
   assert.ok(!shellRender.includes("\u001b[48;2;40;50;40m"));
   assert.ok(shellRender.includes("\u001b[48;2;26;26;33m"));
+  assert.ok(shellComponent.render(120).every((line) => visibleWidth(line) <= 120));
 
   shellComponent.setExpanded(true);
   const expandedShellRender = shellComponent.render(120).join("\n");

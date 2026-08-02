@@ -80,7 +80,10 @@ export function renderApplyPatchCall(
     }
   }
 
-  return new ApplyPatchSurfaceComponent(container, theme);
+  return new ApplyPatchSurfaceComponent(container, theme, {
+    top: true,
+    bottom: context.isPartial,
+  });
 }
 
 export function renderApplyPatchResult(
@@ -106,9 +109,13 @@ export function renderApplyPatchResult(
     return new ApplyPatchSurfaceComponent(
       new ApplyPatchDiffComponent(renderDetails, theme, context.cwd, context.expanded),
       theme,
+      { top: false, bottom: true },
     );
   }
   const text = context.isError ? theme.bold(theme.fg("error", "✘ Failed to apply patch")) : "";
   if (!text) return new Container();
-  return new ApplyPatchSurfaceComponent(new Text(text, 0, 0), theme);
+  return new ApplyPatchSurfaceComponent(new Text(text, 0, 0), theme, {
+    top: false,
+    bottom: true,
+  });
 }
