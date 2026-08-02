@@ -15,35 +15,49 @@ const GENERATION_ENDPOINT = "images/generations";
 const EDIT_ENDPOINT = "images/edits";
 const GENERATED_IMAGES_DIRECTORY = "generated_images";
 
-const IMAGE_GENERATION_DESCRIPTION = `Generate a new image from a description or edit existing images according to specific instructions.
+const IMAGE_GENERATION_DESCRIPTION = `The \`image_gen.imagegen\` tool enables image generation from descriptions and editing of existing images based on specific instructions. Use it when:
 
-Use this tool for requested diagrams, portraits, comics, memes, other visuals, and image edits. Generate directly without reconfirming unless required edit images are unavailable.
+- The user requests an image based on a scene description, such as a diagram, portrait, comic, meme, or any other visual.
+- The user wants to modify an attached or previously generated image with specific changes, including adding or removing elements, altering colors, improving quality/resolution, or transforming the style (e.g., cartoon, oil painting).
 
-Omit both optional image selectors for a new image. For edits, use referenced_image_paths when every target image has an absolute local path. Use num_last_images_to_include only when at least one target image exists in recent conversation history without a local path, and request the smallest recent-image window containing every target. Never provide both selectors.`;
+Guidelines:
+- imagegen needs a few minutes to finish. In code-mode, use the first-line @exec directive to give the initial call 120 seconds and the same yield for any waits that follow. Once it finishes, return the image with generatedImage(result).
+- Omit both \`referenced_image_paths\` and \`num_last_images_to_include\` when generating a brand new image.
+- For edits, use \`referenced_image_paths\` when every target image has a local file path.
+- If you have not seen a local image yet, use \`view_image\` to inspect it before editing.
+- Use \`num_last_images_to_include\` only when at least one target image has no local file path.
+- Set \`num_last_images_to_include\` to the smallest number of recent conversation images that includes every target image, up to 5.
+- Never provide both \`referenced_image_paths\` and \`num_last_images_to_include\`.
+- If neither mechanism can include every target image, ask the user to attach the missing images again.
+- Directly generate the image without reconfirmation or clarification unless required images must be attached again.
+- Always use this tool for image editing unless the user explicitly requests otherwise. Do not use the \`python\` tool for image editing unless specifically instructed.
+`;
 
-const imageGenerationParameters = Type.Object(
-  {
-    prompt: Type.String({
-      description: "Complete image-generation or image-editing instructions.",
-    }),
-    referenced_image_paths: Type.Optional(
-      Type.Array(
-        Type.String({
-          description: "Absolute path to a local image to include in an edit.",
-        }),
-        { maxItems: MAX_EDIT_IMAGES },
-      ),
-    ),
-    num_last_images_to_include: Type.Optional(
-      Type.Integer({
-        minimum: 1,
-        maximum: MAX_EDIT_IMAGES,
-        description: "Number of most recent conversation images to include in an edit.",
-      }),
-    ),
+const imageGenerationParameters = Type.Unsafe<{
+  prompt: string;
+  referenced_image_paths?: string[] | null;
+  num_last_images_to_include?: number | null;
+}>({
+  type: "object",
+  properties: {
+    num_last_images_to_include: {
+      type: ["integer", "null"],
+    },
+    prompt: {
+      type: "string",
+    },
+    referenced_image_paths: {
+      type: ["array", "null"],
+      items: {
+        type: "string",
+        description:
+          "A path that is guaranteed to be absolute and normalized (though it is not guaranteed to be canonicalized or exist on the filesystem).\n\nIMPORTANT: When deserializing an `AbsolutePathBuf`, a base path must be set using [AbsolutePathBufGuard::new]. If no base path is set, the deserialization will fail unless the path being deserialized is already absolute.",
+      },
+    },
   },
-  { additionalProperties: false },
-);
+  required: ["prompt"],
+  additionalProperties: false,
+});
 
 export type ImageGenerationDetails = {
   operation: "generate" | "edit";
@@ -156,13 +170,22 @@ async function localImageUrl(path: string): Promise<string> {
 async function imageRequest(
   params: {
     prompt: string;
-    referenced_image_paths?: string[];
-    num_last_images_to_include?: number;
+    referenced_image_paths?: string[] | null;
+    num_last_images_to_include?: number | null;
   },
   history: readonly ResponsesItem[],
 ): Promise<ImageRequest> {
   const paths = params.referenced_image_paths ?? [];
-  const recentCount = params.num_last_images_to_include;
+  const recentCount = params.num_last_images_to_include ?? undefined;
+  if (paths.length > MAX_EDIT_IMAGES) {
+    throw new Error(`referenced_image_paths must contain at most ${MAX_EDIT_IMAGES} paths`);
+  }
+  if (
+    recentCount !== undefined &&
+    (!Number.isInteger(recentCount) || recentCount < 1 || recentCount > MAX_EDIT_IMAGES)
+  ) {
+    throw new Error(`num_last_images_to_include must be between 1 and ${MAX_EDIT_IMAGES}`);
+  }
   if (paths.length > 0 && recentCount !== undefined) {
     throw new Error("provide only one of referenced_image_paths or num_last_images_to_include");
   }

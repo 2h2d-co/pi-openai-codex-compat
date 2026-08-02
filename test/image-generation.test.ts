@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -103,6 +104,31 @@ void test("executes generation and recent-image edits through Codex Images", asy
   registerImageGeneration(pi, async (_model, path, body, options) => {
     requests.push({ path, body: structuredClone(body), options });
     return { created: 1, data: [{ b64_json: GENERATED_PNG }] };
+  });
+  assert.equal(
+    createHash("sha256").update(tool.description).digest("hex"),
+    "77a992a7c90e45fcd11623a1efa34bfd4c7870697e0aa54ce9b28f690877170e",
+  );
+  assert.deepEqual(JSON.parse(JSON.stringify(tool.parameters)), {
+    type: "object",
+    properties: {
+      num_last_images_to_include: {
+        type: ["integer", "null"],
+      },
+      prompt: {
+        type: "string",
+      },
+      referenced_image_paths: {
+        type: ["array", "null"],
+        items: {
+          type: "string",
+          description:
+            "A path that is guaranteed to be absolute and normalized (though it is not guaranteed to be canonicalized or exist on the filesystem).\n\nIMPORTANT: When deserializing an `AbsolutePathBuf`, a base path must be set using [AbsolutePathBufGuard::new]. If no base path is set, the deserialization will fail unless the path being deserialized is already absolute.",
+        },
+      },
+    },
+    required: ["prompt"],
+    additionalProperties: false,
   });
 
   const context = {

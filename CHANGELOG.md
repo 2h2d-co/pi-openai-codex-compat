@@ -15,6 +15,7 @@
 
 ### Changed
 
+- Match the server-reserved `image_gen.imagegen` description and JSON Schema so Codex accepts the tool declaration.
 - Apply fast mode as a priority-tier request modification on the selected `openai-codex` provider.
 - Make `/codex-settings` changes session-local by default and persist them only on `Ctrl+S`.
 - Print effective settings once at session start and move non-default fast, pro, verbosity, and reasoning-summary indicators onto the second footer line.
