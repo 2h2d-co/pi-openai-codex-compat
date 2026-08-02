@@ -118,39 +118,43 @@ export function renderApplyPatchCall(
   args: ApplyPatchArgs,
   theme: Theme,
   context: ApplyPatchRenderContext,
-): Text | Container {
-  if (!context.isPartial) return new Container();
+): Container {
+  const container = new Container();
+  container.addChild(new Text(theme.fg("toolTitle", theme.bold("apply_patch")), 0, 0));
 
-  const state = context.state;
-  const patch = typeof args.patch === "string" ? args.patch : "";
-  if (context.argsComplete && patch) {
-    const previewKey = `${context.cwd}\0${patch}`;
-    if (state.previewKey !== previewKey) {
-      state.previewKey = previewKey;
-      delete state.preview;
-      state.previewPending = false;
+  if (context.isPartial) {
+    const state = context.state;
+    const patch = typeof args.patch === "string" ? args.patch : "";
+    if (context.argsComplete && patch) {
+      const previewKey = `${context.cwd}\0${patch}`;
+      if (state.previewKey !== previewKey) {
+        state.previewKey = previewKey;
+        delete state.preview;
+        state.previewPending = false;
+      }
+      if (!state.preview && !state.previewPending) {
+        state.previewPending = true;
+        void previewPatch(context.cwd, patch)
+          .then((preview) => {
+            if (state.previewKey === previewKey) state.preview = preview;
+          })
+          .catch(() => {})
+          .finally(() => {
+            if (state.previewKey === previewKey) {
+              state.previewPending = false;
+              context.invalidate();
+            }
+          });
+      }
     }
-    if (!state.preview && !state.previewPending) {
-      state.previewPending = true;
-      void previewPatch(context.cwd, patch)
-        .then((preview) => {
-          if (state.previewKey === previewKey) state.preview = preview;
-        })
-        .catch(() => {})
-        .finally(() => {
-          if (state.previewKey === previewKey) {
-            state.previewPending = false;
-            context.invalidate();
-          }
-        });
-    }
+
+    const previewText = state.preview
+      ? formatApplyPatchRenderText(state.preview, theme, context.cwd)
+      : "";
+    if (previewText) container.addChild(new Text(previewText, 0, 0));
   }
 
-  const text = state.preview ? formatApplyPatchRenderText(state.preview, theme, context.cwd) : "";
-  if (!text) return new Container();
-  const component = (context.lastComponent as Text | undefined) ?? new Text("", 0, 0);
-  component.setText(text);
-  return component;
+  return container;
 }
 
 export function renderApplyPatchResult(

@@ -83,7 +83,6 @@ export default function registerApplyPatch(pi: ExtensionAPI): void {
       variants: { openai_lark: APPLY_PATCH_LARK_GRAMMAR },
     },
     executionMode: "sequential",
-    renderShell: "self",
     async execute(toolCallId, params, signal, onUpdate, ctx) {
       const startedAt = performance.now();
       try {

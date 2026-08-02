@@ -332,7 +332,7 @@ void test("registers the Codex freeform tool with model, UI, and failed-history 
   registerApplyPatch(pi);
   assert.equal(registered?.name, "apply_patch");
   assert.equal(registered?.executionMode, "sequential");
-  assert.equal(registered?.renderShell, "self");
+  assert.equal(registered?.renderShell, undefined);
   assert.deepEqual(registered?.constrainedSampling, {
     type: "grammar",
     variants: { openai_lark: APPLY_PATCH_LARK_GRAMMAR },
@@ -356,6 +356,28 @@ void test("registers the Codex freeform tool with model, UI, and failed-history 
     fg: (_color: string, text: string) => text,
     bold: (text: string) => text,
   } as Theme;
+  const callComponent = registered!.renderCall!(
+    { patch: "*** Begin Patch\n*** Add File: rendered.txt\n+hello\n*** End Patch" },
+    theme,
+    {
+      args: {
+        patch: "*** Begin Patch\n*** Add File: rendered.txt\n+hello\n*** End Patch",
+      },
+      toolCallId: "success-call",
+      invalidate() {},
+      lastComponent: undefined,
+      state: {},
+      cwd,
+      executionStarted: true,
+      argsComplete: true,
+      isPartial: false,
+      expanded: false,
+      showImages: false,
+      isError: false,
+    },
+  );
+  assert.equal(callComponent.render(120).join("\n").trimEnd(), "apply_patch");
+
   const component = registered!.renderResult!(
     result,
     { expanded: false, isPartial: false },
