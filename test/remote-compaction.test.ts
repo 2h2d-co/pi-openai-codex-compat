@@ -77,7 +77,12 @@ function toolResultEntry(id: string, parentId: string, toolCallId: string): Sess
       role: "toolResult",
       toolCallId,
       toolName: "apply_patch",
-      content: [{ type: "text", text: "Done!" }],
+      content: [
+        {
+          type: "text",
+          text: "Exit code: 0\nWall time: 0 seconds\nOutput:\nSuccess. Updated the following files:\nM example.txt\n",
+        },
+      ],
       isError: false,
       timestamp: Date.now(),
     },

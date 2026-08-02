@@ -87,7 +87,12 @@ const context: Context = {
       role: "toolResult",
       toolCallId: "call_test|ctc_test",
       toolName: "apply_patch",
-      content: [{ type: "text", text: "Done!" }],
+      content: [
+        {
+          type: "text",
+          text: "Exit code: 0\nWall time: 0 seconds\nOutput:\nSuccess. Updated the following files:\nM example.txt\n",
+        },
+      ],
       isError: false,
       timestamp: 2,
       addedToolNames: ["deferred"],

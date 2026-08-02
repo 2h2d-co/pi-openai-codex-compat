@@ -6,7 +6,7 @@ OpenAI Codex compatibility for [Pi](https://github.com/earendil-works/pi-mono), 
 
 - **Request-level fast mode**: keeps Pi's built-in `openai-codex` provider selected and adds `service_tier: "priority"` at the request boundary.
 - **Native compaction**: uses Codex `remote_compaction_v2` for `/compact`, Pi threshold compaction, context-overflow recovery, and an optional percentage threshold.
-- **Codex `apply_patch`**: provides an optional workspace-scoped patch tool with the Codex Lark grammar. Pi sends it as an OpenAI custom grammar tool when the model supports that protocol and as a normal function tool otherwise.
+- **Codex `apply_patch`**: provides an optional workspace-scoped patch tool with the Codex grammar, parser, fuzzy matcher, overwrite semantics, model-facing result format, structured history, and diff-oriented TUI rendering. Pi sends it as an OpenAI custom grammar tool when the model supports that protocol and as a normal function tool otherwise.
 - **Hosted web search**: optionally injects the native Codex `web_search` tool with cached, indexed, or live modes.
 - **Native request controls**: configures Responses API text verbosity, reasoning summaries, and GPT-5.6 standard/pro reasoning mode.
 - **Session-local settings pane**: `/codex-settings` changes every compatibility setting for the current session; `Ctrl+S` explicitly persists the current values.
@@ -134,15 +134,24 @@ Supported operations:
 - move an updated file;
 - anchor updates at the end of a file.
 
+Compatibility behavior:
+
+- `*** Add File` overwrites an existing file, matching Codex.
+- `*** Move to` overwrites an existing destination, matching Codex.
+- Hunk matching retries exact text, trailing-whitespace-insensitive text, fully trimmed text, and Codex's Unicode punctuation normalization.
+- The parser accepts Codex's lenient marker whitespace, blank update-context lines, and direct heredoc wrappers.
+- Successful model-facing results use Codex's exit-code, wall-time, and `Success. Updated the following files:` format.
+- Tool-result history stores per-file old/new content, display diffs, move destinations, overwrite information, and committed-prefix details after runtime failures.
+- The TUI renders Codex-style `Added`, `Edited`, and `Deleted` diff blocks instead of the raw model-facing result.
+
 Safety behavior:
 
 - Paths must remain inside Pi's current working directory, including after symlink resolution.
 - `.git` metadata cannot be modified.
 - Every hunk is parsed and validated before filesystem writes begin.
 - Mutations participate in Pi's per-file mutation queue and `apply_patch` calls execute sequentially.
-- Adding or moving to an existing path is rejected.
 
-A low-level I/O failure can still leave a multi-file patch partially applied; inspect the reported error and working tree before retrying.
+A low-level I/O failure can still leave a multi-file patch partially applied. The failed tool result records the known committed prefix, but inspect the working tree before retrying when that record is marked inexact.
 
 ## Development
 
@@ -162,7 +171,7 @@ The GitHub Actions workflow stages npm releases when a `v*` tag is pushed. The t
 
 ## Acknowledgements
 
-The remote-compaction implementation follows the current OpenAI Codex `remote_compaction_v2` protocol. The `apply_patch` grammar is adapted from OpenAI Codex under Apache-2.0. OpenAI Responses history serialization adapts selected Pi AI methods under MIT; see [third-party notices](THIRD_PARTY_NOTICES.md).
+The remote-compaction implementation follows the current OpenAI Codex `remote_compaction_v2` protocol. The `apply_patch` grammar, parser, matcher, mutation semantics, result format, and compatibility scenarios are adapted from OpenAI Codex under Apache-2.0. OpenAI Responses history serialization adapts selected Pi AI methods under MIT; see [third-party notices](THIRD_PARTY_NOTICES.md).
 
 ## License
 
