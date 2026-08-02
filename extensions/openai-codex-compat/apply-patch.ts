@@ -84,13 +84,24 @@ export default function registerApplyPatch(pi: ExtensionAPI): void {
     },
     executionMode: "sequential",
     async execute(toolCallId, params, signal, onUpdate, ctx) {
-      const startedAt = performance.now();
+      let executionStartedAt: number | undefined;
+      const executionDurationMs = (): number => {
+        if (executionStartedAt === undefined) {
+          throw new Error("apply_patch execution timing was not initialized.");
+        }
+        return performance.now() - executionStartedAt;
+      };
       try {
-        const details = await applyPatch(ctx.cwd, params.patch, signal, (partialDetails) => {
-          onUpdate?.({
-            content: [{ type: "text", text: "" }],
-            details: partialDetails,
-          });
+        const details = await applyPatch(ctx.cwd, params.patch, signal, {
+          onExecutionStart() {
+            executionStartedAt = performance.now();
+          },
+          onProgress(partialDetails) {
+            onUpdate?.({
+              content: [{ type: "text", text: "" }],
+              details: partialDetails,
+            });
+          },
         });
         return {
           content: [
@@ -98,7 +109,7 @@ export default function registerApplyPatch(pi: ExtensionAPI): void {
               type: "text",
               text: formatApplyPatchModelOutput(
                 0,
-                performance.now() - startedAt,
+                executionDurationMs(),
                 formatApplyPatchSummary(details),
               ),
             },
@@ -109,7 +120,7 @@ export default function registerApplyPatch(pi: ExtensionAPI): void {
         if (error instanceof ApplyPatchExecutionError) {
           failedDetails.set(toolCallId, error.details);
           throw new Error(
-            formatApplyPatchModelOutput(1, performance.now() - startedAt, `${error.message}\n`),
+            formatApplyPatchModelOutput(1, executionDurationMs(), `${error.message}\n`),
           );
         }
         throw error;

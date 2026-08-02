@@ -216,6 +216,7 @@ void test("matches Codex fuzzy Unicode and strict end-of-file matching", async (
 void test("prevalidates all hunks but preserves committed-prefix history after runtime failure", async (t) => {
   const cwd = await workspace(t);
   await writeFile(join(cwd, "current.txt"), "original\n");
+  let executionStarted = false;
 
   await assert.rejects(
     applyPatch(
@@ -228,9 +229,16 @@ void test("prevalidates all hunks but preserves committed-prefix history after r
 -missing
 +replacement
 *** End Patch`,
+      undefined,
+      {
+        onExecutionStart() {
+          executionStarted = true;
+        },
+      },
     ),
     /apply_patch verification failed/,
   );
+  assert.equal(executionStarted, false);
   await assert.rejects(readFile(join(cwd, "created.txt"), "utf8"), { code: "ENOENT" });
 
   const duplicatePatch = `*** Begin Patch
@@ -249,13 +257,25 @@ void test("prevalidates all hunks but preserves committed-prefix history after r
     preview.changes[0]?.kind === "update" ? preview.changes[0].newContent : undefined,
     "second\n",
   );
-  await assert.rejects(applyPatch(cwd, duplicatePatch), (error: unknown) => {
-    if (!(error instanceof ApplyPatchExecutionError)) return false;
-    assert.equal(error.details.status, "failed");
-    assert.equal(error.details.changes.length, 1);
-    assert.equal(error.details.changes[0]?.kind, "update");
-    return true;
-  });
+  const lifecycle: string[] = [];
+  await assert.rejects(
+    applyPatch(cwd, duplicatePatch, undefined, {
+      onExecutionStart() {
+        lifecycle.push("execution-start");
+      },
+      onProgress() {
+        lifecycle.push("progress");
+      },
+    }),
+    (error: unknown) => {
+      if (!(error instanceof ApplyPatchExecutionError)) return false;
+      assert.equal(error.details.status, "failed");
+      assert.equal(error.details.changes.length, 1);
+      assert.equal(error.details.changes[0]?.kind, "update");
+      return true;
+    },
+  );
+  assert.deepEqual(lifecycle, ["execution-start", "progress"]);
   assert.equal(await readFile(join(cwd, "current.txt"), "utf8"), "first\n");
 });
 

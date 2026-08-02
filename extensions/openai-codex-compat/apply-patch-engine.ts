@@ -695,6 +695,11 @@ export function cloneApplyPatchDetails(details: ApplyPatchDetails): ApplyPatchDe
   };
 }
 
+export type ApplyPatchExecutionHooks = {
+  onExecutionStart?: () => void;
+  onProgress?: (details: ApplyPatchDetails) => void;
+};
+
 async function writeFileWithParents(path: string, content: string): Promise<void> {
   try {
     await writeFile(path, content, "utf8");
@@ -927,7 +932,7 @@ export async function applyPatch(
   cwd: string,
   patch: string,
   signal?: AbortSignal,
-  onProgress?: (details: ApplyPatchDetails) => void,
+  hooks: ApplyPatchExecutionHooks = {},
 ): Promise<ApplyPatchDetails> {
   throwIfAborted(signal);
   let parsed: ParsedPatch;
@@ -971,7 +976,8 @@ export async function applyPatch(
       );
     }
     throwIfAborted(signal);
-    return applyOperations(operations, signal, onProgress);
+    hooks.onExecutionStart?.();
+    return applyOperations(operations, signal, hooks.onProgress);
   });
 }
 
