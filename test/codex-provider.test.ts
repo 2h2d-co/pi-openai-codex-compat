@@ -429,6 +429,72 @@ void test("rejects missing streamSimple authentication synchronously", () => {
   );
 });
 
+void test("honors aborts after terminal processing and while waiting for a session request", async () => {
+  const user = userEntry("user-1", "hello");
+  const context: Context = { messages: [user.message as Context["messages"][number]] };
+
+  const terminalHarness = createHarness([user]);
+  const terminalAbort = new AbortController();
+  terminalHarness.runtime.transport.request = async function* () {
+    yield* textEvents("finished");
+    terminalAbort.abort();
+  };
+  const terminalMessage = await terminalHarness.runtime
+    .streamSimple(codexModel(), context, {
+      apiKey: accessToken(),
+      sessionId: "session-1",
+      signal: terminalAbort.signal,
+    })
+    .result();
+  assert.equal(terminalMessage.stopReason, "aborted");
+
+  const queuedHarness = createHarness([user]);
+  let startFirst!: () => void;
+  const firstStarted = new Promise<void>((resolve) => {
+    startFirst = resolve;
+  });
+  let releaseFirst!: () => void;
+  const firstReleased = new Promise<void>((resolve) => {
+    releaseFirst = resolve;
+  });
+  let requests = 0;
+  queuedHarness.runtime.transport.request = async function* () {
+    requests += 1;
+    if (requests === 1) {
+      startFirst();
+      await firstReleased;
+    }
+    yield* textEvents("finished");
+  };
+
+  const first = queuedHarness.runtime.streamSimple(codexModel(), context, {
+    apiKey: accessToken(),
+    sessionId: "session-1",
+  });
+  await firstStarted;
+
+  const queuedAbort = new AbortController();
+  const second = queuedHarness.runtime.streamSimple(codexModel(), context, {
+    apiKey: accessToken(),
+    sessionId: "session-1",
+    signal: queuedAbort.signal,
+  });
+  queuedAbort.abort();
+  try {
+    const queuedMessage = await Promise.race([
+      second.result(),
+      new Promise<never>((_resolve, reject) => {
+        setTimeout(() => reject(new Error("queued abort did not settle promptly")), 250);
+      }),
+    ]);
+    assert.equal(queuedMessage.stopReason, "aborted");
+    assert.equal(requests, 1);
+  } finally {
+    releaseFirst();
+  }
+  assert.equal((await first.result()).stopReason, "stop");
+});
+
 void test("transports dotted Pi tools as native Responses namespaces", async () => {
   const user = userEntry("user-1", "search");
   const harness = createHarness([user]);

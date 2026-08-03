@@ -516,6 +516,86 @@ void test("reports WebSocket close details and preserves preceding errors", asyn
   );
 });
 
+void test("stops WebSocket delivery at the terminal response event", async (t) => {
+  const previousWebSocket = globalThis.WebSocket;
+
+  class TerminalWebSocket {
+    readonly readyState = 1;
+    private readonly listeners = new Map<string, Set<(event: unknown) => void>>();
+
+    constructor() {
+      queueMicrotask(() => this.dispatch("open", {}));
+    }
+
+    addEventListener(type: string, listener: (event: unknown) => void): void {
+      const listeners = this.listeners.get(type) ?? new Set();
+      listeners.add(listener);
+      this.listeners.set(type, listeners);
+    }
+
+    removeEventListener(type: string, listener: (event: unknown) => void): void {
+      this.listeners.get(type)?.delete(listener);
+    }
+
+    send(): void {
+      queueMicrotask(() => {
+        this.dispatch("message", {
+          data: JSON.stringify({
+            type: "response.completed",
+            response: { id: "response-terminal", status: "completed" },
+          }),
+        });
+        this.dispatch("message", {
+          data: JSON.stringify({
+            type: "response.output_text.delta",
+            output_index: 0,
+            delta: "late",
+          }),
+        });
+      });
+    }
+
+    close(): void {}
+
+    private dispatch(type: string, event: unknown): void {
+      for (const listener of this.listeners.get(type) ?? []) listener(event);
+    }
+  }
+
+  Object.defineProperty(globalThis, "WebSocket", {
+    configurable: true,
+    writable: true,
+    value: TerminalWebSocket,
+  });
+  t.after(() => {
+    Object.defineProperty(globalThis, "WebSocket", {
+      configurable: true,
+      writable: true,
+      value: previousWebSocket,
+    });
+  });
+
+  const events: JsonRecord[] = [];
+  for await (const event of new CodexTransport().request(
+    codexModel(),
+    { input: [] },
+    {
+      apiKey: accessToken(),
+      cacheRetention: "none",
+      transport: "websocket",
+    },
+  )) {
+    events.push(event);
+  }
+
+  assert.deepEqual(events, [
+    {
+      type: "response.completed",
+      response: { id: "response-terminal", status: "completed" },
+    },
+  ]);
+});
+
 void test("retries WebSocket connection limits before output starts", async (t) => {
   const previousWebSocket = globalThis.WebSocket;
   let connections = 0;

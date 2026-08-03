@@ -26,6 +26,7 @@
 - Honor every non-undefined payload replacement and reject missing `streamSimple` authentication synchronously, matching Pi AI.
 - Match Pi AI's configured SSE retry behavior for callback, body-read, and otherwise non-terminal response-acquisition failures.
 - Use Pi AI's time-ordered UUIDv7 identifiers for WebSocket requests without session affinity.
+- Stop at terminal WebSocket events and honor aborts while requests wait for session transport ownership or finish streaming.
 
 ## 0.0.2 - 2026-08-03
 

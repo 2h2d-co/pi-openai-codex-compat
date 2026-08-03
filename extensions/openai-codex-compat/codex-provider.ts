@@ -342,7 +342,10 @@ export class CodexProviderRuntime {
     this.transport.close(sessionId);
   }
 
-  private async acquireRequest(sessionId: string | undefined): Promise<() => void> {
+  private async acquireRequest(
+    sessionId: string | undefined,
+    signal?: AbortSignal,
+  ): Promise<() => void> {
     if (!sessionId) return () => {};
     const previous = this.requestTails.get(sessionId) ?? Promise.resolve();
     let releaseCurrent!: () => void;
@@ -350,11 +353,44 @@ export class CodexProviderRuntime {
       releaseCurrent = resolve;
     });
     this.requestTails.set(sessionId, current);
-    await previous;
-    return () => {
+    let released = false;
+    const release = () => {
+      if (released) return;
+      released = true;
       releaseCurrent();
       if (this.requestTails.get(sessionId) === current) this.requestTails.delete(sessionId);
     };
+
+    if (signal?.aborted) {
+      void previous.then(release);
+      throw new Error("Request was aborted");
+    }
+
+    let onAbort: (() => void) | undefined;
+    try {
+      await Promise.race([
+        previous,
+        ...(signal
+          ? [
+              new Promise<never>((_resolve, reject) => {
+                onAbort = () => reject(new Error("Request was aborted"));
+                signal.addEventListener("abort", onAbort, { once: true });
+              }),
+            ]
+          : []),
+      ]);
+    } catch (error) {
+      void previous.then(release);
+      throw error;
+    } finally {
+      if (onAbort) signal?.removeEventListener("abort", onAbort);
+    }
+
+    if (signal?.aborted) {
+      release();
+      throw new Error("Request was aborted");
+    }
+    return release;
   }
 
   createProvider(base: Provider): Provider {
@@ -602,8 +638,9 @@ export class CodexProviderRuntime {
         timestamp: Date.now(),
       };
       const runtimeSessionId = requestOptions.sessionId;
-      const releaseRequest = await this.acquireRequest(runtimeSessionId);
+      let releaseRequest = () => {};
       try {
+        releaseRequest = await this.acquireRequest(runtimeSessionId, requestOptions.signal);
         const cacheSessionId =
           requestOptions.cacheRetention === "none"
             ? undefined
@@ -666,6 +703,7 @@ export class CodexProviderRuntime {
           model,
           grammarToolInputProperties,
         );
+        if (requestOptions.signal?.aborted) throw new Error("Request was aborted");
         if (!successfulStopReason(output)) {
           throw new Error(output.errorMessage || "Codex stream ended without a successful stop.");
         }
@@ -755,7 +793,10 @@ export class CodexProviderRuntime {
     template: JsonRecord;
     priority: boolean;
   }): Promise<{ checkpoint: CheckpointData; usage?: Usage }> {
-    return this.acquireRequest(options.requestOptions.sessionId).then(async (release) => {
+    return this.acquireRequest(
+      options.requestOptions.sessionId,
+      options.requestOptions.signal,
+    ).then(async (release) => {
       try {
         return await this.performCompaction(options);
       } finally {

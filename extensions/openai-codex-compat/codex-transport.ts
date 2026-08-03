@@ -1054,8 +1054,11 @@ async function* requestWebSocket(
           }
         }
       }
-      yield normalizeEvent(event);
+      const normalized = normalizeEvent(event);
+      yield normalized;
+      if (isTerminalEvent(normalized)) break;
     }
+    if (options.signal?.aborted) throw new Error("Request was aborted");
     if (useContinuation && acquired.entry && responseId) {
       acquired.entry.continuation = {
         lastRequestBody: structuredClone(body),
