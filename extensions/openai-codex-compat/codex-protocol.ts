@@ -269,7 +269,7 @@ export function remoteCompactionPayload(options: {
   modelId: string;
   history: readonly ResponsesItem[];
   instructions: string;
-  sessionId: string;
+  sessionId?: string | undefined;
   fallbackTools?: unknown[] | undefined;
   priority: boolean;
 }): JsonRecord {
@@ -290,7 +290,8 @@ export function remoteCompactionPayload(options: {
     typeof payload.parallel_tool_calls === "boolean" ? payload.parallel_tool_calls : true;
   payload.tool_choice ??= "auto";
   payload.include = [...new Set([...include, "reasoning.encrypted_content"])];
-  payload.prompt_cache_key = options.sessionId;
+  if (options.sessionId) payload.prompt_cache_key = options.sessionId;
+  else delete payload.prompt_cache_key;
   payload.text =
     isObject(payload.text) && typeof payload.text.verbosity === "string"
       ? { verbosity: payload.text.verbosity }

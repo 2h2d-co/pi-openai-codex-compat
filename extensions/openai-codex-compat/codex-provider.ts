@@ -441,7 +441,10 @@ export class CodexProviderRuntime {
       modelId: options.model.id,
       history: options.history,
       instructions: options.instructions,
-      sessionId,
+      sessionId:
+        options.requestOptions.cacheRetention === "none"
+          ? undefined
+          : clampPromptCacheKey(sessionId),
       priority: options.priority,
     });
     const transformed = await options.requestOptions.onPayload?.(payload, options.model);
@@ -575,7 +578,10 @@ export class CodexProviderRuntime {
       const runtimeSessionId = requestOptions.sessionId;
       const releaseRequest = await this.acquireRequest(runtimeSessionId);
       try {
-        const cacheSessionId = clampPromptCacheKey(runtimeSessionId);
+        const cacheSessionId =
+          requestOptions.cacheRetention === "none"
+            ? undefined
+            : clampPromptCacheKey(runtimeSessionId);
         const grammarToolInputProperties = createGrammarToolInputProperties(
           context.tools,
           (model.compat as CodexCompat | undefined)?.supportsOpenAIGrammarTools ?? false,

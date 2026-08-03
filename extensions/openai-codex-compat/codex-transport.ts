@@ -23,6 +23,7 @@ const REQUEST_COMPRESSION_ZSTD_LEVEL = 3;
 const DEFAULT_WEBSOCKET_CONNECT_TIMEOUT_MS = 15_000;
 const SESSION_WEBSOCKET_CACHE_TTL_MS = 5 * 60 * 1_000;
 const SESSION_WEBSOCKET_MAX_AGE_MS = 55 * 60 * 1_000;
+const OPENAI_PROMPT_CACHE_KEY_MAX_LENGTH = 64;
 const WEBSOCKET_CONNECTION_LIMIT_REACHED_CODE = "websocket_connection_limit_reached";
 const PREVIOUS_RESPONSE_NOT_FOUND_CODE = "previous_response_not_found";
 
@@ -273,6 +274,14 @@ function resolveCodexWebSocketUrl(baseUrl?: string): string {
   if (url.protocol === "https:") url.protocol = "wss:";
   if (url.protocol === "http:") url.protocol = "ws:";
   return url.toString();
+}
+
+function clampPromptCacheKey(key: string | undefined): string | undefined {
+  if (key === undefined) return undefined;
+  const characters = Array.from(key);
+  return characters.length <= OPENAI_PROMPT_CACHE_KEY_MAX_LENGTH
+    ? key
+    : characters.slice(0, OPENAI_PROMPT_CACHE_KEY_MAX_LENGTH).join("");
 }
 
 function baseHeaders(
@@ -938,18 +947,21 @@ export class CodexTransport {
   ): AsyncGenerator<JsonRecord> {
     if (!options.apiKey) throw new Error(`No API key for provider: ${model.provider}`);
     const accountId = extractAccountId(options.apiKey);
-    const sessionId = options.cacheRetention === "none" ? undefined : options.sessionId;
+    const cacheSessionId = options.cacheRetention === "none" ? undefined : options.sessionId;
+    const requestId = clampPromptCacheKey(cacheSessionId);
     const transport = options.transport ?? "auto";
 
     const websocketDisabled =
-      transport === "auto" && sessionId !== undefined && websocketFallbackSessions.has(sessionId);
+      transport !== "sse" &&
+      cacheSessionId !== undefined &&
+      websocketFallbackSessions.has(cacheSessionId);
     if (transport !== "sse" && !websocketDisabled) {
       const headers = websocketHeaders(
         model.headers,
         options.headers,
         accountId,
         options.apiKey,
-        sessionId ?? crypto.randomUUID(),
+        requestId ?? crypto.randomUUID(),
       );
       let retriedConnectionLimit = false;
       let retriedMissingContinuation = false;
@@ -961,7 +973,7 @@ export class CodexTransport {
             body,
             options,
             headers,
-            sessionId,
+            cacheSessionId,
             accountId,
           )) {
             emitted = true;
@@ -980,16 +992,11 @@ export class CodexTransport {
             retriedConnectionLimit = true;
             continue;
           }
-          if (
-            emitted ||
-            aborted ||
-            (isCodexNonTransportError(error) && !connectionLimitBeforeStart) ||
-            transport === "websocket" ||
-            transport === "websocket-cached"
-          ) {
+          if (aborted || (isCodexNonTransportError(error) && !connectionLimitBeforeStart)) {
             throw error;
           }
-          if (sessionId) websocketFallbackSessions.add(sessionId);
+          if (cacheSessionId) websocketFallbackSessions.add(cacheSessionId);
+          if (emitted) throw error;
           break;
         }
       }
@@ -1000,7 +1007,7 @@ export class CodexTransport {
       options.headers,
       accountId,
       options.apiKey,
-      sessionId,
+      requestId,
     );
     yield* requestSse(model, body, options, headers);
   }

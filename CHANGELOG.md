@@ -17,6 +17,8 @@
 - Scope sticky Codex WebSockets to the authenticated account so changing accounts cannot reuse a connection authorized for another account.
 - Recover once from expired WebSocket continuations and connection-limit responses while preserving structured Codex API and protocol errors.
 - Finish SSE requests as soon as a terminal response arrives, even if the response body remains open, and reject pre-aborted cached-WebSocket requests before sending.
+- Apply `cacheRetention: "none"` consistently to ordinary and compaction payloads and clamp cache-affinity headers to the backend's 64-character limit.
+- Keep SSE fallback sticky after midstream WebSocket failures and use the fallback for later requests regardless of the preferred WebSocket mode.
 
 ## 0.0.2 - 2026-08-03
 

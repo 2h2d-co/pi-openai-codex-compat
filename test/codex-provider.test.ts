@@ -230,6 +230,31 @@ void test("streams ordinary responses without persisting redundant native data",
   assert.equal(harness.customEntries.length, 0);
 });
 
+void test("honors disabled cache retention when building provider payloads", async () => {
+  const user = userEntry("user-1", "hello");
+  const harness = createHarness([user]);
+  const requests: JsonRecord[] = [];
+  harness.runtime.transport.request = async function* (_model, body) {
+    requests.push(structuredClone(body));
+    yield* textEvents("hello back");
+  };
+
+  await harness.runtime
+    .streamSimple(
+      codexModel(),
+      { messages: [user.message as Context["messages"][number]] },
+      {
+        apiKey: accessToken(),
+        sessionId: "session-with-cache-disabled",
+        cacheRetention: "none",
+        transport: "sse",
+      },
+    )
+    .result();
+
+  assert.equal(requests[0]?.prompt_cache_key, undefined);
+});
+
 void test("transports dotted Pi tools as native Responses namespaces", async () => {
   const user = userEntry("user-1", "search");
   const harness = createHarness([user]);

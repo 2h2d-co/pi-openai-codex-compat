@@ -104,6 +104,51 @@ void test("finishes SSE requests when the terminal event arrives before EOF", as
   assert.equal(cancelled, true);
 });
 
+void test("aligns cache-affinity headers with retention and length limits", async () => {
+  const requestHeaders: Headers[] = [];
+  const terminal = `data: ${JSON.stringify({
+    type: "response.completed",
+    response: { id: "response-1", status: "completed" },
+  })}\n\n`;
+  const fetcher: typeof fetch = async (_input, init) => {
+    requestHeaders.push(new Headers(init?.headers));
+    return new Response(terminal, { status: 200 });
+  };
+  const longSessionId = "s".repeat(80);
+  const transport = new CodexTransport();
+
+  for await (const _event of transport.request(
+    codexModel(),
+    { input: [] },
+    {
+      apiKey: accessToken(),
+      sessionId: longSessionId,
+      transport: "sse",
+      fetch: fetcher,
+    },
+  )) {
+    // Consume the response.
+  }
+  for await (const _event of transport.request(
+    codexModel(),
+    { input: [] },
+    {
+      apiKey: accessToken(),
+      sessionId: "no-cache-session",
+      cacheRetention: "none",
+      transport: "sse",
+      fetch: fetcher,
+    },
+  )) {
+    // Consume the response.
+  }
+
+  assert.equal(Array.from(requestHeaders[0]?.get("session-id") ?? "").length, 64);
+  assert.equal(requestHeaders[0]?.get("x-client-request-id"), requestHeaders[0]?.get("session-id"));
+  assert.equal(requestHeaders[1]?.get("session-id"), null);
+  assert.equal(requestHeaders[1]?.get("x-client-request-id"), null);
+});
+
 void test("reports WebSocket close details and preserves preceding errors", async (t) => {
   const previousWebSocket = globalThis.WebSocket;
   let failureMode: "close" | "error-then-close" = "close";
@@ -128,11 +173,16 @@ void test("reports WebSocket close details and preserves preceding errors", asyn
 
     send(): void {
       queueMicrotask(() => {
-        if (failureMode === "error-then-close") {
-          this.emit("error", { message: "underlying socket failure" });
-        }
-        this.readyState = 3;
-        this.emit("close", { code: 1_006, reason: "connection lost", wasClean: false });
+        this.emit("message", {
+          data: JSON.stringify({ type: "response.created", response: { id: "response-1" } }),
+        });
+        setTimeout(() => {
+          if (failureMode === "error-then-close") {
+            this.emit("error", { message: "underlying socket failure" });
+          }
+          this.readyState = 3;
+          this.emit("close", { code: 1_006, reason: "connection lost", wasClean: false });
+        }, 0);
       });
     }
 
@@ -454,6 +504,94 @@ void test("rejects a pre-aborted request before reusing a cached WebSocket", asy
   );
   assert.equal(sends, 1);
   transport.close("abort-session");
+});
+
+void test("uses sticky SSE fallback after a midstream WebSocket failure", async (t) => {
+  const previousWebSocket = globalThis.WebSocket;
+  let connections = 0;
+  let fetches = 0;
+
+  class MidstreamFailureWebSocket {
+    readyState = 1;
+    private readonly listeners = new Map<string, Set<(event: unknown) => void>>();
+
+    constructor() {
+      connections += 1;
+      queueMicrotask(() => this.emit("open", {}));
+    }
+
+    addEventListener(type: string, listener: (event: unknown) => void): void {
+      const listeners = this.listeners.get(type) ?? new Set();
+      listeners.add(listener);
+      this.listeners.set(type, listeners);
+    }
+
+    removeEventListener(type: string, listener: (event: unknown) => void): void {
+      this.listeners.get(type)?.delete(listener);
+    }
+
+    send(): void {
+      queueMicrotask(() => {
+        this.emit("message", {
+          data: JSON.stringify({ type: "response.created", response: { id: "response-1" } }),
+        });
+        setTimeout(() => this.emit("error", { message: "socket failed after output started" }), 0);
+      });
+    }
+
+    close(): void {
+      this.readyState = 3;
+    }
+
+    private emit(type: string, event: unknown): void {
+      for (const listener of this.listeners.get(type) ?? []) listener(event);
+    }
+  }
+
+  Object.defineProperty(globalThis, "WebSocket", {
+    configurable: true,
+    value: MidstreamFailureWebSocket,
+  });
+  t.after(() => {
+    Object.defineProperty(globalThis, "WebSocket", {
+      configurable: true,
+      value: previousWebSocket,
+    });
+  });
+
+  const fetcher: typeof fetch = async () => {
+    fetches += 1;
+    return new Response(
+      `data: ${JSON.stringify({
+        type: "response.completed",
+        response: { id: "response-2", status: "completed" },
+      })}\n\n`,
+      { status: 200 },
+    );
+  };
+  const transport = new CodexTransport();
+  const options = {
+    apiKey: accessToken(),
+    sessionId: "fallback-session",
+    transport: "websocket-cached" as const,
+    fetch: fetcher,
+  };
+
+  await assert.rejects(
+    async () => {
+      for await (const _event of transport.request(codexModel(), { input: [] }, options)) {
+        // Observe the first event before the transport fails.
+      }
+    },
+    { message: "socket failed after output started" },
+  );
+  for await (const _event of transport.request(codexModel(), { input: [] }, options)) {
+    // The failed session now uses SSE.
+  }
+
+  assert.equal(connections, 1);
+  assert.equal(fetches, 1);
+  transport.close("fallback-session");
 });
 
 void test("scopes cached WebSockets to the authenticated account", async (t) => {

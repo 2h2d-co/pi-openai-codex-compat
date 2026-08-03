@@ -92,8 +92,18 @@ void test("builds the remote-compaction-v2 request and checkpoint history", () =
     type: "compaction_trigger",
   });
   assert.equal(payload.service_tier, "priority");
+  assert.equal(payload.prompt_cache_key, "session-1");
   assert.deepEqual(payload["reasoning"], { effort: "high", summary: "auto" });
   assert.deepEqual(payload.text, { verbosity: "medium" });
+  assert.equal(
+    remoteCompactionPayload({
+      modelId: codexModel.id,
+      history: [user("hello")],
+      instructions: "system prompt",
+      priority: false,
+    }).prompt_cache_key,
+    undefined,
+  );
 
   const installed = installCompactionItem(
     [user("old request"), { type: "message", role: "assistant", content: [] }],
