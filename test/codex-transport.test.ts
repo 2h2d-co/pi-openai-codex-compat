@@ -5,6 +5,7 @@ import {
   CodexTransport,
   requestCodexJson,
   resolveCodexApiUrl,
+  type CodexTransportDiagnostic,
 } from "../extensions/openai-codex-compat/codex-transport.ts";
 import type { JsonRecord } from "../extensions/openai-codex-compat/codex-protocol.ts";
 
@@ -70,6 +71,31 @@ void test("posts authenticated JSON requests to sibling Codex endpoints", async 
   if (typeof requestBody !== "string") throw new Error("expected a JSON request body");
   assert.deepEqual(JSON.parse(requestBody), { id: "session-1" });
   assert.deepEqual(result, { output: "result" });
+});
+
+void test("formats structured errors from sibling Codex endpoints", async () => {
+  await assert.rejects(
+    requestCodexJson(
+      codexModel(),
+      "alpha/search",
+      {},
+      {
+        apiKey: accessToken(),
+        fetch: async () =>
+          new Response(
+            JSON.stringify({
+              error: {
+                code: "usage_limit_reached",
+                message: "limit reached",
+                plan_type: "plus",
+              },
+            }),
+            { status: 429 },
+          ),
+      },
+    ),
+    { message: "You have hit your ChatGPT usage limit (plus plan)." },
+  );
 });
 
 void test("finishes SSE requests when the terminal event arrives before EOF", async () => {
@@ -147,6 +173,159 @@ void test("aligns cache-affinity headers with retention and length limits", asyn
   assert.equal(requestHeaders[0]?.get("x-client-request-id"), requestHeaders[0]?.get("session-id"));
   assert.equal(requestHeaders[1]?.get("session-id"), null);
   assert.equal(requestHeaders[1]?.get("x-client-request-id"), null);
+});
+
+void test("validates transport timeouts and reports SSE header timeouts", async () => {
+  const transport = new CodexTransport();
+  await assert.rejects(
+    async () => {
+      for await (const _event of transport.request(
+        codexModel(),
+        { input: [] },
+        {
+          apiKey: accessToken(),
+          transport: "sse",
+          timeoutMs: -1,
+          fetch: async () => {
+            throw new Error("fetch should not run");
+          },
+        },
+      )) {
+        // Validation fails before the request.
+      }
+    },
+    { message: "Invalid timeoutMs: -1" },
+  );
+
+  await assert.rejects(
+    async () => {
+      for await (const _event of transport.request(
+        codexModel(),
+        { input: [] },
+        {
+          apiKey: accessToken(),
+          transport: "sse",
+          timeoutMs: 5,
+          fetch: async (_input, init) =>
+            new Promise<Response>((_resolve, reject) => {
+              const signal = init?.signal;
+              if (!signal) throw new Error("expected timeout signal");
+              const keepAlive = setTimeout(() => {}, 100);
+              const onAbort = () => {
+                clearTimeout(keepAlive);
+                reject(signal.reason);
+              };
+              if (signal.aborted) onAbort();
+              else signal.addEventListener("abort", onAbort, { once: true });
+            }),
+        },
+      )) {
+        // The response headers never arrive.
+      }
+    },
+    { message: "Codex SSE response headers timed out after 5ms" },
+  );
+});
+
+void test("disables the WebSocket connect timeout when configured as zero", async (t) => {
+  const previousWebSocket = globalThis.WebSocket;
+
+  class PendingWebSocket {
+    addEventListener(): void {}
+    removeEventListener(): void {}
+    send(): void {
+      throw new Error("send should not run before open");
+    }
+    close(): void {}
+  }
+
+  Object.defineProperty(globalThis, "WebSocket", {
+    configurable: true,
+    value: PendingWebSocket,
+  });
+  t.after(() => {
+    Object.defineProperty(globalThis, "WebSocket", {
+      configurable: true,
+      value: previousWebSocket,
+    });
+  });
+
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 10);
+  await assert.rejects(
+    async () => {
+      for await (const _event of new CodexTransport().request(
+        codexModel(),
+        { input: [] },
+        {
+          apiKey: accessToken(),
+          transport: "websocket",
+          websocketConnectTimeoutMs: 0,
+          signal: controller.signal,
+          fetch: async () => {
+            throw new Error("SSE fallback should not run after abort");
+          },
+        },
+      )) {
+        // The request remains pending until explicitly aborted.
+      }
+    },
+    { message: "Request was aborted" },
+  );
+  clearTimeout(timer);
+});
+
+void test("honors server-directed SSE retry delays and their configured cap", async () => {
+  const terminal = `data: ${JSON.stringify({
+    type: "response.completed",
+    response: { id: "response-1", status: "completed" },
+  })}\n\n`;
+  let requests = 0;
+  const transport = new CodexTransport();
+  for await (const _event of transport.request(
+    codexModel(),
+    { input: [] },
+    {
+      apiKey: accessToken(),
+      transport: "sse",
+      maxRetries: 1,
+      fetch: async () => {
+        requests += 1;
+        return requests === 1
+          ? new Response('{"error":{"code":"temporarily_unavailable"}}', {
+              status: 503,
+              headers: { "retry-after-ms": "1" },
+            })
+          : new Response(terminal, { status: 200 });
+      },
+    },
+  )) {
+    // Consume the successful retry.
+  }
+  assert.equal(requests, 2);
+
+  await assert.rejects(
+    async () => {
+      for await (const _event of transport.request(
+        codexModel(),
+        { input: [] },
+        {
+          apiKey: accessToken(),
+          transport: "sse",
+          maxRetries: 3,
+          maxRetryDelayMs: 1_000,
+          fetch: async () =>
+            new Response('{"error":{"code":"temporarily_unavailable"}}', {
+              status: 503,
+              headers: { "retry-after": "2" },
+            }),
+        },
+      )) {
+        // The retry delay is rejected before another request.
+      }
+    },
+    { message: "Server requested 2s retry delay (max: 1s)" },
+  );
 });
 
 void test("reports WebSocket close details and preserves preceding errors", async (t) => {
@@ -299,6 +478,77 @@ void test("retries WebSocket connection limits before output starts", async (t) 
 
   assert.equal(connections, 2);
   assert.equal(events.at(-1)?.type, "response.completed");
+});
+
+void test("does not mask malformed WebSocket events with SSE fallback", async (t) => {
+  const previousWebSocket = globalThis.WebSocket;
+  let fetches = 0;
+
+  class MalformedWebSocket {
+    readyState = 1;
+    private readonly listeners = new Map<string, Set<(event: unknown) => void>>();
+
+    constructor() {
+      queueMicrotask(() => this.emit("open", {}));
+    }
+
+    addEventListener(type: string, listener: (event: unknown) => void): void {
+      const listeners = this.listeners.get(type) ?? new Set();
+      listeners.add(listener);
+      this.listeners.set(type, listeners);
+    }
+
+    removeEventListener(type: string, listener: (event: unknown) => void): void {
+      this.listeners.get(type)?.delete(listener);
+    }
+
+    send(): void {
+      queueMicrotask(() => this.emit("message", { data: "{not-json" }));
+    }
+
+    close(): void {
+      this.readyState = 3;
+    }
+
+    private emit(type: string, event: unknown): void {
+      for (const listener of this.listeners.get(type) ?? []) listener(event);
+    }
+  }
+
+  Object.defineProperty(globalThis, "WebSocket", {
+    configurable: true,
+    value: MalformedWebSocket,
+  });
+  t.after(() => {
+    Object.defineProperty(globalThis, "WebSocket", {
+      configurable: true,
+      value: previousWebSocket,
+    });
+  });
+
+  await assert.rejects(
+    async () => {
+      for await (const _event of new CodexTransport().request(
+        codexModel(),
+        { input: [] },
+        {
+          apiKey: accessToken(),
+          transport: "auto",
+          fetch: async () => {
+            fetches += 1;
+            return new Response();
+          },
+        },
+      )) {
+        // Protocol errors fail instead of duplicating the request over SSE.
+      }
+    },
+    {
+      name: "CodexProtocolError",
+      message: /Invalid Codex WebSocket JSON/,
+    },
+  );
+  assert.equal(fetches, 0);
 });
 
 void test("recovers when a cached WebSocket continuation expires", async (t) => {
@@ -510,6 +760,7 @@ void test("uses sticky SSE fallback after a midstream WebSocket failure", async 
   const previousWebSocket = globalThis.WebSocket;
   let connections = 0;
   let fetches = 0;
+  const diagnostics: CodexTransportDiagnostic[] = [];
 
   class MidstreamFailureWebSocket {
     readyState = 1;
@@ -575,6 +826,9 @@ void test("uses sticky SSE fallback after a midstream WebSocket failure", async 
     sessionId: "fallback-session",
     transport: "websocket-cached" as const,
     fetch: fetcher,
+    onTransportDiagnostic(diagnostic: CodexTransportDiagnostic) {
+      diagnostics.push(diagnostic);
+    },
   };
 
   await assert.rejects(
@@ -591,6 +845,9 @@ void test("uses sticky SSE fallback after a midstream WebSocket failure", async 
 
   assert.equal(connections, 1);
   assert.equal(fetches, 1);
+  assert.equal(diagnostics.length, 1);
+  assert.equal(diagnostics[0]?.details.phase, "after_message_stream_start");
+  assert.equal(diagnostics[0]?.details.fallbackTransport, undefined);
   transport.close("fallback-session");
 });
 

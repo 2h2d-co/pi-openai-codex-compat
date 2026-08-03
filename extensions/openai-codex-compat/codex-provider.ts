@@ -35,7 +35,7 @@ import {
   type ResponsesItem,
 } from "./codex-protocol.ts";
 import { processCodexStream } from "./codex-stream.ts";
-import { CodexTransport } from "./codex-transport.ts";
+import { CodexTransport, type CodexTransportDiagnostic } from "./codex-transport.ts";
 import type { CodexCompatConfig, ImageDetail } from "./config.ts";
 import { nativeResponseData, NATIVE_RESPONSE_ENTRY_TYPE } from "./native-history.ts";
 import {
@@ -613,10 +613,16 @@ export class CodexProviderRuntime {
 
         const rawItems: ResponsesItem[] = [];
         const responseMetadata: { serviceTier?: string } = {};
+        const transportRequestOptions = {
+          ...requestOptions,
+          onTransportDiagnostic(diagnostic: CodexTransportDiagnostic) {
+            output.diagnostics = [...(output.diagnostics ?? []), diagnostic];
+          },
+        };
         stream.push({ type: "start", partial: output });
         await processCodexStream(
           captureRawEvents(
-            this.transport.request(model, body, requestOptions),
+            this.transport.request(model, body, transportRequestOptions),
             rawItems,
             responseMetadata,
           ),

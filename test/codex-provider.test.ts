@@ -9,6 +9,7 @@ import {
   type CodexCompatConfig,
 } from "../extensions/openai-codex-compat/config.ts";
 import type { JsonRecord } from "../extensions/openai-codex-compat/codex-protocol.ts";
+import type { CodexTransportDiagnostic } from "../extensions/openai-codex-compat/codex-transport.ts";
 import { IMAGE_GENERATION_PARAMETERS } from "../extensions/openai-codex-compat/image-generation-schema.ts";
 import { NATIVE_RESPONSE_ENTRY_TYPE } from "../extensions/openai-codex-compat/native-history.ts";
 import { IMAGE_GENERATION_TOOL_NAME } from "../extensions/openai-codex-compat/namespaced-tools.ts";
@@ -253,6 +254,41 @@ void test("honors disabled cache retention when building provider payloads", asy
     .result();
 
   assert.equal(requests[0]?.prompt_cache_key, undefined);
+});
+
+void test("retains recovered transport diagnostics on assistant messages", async () => {
+  const user = userEntry("user-1", "hello");
+  const harness = createHarness([user]);
+  const diagnostic: CodexTransportDiagnostic = {
+    type: "provider_transport_failure",
+    timestamp: Date.now(),
+    error: { name: "Error", message: "WebSocket unavailable" },
+    details: {
+      configuredTransport: "auto",
+      fallbackTransport: "sse",
+      eventsEmitted: false,
+      phase: "before_message_stream_start",
+      requestBytes: 123,
+    },
+  };
+  harness.runtime.transport.request = async function* (_model, _body, options) {
+    options.onTransportDiagnostic?.(diagnostic);
+    yield* textEvents("hello back");
+  };
+
+  const message = await harness.runtime
+    .streamSimple(
+      codexModel(),
+      { messages: [user.message as Context["messages"][number]] },
+      {
+        apiKey: accessToken(),
+        sessionId: "session-1",
+        transport: "auto",
+      },
+    )
+    .result();
+
+  assert.deepEqual(message.diagnostics, [diagnostic]);
 });
 
 void test("transports dotted Pi tools as native Responses namespaces", async () => {
