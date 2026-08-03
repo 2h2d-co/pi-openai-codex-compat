@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import test from "node:test";
 import type { ExtensionAPI, ExtensionContext, SessionEntry } from "@earendil-works/pi-coding-agent";
 import type { Model } from "@earendil-works/pi-ai";
@@ -84,7 +85,7 @@ void test("retains only the latest two visible user turns for standalone search"
   ]);
 });
 
-void test("registers a restricted web.run schema and executes alpha/search", async () => {
+void test("registers the complete reserved web.run schema and executes alpha/search", async () => {
   let tool: any;
   const requests: Array<{
     path: string;
@@ -113,17 +114,26 @@ void test("registers a restricted web.run schema and executes alpha/search", asy
 
   const properties = tool.parameters.properties as Record<string, unknown>;
   assert.deepEqual(Object.keys(properties), [
-    "search_query",
+    "click",
+    "finance",
+    "find",
     "image_query",
     "open",
-    "click",
-    "find",
-    "screenshot",
     "response_length",
+    "screenshot",
+    "search_query",
+    "sports",
+    "time",
+    "weather",
   ]);
-  for (const unsupported of ["finance", "sports", "weather", "time"]) {
-    assert.equal(properties[unsupported], undefined);
-  }
+  assert.equal(
+    createHash("sha256").update(tool.description).digest("hex"),
+    "1f3879b44690eb7aad9ba97351acda16c4d0c26847bcb4af2964d5989404407e",
+  );
+  assert.equal(
+    createHash("sha256").update(JSON.stringify(tool.parameters)).digest("hex"),
+    "08e29981dbaa62bd9dd50c0a8ef24182a00f64e5ce54ff42693e6dbced272911",
+  );
 
   const context = {
     model: codexModel(),
@@ -139,19 +149,18 @@ void test("registers a restricted web.run schema and executes alpha/search", asy
       }),
     },
   } as unknown as ExtensionContext;
-  const result = await tool.execute(
-    "call-web|fc-web",
-    { search_query: [{ q: "Pi" }], response_length: "short" },
-    undefined,
-    undefined,
-    context,
-  );
+  const commands = {
+    search_query: [{ q: "Pi" }],
+    finance: [{ ticker: "AMD", type: "equity", market: "USA" }],
+    sports: [{ fn: "schedule", league: "nba", team: "GSW" }],
+    time: [{ utc_offset: "+03:00" }],
+    weather: [{ location: "United States, California, San Francisco" }],
+    response_length: "short",
+  };
+  const result = await tool.execute("call-web|fc-web", commands, undefined, undefined, context);
 
   assert.equal(requests[0]?.path, "alpha/search");
-  assert.deepEqual(requests[0]?.body["commands"], {
-    search_query: [{ q: "Pi" }],
-    response_length: "short",
-  });
+  assert.deepEqual(requests[0]?.body["commands"], commands);
   assert.deepEqual(requests[0]?.body["settings"], {
     allowed_callers: ["direct"],
     external_web_access: "indexed",

@@ -9,13 +9,14 @@
 - Add a grammar-constrained Codex `apply_patch` tool.
 - Add independently configurable `image_gen.imagegen` and `web.run` tools, enabled by default and transported as native Responses API namespaces.
 - Add Codex Images generation/edit execution with generated PNG persistence under the Pi agent directory.
-- Add standalone `alpha/search` execution with structured result persistence in Pi tool-result details and a restricted schema that omits finance, sports, weather, and time queries.
+- Add standalone `alpha/search` execution with structured result persistence in Pi tool-result details.
 - Add configurable hosted web search, text verbosity, reasoning summaries, and GPT-5.6 standard/pro reasoning mode.
 - Add configurable image tool-result detail with `auto` as the default.
 - Add a dedicated `/codex-settings` pane backed by `openai-codex-compat.json`, including controls for the extension's additional tools.
 
 ### Changed
 
+- Match the complete server-reserved `web.run` description and command schema, including finance, weather, sports, and time operations.
 - Document the package's configurable defaults, architectural differences, known gaps, and unsupported runtime/tool families relative to Codex CLI `0.146.0`.
 - Match the server-reserved `image_gen.imagegen` description and JSON Schema so Codex accepts the tool declaration.
 - Apply fast mode as a priority-tier request modification on the selected `openai-codex` provider.

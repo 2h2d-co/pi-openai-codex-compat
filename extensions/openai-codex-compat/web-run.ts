@@ -1,6 +1,6 @@
+import { readFileSync } from "node:fs";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { StringEnum, type Model } from "@earendil-works/pi-ai";
-import { Type } from "typebox";
+import type { Model } from "@earendil-works/pi-ai";
 import {
   approximateTokens,
   isObject,
@@ -13,114 +13,15 @@ import type { CodexCompatConfig, WebSearchMode } from "./config.ts";
 import { WEB_RUN_TOOL_NAME } from "./namespaced-tools.ts";
 import { isCodexModel } from "./request-options.ts";
 import { codexToolAuthentication, codexToolHistory } from "./tool-runtime.ts";
+import { WEB_RUN_PARAMETERS } from "./web-run-schema.ts";
 
 const SEARCH_ENDPOINT = "alpha/search";
 const SEARCH_OUTPUT_TOKEN_BUDGET = 2_500;
 const ASSISTANT_CONTEXT_TOKEN_BUDGET = 1_000;
 
-const WEB_RUN_DESCRIPTION = `Tool for accessing the internet.
-
-Available commands:
-- search_query: query the internet search engine.
-- image_query: query the image search engine.
-- open: open a result reference or URL, optionally at a line number.
-- click: open a numbered link from a previously opened page.
-- find: locate text within a page.
-- screenshot: capture a zero-indexed PDF page.
-
-Use multiple commands in one call when they can run together, and provide only fields needed by each command. A search_query call supports at most four queries; use medium or long response_length when sending more than three.
-
-Use search for current, unstable, niche, or externally sourced information. Prefer authoritative primary sources for technical claims. Use returned reference IDs only in later web.run operations; final answers should cite direct source links rather than exposing reference IDs.`;
-
-const searchQuery = Type.Object(
-  {
-    q: Type.String({ description: "Search query." }),
-    recency: Type.Optional(
-      Type.Integer({
-        minimum: 0,
-        description: "Filter to results from this many recent days.",
-      }),
-    ),
-    domains: Type.Optional(
-      Type.Array(Type.String(), {
-        description: "Restrict results to these domains.",
-      }),
-    ),
-  },
-  { additionalProperties: false },
-);
-
-const webRunParameters = Type.Object(
-  {
-    search_query: Type.Optional(
-      Type.Array(searchQuery, {
-        description: "Internet search queries.",
-      }),
-    ),
-    image_query: Type.Optional(
-      Type.Array(searchQuery, {
-        description: "Image search queries.",
-      }),
-    ),
-    open: Type.Optional(
-      Type.Array(
-        Type.Object(
-          {
-            ref_id: Type.String({ description: "Result reference id or URL." }),
-            lineno: Type.Optional(
-              Type.Integer({
-                minimum: 0,
-                description: "Line number at which to position the page.",
-              }),
-            ),
-          },
-          { additionalProperties: false },
-        ),
-      ),
-    ),
-    click: Type.Optional(
-      Type.Array(
-        Type.Object(
-          {
-            ref_id: Type.String({ description: "Reference id containing the numbered link." }),
-            id: Type.Integer({ minimum: 0, description: "Numbered link id." }),
-          },
-          { additionalProperties: false },
-        ),
-      ),
-    ),
-    find: Type.Optional(
-      Type.Array(
-        Type.Object(
-          {
-            ref_id: Type.String({ description: "Result reference id or URL." }),
-            pattern: Type.String({ description: "Text pattern to find." }),
-          },
-          { additionalProperties: false },
-        ),
-      ),
-    ),
-    screenshot: Type.Optional(
-      Type.Array(
-        Type.Object(
-          {
-            ref_id: Type.String({ description: "PDF result reference id or URL." }),
-            pageno: Type.Integer({
-              minimum: 0,
-              description: "Zero-indexed PDF page number.",
-            }),
-          },
-          { additionalProperties: false },
-        ),
-      ),
-    ),
-    response_length: Type.Optional(
-      StringEnum(["short", "medium", "long"] as const, {
-        description: "Length of the returned search response.",
-      }),
-    ),
-  },
-  { additionalProperties: false },
+const WEB_RUN_DESCRIPTION = readFileSync(
+  new URL("./web-run-description.txt", import.meta.url),
+  "utf8",
 );
 
 export type WebRunDetails = {
@@ -213,7 +114,7 @@ export default function registerWebRun(
     name: WEB_RUN_TOOL_NAME,
     label: WEB_RUN_TOOL_NAME,
     description: WEB_RUN_DESCRIPTION,
-    parameters: webRunParameters,
+    parameters: WEB_RUN_PARAMETERS,
     executionMode: "parallel",
     async execute(_toolCallId, params, signal, _onUpdate, ctx) {
       const model = ctx.model;
