@@ -150,7 +150,12 @@ function reasoningText(item: JsonRecord): string {
         .join("\n\n")
     : "";
   if (summary) return summary;
-  return itemContentText(item);
+  return Array.isArray(item.content)
+    ? item.content
+        .filter(isObject)
+        .map((part) => (typeof part.text === "string" ? part.text : ""))
+        .join("\n\n")
+    : "";
 }
 
 function normalizeCodexStatus(status: unknown): CodexResponseStatus | undefined {
@@ -187,6 +192,11 @@ export async function processCodexStream(
   let terminal = false;
   const slots = new Map<number, OutputSlot>();
   const reasoningById = new Map<string, ThinkingContent>();
+  const applyMessagePhaseStopReason = (item: JsonRecord): void => {
+    if (item.type === "message" && item["phase"] === "final_answer") {
+      output.stopReason = "stop";
+    }
+  };
 
   const getSlot = <TType extends OutputSlot["type"]>(
     index: number,
@@ -220,6 +230,7 @@ export async function processCodexStream(
       return slot;
     }
     if (item.type === "message") {
+      applyMessagePhaseStopReason(item);
       const block: TextContent = { type: "text", text: "" };
       output.content.push(block);
       const slot = {
@@ -408,8 +419,10 @@ export async function processCodexStream(
       const previous = slot.block.partialJson;
       slot.block.partialJson = event.arguments;
       slot.block.arguments = parseStreamingJson(event.arguments);
-      if (event.arguments.startsWith(previous))
-        pushToolDelta(slot, event.arguments.slice(previous.length));
+      if (event.arguments.startsWith(previous)) {
+        const delta = event.arguments.slice(previous.length);
+        if (delta.length > 0) pushToolDelta(slot, delta);
+      }
     } else if (event.type === "response.custom_tool_call_input.delta") {
       const slot = getSlot(index, "toolCall");
       if (!slot || typeof event["delta"] !== "string") continue;
@@ -423,6 +436,7 @@ export async function processCodexStream(
       pushToolDelta(slot, appendCustomInput(slot.block, event["input"], true));
     } else if (event.type === "response.output_item.done" && isObject(event.item)) {
       const item = event.item;
+      applyMessagePhaseStopReason(item);
       const slot = slotFor(index, item);
       if (item.type === "reasoning" && slot?.type === "thinking") {
         slot.block.thinking = reasoningText(item) || slot.block.thinking;

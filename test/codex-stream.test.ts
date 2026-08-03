@@ -3,6 +3,7 @@ import test from "node:test";
 import {
   createAssistantMessageEventStream,
   type AssistantMessage,
+  type AssistantMessageEventStream,
   type Model,
 } from "@earendil-works/pi-ai";
 import { processCodexStream } from "../extensions/openai-codex-compat/codex-stream.ts";
@@ -182,6 +183,114 @@ void test("maps allowlisted Responses namespace calls to dotted Pi tool names", 
   const toolCall = message.content.find((block) => block.type === "toolCall");
   assert.equal(toolCall?.name, "web.run");
   assert.deepEqual(toolCall?.arguments, { search_query: [{ q: "Pi" }] });
+});
+
+void test("matches Pi AI phase, reasoning, and final tool-delta events", async () => {
+  const message = output();
+  const pushed: Array<{ type: string; delta?: string; stopReason?: string }> = [];
+  const stream = {
+    push(event: { type: string; delta?: string; partial?: AssistantMessage }) {
+      pushed.push({
+        type: event.type,
+        ...(event.delta === undefined ? {} : { delta: event.delta }),
+        ...(event.partial ? { stopReason: event.partial.stopReason } : {}),
+      });
+    },
+  } as AssistantMessageEventStream;
+
+  await processCodexStream(
+    events([
+      {
+        type: "response.output_item.added",
+        output_index: 0,
+        item: {
+          type: "message",
+          id: "msg_final",
+          role: "assistant",
+          phase: "final_answer",
+          content: [],
+        },
+      },
+      {
+        type: "response.output_item.done",
+        output_index: 0,
+        item: {
+          type: "message",
+          id: "msg_final",
+          role: "assistant",
+          phase: "final_answer",
+          content: [{ type: "output_text", text: "Done" }],
+        },
+      },
+      {
+        type: "response.output_item.done",
+        output_index: 1,
+        item: {
+          type: "reasoning",
+          id: "rs_parts",
+          summary: [],
+          content: [
+            { type: "reasoning_text", text: "First" },
+            { type: "reasoning_text", text: "Second" },
+          ],
+        },
+      },
+      {
+        type: "response.output_item.added",
+        output_index: 2,
+        item: {
+          type: "function_call",
+          id: "fc_tool",
+          call_id: "call_tool",
+          name: "tool",
+          arguments: "",
+        },
+      },
+      {
+        type: "response.function_call_arguments.delta",
+        output_index: 2,
+        delta: '{"value":1}',
+      },
+      {
+        type: "response.function_call_arguments.done",
+        output_index: 2,
+        arguments: '{"value":1}',
+      },
+      {
+        type: "response.output_item.done",
+        output_index: 2,
+        item: {
+          type: "function_call",
+          id: "fc_tool",
+          call_id: "call_tool",
+          name: "tool",
+          arguments: '{"value":1}',
+        },
+      },
+      {
+        type: "response.completed",
+        response: {
+          id: "resp_details",
+          status: "completed",
+          usage: { input_tokens: 1, output_tokens: 1, total_tokens: 2 },
+        },
+      },
+    ]),
+    message,
+    stream,
+    model,
+    new Map(),
+  );
+
+  assert.equal(pushed.find((event) => event.type === "text_start")?.stopReason, "stop");
+  assert.equal(
+    message.content.find((block) => block.type === "thinking")?.thinking,
+    "First\n\nSecond",
+  );
+  assert.deepEqual(
+    pushed.filter((event) => event.type === "toolcall_delta").map((event) => event.delta),
+    ['{"value":1}'],
+  );
 });
 
 void test("rejects unknown and flat namespace tool calls", async () => {
