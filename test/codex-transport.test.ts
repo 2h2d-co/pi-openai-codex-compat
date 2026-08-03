@@ -519,13 +519,22 @@ void test("reports WebSocket close details and preserves preceding errors", asyn
 void test("retries WebSocket connection limits before output starts", async (t) => {
   const previousWebSocket = globalThis.WebSocket;
   let connections = 0;
+  const requestIds: string[] = [];
 
   class ConnectionLimitWebSocket {
     readyState = 1;
     private readonly limited: boolean;
     private readonly listeners = new Map<string, Set<(event: unknown) => void>>();
 
-    constructor() {
+    constructor(
+      _url: string,
+      protocols?: string | string[] | { headers?: Record<string, string> },
+    ) {
+      const headers =
+        protocols && typeof protocols === "object" && !Array.isArray(protocols)
+          ? protocols.headers
+          : undefined;
+      requestIds.push(headers?.["session-id"] ?? "");
       this.limited = connections++ === 0;
       queueMicrotask(() => this.emit("open", {}));
     }
@@ -580,6 +589,11 @@ void test("retries WebSocket connection limits before output starts", async (t) 
   }
 
   assert.equal(connections, 2);
+  assert.equal(requestIds[0], requestIds[1]);
+  assert.match(
+    requestIds[0] ?? "",
+    /^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/,
+  );
   assert.equal(events.at(-1)?.type, "response.completed");
 });
 

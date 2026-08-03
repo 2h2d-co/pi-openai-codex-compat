@@ -6,6 +6,7 @@ import {
   type OpenAICodexResponsesOptions,
   type ProviderEnv,
   type ProviderHeaders,
+  uuidv7,
 } from "@earendil-works/pi-ai";
 import { isObject, type JsonRecord } from "./codex-protocol.ts";
 import { normalizeReplayItem, replayItemsEqual, stableResponsesJson } from "./responses-replay.ts";
@@ -1134,7 +1135,7 @@ export class CodexTransport {
         options.headers,
         accountId,
         options.apiKey,
-        requestId ?? crypto.randomUUID(),
+        requestId ?? uuidv7(),
       );
       let retriedConnectionLimit = false;
       let retriedMissingContinuation = false;
