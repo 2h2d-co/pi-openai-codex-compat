@@ -304,5 +304,5 @@ void test("registers the complete reserved web.run schema and executes alpha/sea
       .render(100)
       .join("\n"),
   );
-  assert.match(expandedNavigation, /L10: expanded page content/);
+  assert.match(expandedNavigation, /L10\s+│ expanded page content/);
 });

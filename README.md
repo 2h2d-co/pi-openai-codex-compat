@@ -284,7 +284,7 @@ The package registers the dotted Pi tool name `web.run` and serializes it as a n
 
 Structured `results` are not sent to the model by either implementation. Codex stores them in extension-backed web-search events; this package stores the equivalent opaque JSON branch-locally in Pi tool-result `details`. Extensions and session readers can inspect those details, while subsequent `web.run` calls resolve model-visible reference IDs through `alpha/search` rather than querying the details directly.
 
-The collapsed TUI view shows the operation, result/source count, and a short domain summary instead of the raw search payload. `Ctrl+O` expands structured source cards with titles, reference IDs, URLs, and snippets. Operations without structured results, such as opening a page, expose their plaintext response only in the expanded view.
+The collapsed TUI view provides action-specific summaries for search, image search, page navigation, in-page find, PDF screenshots, finance, weather, sports, and time. `Ctrl+O` expands structured source or image cards, page metadata with line/page gutters, PDF page cards, operation-specific result cards, and readable labeled fields for forward-compatible result types. Citation markers and backend separators are normalized for display, while empty or unavailable operations use compact warning states instead of appearing successful.
 
 The exposed command schema includes:
 

@@ -2,54 +2,54 @@ import { Type } from "typebox";
 
 export type WebRunSearchQuery = {
   q: string;
-  recency?: number;
-  domains?: string[];
+  recency?: number | null;
+  domains?: string[] | null;
 };
 
 export type WebRunCommands = {
-  search_query?: WebRunSearchQuery[];
-  image_query?: WebRunSearchQuery[];
+  search_query?: WebRunSearchQuery[] | null;
+  image_query?: WebRunSearchQuery[] | null;
   open?: Array<{
     ref_id: string;
-    lineno?: number;
-  }>;
+    lineno?: number | null;
+  }> | null;
   click?: Array<{
     ref_id: string;
     id: number;
-  }>;
+  }> | null;
   find?: Array<{
     ref_id: string;
     pattern: string;
-  }>;
+  }> | null;
   screenshot?: Array<{
     ref_id: string;
     pageno: number;
-  }>;
+  }> | null;
   finance?: Array<{
     ticker: string;
     type: "equity" | "fund" | "crypto" | "index";
-    market?: string;
-  }>;
+    market?: string | null;
+  }> | null;
   weather?: Array<{
     location: string;
-    start?: string;
-    duration?: number;
-  }>;
+    start?: string | null;
+    duration?: number | null;
+  }> | null;
   sports?: Array<{
-    tool?: "sports";
+    tool?: "sports" | null;
     fn: "schedule" | "standings";
     league: "nba" | "wnba" | "nfl" | "nhl" | "mlb" | "epl" | "ncaamb" | "ncaawb" | "ipl";
-    team?: string;
-    opponent?: string;
-    date_from?: string;
-    date_to?: string;
-    num_games?: number;
-    locale?: string;
-  }>;
+    team?: string | null;
+    opponent?: string | null;
+    date_from?: string | null;
+    date_to?: string | null;
+    num_games?: number | null;
+    locale?: string | null;
+  }> | null;
   time?: Array<{
     utc_offset: string;
-  }>;
-  response_length?: "short" | "medium" | "long";
+  }> | null;
+  response_length?: "short" | "medium" | "long" | null;
 };
 
 /**
