@@ -929,43 +929,38 @@ async function* requestSse(
   if (compressed) headers.set("content-encoding", "zstd");
   const requestBody = compressed ?? bodyJson;
   const maxRetries = options.maxRetries ?? DEFAULT_MAX_RETRIES;
+  let response: Response | undefined;
+  let lastError: Error | undefined;
 
   for (let attempt = 0; attempt <= maxRetries; attempt++) {
     if (options.signal?.aborted) throw new Error("Request was aborted");
-    const timeoutSignal =
-      timeoutMs !== undefined && timeoutMs > 0 ? AbortSignal.timeout(timeoutMs) : undefined;
-    const combined = combineAbortSignals([options.signal, timeoutSignal]);
-    let response: Response;
     try {
+      const timeoutSignal =
+        timeoutMs !== undefined && timeoutMs > 0 ? AbortSignal.timeout(timeoutMs) : undefined;
+      const combined = combineAbortSignals([options.signal, timeoutSignal]);
       try {
-        response = await (options.fetch ?? globalThis.fetch)(resolveCodexUrl(model.baseUrl), {
-          method: "POST",
-          headers,
-          body: requestBody,
-          ...(combined.signal ? { signal: combined.signal } : {}),
-        });
-      } catch (error) {
-        if (options.signal?.aborted) throw new Error("Request was aborted");
-        const failure =
-          timeoutSignal?.aborted && !options.signal?.aborted
-            ? new Error(`Codex SSE response headers timed out after ${String(timeoutMs)}ms`)
-            : error instanceof Error
-              ? error
-              : new Error(String(error));
-        if (attempt < maxRetries && !options.signal?.aborted) {
-          await sleep(BASE_DELAY_MS * 2 ** attempt, options.signal);
-          continue;
+        try {
+          response = await (options.fetch ?? globalThis.fetch)(resolveCodexUrl(model.baseUrl), {
+            method: "POST",
+            headers,
+            body: requestBody,
+            ...(combined.signal ? { signal: combined.signal } : {}),
+          });
+        } catch (error) {
+          if (timeoutSignal?.aborted && !options.signal?.aborted) {
+            throw new Error(`Codex SSE response headers timed out after ${String(timeoutMs)}ms`);
+          }
+          throw error;
         }
-        throw failure;
+      } finally {
+        combined.cleanup();
       }
-    } finally {
-      combined.cleanup();
-    }
-    await options.onResponse?.(
-      { status: response.status, headers: headersToRecord(response.headers) },
-      model,
-    );
-    if (!response.ok) {
+      await options.onResponse?.(
+        { status: response.status, headers: headersToRecord(response.headers) },
+        model,
+      );
+      if (response.ok) break;
+
       const errorText = await response.text();
       if (attempt < maxRetries && isRetryable(response.status, errorText)) {
         const requestedDelay = retryDelayMs(response.headers);
@@ -977,14 +972,34 @@ async function* requestSse(
         continue;
       }
       throw codexHttpError(response.status, response.statusText, errorText);
+    } catch (error) {
+      if (
+        options.signal?.aborted ||
+        (error instanceof Error &&
+          (error.name === "AbortError" || error.message === "Request was aborted"))
+      ) {
+        throw new Error("Request was aborted");
+      }
+      lastError = error instanceof Error ? error : new Error(String(error));
+      if (
+        attempt < maxRetries &&
+        !(lastError instanceof RetryDelayExceededError) &&
+        !lastError.message.includes("usage limit")
+      ) {
+        await sleep(BASE_DELAY_MS * 2 ** attempt, options.signal);
+        continue;
+      }
+      throw lastError;
     }
-    options.onTransportStart?.();
-    for await (const event of parseSse(response, options.signal)) {
-      const normalized = normalizeEvent(event);
-      yield normalized;
-      if (isTerminalEvent(normalized)) return;
-    }
-    return;
+  }
+
+  if (!response?.ok) throw lastError ?? new Error("Failed after retries");
+  if (!response.body) throw new Error("No response body");
+  options.onTransportStart?.();
+  for await (const event of parseSse(response, options.signal)) {
+    const normalized = normalizeEvent(event);
+    yield normalized;
+    if (isTerminalEvent(normalized)) return;
   }
 }
 

@@ -24,6 +24,7 @@
 - Distinguish output-token truncation from other incomplete Codex responses and preserve the provider's incomplete reason.
 - Match Pi AI's Codex stream lifecycle by delaying `start` until transport readiness, cleaning parser scratch state on failure, and normalizing structured or non-Error failures.
 - Honor every non-undefined payload replacement and reject missing `streamSimple` authentication synchronously, matching Pi AI.
+- Match Pi AI's configured SSE retry behavior for callback, body-read, and otherwise non-terminal response-acquisition failures.
 
 ## 0.0.2 - 2026-08-03
 

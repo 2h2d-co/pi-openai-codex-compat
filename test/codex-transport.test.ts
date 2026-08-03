@@ -350,6 +350,87 @@ void test("honors server-directed SSE retry delays and their configured cap", as
   );
 });
 
+void test("retries non-transient SSE response errors when configured like Pi AI", async () => {
+  const terminal = `data: ${JSON.stringify({
+    type: "response.completed",
+    response: { id: "response-1", status: "completed" },
+  })}\n\n`;
+  let requests = 0;
+  for await (const _event of new CodexTransport().request(
+    codexModel(),
+    { input: [] },
+    {
+      apiKey: accessToken(),
+      transport: "sse",
+      maxRetries: 1,
+      fetch: async () => {
+        requests += 1;
+        return requests === 1
+          ? new Response('{"error":{"code":"invalid_request","message":"bad request"}}', {
+              status: 400,
+            })
+          : new Response(terminal, { status: 200 });
+      },
+    },
+  )) {
+    // Consume the successful retry.
+  }
+
+  assert.equal(requests, 2);
+});
+
+void test("normalizes AbortError without retrying", async () => {
+  let requests = 0;
+  await assert.rejects(
+    async () => {
+      for await (const _event of new CodexTransport().request(
+        codexModel(),
+        { input: [] },
+        {
+          apiKey: accessToken(),
+          transport: "sse",
+          maxRetries: 2,
+          fetch: async () => {
+            requests += 1;
+            const error = new Error("custom abort");
+            error.name = "AbortError";
+            throw error;
+          },
+        },
+      )) {
+        // AbortError stops acquisition immediately.
+      }
+    },
+    { message: "Request was aborted" },
+  );
+  assert.equal(requests, 1);
+});
+
+void test("does not retry SSE protocol errors after streaming starts", async () => {
+  let requests = 0;
+  await assert.rejects(
+    async () => {
+      for await (const _event of new CodexTransport().request(
+        codexModel(),
+        { input: [] },
+        {
+          apiKey: accessToken(),
+          transport: "sse",
+          maxRetries: 1,
+          fetch: async () => {
+            requests += 1;
+            return new Response("data: {not-json}\n\n", { status: 200 });
+          },
+        },
+      )) {
+        // Protocol errors after response acquisition are terminal.
+      }
+    },
+    { name: "CodexProtocolError" },
+  );
+  assert.equal(requests, 1);
+});
+
 void test("reports WebSocket close details and preserves preceding errors", async (t) => {
   const previousWebSocket = globalThis.WebSocket;
   let failureMode: "close" | "error-then-close" = "close";
