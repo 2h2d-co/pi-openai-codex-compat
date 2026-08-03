@@ -181,7 +181,36 @@ Defaults:
 | `reasoningSummary`     | `auto`, `concise`, `detailed`, `off`                 | `auto`     | Sets `reasoning.summary` when reasoning is enabled; `off` omits the summary parameter.                                                                                                                                                    |
 | `reasoningMode`        | `standard`, `pro`                                    | `standard` | Sets `reasoning.mode` on GPT-5.6 models independently of Pi's reasoning-effort control.                                                                                                                                                   |
 
-Invalid values are ignored and invalid JSON does not prevent Pi from starting. The settings pane never writes on ordinary changes, refuses to overwrite invalid JSON when `Enter` or `Ctrl+S` attempts to save, and retains unknown keys when saving. Project configuration is read only when the project is trusted.
+Invalid JSON setting values are ignored and invalid JSON does not prevent Pi from starting. The settings pane never writes on ordinary changes, refuses to overwrite invalid JSON when `Enter` or `Ctrl+S` attempts to save, and retains unknown keys when saving. Project configuration is read only when the project is trusted.
+
+Every setting can also be overridden for one Pi process with an environment variable:
+
+| Setting                | Environment variable                             |
+| ---------------------- | ------------------------------------------------ |
+| `fastMode`             | `PI_OPENAI_CODEX_COMPAT_FAST_MODE`               |
+| `toolBackground`       | `PI_OPENAI_CODEX_COMPAT_TOOL_BACKGROUND`         |
+| `applyPatch`           | `PI_OPENAI_CODEX_COMPAT_APPLY_PATCH`             |
+| `imageGeneration`      | `PI_OPENAI_CODEX_COMPAT_IMAGE_GENERATION`        |
+| `imageDetail`          | `PI_OPENAI_CODEX_COMPAT_IMAGE_DETAIL`            |
+| `webRun`               | `PI_OPENAI_CODEX_COMPAT_WEB_RUN`                 |
+| `autoCompactAtPercent` | `PI_OPENAI_CODEX_COMPAT_AUTO_COMPACT_AT_PERCENT` |
+| `webSearch`            | `PI_OPENAI_CODEX_COMPAT_WEB_SEARCH`              |
+| `textVerbosity`        | `PI_OPENAI_CODEX_COMPAT_TEXT_VERBOSITY`          |
+| `reasoningSummary`     | `PI_OPENAI_CODEX_COMPAT_REASONING_SUMMARY`       |
+| `reasoningMode`        | `PI_OPENAI_CODEX_COMPAT_REASONING_MODE`          |
+
+Environment variables have the highest precedence: defaults < global JSON < trusted-project JSON < environment. Boolean values accept `true`/`false`, `1`/`0`, or `on`/`off`. Other settings use the values in the defaults table; `PI_OPENAI_CODEX_COMPAT_AUTO_COMPACT_AT_PERCENT=off` explicitly selects Pi's default compaction lifecycle.
+
+Environment-controlled rows are marked `(env)` and locked in `/codex-settings`. Saving the pane does not copy their effective values into JSON, so CLI overrides remain transient. Invalid environment values fail fast with the variable name and accepted values.
+
+For example:
+
+```bash
+PI_OPENAI_CODEX_COMPAT_WEB_RUN=off \
+PI_OPENAI_CODEX_COMPAT_IMAGE_DETAIL=high \
+PI_OPENAI_CODEX_COMPAT_AUTO_COMPACT_AT_PERCENT=90 \
+pi
+```
 
 ## Native compaction
 

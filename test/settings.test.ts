@@ -10,6 +10,7 @@ import {
 } from "@earendil-works/pi-coding-agent";
 import type { Model } from "@earendil-works/pi-ai";
 import {
+  CONFIG_ENVIRONMENT_VARIABLES,
   CONFIG_FILE,
   DEFAULT_CONFIG,
   configLayer,
@@ -152,6 +153,23 @@ void test("exposes every request and tool control in the settings pane", () => {
     )?.id,
     "gpt-5.6-sol • xhigh • fast • pro • verbosity high • summary detailed",
   );
+});
+
+void test("marks environment-controlled settings as locked", () => {
+  const items = settingItems(
+    { ...DEFAULT_CONFIG, fastMode: true, autoCompactAtPercent: 90 },
+    { fastMode: true, autoCompactAtPercent: 90 },
+  );
+  const fastMode = items.find((item) => item.id === "fastMode");
+  const threshold = items.find((item) => item.id === "autoCompactAtPercent");
+  const applyPatch = items.find((item) => item.id === "applyPatch");
+
+  assert.equal(fastMode?.currentValue, "on (env)");
+  assert.equal(fastMode?.values, undefined);
+  assert.match(fastMode?.description ?? "", new RegExp(CONFIG_ENVIRONMENT_VARIABLES.fastMode));
+  assert.equal(threshold?.currentValue, "90% (env)");
+  assert.equal(threshold?.values, undefined);
+  assert.deepEqual(applyPatch?.values, ["off", "on"]);
 });
 
 void test("saves on Enter or Ctrl+S and discards unsaved changes on Escape", async (t) => {

@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Added
+
+- Add transient `PI_OPENAI_CODEX_COMPAT_*` environment overrides for every compatibility setting.
+
 ### Changed
 
 - Make `Enter` save and close `/codex-settings`, make `Escape` discard unsaved changes and close, and retain `Ctrl+S` as save without closing.

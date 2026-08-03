@@ -13,9 +13,12 @@ import {
   truncateToWidth,
 } from "@earendil-works/pi-tui";
 import {
+  CONFIG_ENVIRONMENT_VARIABLES,
   configLayer,
   loadConfig,
+  parseEnvironmentConfig,
   saveConfig,
+  withoutEnvironmentOverrides,
   writableConfigPath,
   type CodexCompatConfig,
   type ConfigLayer,
@@ -49,8 +52,11 @@ function thresholdValue(value: number | undefined): string {
   return value === undefined ? "Pi default" : `${value}%`;
 }
 
-export function settingItems(config: CodexCompatConfig): SettingItem[] {
-  return [
+export function settingItems(
+  config: CodexCompatConfig,
+  environmentConfig: ConfigLayer = {},
+): SettingItem[] {
+  const items: SettingItem[] = [
     {
       id: "fastMode",
       label: "Fast mode",
@@ -131,6 +137,18 @@ export function settingItems(config: CodexCompatConfig): SettingItem[] {
       values: ["Pi default", "75%", "80%", "85%", "90%", "95%"],
     },
   ];
+
+  return items.map((item) => {
+    const id = item.id as SettingId;
+    if (!Object.hasOwn(environmentConfig, id)) return item;
+
+    const variable = CONFIG_ENVIRONMENT_VARIABLES[id];
+    const lockedItem = { ...item };
+    lockedItem.currentValue = `${item.currentValue} (env)`;
+    lockedItem.description = `${item.description} Locked by ${variable}.`;
+    delete lockedItem.values;
+    return lockedItem;
+  });
 }
 
 export function settingPatch(id: string, value: string): ConfigLayer | undefined {
@@ -218,6 +236,7 @@ async function showSettings(
   let savedRevision = 0;
   let saveQueue = Promise.resolve();
   const filePath = writableConfigPath(ctx.cwd, ctx.isProjectTrusted());
+  const environmentConfig = parseEnvironmentConfig();
 
   await ctx.ui.custom((tui, theme, keybindings, done) => {
     let closing = false;
@@ -240,7 +259,7 @@ async function showSettings(
       if (closeAfterSave) closing = true;
 
       const snapshotConfig = { ...config };
-      const snapshot = configLayer(snapshotConfig);
+      const snapshot = withoutEnvironmentOverrides(configLayer(snapshotConfig), environmentConfig);
       const snapshotRevision = revision;
       saveStatus.setText(theme.fg("dim", closeAfterSave ? "Saving and closing…" : "Saving…"));
       saveQueue = saveQueue.then(async () => {
@@ -287,7 +306,7 @@ async function showSettings(
 
     const listTheme = getSettingsListTheme();
     const list = new SettingsList(
-      settingItems(config),
+      settingItems(config, environmentConfig),
       12,
       listTheme,
       (id, value) => {

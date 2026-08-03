@@ -2,9 +2,12 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import type { AssistantMessage, Model } from "@earendil-works/pi-ai";
 import {
+  CONFIG_ENVIRONMENT_VARIABLES,
   DEFAULT_CONFIG,
+  parseEnvironmentConfig,
   parseConfig,
   resolveConfig,
+  withoutEnvironmentOverrides,
 } from "../extensions/openai-codex-compat/config.ts";
 import type { JsonRecord } from "../extensions/openai-codex-compat/codex-protocol.ts";
 import {
@@ -78,6 +81,72 @@ void test("validates and layers Codex compatibility configuration", () => {
       reasoningMode: "pro",
     },
   );
+});
+
+void test("parses environment overrides with highest precedence", () => {
+  const environmentConfig = parseEnvironmentConfig({
+    [CONFIG_ENVIRONMENT_VARIABLES.fastMode]: "on",
+    [CONFIG_ENVIRONMENT_VARIABLES.applyPatch]: "0",
+    [CONFIG_ENVIRONMENT_VARIABLES.toolBackground]: "status",
+    [CONFIG_ENVIRONMENT_VARIABLES.imageGeneration]: "false",
+    [CONFIG_ENVIRONMENT_VARIABLES.imageDetail]: "original",
+    [CONFIG_ENVIRONMENT_VARIABLES.webRun]: "1",
+    [CONFIG_ENVIRONMENT_VARIABLES.autoCompactAtPercent]: "87.5",
+    [CONFIG_ENVIRONMENT_VARIABLES.webSearch]: "live",
+    [CONFIG_ENVIRONMENT_VARIABLES.textVerbosity]: "high",
+    [CONFIG_ENVIRONMENT_VARIABLES.reasoningSummary]: "detailed",
+    [CONFIG_ENVIRONMENT_VARIABLES.reasoningMode]: "pro",
+  });
+
+  assert.deepEqual(environmentConfig, {
+    fastMode: true,
+    applyPatch: false,
+    toolBackground: "status",
+    imageGeneration: false,
+    imageDetail: "original",
+    webRun: true,
+    autoCompactAtPercent: 87.5,
+    webSearch: "live",
+    textVerbosity: "high",
+    reasoningSummary: "detailed",
+    reasoningMode: "pro",
+  });
+  assert.deepEqual(
+    resolveConfig(
+      { fastMode: false, autoCompactAtPercent: 80 },
+      { fastMode: false, autoCompactAtPercent: 90 },
+      environmentConfig,
+    ),
+    {
+      ...DEFAULT_CONFIG,
+      ...environmentConfig,
+    },
+  );
+  assert.deepEqual(
+    parseEnvironmentConfig({
+      [CONFIG_ENVIRONMENT_VARIABLES.autoCompactAtPercent]: "off",
+    }),
+    { autoCompactAtPercent: null },
+  );
+  assert.throws(
+    () =>
+      parseEnvironmentConfig({
+        [CONFIG_ENVIRONMENT_VARIABLES.imageDetail]: "medium",
+      }),
+    /PI_OPENAI_CODEX_COMPAT_IMAGE_DETAIL/,
+  );
+
+  const persisted = withoutEnvironmentOverrides(
+    {
+      ...environmentConfig,
+      autoCompactAtPercent: 87.5,
+      webSearch: "cached",
+    },
+    { fastMode: true, autoCompactAtPercent: null },
+  );
+  assert.equal(Object.hasOwn(persisted, "fastMode"), false);
+  assert.equal(Object.hasOwn(persisted, "autoCompactAtPercent"), false);
+  assert.equal(persisted.webSearch, "cached");
 });
 
 void test("applies priority, GPT-5.6 reasoning mode, and native request controls", () => {

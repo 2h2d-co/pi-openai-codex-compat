@@ -11,6 +11,8 @@ export type ReasoningMode = "standard" | "pro";
 export type ImageDetail = "auto" | "low" | "high" | "original";
 export type CodexToolBackground = "subtle" | "status" | "none";
 
+export const ENV_PREFIX = "PI_OPENAI_CODEX_COMPAT_";
+
 export interface CodexCompatConfig {
   /** Send OpenAI Codex requests through the priority service tier. */
   fastMode: boolean;
@@ -35,6 +37,20 @@ export interface CodexCompatConfig {
   reasoningSummary: ReasoningSummary;
   reasoningMode: ReasoningMode;
 }
+
+export const CONFIG_ENVIRONMENT_VARIABLES = {
+  fastMode: `${ENV_PREFIX}FAST_MODE`,
+  applyPatch: `${ENV_PREFIX}APPLY_PATCH`,
+  toolBackground: `${ENV_PREFIX}TOOL_BACKGROUND`,
+  imageGeneration: `${ENV_PREFIX}IMAGE_GENERATION`,
+  imageDetail: `${ENV_PREFIX}IMAGE_DETAIL`,
+  webRun: `${ENV_PREFIX}WEB_RUN`,
+  autoCompactAtPercent: `${ENV_PREFIX}AUTO_COMPACT_AT_PERCENT`,
+  webSearch: `${ENV_PREFIX}WEB_SEARCH`,
+  textVerbosity: `${ENV_PREFIX}TEXT_VERBOSITY`,
+  reasoningSummary: `${ENV_PREFIX}REASONING_SUMMARY`,
+  reasoningMode: `${ENV_PREFIX}REASONING_MODE`,
+} as const satisfies Record<keyof CodexCompatConfig, string>;
 
 export type ConfigLayer = {
   fastMode?: boolean;
@@ -71,8 +87,132 @@ const REASONING_MODES = new Set<ReasoningMode>(["standard", "pro"]);
 const IMAGE_DETAILS = new Set<ImageDetail>(["auto", "low", "high", "original"]);
 const CODEX_TOOL_BACKGROUNDS = new Set<CodexToolBackground>(["subtle", "status", "none"]);
 
+type Environment = Readonly<Record<string, string | undefined>>;
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+function invalidEnvironmentValue(name: string, value: string, expected: string): never {
+  throw new Error(`Invalid ${name}=${JSON.stringify(value)}; expected ${expected}`);
+}
+
+function environmentBoolean(environment: Environment, name: string): boolean | undefined {
+  const raw = environment[name];
+  if (raw === undefined) return undefined;
+
+  switch (raw.trim().toLowerCase()) {
+    case "1":
+    case "on":
+    case "true":
+      return true;
+    case "0":
+    case "off":
+    case "false":
+      return false;
+    default:
+      return invalidEnvironmentValue(name, raw, "true, false, 1, 0, on, or off");
+  }
+}
+
+function environmentEnum<T extends string>(
+  environment: Environment,
+  name: string,
+  values: ReadonlySet<T>,
+): T | undefined {
+  const raw = environment[name];
+  if (raw === undefined) return undefined;
+
+  const value = raw.trim();
+  if (values.has(value as T)) return value as T;
+  return invalidEnvironmentValue(name, raw, [...values].join(", "));
+}
+
+/**
+ * Parse explicit process-level overrides. Unlike invalid JSON settings, invalid
+ * environment values fail fast so a CLI test cannot silently exercise a
+ * different configuration than requested.
+ */
+export function parseEnvironmentConfig(environment: Environment = process.env): ConfigLayer {
+  const layer: ConfigLayer = {};
+
+  const fastMode = environmentBoolean(environment, CONFIG_ENVIRONMENT_VARIABLES.fastMode);
+  if (fastMode !== undefined) layer.fastMode = fastMode;
+
+  const applyPatch = environmentBoolean(environment, CONFIG_ENVIRONMENT_VARIABLES.applyPatch);
+  if (applyPatch !== undefined) layer.applyPatch = applyPatch;
+
+  const toolBackground = environmentEnum(
+    environment,
+    CONFIG_ENVIRONMENT_VARIABLES.toolBackground,
+    CODEX_TOOL_BACKGROUNDS,
+  );
+  if (toolBackground !== undefined) layer.toolBackground = toolBackground;
+
+  const imageGeneration = environmentBoolean(
+    environment,
+    CONFIG_ENVIRONMENT_VARIABLES.imageGeneration,
+  );
+  if (imageGeneration !== undefined) layer.imageGeneration = imageGeneration;
+
+  const imageDetail = environmentEnum(
+    environment,
+    CONFIG_ENVIRONMENT_VARIABLES.imageDetail,
+    IMAGE_DETAILS,
+  );
+  if (imageDetail !== undefined) layer.imageDetail = imageDetail;
+
+  const webRun = environmentBoolean(environment, CONFIG_ENVIRONMENT_VARIABLES.webRun);
+  if (webRun !== undefined) layer.webRun = webRun;
+
+  const thresholdName = CONFIG_ENVIRONMENT_VARIABLES.autoCompactAtPercent;
+  const rawThreshold = environment[thresholdName];
+  if (rawThreshold !== undefined) {
+    const value = rawThreshold.trim();
+    if (value.toLowerCase() === "off") {
+      layer.autoCompactAtPercent = null;
+    } else {
+      const threshold = Number(value);
+      if (value.length === 0 || !Number.isFinite(threshold) || threshold <= 0 || threshold > 100) {
+        invalidEnvironmentValue(
+          thresholdName,
+          rawThreshold,
+          "a number greater than 0 and at most 100, or off",
+        );
+      }
+      layer.autoCompactAtPercent = threshold;
+    }
+  }
+
+  const webSearch = environmentEnum(
+    environment,
+    CONFIG_ENVIRONMENT_VARIABLES.webSearch,
+    WEB_SEARCH_MODES,
+  );
+  if (webSearch !== undefined) layer.webSearch = webSearch;
+
+  const textVerbosity = environmentEnum(
+    environment,
+    CONFIG_ENVIRONMENT_VARIABLES.textVerbosity,
+    TEXT_VERBOSITIES,
+  );
+  if (textVerbosity !== undefined) layer.textVerbosity = textVerbosity;
+
+  const reasoningSummary = environmentEnum(
+    environment,
+    CONFIG_ENVIRONMENT_VARIABLES.reasoningSummary,
+    REASONING_SUMMARIES,
+  );
+  if (reasoningSummary !== undefined) layer.reasoningSummary = reasoningSummary;
+
+  const reasoningMode = environmentEnum(
+    environment,
+    CONFIG_ENVIRONMENT_VARIABLES.reasoningMode,
+    REASONING_MODES,
+  );
+  if (reasoningMode !== undefined) layer.reasoningMode = reasoningMode;
+
+  return layer;
 }
 
 export function parseConfig(value: unknown): ConfigLayer {
@@ -157,8 +297,9 @@ function readConfig(filePath: string): ConfigLayer {
 export function resolveConfig(
   globalConfig: ConfigLayer,
   projectConfig: ConfigLayer,
+  environmentConfig: ConfigLayer = {},
 ): CodexCompatConfig {
-  const merged = { ...globalConfig, ...projectConfig };
+  const merged = { ...globalConfig, ...projectConfig, ...environmentConfig };
   return {
     ...DEFAULT_CONFIG,
     ...(typeof merged.fastMode === "boolean" ? { fastMode: merged.fastMode } : {}),
@@ -193,10 +334,14 @@ export function writableConfigPath(cwd: string, projectTrusted: boolean): string
   return projectTrusted && existsSync(projectPath) ? projectPath : globalConfigPath();
 }
 
-export function loadConfig(cwd: string, projectTrusted: boolean): CodexCompatConfig {
+export function loadConfig(
+  cwd: string,
+  projectTrusted: boolean,
+  environment: Environment = process.env,
+): CodexCompatConfig {
   const globalConfig = readConfig(globalConfigPath());
   const projectConfig = projectTrusted ? readConfig(projectConfigPath(cwd)) : {};
-  return resolveConfig(globalConfig, projectConfig);
+  return resolveConfig(globalConfig, projectConfig, parseEnvironmentConfig(environment));
 }
 
 export function configLayer(config: CodexCompatConfig): ConfigLayer {
@@ -213,6 +358,18 @@ export function configLayer(config: CodexCompatConfig): ConfigLayer {
     reasoningSummary: config.reasoningSummary,
     reasoningMode: config.reasoningMode,
   };
+}
+
+/** Keep process-level overrides transient when an effective config is saved. */
+export function withoutEnvironmentOverrides(
+  layer: ConfigLayer,
+  environmentConfig: ConfigLayer,
+): ConfigLayer {
+  const result = { ...layer };
+  for (const key of Object.keys(environmentConfig) as (keyof ConfigLayer)[]) {
+    delete result[key];
+  }
+  return result;
 }
 
 async function readWritableConfig(filePath: string): Promise<Record<string, unknown>> {
