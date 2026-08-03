@@ -16,6 +16,7 @@
 
 ### Changed
 
+- Document the package's configurable defaults, architectural differences, known gaps, and unsupported runtime/tool families relative to Codex CLI `0.146.0`.
 - Match the server-reserved `image_gen.imagegen` description and JSON Schema so Codex accepts the tool declaration.
 - Apply fast mode as a priority-tier request modification on the selected `openai-codex` provider.
 - Make `/codex-settings` changes session-local by default and persist them only on `Ctrl+S`.

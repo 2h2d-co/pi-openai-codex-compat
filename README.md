@@ -28,6 +28,79 @@ Authenticate through Pi if needed:
 /login openai-codex
 ```
 
+## Compatibility baseline and differences
+
+The compatibility baseline is official Codex CLI `0.146.0`, released July 29, 2026. Upstream `main` at commit `bb5054fe47abe73ecbbd454751066a28c89f4bb9` was also inspected on August 3, 2026. This section is the package's explicit compatibility contract: it distinguishes close protocol adaptations from deliberate Pi behavior, configurable defaults, known gaps, and unsupported Codex runtimes.
+
+### Configurable defaults that differ from Codex
+
+| Area                                          | This package by default                                                                                                                | Official Codex                                                                                                                                                              | Configuration                                                                              |
+| --------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------ |
+| Generated-image detail sent back to the model | Sends image tool-result content with `input_image.detail: "auto"`. On GPT-5.6, `auto` uses original-size image accounting.             | Uses `high`.                                                                                                                                                                | `imageDetail`: `auto`, `low`, `high`, or `original`.                                       |
+| Image-generation tool                         | Enabled whenever an `openai-codex` model is selected. Backend capability and account failures surface when the tool executes.          | Stable and enabled by default, but additionally gated by plan, model, provider, authentication, image-generation, and namespace capabilities.                               | `imageGeneration`: boolean.                                                                |
+| Standalone `web.run`                          | Enabled and preferred over hosted `web_search`. Its intentionally restricted schema omits finance, sports, weather, and time commands. | The standalone feature is under development and disabled by default outside environments such as Responses Lite. Its reserved schema includes the complete command catalog. | `webRun`: boolean. The restricted command catalog is not configurable.                     |
+| Hosted web search                             | Omitted while `web.run` is active; otherwise injected in cached mode.                                                                  | Normally uses hosted cached search because standalone `web.run` is disabled by default.                                                                                     | `webRun` and `webSearch`: `disabled`, `cached`, `indexed`, or `live`.                      |
+| Coding mutation tools                         | Enables `apply_patch` and suppresses Pi's active `edit` and `write` tools.                                                             | Chooses its tool surface from model metadata and runtime capabilities; there are no Pi `edit` or `write` tools to suppress.                                                 | `applyPatch`: boolean.                                                                     |
+| Auto-compaction trigger                       | Relies on Pi's reserve-token threshold unless a percentage is configured.                                                              | Tracks Codex's model/token-budget state before and between sampling steps.                                                                                                  | `autoCompactAtPercent`: percentage or unset. Pi's own compaction settings remain separate. |
+| Fast mode                                     | Uses the normal tier.                                                                                                                  | Uses the configured Codex service tier.                                                                                                                                     | `fastMode`: boolean; `true` requests the priority tier.                                    |
+| Text and reasoning request controls           | Explicitly sends low text verbosity, automatic reasoning summaries, and standard GPT-5.6 reasoning mode.                               | Resolves these controls through Codex configuration, model metadata, and turn state.                                                                                        | `textVerbosity`, `reasoningSummary`, and `reasoningMode`.                                  |
+
+`web.run` is a reserved GPT-5.6 tool name. The Codex backend can reject a declaration whose schema differs from its configured reserved schema. Because this package deliberately omits finance, sports, weather, and time commands, disable `webRun` when the selected model enforces the complete reserved schema. Hosted search then resumes according to `webSearch`.
+
+### Non-configurable implementation differences
+
+| Area                        | Difference                                                                                                                                                                                                                                                                                                                                       |
+| --------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Session storage             | Pi remains the canonical session owner. Opaque Codex compaction checkpoints are stored in Pi `compaction` entries, and otherwise lossy Responses output is stored in sparse custom native-response entries. Official Codex owns a rollout/thread store directly.                                                                                 |
+| Branching                   | Checkpoints and native response overrides follow Pi's active session branch. Official Codex uses its own thread, turn, rollback, fork, and context-window lineage.                                                                                                                                                                               |
+| Model switching             | This package rejects model switches while the active Pi branch contains a native Codex checkpoint because the checkpoint is model-specific.                                                                                                                                                                                                      |
+| System instructions         | Pi rebuilds the current system prompt and sends it through Responses `instructions`; normal Pi history does not store it as replayed system/developer input. `/reload` therefore updates the next request without rewriting old checkpoints.                                                                                                     |
+| Turn metadata               | Requests do not yet send Codex's complete thread, turn, context-window, request-kind, workspace, and per-turn routing metadata. Sticky WebSocket continuation is implemented locally from response IDs and replayable items.                                                                                                                     |
+| Mid-turn compaction         | Provider-boundary percentage compaction installs a checkpoint and continues the intercepted request. Pi threshold compaction runs after the agent response and does not automatically continue unless Pi has queued messages. Official Codex compacts inline and continues when a completed sampling step says more model/tool work is required. |
+| Incomplete responses        | A Responses `status: "incomplete"` currently becomes Pi `stopReason: "length"`. Official Codex treats `response.incomplete` as a stream error. This can produce a Pi threshold compaction followed by an idle agent instead of an inline continuation or explicit error.                                                                         |
+| Compaction lifecycle events | Percentage compaction writes through Pi's mutable session manager but cannot emit Pi's internal `session_compact` event through the public extension API. Manual, threshold, and overflow compactions initiated by Pi do emit the normal lifecycle.                                                                                              |
+| Header hooks                | An internal percentage-compaction request reuses the already transformed provider headers. It cannot independently rerun Pi's `before_provider_headers` hook.                                                                                                                                                                                    |
+| Native retained context     | The v2 retained-message selection and truncation match Codex. In normal Pi operation, system instructions are carried separately through `instructions`, so retained API history usually contains user messages rather than Codex's complete initial-context lifecycle.                                                                          |
+| Tool namespaces             | Pi registers dotted names such as `web.run` as exact flat identifiers. The provider converts only the fixed extension-owned allowlist into real Responses namespace/member identities and rejects unknown or ambiguously flat namespaced calls.                                                                                                  |
+| Capability gating           | Tool activation is based on the selected `openai-codex` provider plus package settings. It does not reproduce every official model-metadata, plan, feature-stage, executor, mode, or account gate.                                                                                                                                               |
+| Sandbox and approvals       | Pi extensions run with full process permissions. `apply_patch`, local image reads, generated-image writes, and sibling Codex endpoints do not use Codex's sandbox, permission-profile, or approval lifecycle.                                                                                                                                    |
+| Image artifact hint         | When image saving succeeds, this package always returns the path hint, says “the generated image,” and has no 1,024-byte cutoff. Official Codex says “a generated image” and omits the hint when it exceeds 1,024 UTF-8 bytes.                                                                                                                   |
+| Image artifacts             | Generated files use Pi's agent directory and the Pi session/tool-call IDs. Official Codex uses its own artifact/output-directory lifecycle.                                                                                                                                                                                                      |
+| Web references              | `web.run` structured results are retained in Pi tool-result details, and hosted native items are preserved for provider replay. Durable reference resolution, hosted citation annotations, clickable citation rendering, and cross-call reference storage are not implemented.                                                                   |
+| UI                          | Pi renders its own conversation, tools, footer, settings pane, branches, and compaction lifecycle. Only the dedicated `apply_patch` renderer deliberately approximates Codex styling.                                                                                                                                                            |
+
+### Tool and runtime coverage
+
+The package implements the Codex-specific pieces that fit a provider compatibility extension:
+
+- native Responses transport and history;
+- remote compaction v2;
+- `apply_patch`;
+- hosted `web_search`;
+- `web.run`;
+- `image_gen.imagegen`;
+- namespaced tool serialization;
+- text verbosity, reasoning summaries/mode, and priority service tier.
+
+The following official Codex facilities are not exact equivalents in this package:
+
+| Official Codex facility                                                 | Pi/package behavior                                                                                                                                              |
+| ----------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `exec_command` and `write_stdin` persistent PTY sessions                | Pi `bash` is a one-shot command tool; no persistent PTY/session protocol is implemented.                                                                         |
+| Legacy `shell_command`                                                  | Pi uses `bash`; the Codex schema and execution/approval envelope are not reproduced.                                                                             |
+| `view_image`                                                            | Pi `read` already accepts images; no canonical `view_image` alias is registered.                                                                                 |
+| `update_plan`, `request_user_input`, permissions, and environment tools | Not implemented by this package.                                                                                                                                 |
+| Context-window and clock tools                                          | Not implemented. Compaction remains host/provider managed rather than model managed.                                                                             |
+| MCP resources and dynamic MCP tools                                     | Pi does not provide this package with Codex's MCP runtime.                                                                                                       |
+| Plugin/connector installation                                           | Not implemented; package installation remains an explicit Pi/user operation.                                                                                     |
+| Searchable `tool_search` catalog                                        | Pi can replay additive tool-search history for capable models, but this package does not implement Codex's searchable deferred-tool catalog and ranking runtime. |
+| Multi-agent V1/V2 coordination                                          | Out of scope; no Codex agent tree, mailbox, task-path, or fork-depth runtime is implemented.                                                                     |
+| JavaScript Code Mode and yielded cells                                  | Out of scope; no V8 isolate, nested tool namespace, cell storage, or `wait` lifecycle is implemented.                                                            |
+| Goals, memories, and remote skill-resource tools                        | Not implemented; Pi's sessions, files, and native skills remain separate systems.                                                                                |
+| Remote/deferred execution environments                                  | Not implemented.                                                                                                                                                 |
+
+See [`OFFICIAL_CODEX_CLI_TOOL_CATALOG.md`](OFFICIAL_CODEX_CLI_TOOL_CATALOG.md) for the complete researched Codex tool inventory, and [`CUSTOM_CODEX_PROVIDER_WEB_REFERENCES.md`](CUSTOM_CODEX_PROVIDER_WEB_REFERENCES.md) for the unimplemented citation/reference design.
+
 ## Install
 
 From npm after a release is published:
@@ -79,6 +152,7 @@ Example:
   "fastMode": true,
   "applyPatch": true,
   "imageGeneration": true,
+  "imageDetail": "auto",
   "webRun": true,
   "autoCompactAtPercent": 90,
   "webSearch": "cached",
@@ -95,6 +169,7 @@ Defaults:
 | `fastMode`             | boolean                                              | `false`    | Adds `service_tier: "priority"` to requests while retaining the current `openai-codex` provider and model.                                                                                                                                |
 | `applyPatch`           | boolean                                              | `true`     | On selected `openai-codex` models, uses the extension's `apply_patch` tool instead of Pi's active `edit` and `write` tools. Other providers always use their normal Pi tool set.                                                          |
 | `imageGeneration`      | boolean                                              | `true`     | Enables the extension-owned `image_gen.imagegen` tool on selected `openai-codex` models.                                                                                                                                                  |
+| `imageDetail`          | `auto`, `low`, `high`, `original`                    | `auto`     | Sets `input_image.detail` when an image tool result is sent back to the model. It does not change `gpt-image-2` generation quality.                                                                                                       |
 | `webRun`               | boolean                                              | `true`     | Enables the extension-owned `web.run` tool on selected `openai-codex` models. When active, it replaces hosted `web_search` in the Responses tool list.                                                                                    |
 | `autoCompactAtPercent` | number greater than `0` and at most `100`, or `null` | unset      | Adds provider-boundary compaction independently of Pi's normal reserve-token threshold. A project value of `null` disables a global percentage threshold.                                                                                 |
 | `webSearch`            | `disabled`, `cached`, `indexed`, `live`              | `cached`   | Controls hosted search and standalone-search external access. `disabled` removes hosted search but leaves an independently enabled `web.run` in cached-only mode; `indexed` prefers indexed content; `live` permits live external access. |
@@ -185,6 +260,8 @@ The tool generates new images with `gpt-image-2` or edits up to five local/recen
 The active Pi agent directory replaces `~/.pi/agent` when configured differently. Turning `imageGeneration` off removes the tool immediately for the current session; `Ctrl+S` in `/codex-settings` persists the value.
 
 Pi also persists the returned image content in tool-result history so later image edits and provider replay remain self-contained. Generated-image turns therefore increase the session file by approximately the base64 image size in addition to the saved PNG artifact.
+
+When the image tool result is serialized back to the model, `imageDetail` controls its Responses `input_image.detail`. The default remains `auto`; select `high` for the official Codex default. The saved-path hint intentionally differs from Codex: it always uses “the generated image” and is not removed when the UTF-8 hint exceeds 1,024 bytes.
 
 ## `web.run`
 
