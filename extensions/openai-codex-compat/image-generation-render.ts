@@ -32,7 +32,7 @@ type ImageGenerationResult = {
   details?: unknown;
 };
 
-function promptPreview(prompt: string, maximum = 90): string {
+function promptPreview(prompt: string, maximum = 250): string {
   const singleLine = prompt.replace(/\s+/gu, " ").trim();
   const preview =
     singleLine.length > maximum ? `${singleLine.slice(0, Math.max(0, maximum - 1))}…` : singleLine;

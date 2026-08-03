@@ -235,6 +235,15 @@ void test("executes generation and recent-image edits through Codex Images", asy
   const callText = stripAnsi(tool.renderCall(args, theme, renderContext).render(100).join("\n"));
   assert.match(callText, /image_gen\.imagegen  generate "Draw a blue square\."/);
 
+  const longPrompt = "x".repeat(260);
+  const longCallText = stripAnsi(
+    tool
+      .renderCall({ prompt: longPrompt }, theme, { ...renderContext, args: { prompt: longPrompt } })
+      .render(400)
+      .join("\n"),
+  );
+  assert.match(longCallText, new RegExp(`generate "${"x".repeat(249)}…"`));
+
   const collapsed = tool
     .renderResult(generated, { expanded: false, isPartial: false }, theme, renderContext)
     .render(100)
