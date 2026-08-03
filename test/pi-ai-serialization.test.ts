@@ -8,10 +8,7 @@ import {
   activeResponsesTools,
   encodeSessionEntries,
 } from "../extensions/openai-codex-compat/compaction-checkpoint.ts";
-import {
-  IMAGE_GENERATION_PARAMETERS,
-  IMAGE_GENERATION_WIRE_PARAMETERS,
-} from "../extensions/openai-codex-compat/image-generation-schema.ts";
+import { IMAGE_GENERATION_PARAMETERS } from "../extensions/openai-codex-compat/image-generation-schema.ts";
 import {
   CODEX_NAMESPACED_TOOL_NAMES,
   CODEX_TEXT_CONTENT_ITEM_TOOL_RESULT_NAMES,
@@ -397,7 +394,7 @@ void test("round-trips namespaced calls and deferred namespaced definitions", ()
           type: "function",
           name: "imagegen",
           description: imageGenerationTool.description,
-          parameters: IMAGE_GENERATION_WIRE_PARAMETERS,
+          parameters: IMAGE_GENERATION_PARAMETERS,
           defer_loading: true,
           strict: false,
         },
@@ -447,7 +444,7 @@ void test("serializes active compaction tools with the same namespace contract",
             type: "function",
             name: "imagegen",
             description: imageGenerationTool.description,
-            parameters: IMAGE_GENERATION_WIRE_PARAMETERS,
+            parameters: IMAGE_GENERATION_PARAMETERS,
             strict: false,
           },
         ],

@@ -9,10 +9,7 @@ import {
   type CodexCompatConfig,
 } from "../extensions/openai-codex-compat/config.ts";
 import type { JsonRecord } from "../extensions/openai-codex-compat/codex-protocol.ts";
-import {
-  IMAGE_GENERATION_PARAMETERS,
-  IMAGE_GENERATION_WIRE_PARAMETERS,
-} from "../extensions/openai-codex-compat/image-generation-schema.ts";
+import { IMAGE_GENERATION_PARAMETERS } from "../extensions/openai-codex-compat/image-generation-schema.ts";
 import { NATIVE_RESPONSE_ENTRY_TYPE } from "../extensions/openai-codex-compat/native-history.ts";
 import { IMAGE_GENERATION_TOOL_NAME } from "../extensions/openai-codex-compat/namespaced-tools.ts";
 import { CHECKPOINT_ENTRY_TYPE } from "../extensions/openai-codex-compat/compaction-checkpoint.ts";
@@ -319,7 +316,7 @@ void test("transports dotted Pi tools as native Responses namespaces", async () 
         type: "function",
         name: "imagegen",
         description: "Generate an image",
-        parameters: IMAGE_GENERATION_WIRE_PARAMETERS,
+        parameters: IMAGE_GENERATION_PARAMETERS,
         strict: false,
       },
     ],

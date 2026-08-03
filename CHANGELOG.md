@@ -4,8 +4,8 @@
 
 ### Changed
 
-- Adapt the `image_gen.imagegen` descriptions and prompt metadata to Pi while retaining the server-reserved wire schema.
-- Add Pi-local schema validation for image-count bounds and edit-selector exclusivity, preserve the accepted schema during provider serialization, and normalize local image paths before reading them.
+- Adapt the `image_gen.imagegen` descriptions and prompt metadata to Pi while retaining the server-reserved schema.
+- Normalize local image paths before reading them and enforce image-count bounds and edit-selector exclusivity in the executor.
 
 ## 0.0.2 - 2026-08-03
 

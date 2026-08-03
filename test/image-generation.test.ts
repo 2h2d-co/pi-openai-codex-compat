@@ -11,7 +11,6 @@ import type {
   Theme,
 } from "@earendil-works/pi-coding-agent";
 import type { Model } from "@earendil-works/pi-ai";
-import { validateToolArguments } from "@earendil-works/pi-ai";
 import registerImageGeneration, {
   normalizeImagePath,
   recentImageUrls,
@@ -151,107 +150,22 @@ void test("executes generation and recent-image edits through Codex Images", asy
     properties: {
       num_last_images_to_include: {
         type: ["integer", "null"],
-        minimum: 1,
-        maximum: 5,
       },
       prompt: {
         type: "string",
       },
       referenced_image_paths: {
         type: ["array", "null"],
-        maxItems: 5,
         items: {
           type: "string",
           description:
-            "Absolute local filesystem path, optionally prefixed with `@`, to a PNG, JPEG, GIF, or WebP image to include in an edit. Resolve relative paths against Pi's current working directory before calling the tool. Pi lexically normalizes `.` and `..` segments before reading the file, which must exist and be readable.",
+            "Absolute path to a local PNG, JPEG, GIF, or WebP image to include in an edit. Convert relative paths to absolute paths before calling the tool; the file must exist and be readable.",
         },
       },
     },
     required: ["prompt"],
     additionalProperties: false,
-    not: {
-      properties: {
-        num_last_images_to_include: {
-          type: "integer",
-        },
-        referenced_image_paths: {
-          type: "array",
-          minItems: 1,
-        },
-      },
-      required: ["num_last_images_to_include", "referenced_image_paths"],
-    },
   });
-  const validate = (arguments_: Record<string, unknown>) =>
-    validateToolArguments(tool, {
-      type: "toolCall",
-      id: "image-schema-test",
-      name: "image_gen.imagegen",
-      arguments: arguments_,
-    });
-  assert.deepEqual(validate({ prompt: "Generate an image." }), {
-    prompt: "Generate an image.",
-  });
-  assert.deepEqual(
-    validate({
-      prompt: "Edit local images.",
-      referenced_image_paths: ["/tmp/one.png", "/tmp/two.png"],
-    }),
-    {
-      prompt: "Edit local images.",
-      referenced_image_paths: ["/tmp/one.png", "/tmp/two.png"],
-    },
-  );
-  assert.deepEqual(
-    validate({
-      prompt: "Edit recent images.",
-      num_last_images_to_include: 5,
-    }),
-    {
-      prompt: "Edit recent images.",
-      num_last_images_to_include: 5,
-    },
-  );
-  assert.throws(
-    () =>
-      validate({
-        prompt: "Too many local images.",
-        referenced_image_paths: [
-          "/tmp/1.png",
-          "/tmp/2.png",
-          "/tmp/3.png",
-          "/tmp/4.png",
-          "/tmp/5.png",
-          "/tmp/6.png",
-        ],
-      }),
-    /referenced_image_paths: must not have more than 5 items/,
-  );
-  assert.throws(
-    () =>
-      validate({
-        prompt: "Too many recent images.",
-        num_last_images_to_include: 6,
-      }),
-    /num_last_images_to_include: must be <= 5/,
-  );
-  assert.throws(
-    () =>
-      validate({
-        prompt: "No recent images.",
-        num_last_images_to_include: 0,
-      }),
-    /num_last_images_to_include: must be >= 1/,
-  );
-  assert.throws(
-    () =>
-      validate({
-        prompt: "Conflicting selectors.",
-        referenced_image_paths: ["/tmp/input.png"],
-        num_last_images_to_include: 1,
-      }),
-    /root: must not be valid/,
-  );
 
   const context = {
     model: codexModel(),
@@ -267,6 +181,55 @@ void test("executes generation and recent-image edits through Codex Images", asy
       }),
     },
   } as unknown as ExtensionContext;
+  await assert.rejects(
+    tool.execute(
+      "call-too-many-paths|fc-too-many-paths",
+      {
+        prompt: "Edit too many local images.",
+        referenced_image_paths: [
+          "/tmp/1.png",
+          "/tmp/2.png",
+          "/tmp/3.png",
+          "/tmp/4.png",
+          "/tmp/5.png",
+          "/tmp/6.png",
+        ],
+      },
+      undefined,
+      undefined,
+      context,
+    ),
+    /referenced_image_paths must contain at most 5 paths/,
+  );
+  for (const count of [0, 6]) {
+    await assert.rejects(
+      tool.execute(
+        `call-invalid-recent-count-${count}|fc-invalid-recent-count-${count}`,
+        {
+          prompt: "Edit an invalid number of recent images.",
+          num_last_images_to_include: count,
+        },
+        undefined,
+        undefined,
+        context,
+      ),
+      /num_last_images_to_include must be between 1 and 5/,
+    );
+  }
+  await assert.rejects(
+    tool.execute(
+      "call-conflicting-selectors|fc-conflicting-selectors",
+      {
+        prompt: "Edit with conflicting selectors.",
+        referenced_image_paths: ["/tmp/input.png"],
+        num_last_images_to_include: 1,
+      },
+      undefined,
+      undefined,
+      context,
+    ),
+    /provide only one of referenced_image_paths or num_last_images_to_include/,
+  );
   const generated = await tool.execute(
     "call-generate|fc-generate",
     { prompt: "Draw a blue square." },

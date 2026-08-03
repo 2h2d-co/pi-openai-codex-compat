@@ -7,7 +7,6 @@ import {
 } from "@earendil-works/pi-coding-agent";
 import type { Message, Model, OpenAIResponsesCompat, Tool } from "@earendil-works/pi-ai";
 import { APPLY_PATCH_LARK_GRAMMAR, APPLY_PATCH_TOOL_NAME } from "./apply-patch.ts";
-import { codexWireToolParameters } from "./codex-tool-schema.ts";
 import type { ImageDetail } from "./config.ts";
 import {
   installCompactionItem,
@@ -67,7 +66,7 @@ function asResponsesTool(
           type: "function",
           name: namespaced.name,
           description: tool.description,
-          parameters: codexWireToolParameters(tool.name, tool.parameters),
+          parameters: tool.parameters as unknown,
           strict: false,
         },
       ],
@@ -77,7 +76,7 @@ function asResponsesTool(
     type: "function",
     name: tool.name,
     description: tool.description,
-    parameters: codexWireToolParameters(tool.name, tool.parameters),
+    parameters: tool.parameters as unknown,
     strict: null,
   };
 }
@@ -104,7 +103,7 @@ function asPiTool(tool: ToolInfo, grammarToolInputProperties: GrammarToolInputPr
   return {
     name: tool.name,
     description: tool.description,
-    parameters: codexWireToolParameters(tool.name, tool.parameters) as Tool["parameters"],
+    parameters: tool.parameters,
     ...(tool.name === APPLY_PATCH_TOOL_NAME && grammarToolInputProperties.has(tool.name)
       ? {
           constrainedSampling: {
