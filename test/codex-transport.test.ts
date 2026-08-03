@@ -23,11 +23,11 @@ function codexModel(): Model<any> {
   } as Model<any>;
 }
 
-function accessToken(): string {
+function accessToken(accountId = "account-1"): string {
   const header = Buffer.from(JSON.stringify({ alg: "none" })).toString("base64url");
   const claims = Buffer.from(
     JSON.stringify({
-      "https://api.openai.com/auth": { chatgpt_account_id: "account-1" },
+      "https://api.openai.com/auth": { chatgpt_account_id: accountId },
     }),
   ).toString("base64url");
   return `${header}.${claims}.signature`;
@@ -150,6 +150,98 @@ void test("reports WebSocket close details and preserves preceding errors", asyn
     },
     { message: "underlying socket failure" },
   );
+});
+
+void test("scopes cached WebSockets to the authenticated account", async (t) => {
+  const previousWebSocket = globalThis.WebSocket;
+  const connectedAccounts: string[] = [];
+  const sentConnectionIds: number[] = [];
+
+  class AccountWebSocket {
+    readyState = 1;
+    private readonly connectionId: number;
+    private readonly listeners = new Map<string, Set<(event: unknown) => void>>();
+
+    constructor(
+      _url: string,
+      protocols?: string | string[] | { headers?: Record<string, string> },
+    ) {
+      this.connectionId = connectedAccounts.length + 1;
+      const headers =
+        protocols && typeof protocols === "object" && !Array.isArray(protocols)
+          ? protocols.headers
+          : undefined;
+      connectedAccounts.push(headers?.["chatgpt-account-id"] ?? "");
+      queueMicrotask(() => this.emit("open", {}));
+    }
+
+    addEventListener(type: string, listener: (event: unknown) => void): void {
+      const listeners = this.listeners.get(type) ?? new Set();
+      listeners.add(listener);
+      this.listeners.set(type, listeners);
+    }
+
+    removeEventListener(type: string, listener: (event: unknown) => void): void {
+      this.listeners.get(type)?.delete(listener);
+    }
+
+    send(): void {
+      sentConnectionIds.push(this.connectionId);
+      queueMicrotask(() => {
+        this.emit("message", {
+          data: JSON.stringify({
+            type: "response.completed",
+            response: {
+              id: `response-${sentConnectionIds.length}`,
+              status: "completed",
+            },
+          }),
+        });
+      });
+    }
+
+    close(): void {
+      this.readyState = 3;
+    }
+
+    private emit(type: string, event: unknown): void {
+      for (const listener of this.listeners.get(type) ?? []) listener(event);
+    }
+  }
+
+  Object.defineProperty(globalThis, "WebSocket", {
+    configurable: true,
+    value: AccountWebSocket,
+  });
+  t.after(() => {
+    Object.defineProperty(globalThis, "WebSocket", {
+      configurable: true,
+      value: previousWebSocket,
+    });
+  });
+
+  const transport = new CodexTransport();
+  const request = async (accountId: string) => {
+    for await (const _event of transport.request(
+      codexModel(),
+      { input: [] },
+      {
+        apiKey: accessToken(accountId),
+        sessionId: "shared-session",
+        transport: "websocket-cached",
+      },
+    )) {
+      // Consume the response.
+    }
+  };
+
+  await request("account-a");
+  await request("account-b");
+  await request("account-a");
+
+  assert.deepEqual(connectedAccounts, ["account-a", "account-b"]);
+  assert.deepEqual(sentConnectionIds, [1, 2, 1]);
+  transport.close("shared-session");
 });
 
 void test("reuses one WebSocket for compaction and continuation requests", async (t) => {

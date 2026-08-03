@@ -14,6 +14,7 @@
 ### Fixed
 
 - Report WebSocket close codes and reasons instead of `[object CloseEvent]`, and preserve an underlying WebSocket error when a close event follows it.
+- Scope sticky Codex WebSockets to the authenticated account so changing accounts cannot reuse a connection authorized for another account.
 
 ## 0.0.2 - 2026-08-03
 

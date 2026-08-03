@@ -71,7 +71,7 @@ type CachedWebSocket = {
   };
 };
 
-const websocketSessions = new Map<string, CachedWebSocket>();
+const websocketSessions = new Map<string, Map<string, CachedWebSocket>>();
 const websocketFallbackSessions = new Set<string>();
 
 class CodexResponseError extends Error {}
@@ -388,12 +388,14 @@ function socketReusable(socket: WebSocketLike): boolean {
   return socket.readyState === undefined || socket.readyState === 1;
 }
 
-function scheduleSocketExpiry(sessionId: string, entry: CachedWebSocket): void {
+function scheduleSocketExpiry(sessionId: string, accountId: string, entry: CachedWebSocket): void {
   if (entry.idleTimer) clearTimeout(entry.idleTimer);
   entry.idleTimer = setTimeout(() => {
     if (entry.busy) return;
     closeSocket(entry.socket, "idle_timeout");
-    websocketSessions.delete(sessionId);
+    const accountEntries = websocketSessions.get(sessionId);
+    if (accountEntries?.get(accountId) === entry) accountEntries.delete(accountId);
+    if (accountEntries?.size === 0) websocketSessions.delete(sessionId);
   }, SESSION_WEBSOCKET_CACHE_TTL_MS);
 }
 
@@ -460,11 +462,13 @@ async function acquireWebSocket(
   url: string,
   headers: Headers,
   sessionId: string | undefined,
+  accountId: string,
   signal: AbortSignal | undefined,
   timeoutMs: number,
 ): Promise<{ socket: WebSocketLike; entry?: CachedWebSocket; release(keep: boolean): void }> {
   if (sessionId) {
-    const cached = websocketSessions.get(sessionId);
+    let accountEntries = websocketSessions.get(sessionId);
+    const cached = accountEntries?.get(accountId);
     if (cached?.idleTimer) {
       clearTimeout(cached.idleTimer);
       delete cached.idleTimer;
@@ -478,39 +482,54 @@ async function acquireWebSocket(
         release(keep) {
           if (!keep || !socketReusable(cached.socket)) {
             closeSocket(cached.socket);
-            websocketSessions.delete(sessionId);
+            const currentEntries = websocketSessions.get(sessionId);
+            if (currentEntries?.get(accountId) === cached) currentEntries.delete(accountId);
+            if (currentEntries?.size === 0) websocketSessions.delete(sessionId);
             return;
           }
           cached.busy = false;
-          scheduleSocketExpiry(sessionId, cached);
+          scheduleSocketExpiry(sessionId, accountId, cached);
         },
       };
     }
     if (cached && !cached.busy) {
       closeSocket(cached.socket);
-      websocketSessions.delete(sessionId);
+      accountEntries?.delete(accountId);
+      if (accountEntries?.size === 0) websocketSessions.delete(sessionId);
     }
+    if (cached?.busy) {
+      const socket = await connectWebSocket(url, headers, signal, timeoutMs);
+      return { socket, release: () => closeSocket(socket) };
+    }
+
+    const socket = await connectWebSocket(url, headers, signal, timeoutMs);
+    const entry: CachedWebSocket = { socket, busy: true, createdAt: Date.now() };
+    accountEntries = websocketSessions.get(sessionId);
+    if (!accountEntries) {
+      accountEntries = new Map();
+      websocketSessions.set(sessionId, accountEntries);
+    }
+    accountEntries.set(accountId, entry);
+    return {
+      socket,
+      entry,
+      release(keep) {
+        if (!keep || !socketReusable(socket)) {
+          closeSocket(socket);
+          if (entry.idleTimer) clearTimeout(entry.idleTimer);
+          const currentEntries = websocketSessions.get(sessionId);
+          if (currentEntries?.get(accountId) === entry) currentEntries.delete(accountId);
+          if (currentEntries?.size === 0) websocketSessions.delete(sessionId);
+          return;
+        }
+        entry.busy = false;
+        scheduleSocketExpiry(sessionId, accountId, entry);
+      },
+    };
   }
 
   const socket = await connectWebSocket(url, headers, signal, timeoutMs);
-  if (!sessionId) {
-    return { socket, release: () => closeSocket(socket) };
-  }
-  const entry: CachedWebSocket = { socket, busy: true, createdAt: Date.now() };
-  websocketSessions.set(sessionId, entry);
-  return {
-    socket,
-    entry,
-    release(keep) {
-      if (!keep || !socketReusable(socket)) {
-        closeSocket(socket);
-        websocketSessions.delete(sessionId);
-        return;
-      }
-      entry.busy = false;
-      scheduleSocketExpiry(sessionId, entry);
-    },
-  };
+  return { socket, release: () => closeSocket(socket) };
 }
 
 function requestWithoutHistory(body: JsonRecord): JsonRecord {
@@ -745,11 +764,13 @@ async function* requestWebSocket(
   options: CodexTransportOptions,
   headers: Headers,
   sessionId: string | undefined,
+  accountId: string,
 ): AsyncGenerator<JsonRecord> {
   const acquired = await acquireWebSocket(
     resolveCodexWebSocketUrl(model.baseUrl),
     headers,
     sessionId,
+    accountId,
     options.signal,
     options.websocketConnectTimeoutMs ?? DEFAULT_WEBSOCKET_CONNECT_TIMEOUT_MS,
   );
@@ -862,7 +883,14 @@ export class CodexTransport {
       );
       let emitted = false;
       try {
-        for await (const event of requestWebSocket(model, body, options, headers, sessionId)) {
+        for await (const event of requestWebSocket(
+          model,
+          body,
+          options,
+          headers,
+          sessionId,
+          accountId,
+        )) {
           emitted = true;
           yield event;
         }
@@ -892,16 +920,19 @@ export class CodexTransport {
 
   close(sessionId?: string): void {
     if (sessionId) {
-      const entry = websocketSessions.get(sessionId);
-      if (entry?.idleTimer) clearTimeout(entry.idleTimer);
-      if (entry) closeSocket(entry.socket, "session_shutdown");
+      for (const entry of websocketSessions.get(sessionId)?.values() ?? []) {
+        if (entry.idleTimer) clearTimeout(entry.idleTimer);
+        closeSocket(entry.socket, "session_shutdown");
+      }
       websocketSessions.delete(sessionId);
       websocketFallbackSessions.delete(sessionId);
       return;
     }
-    for (const entry of websocketSessions.values()) {
-      if (entry.idleTimer) clearTimeout(entry.idleTimer);
-      closeSocket(entry.socket, "shutdown");
+    for (const accountEntries of websocketSessions.values()) {
+      for (const entry of accountEntries.values()) {
+        if (entry.idleTimer) clearTimeout(entry.idleTimer);
+        closeSocket(entry.socket, "shutdown");
+      }
     }
     websocketSessions.clear();
     websocketFallbackSessions.clear();
