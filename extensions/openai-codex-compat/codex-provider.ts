@@ -156,7 +156,6 @@ function nativeOverrideRequired(
 function captureRawEvents(
   events: AsyncIterable<JsonRecord>,
   items: ResponsesItem[],
-  metadata: { serviceTier?: string },
 ): AsyncIterable<JsonRecord> {
   return {
     async *[Symbol.asyncIterator]() {
@@ -173,13 +172,6 @@ function captureRawEvents(
           if (terminalItems.length > 0) {
             items.splice(0, items.length, ...terminalItems.map((item) => structuredClone(item)));
           }
-        }
-        if (
-          (event.type === "response.completed" || event.type === "response.incomplete") &&
-          isObject(event.response) &&
-          typeof event.response.service_tier === "string"
-        ) {
-          metadata.serviceTier = event.response.service_tier;
         }
         yield event;
       }
@@ -684,7 +676,6 @@ export class CodexProviderRuntime {
         );
 
         const rawItems: ResponsesItem[] = [];
-        const responseMetadata: { serviceTier?: string } = {};
         let startEmitted = false;
         const emitStart = () => {
           if (startEmitted) return;
@@ -704,7 +695,6 @@ export class CodexProviderRuntime {
             captureRawEvents(
               this.transport.request(model, body, transportRequestOptions),
               rawItems,
-              responseMetadata,
             ),
             emitStart,
           ),
@@ -712,17 +702,16 @@ export class CodexProviderRuntime {
           stream,
           model,
           grammarToolInputProperties,
+          {
+            applyServiceTierPricing(usage, responseServiceTier) {
+              applyServiceTierPricing(usage, model, body.service_tier, responseServiceTier);
+            },
+          },
         );
         if (requestOptions.signal?.aborted) throw new Error("Request was aborted");
         if (!successfulStopReason(output)) {
           throw new Error(output.errorMessage || "Codex stream ended without a successful stop.");
         }
-        applyServiceTierPricing(
-          output.usage,
-          model,
-          body.service_tier,
-          responseMetadata.serviceTier,
-        );
 
         const compat = model.compat as CodexCompat | undefined;
         const canonicalContext: Context = {

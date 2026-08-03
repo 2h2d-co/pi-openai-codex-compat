@@ -478,6 +478,42 @@ void test("validates direct-stream and compaction authentication before payload 
   assert.equal(transportRequests, 0);
 });
 
+void test("prices unsuccessful terminal usage before returning the provider error", async () => {
+  const user = userEntry("user-1", "hello");
+  const harness = createHarness([user]);
+  harness.runtime.transport.request = async function* () {
+    yield {
+      type: "response.incomplete",
+      response: {
+        id: "response-filtered",
+        status: "incomplete",
+        service_tier: "default",
+        incomplete_details: { reason: "content_filter" },
+        usage: { input_tokens: 10, output_tokens: 5 },
+      },
+    };
+  };
+
+  const message = await harness.runtime
+    .stream(
+      codexModel(),
+      { messages: [user.message as Context["messages"][number]] },
+      {
+        apiKey: accessToken(),
+        sessionId: "session-1",
+        serviceTier: "priority",
+      },
+    )
+    .result();
+
+  assert.equal(message.stopReason, "error");
+  assert.equal(message.errorMessage, "Response incomplete: content_filter");
+  assert.equal(message.usage.totalTokens, 0);
+  assert.ok(Math.abs(message.usage.cost.input - 0.00002) < 1e-12);
+  assert.ok(Math.abs(message.usage.cost.output - 0.00002) < 1e-12);
+  assert.ok(Math.abs(message.usage.cost.total - 0.00004) < 1e-12);
+});
+
 void test("honors aborts after terminal processing and while waiting for a session request", async () => {
   const user = userEntry("user-1", "hello");
   const context: Context = { messages: [user.message as Context["messages"][number]] };

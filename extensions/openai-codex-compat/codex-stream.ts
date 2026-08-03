@@ -8,6 +8,7 @@ import {
   type TextSignatureV1,
   type ThinkingContent,
   type ToolCall,
+  type Usage,
 } from "@earendil-works/pi-ai";
 import { isObject, type JsonRecord } from "./codex-protocol.ts";
 import { CODEX_NAMESPACED_TOOL_NAMES, namespacedToolCallName } from "./namespaced-tools.ts";
@@ -37,6 +38,10 @@ type OutputSlot =
   | { type: "toolCall"; block: StreamingToolCall; contentIndex: number };
 
 type ToolCallSlot = Extract<OutputSlot, { type: "toolCall" }>;
+
+type ProcessCodexStreamOptions = {
+  applyServiceTierPricing?(usage: Usage, responseServiceTier: string | undefined): void;
+};
 
 type CodexResponseStatus =
   | "completed"
@@ -177,6 +182,7 @@ export async function processCodexStream(
   stream: AssistantMessageEventStream,
   model: Model<any>,
   grammarToolInputProperties: ReadonlyMap<string, string>,
+  options?: ProcessCodexStreamOptions,
 ): Promise<void> {
   let terminal = false;
   const slots = new Map<number, OutputSlot>();
@@ -304,12 +310,15 @@ export async function processCodexStream(
           typeof outputDetails?.["reasoning_tokens"] === "number"
             ? outputDetails["reasoning_tokens"]
             : 0,
-        totalTokens:
-          typeof usage.total_tokens === "number" ? usage.total_tokens : input + outputTokens,
+        totalTokens: typeof usage.total_tokens === "number" ? usage.total_tokens || 0 : 0,
         cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
       };
-      calculateCost(model, output.usage);
     }
+    calculateCost(model, output.usage);
+    options?.applyServiceTierPricing?.(
+      output.usage,
+      typeof response.service_tier === "string" ? response.service_tier : undefined,
+    );
     for (const item of responseItems(response["output"])) {
       if (item.type !== "reasoning" || typeof item.id !== "string") continue;
       const block = reasoningById.get(item.id);
