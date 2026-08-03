@@ -1,17 +1,21 @@
 import { readFile, mkdir, writeFile } from "node:fs/promises";
-import { dirname, isAbsolute, join } from "node:path";
+import { dirname, isAbsolute, join, normalize } from "node:path";
 import {
   getAgentDir,
   type ExtensionAPI,
   type ExtensionContext,
 } from "@earendil-works/pi-coding-agent";
 import type { Model } from "@earendil-works/pi-ai";
-import { Type } from "typebox";
 import type { CodexCompatConfig } from "./config.ts";
 import type { CodexToolBackgroundResolver } from "./codex-tool-surface.ts";
 import { DEFAULT_CONFIG } from "./config.ts";
 import { isObject, type JsonRecord, type ResponsesItem } from "./codex-protocol.ts";
 import { requestCodexJson, type CodexJsonRequestOptions } from "./codex-transport.ts";
+import {
+  IMAGE_GENERATION_PARAMETERS,
+  MAX_EDIT_IMAGES,
+  type ImageGenerationParameters,
+} from "./image-generation-schema.ts";
 import { IMAGE_GENERATION_TOOL_NAME } from "./namespaced-tools.ts";
 import {
   renderImageGenerationCall,
@@ -22,7 +26,6 @@ import { isCodexModel } from "./request-options.ts";
 import { codexToolAuthentication, codexToolHistory } from "./tool-runtime.ts";
 
 const IMAGE_MODEL = "gpt-image-2";
-const MAX_EDIT_IMAGES = 5;
 const GENERATION_ENDPOINT = "images/generations";
 const EDIT_ENDPOINT = "images/edits";
 const GENERATED_IMAGES_DIRECTORY = "generated_images";
@@ -35,38 +38,12 @@ const IMAGE_GENERATION_DESCRIPTION = `The \`image_gen.imagegen\` tool generates 
 Guidelines:
 - Call \`image_gen.imagegen\` directly without reconfirmation unless required source images are unavailable.
 - Omit both \`referenced_image_paths\` and \`num_last_images_to_include\` when generating a brand new image.
-- For edits, use \`referenced_image_paths\` when every target image has an absolute local path. Use \`read\` first when you need to inspect a local image.
+- For edits, use \`referenced_image_paths\` when every target image has an absolute local path, with at most 5 paths. Use \`read\` first when you need to inspect a local image.
 - Use \`num_last_images_to_include\` only when at least one target image has no local path, and set it to the smallest number of recent conversation images that includes every target, up to 5.
 - Never provide both \`referenced_image_paths\` and \`num_last_images_to_include\`.
 - If neither mechanism can include every target image, ask the user to attach the missing images again.
 - Generated images are returned, displayed, and saved automatically. Do not embed the image in the final response unless the user asks.
 `;
-
-const imageGenerationParameters = Type.Unsafe<{
-  prompt: string;
-  referenced_image_paths?: string[] | null;
-  num_last_images_to_include?: number | null;
-}>({
-  type: "object",
-  properties: {
-    num_last_images_to_include: {
-      type: ["integer", "null"],
-    },
-    prompt: {
-      type: "string",
-    },
-    referenced_image_paths: {
-      type: ["array", "null"],
-      items: {
-        type: "string",
-        description:
-          "Absolute path to a local PNG, JPEG, GIF, or WebP image to include in an edit. Resolve relative paths against Pi's current working directory before calling the tool. The path does not need to be canonicalized, but the file must exist and be readable by Pi.",
-      },
-    },
-  },
-  required: ["prompt"],
-  additionalProperties: false,
-});
 
 export type { ImageGenerationDetails } from "./image-generation-render.ts";
 
@@ -134,12 +111,12 @@ export function recentImageUrls(history: readonly ResponsesItem[], count: number
   return newestFirst.reverse();
 }
 
-function normalizeImagePath(path: string): string {
-  const normalized = path.startsWith("@") ? path.slice(1) : path;
-  if (!isAbsolute(normalized)) {
+export function normalizeImagePath(path: string): string {
+  const unprefixed = path.startsWith("@") ? path.slice(1) : path;
+  if (!isAbsolute(unprefixed)) {
     throw new Error(`referenced image path must be absolute: ${path}`);
   }
-  return normalized;
+  return normalize(unprefixed);
 }
 
 function imageMimeType(bytes: Uint8Array, path: string): string {
@@ -173,11 +150,7 @@ async function localImageUrl(path: string): Promise<string> {
 }
 
 async function imageRequest(
-  params: {
-    prompt: string;
-    referenced_image_paths?: string[] | null;
-    num_last_images_to_include?: number | null;
-  },
+  params: ImageGenerationParameters,
   history: readonly ResponsesItem[],
 ): Promise<ImageRequest> {
   const paths = params.referenced_image_paths ?? [];
@@ -291,10 +264,10 @@ export default function registerImageGeneration(
     promptGuidelines: [
       "Use image_gen.imagegen directly to generate new images or edit existing images without reconfirmation unless required source images are unavailable.",
       "For new images, call image_gen.imagegen without referenced_image_paths or num_last_images_to_include.",
-      "For image_gen.imagegen edits, use absolute referenced_image_paths when every target is local; otherwise use the smallest necessary num_last_images_to_include, and use read when you need to inspect a local image.",
+      "For image_gen.imagegen edits, use up to five absolute referenced_image_paths when every target is local; otherwise use num_last_images_to_include from 1 to 5, and use read when you need to inspect a local image.",
       "Never pass both image selectors to image_gen.imagegen; ask the user to reattach images when every target cannot be referenced.",
     ],
-    parameters: imageGenerationParameters,
+    parameters: IMAGE_GENERATION_PARAMETERS,
     executionMode: "sequential",
     renderShell: "self",
     async execute(toolCallId, params, signal, onUpdate, ctx) {

@@ -9,6 +9,10 @@ import {
   encodeSessionEntries,
 } from "../extensions/openai-codex-compat/compaction-checkpoint.ts";
 import {
+  IMAGE_GENERATION_PARAMETERS,
+  IMAGE_GENERATION_WIRE_PARAMETERS,
+} from "../extensions/openai-codex-compat/image-generation-schema.ts";
+import {
   CODEX_NAMESPACED_TOOL_NAMES,
   CODEX_TEXT_CONTENT_ITEM_TOOL_RESULT_NAMES,
   IMAGE_GENERATION_TOOL_NAME,
@@ -58,7 +62,7 @@ const webRunTool: Tool = {
 const imageGenerationTool: Tool = {
   name: IMAGE_GENERATION_TOOL_NAME,
   description: "Generate an image",
-  parameters: Type.Object({ prompt: Type.String() }),
+  parameters: IMAGE_GENERATION_PARAMETERS,
 };
 
 const assistantMessage = {
@@ -365,12 +369,41 @@ void test("round-trips namespaced calls and deferred namespaced definitions", ()
       message: namespacedContext.messages[1],
     },
   ] as SessionEntry[];
-  const checkpointHistory = encodeSessionEntries(model, entries, [], new Map());
+  const checkpointHistory = encodeSessionEntries(
+    model,
+    entries,
+    [
+      {
+        name: IMAGE_GENERATION_TOOL_NAME,
+        description: imageGenerationTool.description,
+        parameters: imageGenerationTool.parameters,
+      } as ToolInfo,
+    ],
+    new Map(),
+  );
   assert.deepEqual(checkpointHistory[1], {
     type: "function_call_output",
     call_id: "call_web",
     output: [{ type: "input_text", text: "result" }],
   });
+  assert.equal(checkpointHistory[2]?.["type"], "tool_search_call");
+  assert.deepEqual(checkpointHistory[3]?.["tools"], [
+    {
+      type: "namespace",
+      name: "image_gen",
+      description: "Tools in the image_gen namespace.",
+      tools: [
+        {
+          type: "function",
+          name: "imagegen",
+          description: imageGenerationTool.description,
+          parameters: IMAGE_GENERATION_WIRE_PARAMETERS,
+          defer_loading: true,
+          strict: false,
+        },
+      ],
+    },
+  ]);
 });
 
 void test("serializes active compaction tools with the same namespace contract", () => {
@@ -382,8 +415,13 @@ void test("serializes active compaction tools with the same namespace contract",
           description: webRunTool.description,
           parameters: webRunTool.parameters,
         } as ToolInfo,
+        {
+          name: IMAGE_GENERATION_TOOL_NAME,
+          description: imageGenerationTool.description,
+          parameters: imageGenerationTool.parameters,
+        } as ToolInfo,
       ],
-      [WEB_RUN_TOOL_NAME],
+      [WEB_RUN_TOOL_NAME, IMAGE_GENERATION_TOOL_NAME],
     ),
     [
       {
@@ -396,6 +434,20 @@ void test("serializes active compaction tools with the same namespace contract",
             name: "run",
             description: webRunTool.description,
             parameters: webRunTool.parameters,
+            strict: false,
+          },
+        ],
+      },
+      {
+        type: "namespace",
+        name: "image_gen",
+        description: "Tools in the image_gen namespace.",
+        tools: [
+          {
+            type: "function",
+            name: "imagegen",
+            description: imageGenerationTool.description,
+            parameters: IMAGE_GENERATION_WIRE_PARAMETERS,
             strict: false,
           },
         ],

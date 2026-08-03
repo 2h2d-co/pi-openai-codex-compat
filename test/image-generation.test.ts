@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, sep } from "node:path";
 import test from "node:test";
 import type {
   ExtensionAPI,
@@ -11,7 +11,9 @@ import type {
   Theme,
 } from "@earendil-works/pi-coding-agent";
 import type { Model } from "@earendil-works/pi-ai";
+import { validateToolArguments } from "@earendil-works/pi-ai";
 import registerImageGeneration, {
+  normalizeImagePath,
   recentImageUrls,
 } from "../extensions/openai-codex-compat/image-generation.ts";
 import { DEFAULT_CONFIG } from "../extensions/openai-codex-compat/config.ts";
@@ -71,6 +73,18 @@ void test("selects the newest conversation images in chronological order", () =>
   );
 });
 
+void test("normalizes absolute referenced image paths", () => {
+  const base = join(tmpdir(), "pi-codex-images");
+  assert.equal(
+    normalizeImagePath(`@${join(base, "nested")}${sep}..${sep}input.png`),
+    join(base, "input.png"),
+  );
+  assert.throws(
+    () => normalizeImagePath(`nested${sep}..${sep}input.png`),
+    /referenced image path must be absolute/,
+  );
+});
+
 void test("executes generation and recent-image edits through Codex Images", async (t) => {
   const agentDir = await mkdtemp(join(tmpdir(), "pi-codex-images-"));
   const previousAgentDir = process.env["PI_CODING_AGENT_DIR"];
@@ -125,34 +139,119 @@ void test("executes generation and recent-image edits through Codex Images", asy
   assert.deepEqual(tool.promptGuidelines, [
     "Use image_gen.imagegen directly to generate new images or edit existing images without reconfirmation unless required source images are unavailable.",
     "For new images, call image_gen.imagegen without referenced_image_paths or num_last_images_to_include.",
-    "For image_gen.imagegen edits, use absolute referenced_image_paths when every target is local; otherwise use the smallest necessary num_last_images_to_include, and use read when you need to inspect a local image.",
+    "For image_gen.imagegen edits, use up to five absolute referenced_image_paths when every target is local; otherwise use num_last_images_to_include from 1 to 5, and use read when you need to inspect a local image.",
     "Never pass both image selectors to image_gen.imagegen; ask the user to reattach images when every target cannot be referenced.",
   ]);
   assert.equal(
     createHash("sha256").update(tool.description).digest("hex"),
-    "e92ffb73c2e0b15307b79902585fea2187236e75c152308259805d146c6e5d63",
+    "3790cbce76512c668f3d6f7a2d87710c8da768dd5854e36ce233a23f9e95b246",
   );
   assert.deepEqual(JSON.parse(JSON.stringify(tool.parameters)), {
     type: "object",
     properties: {
       num_last_images_to_include: {
         type: ["integer", "null"],
+        minimum: 1,
+        maximum: 5,
       },
       prompt: {
         type: "string",
       },
       referenced_image_paths: {
         type: ["array", "null"],
+        maxItems: 5,
         items: {
           type: "string",
           description:
-            "Absolute path to a local PNG, JPEG, GIF, or WebP image to include in an edit. Resolve relative paths against Pi's current working directory before calling the tool. The path does not need to be canonicalized, but the file must exist and be readable by Pi.",
+            "Absolute local filesystem path, optionally prefixed with `@`, to a PNG, JPEG, GIF, or WebP image to include in an edit. Resolve relative paths against Pi's current working directory before calling the tool. Pi lexically normalizes `.` and `..` segments before reading the file, which must exist and be readable.",
         },
       },
     },
     required: ["prompt"],
     additionalProperties: false,
+    not: {
+      properties: {
+        num_last_images_to_include: {
+          type: "integer",
+        },
+        referenced_image_paths: {
+          type: "array",
+          minItems: 1,
+        },
+      },
+      required: ["num_last_images_to_include", "referenced_image_paths"],
+    },
   });
+  const validate = (arguments_: Record<string, unknown>) =>
+    validateToolArguments(tool, {
+      type: "toolCall",
+      id: "image-schema-test",
+      name: "image_gen.imagegen",
+      arguments: arguments_,
+    });
+  assert.deepEqual(validate({ prompt: "Generate an image." }), {
+    prompt: "Generate an image.",
+  });
+  assert.deepEqual(
+    validate({
+      prompt: "Edit local images.",
+      referenced_image_paths: ["/tmp/one.png", "/tmp/two.png"],
+    }),
+    {
+      prompt: "Edit local images.",
+      referenced_image_paths: ["/tmp/one.png", "/tmp/two.png"],
+    },
+  );
+  assert.deepEqual(
+    validate({
+      prompt: "Edit recent images.",
+      num_last_images_to_include: 5,
+    }),
+    {
+      prompt: "Edit recent images.",
+      num_last_images_to_include: 5,
+    },
+  );
+  assert.throws(
+    () =>
+      validate({
+        prompt: "Too many local images.",
+        referenced_image_paths: [
+          "/tmp/1.png",
+          "/tmp/2.png",
+          "/tmp/3.png",
+          "/tmp/4.png",
+          "/tmp/5.png",
+          "/tmp/6.png",
+        ],
+      }),
+    /referenced_image_paths: must not have more than 5 items/,
+  );
+  assert.throws(
+    () =>
+      validate({
+        prompt: "Too many recent images.",
+        num_last_images_to_include: 6,
+      }),
+    /num_last_images_to_include: must be <= 5/,
+  );
+  assert.throws(
+    () =>
+      validate({
+        prompt: "No recent images.",
+        num_last_images_to_include: 0,
+      }),
+    /num_last_images_to_include: must be >= 1/,
+  );
+  assert.throws(
+    () =>
+      validate({
+        prompt: "Conflicting selectors.",
+        referenced_image_paths: ["/tmp/input.png"],
+        num_last_images_to_include: 1,
+      }),
+    /root: must not be valid/,
+  );
 
   const context = {
     model: codexModel(),

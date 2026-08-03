@@ -9,7 +9,12 @@ import {
   type CodexCompatConfig,
 } from "../extensions/openai-codex-compat/config.ts";
 import type { JsonRecord } from "../extensions/openai-codex-compat/codex-protocol.ts";
+import {
+  IMAGE_GENERATION_PARAMETERS,
+  IMAGE_GENERATION_WIRE_PARAMETERS,
+} from "../extensions/openai-codex-compat/image-generation-schema.ts";
 import { NATIVE_RESPONSE_ENTRY_TYPE } from "../extensions/openai-codex-compat/native-history.ts";
+import { IMAGE_GENERATION_TOOL_NAME } from "../extensions/openai-codex-compat/namespaced-tools.ts";
 import { CHECKPOINT_ENTRY_TYPE } from "../extensions/openai-codex-compat/compaction-checkpoint.ts";
 
 type MessageEntry = Extract<SessionEntry, { type: "message" }>;
@@ -268,13 +273,18 @@ void test("transports dotted Pi tools as native Responses namespaces", async () 
       search_query: Type.Array(Type.Object({ q: Type.String() })),
     }),
   };
+  const imageGeneration: Tool = {
+    name: IMAGE_GENERATION_TOOL_NAME,
+    description: "Generate an image",
+    parameters: IMAGE_GENERATION_PARAMETERS,
+  };
 
   const message = await harness.runtime
     .streamSimple(
       codexModel(),
       {
         messages: [user.message as Context["messages"][number]],
-        tools: [webRun],
+        tools: [webRun, imageGeneration],
       },
       {
         apiKey: accessToken(),
@@ -296,6 +306,20 @@ void test("transports dotted Pi tools as native Responses namespaces", async () 
         name: "run",
         description: "Browse the web",
         parameters: webRun.parameters,
+        strict: false,
+      },
+    ],
+  });
+  assert.deepEqual((firstRequest.tools as JsonRecord[])[1], {
+    type: "namespace",
+    name: "image_gen",
+    description: "Tools in the image_gen namespace.",
+    tools: [
+      {
+        type: "function",
+        name: "imagegen",
+        description: "Generate an image",
+        parameters: IMAGE_GENERATION_WIRE_PARAMETERS,
         strict: false,
       },
     ],

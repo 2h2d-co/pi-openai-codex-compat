@@ -25,6 +25,7 @@ import {
   type CheckpointData,
   type GrammarToolInputProperties,
 } from "./compaction-checkpoint.ts";
+import { withCodexWireToolParameters } from "./codex-tool-schema.ts";
 import {
   collectRemoteCompaction,
   isObject,
@@ -107,7 +108,12 @@ function splitDeferredTools(
   context: Context,
   enabled: boolean,
 ): { immediate: Tool[]; deferred: Map<string, Tool> } {
-  const unique = new Map((context.tools ?? []).map((tool) => [tool.name, tool]));
+  const unique = new Map(
+    (context.tools ?? []).map((tool) => {
+      const wireTool = withCodexWireToolParameters(tool);
+      return [wireTool.name, wireTool];
+    }),
+  );
   if (!enabled) return { immediate: [...unique.values()], deferred: new Map() };
 
   const deferredNames = new Set<string>();
