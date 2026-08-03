@@ -184,10 +184,14 @@ function resultRecords(details: WebRunDetails | undefined): JsonRecord[] {
 function domainFromUrl(value: string | undefined): string | undefined {
   if (!value) return undefined;
   try {
-    return new URL(value).hostname;
+    return displayDomain(new URL(value).hostname);
   } catch {
     return undefined;
   }
+}
+
+function displayDomain(value: string): string {
+  return value.replace(/^www\./u, "");
 }
 
 function resultDomains(results: readonly JsonRecord[]): string[] {
@@ -196,7 +200,7 @@ function resultDomains(results: readonly JsonRecord[]): string[] {
       results.flatMap((item) => {
         const domain = stringField(item, "domain");
         const url = stringField(item, "url") ?? stringField(item, "source_url");
-        return domain ? [domain] : domainFromUrl(url) ? [domainFromUrl(url)!] : [];
+        return domain ? [displayDomain(domain)] : domainFromUrl(url) ? [domainFromUrl(url)!] : [];
       }),
     ),
   ];
@@ -305,7 +309,7 @@ function actionResultSummary(
 ): string {
   const title = blockTitle(blocks);
   const compactTitle = title ? textPreview(title) : undefined;
-  const domains = outputDomains(blocks);
+  const domains = [...new Set(outputDomains(blocks).map(displayDomain))];
   const domain = domains[0];
   const domainDetail = compactTitle === domain ? undefined : domain;
   const lineRange = outputLineRange(blocks);
@@ -346,11 +350,13 @@ function actionResultSummary(
     case "screenshot": {
       const screenshots = args.screenshot ?? [];
       const pages = previewItems(screenshots, (item) => String(item.pageno + 1));
-      return detailLine([
-        `Captured ${countDescription(screenshots.length, "PDF page")}${pages ? ` ${pages}` : ""}`,
-        compactTitle,
-        domain,
-      ]);
+      const capture =
+        screenshots.length === 1
+          ? `Captured PDF page${pages ? ` ${pages}` : ""}`
+          : `Captured ${countDescription(screenshots.length, "PDF page")}${
+              pages ? ` ${pages}` : ""
+            }`;
+      return detailLine([capture, compactTitle, domain]);
     }
     case "finance":
       return `Quotes for ${previewItems(args.finance, (item) => item.ticker) ?? "requested assets"}`;

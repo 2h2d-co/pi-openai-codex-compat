@@ -89,7 +89,7 @@ void test("summarizes every item in every web.run action family", () => {
 void test("renders image search output as source cards instead of a text blob", () => {
   const output = [
     [
-      "Blue square icon (https://images.example/blue)",
+      "Blue square icon (https://www.images.example/blue)",
       "citeturn2image0 # Blue Square",
       "",
       "A clean blue square on a white background.",
@@ -110,7 +110,7 @@ void test("renders image search output as source cards instead of a text blob", 
   const expanded = renderResult(args, output, true);
   assert.match(expanded, /1\. Blue square icon/);
   assert.match(expanded, /turn2image0/);
-  assert.match(expanded, /https:\/\/images\.example\/blue/);
+  assert.match(expanded, /https:\/\/www\.images\.example\/blue/);
   assert.match(expanded, /Blue Square/);
   assert.match(expanded, /A clean blue square/);
   assert.doesNotMatch(expanded, /-{20}/);
@@ -169,6 +169,14 @@ void test("renders PDF screenshots as concise page cards", () => {
 
   const collapsed = renderResult(args, output, false);
   assert.match(collapsed, /Captured 2 PDF pages 1, 3 · cdn\.example/);
+
+  const single = renderResult(
+    { screenshot: [{ ref_id: "turn4pdf0", pageno: 0 }] },
+    output.split(SEPARATOR)[0]!,
+    false,
+  );
+  assert.match(single, /Captured PDF page 1 · cdn\.example/);
+  assert.doesNotMatch(single, /Captured 1 PDF page/);
 
   const expanded = renderResult(args, output, true);
   assert.match(expanded, /turn4pdf0 · page 1/);
