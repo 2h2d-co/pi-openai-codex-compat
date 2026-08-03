@@ -379,6 +379,36 @@ void test("retries non-transient SSE response errors when configured like Pi AI"
   assert.equal(requests, 2);
 });
 
+void test("retries generic usage-limit responses like Pi AI", async () => {
+  const terminal = `data: ${JSON.stringify({
+    type: "response.completed",
+    response: { id: "response-1", status: "completed" },
+  })}\n\n`;
+  let requests = 0;
+  for await (const _event of new CodexTransport().request(
+    codexModel(),
+    { input: [] },
+    {
+      apiKey: accessToken(),
+      transport: "sse",
+      maxRetries: 1,
+      fetch: async () => {
+        requests += 1;
+        return requests === 1
+          ? new Response('{"error":{"code":"temporary_limit","message":"usage limit"}}', {
+              status: 429,
+              headers: { "retry-after-ms": "0" },
+            })
+          : new Response(terminal, { status: 200 });
+      },
+    },
+  )) {
+    // Consume the successful retry.
+  }
+
+  assert.equal(requests, 2);
+});
+
 void test("normalizes AbortError without retrying", async () => {
   let requests = 0;
   await assert.rejects(

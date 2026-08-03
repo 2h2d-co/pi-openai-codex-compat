@@ -265,7 +265,7 @@ function normalizeTimeoutMs(value: number | undefined): number | undefined {
 }
 
 function isTerminalRateLimitError(errorText: string): boolean {
-  return /GoUsageLimitError|FreeUsageLimitError|Monthly usage limit reached|usage limit|available balance|insufficient_quota|out of budget|quota exceeded|billing/i.test(
+  return /GoUsageLimitError|FreeUsageLimitError|Monthly usage limit reached|available balance|insufficient_quota|out of budget|quota exceeded|billing/i.test(
     errorText,
   );
 }
