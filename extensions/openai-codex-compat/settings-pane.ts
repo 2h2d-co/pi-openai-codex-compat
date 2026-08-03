@@ -10,6 +10,7 @@ import {
   type SettingItem,
   SettingsList,
   Text,
+  truncateToWidth,
 } from "@earendil-works/pi-tui";
 import {
   configLayer,
@@ -212,18 +213,20 @@ async function showSettings(
   }
 
   let config = callbacks.getConfig?.(ctx) ?? loadConfig(ctx.cwd, ctx.isProjectTrusted());
+  let persistedConfig = { ...config };
   let revision = 0;
   let savedRevision = 0;
   let saveQueue = Promise.resolve();
   const filePath = writableConfigPath(ctx.cwd, ctx.isProjectTrusted());
 
-  await ctx.ui.custom((tui, theme, _keybindings, done) => {
+  await ctx.ui.custom((tui, theme, keybindings, done) => {
+    let closing = false;
     const container = new Container();
     container.addChild(
       new Text(theme.fg("accent", theme.bold("OpenAI Codex Compatibility Settings")), 1, 1),
     );
     container.addChild(
-      new Text(theme.fg("dim", `Session-only. Ctrl+S saves to ${filePath}`), 1, 0),
+      new Text(theme.fg("dim", `Ctrl+S saves without closing to ${filePath}`), 1, 0),
     );
     const saveStatus = new Text(
       theme.fg("dim", "Changes apply to this session immediately."),
@@ -232,10 +235,61 @@ async function showSettings(
     );
     container.addChild(saveStatus);
 
+    const queueSave = (closeAfterSave: boolean): void => {
+      if (closing) return;
+      if (closeAfterSave) closing = true;
+
+      const snapshotConfig = { ...config };
+      const snapshot = configLayer(snapshotConfig);
+      const snapshotRevision = revision;
+      saveStatus.setText(theme.fg("dim", closeAfterSave ? "Saving and closing…" : "Saving…"));
+      saveQueue = saveQueue.then(async () => {
+        try {
+          const savedPath = await saveConfig(ctx.cwd, ctx.isProjectTrusted(), snapshot);
+          if (snapshotRevision >= savedRevision) {
+            persistedConfig = snapshotConfig;
+            savedRevision = snapshotRevision;
+          }
+          if (closeAfterSave) {
+            done(undefined);
+            return;
+          }
+          saveStatus.setText(
+            savedRevision === revision
+              ? theme.fg("success", `Saved to ${savedPath}`)
+              : theme.fg("warning", "Unsaved session changes."),
+          );
+        } catch (error) {
+          if (closeAfterSave) closing = false;
+          const message = error instanceof Error ? error.message : String(error);
+          saveStatus.setText(theme.fg("error", message));
+          ctx.ui.notify(message, "error");
+        }
+        tui.requestRender();
+      });
+      tui.requestRender();
+    };
+
+    const discardAndClose = (): void => {
+      if (closing) return;
+      closing = true;
+      saveStatus.setText(theme.fg("dim", "Discarding unsaved changes…"));
+      saveQueue = saveQueue.then(() => {
+        if (revision !== savedRevision) {
+          config = { ...persistedConfig };
+          revision = savedRevision;
+          callbacks.onChange?.(config, ctx);
+        }
+        done(undefined);
+      });
+      tui.requestRender();
+    };
+
+    const listTheme = getSettingsListTheme();
     const list = new SettingsList(
       settingItems(config),
       12,
-      getSettingsListTheme(),
+      listTheme,
       (id, value) => {
         const patch = settingPatch(id, value);
         if (!patch) return;
@@ -246,36 +300,42 @@ async function showSettings(
         saveStatus.setText(theme.fg("warning", "Unsaved session changes."));
         tui.requestRender();
       },
-      () => done(undefined),
+      discardAndClose,
       { enableSearch: true },
     );
-    container.addChild(list);
+    container.addChild({
+      render: (width: number) => {
+        const lines = list.render(width);
+        if (lines.length > 0) {
+          lines[lines.length - 1] = truncateToWidth(
+            listTheme.hint(
+              "  Type to search · Space changes · Enter save & close · Esc discard & close",
+            ),
+            width,
+            "",
+          );
+        }
+        return lines;
+      },
+      invalidate: () => list.invalidate(),
+      handleInput: (data: string) => list.handleInput(data),
+    });
 
     return {
       render: (width: number) => container.render(width),
       invalidate: () => container.invalidate(),
       handleInput: (data: string) => {
+        if (closing) return;
         if (matchesKey(data, Key.ctrl("s"))) {
-          const snapshot = configLayer(config);
-          const snapshotRevision = revision;
-          saveStatus.setText(theme.fg("dim", "Saving…"));
-          saveQueue = saveQueue.then(async () => {
-            try {
-              const savedPath = await saveConfig(ctx.cwd, ctx.isProjectTrusted(), snapshot);
-              savedRevision = Math.max(savedRevision, snapshotRevision);
-              saveStatus.setText(
-                savedRevision === revision
-                  ? theme.fg("success", `Saved to ${savedPath}`)
-                  : theme.fg("warning", "Unsaved session changes."),
-              );
-            } catch (error) {
-              const message = error instanceof Error ? error.message : String(error);
-              saveStatus.setText(theme.fg("error", message));
-              ctx.ui.notify(message, "error");
-            }
-            tui.requestRender();
-          });
-          tui.requestRender();
+          queueSave(false);
+          return;
+        }
+        if (matchesKey(data, Key.enter)) {
+          queueSave(true);
+          return;
+        }
+        if (matchesKey(data, Key.escape) || keybindings.matches(data, "tui.select.cancel")) {
+          discardAndClose();
           return;
         }
         list.handleInput(data);

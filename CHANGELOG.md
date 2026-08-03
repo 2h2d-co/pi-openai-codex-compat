@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Changed
+
+- Make `Enter` save and close `/codex-settings`, make `Escape` discard unsaved changes and close, and retain `Ctrl+S` as save without closing.
+
 ## 0.0.1 - 2026-08-03
 
 ### Added

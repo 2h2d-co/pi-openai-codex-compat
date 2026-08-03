@@ -154,7 +154,7 @@ void test("exposes every request and tool control in the settings pane", () => {
   );
 });
 
-void test("keeps settings changes session-local until Ctrl+S", async (t) => {
+void test("saves on Enter or Ctrl+S and discards unsaved changes on Escape", async (t) => {
   initTheme("dark", false);
   const root = await mkdtemp(join(tmpdir(), "pi-codex-session-settings-"));
   const cwd = join(root, "project");
@@ -194,6 +194,7 @@ void test("keeps settings changes session-local until Ctrl+S", async (t) => {
   assert.ok(command);
 
   const runSettings = async (inputs: string[]) => {
+    let closeCount = 0;
     const context = {
       cwd,
       mode: "tui",
@@ -201,28 +202,45 @@ void test("keeps settings changes session-local until Ctrl+S", async (t) => {
       ui: {
         notify() {},
         async custom(factory: (...args: any[]) => any) {
-          const component = await factory(
+          let resolveDone: (() => void) | undefined;
+          const closed = new Promise<void>((resolve) => {
+            resolveDone = resolve;
+          });
+          const component = factory(
             { requestRender() {} },
             {
               fg: (_color: string, text: string) => text,
               bold: (text: string) => text,
             },
-            {},
-            () => {},
+            {
+              matches: (data: string, id: string) =>
+                id === "tui.select.cancel" && (data === "\u001b" || data === "\u0003"),
+            },
+            () => {
+              closeCount++;
+              resolveDone?.();
+            },
           );
           for (const input of inputs) component.handleInput?.(input);
+          await closed;
         },
       },
     } as unknown as ExtensionCommandContext;
     await command!("", context);
+    return closeCount;
   };
 
-  await runSettings(["\r", "\u001b"]);
-  assert.equal(sessionConfig.fastMode, true);
+  assert.equal(await runSettings([" ", "\u001b"]), 1);
+  assert.equal(sessionConfig.fastMode, false);
   assert.equal(loadConfig(cwd, false).fastMode, false);
 
-  await runSettings(["\u0013", "\u001b"]);
+  assert.equal(await runSettings([" ", "\r"]), 1);
+  assert.equal(sessionConfig.fastMode, true);
   assert.equal(loadConfig(cwd, false).fastMode, true);
+
+  assert.equal(await runSettings([" ", "\u0013", " ", "\u001b"]), 1);
+  assert.equal(sessionConfig.fastMode, false);
+  assert.equal(loadConfig(cwd, false).fastMode, false);
 });
 
 void test("uses apply_patch instead of Pi's active edit and write tools", () => {

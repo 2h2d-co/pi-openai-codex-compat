@@ -12,7 +12,7 @@ OpenAI Codex compatibility for [Pi](https://github.com/earendil-works/pi-mono), 
 - **Dedicated Codex tool UI**: renders `apply_patch`, `image_gen.imagegen`, and `web.run` on a shared configurable surface with compact summaries and `Ctrl+O` expansion.
 - **Hosted web-search fallback**: injects native `web_search` only when `web.run` is inactive, with cached, indexed, or live modes.
 - **Native request controls**: configures Responses API text verbosity, reasoning summaries, and GPT-5.6 standard/pro reasoning mode.
-- **Session-local settings pane**: `/codex-settings` changes every compatibility setting for the current session; `Ctrl+S` explicitly persists the current values.
+- **Session-local settings pane**: `/codex-settings` changes every compatibility setting for the current session; `Enter` persists and closes, `Escape` discards unsaved changes and closes, and `Ctrl+S` persists without closing.
 - **Compact footer indicators**: non-default Codex request modes are appended to the model side of Pi's normal second footer line.
 
 Pi provides the Codex OAuth flow and model catalog. At session start, this package overrides the built-in `openai-codex` runtime under the same provider id so ordinary responses and remote compaction share one transport, parser, native-history store, and sticky WebSocket session.
@@ -143,7 +143,7 @@ A trusted project can override it at:
 <project>/.pi/openai-codex-compat.json
 ```
 
-Each session inherits the effective file-backed settings. Open `/codex-settings` to make immediate session-local changes. Press `Ctrl+S` in the pane to persist the current values; the global file is the normal save target, while an existing trusted project override remains the target for that project.
+Each session inherits the effective file-backed settings. Open `/codex-settings` to make immediate session-local changes. Press `Enter` to persist and close, `Escape` to discard unsaved changes and close, or `Ctrl+S` to persist without closing. The global file is the normal save target, while an existing trusted project override remains the target for that project. After `Ctrl+S`, later unsaved changes can still be discarded back to the values from that save.
 
 The effective settings are printed once when a TUI session starts. The footer shows `fast` and `pro` only when enabled, and shows text verbosity or reasoning summary only when they differ from their defaults.
 
@@ -181,7 +181,7 @@ Defaults:
 | `reasoningSummary`     | `auto`, `concise`, `detailed`, `off`                 | `auto`     | Sets `reasoning.summary` when reasoning is enabled; `off` omits the summary parameter.                                                                                                                                                    |
 | `reasoningMode`        | `standard`, `pro`                                    | `standard` | Sets `reasoning.mode` on GPT-5.6 models independently of Pi's reasoning-effort control.                                                                                                                                                   |
 
-Invalid values are ignored and invalid JSON does not prevent Pi from starting. The settings pane never writes on ordinary changes, refuses to overwrite invalid JSON when `Ctrl+S` is pressed, and retains unknown keys when saving. Project configuration is read only when the project is trusted.
+Invalid values are ignored and invalid JSON does not prevent Pi from starting. The settings pane never writes on ordinary changes, refuses to overwrite invalid JSON when `Enter` or `Ctrl+S` attempts to save, and retains unknown keys when saving. Project configuration is read only when the project is trusted.
 
 ## Native compaction
 
@@ -262,7 +262,7 @@ The tool generates new images with `gpt-image-2` or edits up to five local/recen
 ~/.pi/agent/generated_images/<session-id>/<call-id>.png
 ```
 
-The active Pi agent directory replaces `~/.pi/agent` when configured differently. Turning `imageGeneration` off removes the tool immediately for the current session; `Ctrl+S` in `/codex-settings` persists the value.
+The active Pi agent directory replaces `~/.pi/agent` when configured differently. Turning `imageGeneration` off removes the tool immediately for the current session; `Enter` or `Ctrl+S` in `/codex-settings` persists the value.
 
 Pi also persists the returned image content in tool-result history so later image edits and provider replay remain self-contained. Generated-image turns therefore increase the session file by approximately the base64 image size in addition to the saved PNG artifact.
 

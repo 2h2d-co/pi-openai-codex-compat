@@ -30,7 +30,7 @@ function settingsSummary(ctx: ExtensionContext, config: CodexCompatConfig): stri
     `reasoning summary: ${config.reasoningSummary}`,
     `auto-compact threshold: ${config.autoCompactAtPercent ?? "Pi default"}`,
     `save target: ${writableConfigPath(ctx.cwd, ctx.isProjectTrusted())}`,
-    "settings: /codex-settings (session-only until Ctrl+S)",
+    "settings: /codex-settings (Enter saves & closes; Esc discards; Ctrl+S saves)",
   ].join("\n");
 }
 
