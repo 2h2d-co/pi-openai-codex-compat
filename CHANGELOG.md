@@ -4,6 +4,7 @@
 
 ### Changed
 
+- Rely on Pi's compaction indicator instead of adding a temporary third footer status line during percentage-triggered compaction.
 - Adapt the `image_gen.imagegen` descriptions and prompt metadata to Pi while retaining the server-reserved schema.
 - Normalize local image paths before reading them and enforce image-count bounds and edit-selector exclusivity in the executor.
 - Add a concise `web.run` prompt snippet and four high-signal system-prompt guidelines derived from its official description.

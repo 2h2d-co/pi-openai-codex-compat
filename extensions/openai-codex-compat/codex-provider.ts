@@ -52,7 +52,6 @@ import {
 
 const CODEX_PROVIDER = "openai-codex";
 const CODEX_API = "openai-codex-responses";
-const CHECKPOINT_STATUS_ID = "openai-codex-compat-compaction";
 const CODEX_TOOL_CALL_PROVIDERS = new Set(["openai", "openai-codex", "opencode"]);
 
 type ConfigResolver = (ctx: ExtensionContext) => CodexCompatConfig;
@@ -78,7 +77,6 @@ type RuntimeScope = {
   config: CodexCompatConfig;
   hasUI: boolean;
   notify(message: string, level: "info" | "warning" | "error"): void;
-  setStatus(message: string | undefined): void;
 };
 
 type RequestTemplate = {
@@ -308,7 +306,6 @@ export class CodexProviderRuntime {
       config: this.resolveConfig(ctx),
       hasUI: ctx.hasUI,
       notify: (message, level) => ctx.ui.notify(message, level),
-      setStatus: (message) => ctx.ui.setStatus(CHECKPOINT_STATUS_ID, message),
     });
   }
 
@@ -515,44 +512,39 @@ export class CodexProviderRuntime {
       return body;
     }
 
-    scope.setStatus("Codex compacting…");
-    try {
-      const compacted = await this.performCompaction({
-        model,
-        requestOptions: options,
-        history: split.history,
-        postCompactionTail: split.tail,
-        template: withoutConversationInput(body),
-        instructions:
-          typeof body.instructions === "string"
-            ? body.instructions
-            : context.systemPrompt || "You are a helpful assistant.",
-        grammarToolInputProperties,
-        priority: scope.config.fastMode,
-      });
-      const firstKeptEntryId = userEntryAfterLastSampled(branch)?.id ?? scope.manager.getLeafId();
-      if (!firstKeptEntryId || typeof scope.manager.appendCompaction !== "function") {
-        throw new Error("Pi's mutable SessionManager is unavailable for percentage compaction.");
-      }
-      if (scope.manager.getLeafId() !== scope.leafId) {
-        throw new Error("Pi's active session branch changed while Codex was compacting.");
-      }
-      scope.manager.appendCompaction(
-        markerSummary(),
-        firstKeptEntryId,
-        scope.contextTokens ?? 0,
-        compacted.checkpoint,
-        true,
-        compacted.usage,
-      );
-      scope.notify(
-        `OpenAI Codex context compacted at ${scope.contextPercent.toFixed(1)}% and will continue.`,
-        "info",
-      );
-      return updateInput(body, compacted.checkpoint.history);
-    } finally {
-      scope.setStatus(undefined);
+    const compacted = await this.performCompaction({
+      model,
+      requestOptions: options,
+      history: split.history,
+      postCompactionTail: split.tail,
+      template: withoutConversationInput(body),
+      instructions:
+        typeof body.instructions === "string"
+          ? body.instructions
+          : context.systemPrompt || "You are a helpful assistant.",
+      grammarToolInputProperties,
+      priority: scope.config.fastMode,
+    });
+    const firstKeptEntryId = userEntryAfterLastSampled(branch)?.id ?? scope.manager.getLeafId();
+    if (!firstKeptEntryId || typeof scope.manager.appendCompaction !== "function") {
+      throw new Error("Pi's mutable SessionManager is unavailable for percentage compaction.");
     }
+    if (scope.manager.getLeafId() !== scope.leafId) {
+      throw new Error("Pi's active session branch changed while Codex was compacting.");
+    }
+    scope.manager.appendCompaction(
+      markerSummary(),
+      firstKeptEntryId,
+      scope.contextTokens ?? 0,
+      compacted.checkpoint,
+      true,
+      compacted.usage,
+    );
+    scope.notify(
+      `OpenAI Codex context compacted at ${scope.contextPercent.toFixed(1)}% and will continue.`,
+      "info",
+    );
+    return updateInput(body, compacted.checkpoint.history);
   }
 
   stream(

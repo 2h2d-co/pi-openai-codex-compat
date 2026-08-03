@@ -133,6 +133,7 @@ function createHarness(initialBranch: SessionEntry[], config: CodexCompatConfig 
   let branch = [...initialBranch];
   const customEntries: Array<{ customType: string; data: unknown }> = [];
   const compactions: Array<{ details: unknown; usage: unknown }> = [];
+  const statuses: Array<{ key: string; text: string | undefined }> = [];
   const pi = {
     getAllTools: () => [],
     getActiveTools: () => [],
@@ -186,7 +187,12 @@ function createHarness(initialBranch: SessionEntry[], config: CodexCompatConfig 
     signal: new AbortController().signal,
     scopedModels: [],
     sessionManager: manager,
-    ui: { notify() {}, setStatus() {} },
+    ui: {
+      notify() {},
+      setStatus(key: string, text: string | undefined) {
+        statuses.push({ key, text });
+      },
+    },
     isProjectTrusted: () => true,
     getContextUsage: () => ({ tokens: 80_000, contextWindow: 100_000, percent: 80 }),
   } as unknown as ExtensionContext;
@@ -196,6 +202,7 @@ function createHarness(initialBranch: SessionEntry[], config: CodexCompatConfig 
     branch: () => branch,
     customEntries,
     compactions,
+    statuses,
   };
 }
 
@@ -406,6 +413,7 @@ void test("performs percentage compaction before sampling the current user input
   assert.match(JSON.stringify(requests[1]?.input), /continue/);
   assert.equal(harness.compactions.length, 1);
   assert.ok(harness.compactions[0]?.usage);
+  assert.deepEqual(harness.statuses, []);
 });
 
 void test("reconstructs active-branch native responses after a checkpoint", async () => {
