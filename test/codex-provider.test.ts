@@ -429,6 +429,55 @@ void test("rejects missing streamSimple authentication synchronously", () => {
   );
 });
 
+void test("validates direct-stream and compaction authentication before payload hooks", async () => {
+  const user = userEntry("user-1", "hello");
+  const harness = createHarness([user]);
+  let payloadHooks = 0;
+  let transportRequests = 0;
+  harness.runtime.transport.request = async function* () {
+    transportRequests += 1;
+    yield* textEvents("unexpected");
+  };
+
+  const streamMessage = await harness.runtime
+    .stream(
+      codexModel(),
+      { messages: [user.message as Context["messages"][number]] },
+      {
+        sessionId: "session-1",
+        onPayload(payload) {
+          payloadHooks += 1;
+          return payload;
+        },
+      },
+    )
+    .result();
+  assert.equal(streamMessage.stopReason, "error");
+  assert.match(streamMessage.errorMessage ?? "", /No API key for provider: openai-codex/);
+
+  await assert.rejects(
+    harness.runtime.compact({
+      model: codexModel(),
+      requestOptions: {
+        apiKey: "invalid-token",
+        sessionId: "session-1",
+        onPayload(payload) {
+          payloadHooks += 1;
+          return payload;
+        },
+      },
+      history: [],
+      instructions: "Compact",
+      grammarToolInputProperties: new Map(),
+      template: {},
+      priority: false,
+    }),
+    /Failed to extract accountId from token/,
+  );
+  assert.equal(payloadHooks, 0);
+  assert.equal(transportRequests, 0);
+});
+
 void test("honors aborts after terminal processing and while waiting for a session request", async () => {
   const user = userEntry("user-1", "hello");
   const context: Context = { messages: [user.message as Context["messages"][number]] };

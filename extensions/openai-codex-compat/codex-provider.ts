@@ -35,7 +35,11 @@ import {
   type ResponsesItem,
 } from "./codex-protocol.ts";
 import { processCodexStream } from "./codex-stream.ts";
-import { CodexTransport, type CodexTransportDiagnostic } from "./codex-transport.ts";
+import {
+  CodexTransport,
+  validateCodexAuthentication,
+  type CodexTransportDiagnostic,
+} from "./codex-transport.ts";
 import type { CodexCompatConfig, ImageDetail } from "./config.ts";
 import { nativeResponseData, NATIVE_RESPONSE_ENTRY_TYPE } from "./native-history.ts";
 import {
@@ -498,6 +502,7 @@ export class CodexProviderRuntime {
   }): Promise<{ checkpoint: CheckpointData; usage?: Usage }> {
     const sessionId = options.requestOptions.sessionId;
     if (!sessionId) throw new Error("Codex compaction requires a Pi session id.");
+    const accountId = validateCodexAuthentication(options.model, options.requestOptions.apiKey);
     const payload = remoteCompactionPayload({
       template: options.template,
       modelId: options.model.id,
@@ -512,7 +517,10 @@ export class CodexProviderRuntime {
     const transformed = await options.requestOptions.onPayload?.(payload, options.model);
     const request = transformed === undefined ? payload : (transformed as JsonRecord);
     const compacted = await collectRemoteCompaction(
-      this.transport.request(options.model, request, options.requestOptions),
+      this.transport.request(options.model, request, {
+        ...options.requestOptions,
+        accountId,
+      }),
       options.model,
       options.priority,
     );
@@ -640,6 +648,7 @@ export class CodexProviderRuntime {
       const runtimeSessionId = requestOptions.sessionId;
       let releaseRequest = () => {};
       try {
+        const accountId = validateCodexAuthentication(model, requestOptions.apiKey);
         releaseRequest = await this.acquireRequest(runtimeSessionId, requestOptions.signal);
         const cacheSessionId =
           requestOptions.cacheRetention === "none"
@@ -684,6 +693,7 @@ export class CodexProviderRuntime {
         };
         const transportRequestOptions = {
           ...requestOptions,
+          accountId,
           onTransportStart: emitStart,
           onTransportDiagnostic(diagnostic: CodexTransportDiagnostic) {
             output.diagnostics = [...(output.diagnostics ?? []), diagnostic];
@@ -784,7 +794,7 @@ export class CodexProviderRuntime {
     return this.templates.get(sessionId);
   }
 
-  compact(options: {
+  async compact(options: {
     model: Model<any>;
     requestOptions: OpenAICodexResponsesOptions;
     history: ResponsesItem[];
@@ -793,16 +803,16 @@ export class CodexProviderRuntime {
     template: JsonRecord;
     priority: boolean;
   }): Promise<{ checkpoint: CheckpointData; usage?: Usage }> {
-    return this.acquireRequest(
+    validateCodexAuthentication(options.model, options.requestOptions.apiKey);
+    const release = await this.acquireRequest(
       options.requestOptions.sessionId,
       options.requestOptions.signal,
-    ).then(async (release) => {
-      try {
-        return await this.performCompaction(options);
-      } finally {
-        release();
-      }
-    });
+    );
+    try {
+      return await this.performCompaction(options);
+    } finally {
+      release();
+    }
   }
 }
 

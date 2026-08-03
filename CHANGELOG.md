@@ -28,6 +28,7 @@
 - Use Pi AI's time-ordered UUIDv7 identifiers for WebSocket requests without session affinity.
 - Stop at terminal WebSocket events and honor aborts while requests wait for session transport ownership or finish streaming.
 - Ignore type-less Codex events before transport start and retain WebSocket continuation IDs supplied by `response.created`.
+- Validate Codex authentication before request hooks, template capture, or native compaction work.
 
 ## 0.0.2 - 2026-08-03
 

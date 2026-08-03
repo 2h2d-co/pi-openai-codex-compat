@@ -64,6 +64,7 @@ export type CodexTransportDiagnostic = {
 };
 
 type CodexTransportOptions = OpenAICodexResponsesOptions & {
+  accountId?: string;
   env?: ProviderEnv;
   onTransportStart?(): void;
   onTransportDiagnostic?(diagnostic: CodexTransportDiagnostic): void;
@@ -387,6 +388,11 @@ function extractAccountId(token: string): string {
   } catch {
     throw new Error("Failed to extract accountId from token");
   }
+}
+
+export function validateCodexAuthentication(model: Model<any>, apiKey: string | undefined): string {
+  if (!apiKey) throw new Error(`No API key for provider: ${model.provider}`);
+  return extractAccountId(apiKey);
 }
 
 function resolveCodexUrl(baseUrl?: string): string {
@@ -1095,7 +1101,7 @@ export async function requestCodexJson(
     model.headers,
     options.headers,
     options.extraHeaders,
-    extractAccountId(options.apiKey),
+    validateCodexAuthentication(model, options.apiKey),
     options.apiKey,
   );
   const response = await (options.fetch ?? globalThis.fetch)(
@@ -1133,7 +1139,7 @@ export class CodexTransport {
     const connectTimeoutMs =
       normalizeTimeoutMs(options.websocketConnectTimeoutMs) ?? DEFAULT_WEBSOCKET_CONNECT_TIMEOUT_MS;
     const requestBytes = new TextEncoder().encode(JSON.stringify(body)).byteLength;
-    const accountId = extractAccountId(options.apiKey);
+    const accountId = options.accountId ?? validateCodexAuthentication(model, options.apiKey);
     const cacheSessionId = options.cacheRetention === "none" ? undefined : options.sessionId;
     const requestId = clampPromptCacheKey(cacheSessionId);
     const transport = options.transport ?? "auto";
