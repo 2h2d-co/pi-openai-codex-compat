@@ -78,7 +78,6 @@ export default function registerApplyPatch(
       "Use `apply_patch` for local file edits.",
       "Do not create or edit files with `cat` or other shell write tricks.",
       "Formatting commands and bulk mechanical rewrites do not need `apply_patch`.",
-      "Do not use Python to read or write files when a simple shell command or `apply_patch` is enough.",
     ],
     parameters: Type.Object({
       patch: Type.String({ description: "Raw patch text beginning with *** Begin Patch" }),
