@@ -44,6 +44,10 @@
 - Place the complete `apply_patch` tool call on a subtle theme-derived neutral surface while preserving stronger added and removed line backgrounds.
 - Add Pi-style horizontal and vertical padding around the `apply_patch` surface while keeping its title and result visually continuous.
 
+### Fixed
+
+- Serialize `web.run` with Codex's post-normalization Responses schema, omitting generated `format` and `minimum` annotations that cause reserved-tool declaration rejection.
+
 ### Removed
 
 - Remove the separate `/codex-compat` status command.

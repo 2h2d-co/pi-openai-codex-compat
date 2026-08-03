@@ -5,6 +5,8 @@ import type { ExtensionAPI, ExtensionContext, SessionEntry } from "@earendil-wor
 import type { Model } from "@earendil-works/pi-ai";
 import { DEFAULT_CONFIG } from "../extensions/openai-codex-compat/config.ts";
 import type { JsonRecord } from "../extensions/openai-codex-compat/codex-protocol.ts";
+import { CODEX_NAMESPACED_TOOL_NAMES } from "../extensions/openai-codex-compat/namespaced-tools.ts";
+import { convertResponsesTools } from "../extensions/openai-codex-compat/vendor/pi-ai/openai-responses-serialization.ts";
 import registerWebRun, { recentSearchInput } from "../extensions/openai-codex-compat/web-run.ts";
 
 function codexModel(): Model<any> {
@@ -132,7 +134,21 @@ void test("registers the complete reserved web.run schema and executes alpha/sea
   );
   assert.equal(
     createHash("sha256").update(JSON.stringify(tool.parameters)).digest("hex"),
-    "08e29981dbaa62bd9dd50c0a8ef24182a00f64e5ce54ff42693e6dbced272911",
+    "cee1fb436b2d198ef7d8d2883cb3161d75f31c10fe40249480031ca2673b364c",
+  );
+  const wireTools = convertResponsesTools([tool], {
+    supportsStrictMode: true,
+    namespacedToolNames: CODEX_NAMESPACED_TOOL_NAMES,
+  });
+  assert.equal(wireTools[0]?.["type"], "namespace");
+  assert.equal(wireTools[0]?.["name"], "web");
+  const namespaceTools = wireTools[0]?.["tools"];
+  assert.ok(Array.isArray(namespaceTools));
+  assert.equal(namespaceTools[0]?.["name"], "run");
+  assert.equal(namespaceTools[0]?.["strict"], false);
+  assert.equal(
+    createHash("sha256").update(JSON.stringify(namespaceTools[0]?.["parameters"])).digest("hex"),
+    "cee1fb436b2d198ef7d8d2883cb3161d75f31c10fe40249480031ca2673b364c",
   );
 
   const context = {

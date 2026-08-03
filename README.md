@@ -45,7 +45,7 @@ The compatibility baseline is official Codex CLI `0.146.0`, released July 29, 20
 | Fast mode                                     | Uses the normal tier.                                                                                                         | Uses the configured Codex service tier.                                                                                                       | `fastMode`: boolean; `true` requests the priority tier.                                    |
 | Text and reasoning request controls           | Explicitly sends low text verbosity, automatic reasoning summaries, and standard GPT-5.6 reasoning mode.                      | Resolves these controls through Codex configuration, model metadata, and turn state.                                                          | `textVerbosity`, `reasoningSummary`, and `reasoningMode`.                                  |
 
-`web.run` is a reserved GPT-5.6 tool name. Its declaration therefore reproduces the complete current Codex `SearchCommands` schema and official tool description instead of using Pi's normal compact tool schema.
+`web.run` is a reserved GPT-5.6 tool name. Its declaration therefore reproduces the complete current Codex post-normalization `SearchCommands` schema and official tool description instead of using Pi's normal compact tool schema. This intentionally omits generated annotations such as `format` and `minimum` that Codex removes before sending the declaration to Responses.
 
 ### Non-configurable implementation differences
 

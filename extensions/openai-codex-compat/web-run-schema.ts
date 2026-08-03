@@ -53,262 +53,249 @@ export type WebRunCommands = {
 };
 
 /**
- * Exact `SearchCommands` schema emitted by Codex at upstream commit
- * bb5054fe47abe73ecbbd454751066a28c89f4bb9. Reserved `web.run` declarations
- * must retain this field metadata instead of using Pi's normal compact schema.
+ * Exact post-normalization `SearchCommands` schema emitted by Codex at
+ * upstream commit bb5054fe47abe73ecbbd454751066a28c89f4bb9. Codex parses the
+ * generated schema through its Responses JSON-schema subset before transport,
+ * which drops unsupported annotations such as `format` and `minimum`.
  */
 export const WEB_RUN_PARAMETERS = Type.Unsafe<WebRunCommands>({
+  type: "object",
   properties: {
     click: {
+      type: "array",
       description: "Open links from previously opened pages.",
       items: {
+        type: "object",
         properties: {
           id: {
-            description: "Numbered link id to open.",
-            format: "uint64",
-            minimum: 0,
             type: "integer",
+            description: "Numbered link id to open.",
           },
           ref_id: {
-            description: "Reference id containing the numbered link.",
             type: "string",
+            description: "Reference id containing the numbered link.",
           },
         },
         required: ["id", "ref_id"],
-        type: "object",
       },
-      type: "array",
     },
     finance: {
+      type: "array",
       description: "Look up prices for the given stock symbols.",
       items: {
+        type: "object",
         properties: {
           market: {
-            description: 'ISO 3166-1 alpha-3 country code, "OTC", or "" for cryptocurrency.',
             type: "string",
+            description: 'ISO 3166-1 alpha-3 country code, "OTC", or "" for cryptocurrency.',
           },
           ticker: {
-            description: "Ticker symbol to look up.",
             type: "string",
+            description: "Ticker symbol to look up.",
           },
           type: {
+            type: "string",
             description: "Asset type to look up.",
             enum: ["equity", "fund", "crypto", "index"],
-            type: "string",
           },
         },
         required: ["ticker", "type"],
-        type: "object",
       },
-      type: "array",
     },
     find: {
+      type: "array",
       description: "Find text patterns in pages.",
       items: {
+        type: "object",
         properties: {
           pattern: {
-            description: "Text pattern to find.",
             type: "string",
+            description: "Text pattern to find.",
           },
           ref_id: {
-            description: "Reference id or URL to search within.",
             type: "string",
+            description: "Reference id or URL to search within.",
           },
         },
         required: ["pattern", "ref_id"],
-        type: "object",
       },
-      type: "array",
     },
     image_query: {
+      type: "array",
       description: "Query the image search engine for a given list of queries.",
       items: {
+        type: "object",
         properties: {
           domains: {
+            type: "array",
             description: "Whether to filter by a specific list of domains.",
             items: {
               type: "string",
             },
-            type: "array",
           },
           q: {
-            description: "Search query.",
             type: "string",
+            description: "Search query.",
           },
           recency: {
-            description: "Whether to filter by recency, as a number of recent days.",
-            format: "uint64",
-            minimum: 0,
             type: "integer",
+            description: "Whether to filter by recency, as a number of recent days.",
           },
         },
         required: ["q"],
-        type: "object",
       },
-      type: "array",
     },
     open: {
+      type: "array",
       description: "Open pages by reference id or URL.",
       items: {
+        type: "object",
         properties: {
           lineno: {
-            description: "Line number to position the page at.",
-            format: "uint64",
-            minimum: 0,
             type: "integer",
+            description: "Line number to position the page at.",
           },
           ref_id: {
-            description: "Reference id or URL to open.",
             type: "string",
+            description: "Reference id or URL to open.",
           },
         },
         required: ["ref_id"],
-        type: "object",
       },
-      type: "array",
     },
     response_length: {
+      type: "string",
       description: "Set the length of the response to be returned.",
       enum: ["short", "medium", "long"],
-      type: "string",
     },
     screenshot: {
+      type: "array",
       description: "Take screenshots of PDF pages.",
       items: {
+        type: "object",
         properties: {
           pageno: {
-            description: "Zero-indexed PDF page number.",
-            format: "uint64",
-            minimum: 0,
             type: "integer",
+            description: "Zero-indexed PDF page number.",
           },
           ref_id: {
-            description: "Reference id or URL to screenshot.",
             type: "string",
+            description: "Reference id or URL to screenshot.",
           },
         },
         required: ["pageno", "ref_id"],
-        type: "object",
       },
-      type: "array",
     },
     search_query: {
+      type: "array",
       description: "Query the internet search engine for a given list of queries.",
       items: {
+        type: "object",
         properties: {
           domains: {
+            type: "array",
             description: "Whether to filter by a specific list of domains.",
             items: {
               type: "string",
             },
-            type: "array",
           },
           q: {
-            description: "Search query.",
             type: "string",
+            description: "Search query.",
           },
           recency: {
-            description: "Whether to filter by recency, as a number of recent days.",
-            format: "uint64",
-            minimum: 0,
             type: "integer",
+            description: "Whether to filter by recency, as a number of recent days.",
           },
         },
         required: ["q"],
-        type: "object",
       },
-      type: "array",
     },
     sports: {
+      type: "array",
       description: "Look up sports schedules and standings.",
       items: {
+        type: "object",
         properties: {
           date_from: {
-            description: "Start date in YYYY-MM-DD format.",
             type: "string",
+            description: "Start date in YYYY-MM-DD format.",
           },
           date_to: {
-            description: "End date in YYYY-MM-DD format.",
             type: "string",
+            description: "End date in YYYY-MM-DD format.",
           },
           fn: {
+            type: "string",
             description: "Sports function to call.",
             enum: ["schedule", "standings"],
-            type: "string",
           },
           league: {
+            type: "string",
             description: "League to look up.",
             enum: ["nba", "wnba", "nfl", "nhl", "mlb", "epl", "ncaamb", "ncaawb", "ipl"],
-            type: "string",
           },
           locale: {
-            description: "Locale for the lookup.",
             type: "string",
+            description: "Locale for the lookup.",
           },
           num_games: {
-            description: "Number of games to return.",
-            format: "uint64",
-            minimum: 0,
             type: "integer",
+            description: "Number of games to return.",
           },
           opponent: {
-            description: "Opponent to use with `team` when narrowing the lookup.",
             type: "string",
+            description: "Opponent to use with `team` when narrowing the lookup.",
           },
           team: {
+            type: "string",
             description:
               "Team to look up, using the common 3 or 4 letter alias used in broadcasts.",
-            type: "string",
           },
           tool: {
+            type: "string",
             description: "Tool name for sports requests.",
             enum: ["sports"],
-            type: "string",
           },
         },
         required: ["fn", "league"],
-        type: "object",
       },
-      type: "array",
     },
     time: {
+      type: "array",
       description: "Get time for the given UTC offsets.",
       items: {
+        type: "object",
         properties: {
           utc_offset: {
-            description: 'UTC offset formatted like "+03:00".',
             type: "string",
+            description: 'UTC offset formatted like "+03:00".',
           },
         },
         required: ["utc_offset"],
-        type: "object",
       },
-      type: "array",
     },
     weather: {
+      type: "array",
       description: "Look up weather forecasts.",
       items: {
+        type: "object",
         properties: {
           duration: {
-            description: "Number of days to return. Defaults to 7.",
-            format: "uint64",
-            minimum: 0,
             type: "integer",
+            description: "Number of days to return. Defaults to 7.",
           },
           location: {
-            description: 'Location in "Country, Area, City" format.',
             type: "string",
+            description: 'Location in "Country, Area, City" format.',
           },
           start: {
-            description: "Start date in YYYY-MM-DD format. Defaults to today.",
             type: "string",
+            description: "Start date in YYYY-MM-DD format. Defaults to today.",
           },
         },
         required: ["location"],
-        type: "object",
       },
-      type: "array",
     },
   },
-  type: "object",
 });
