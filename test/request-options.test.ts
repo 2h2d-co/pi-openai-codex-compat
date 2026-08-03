@@ -18,7 +18,8 @@ import {
 void test("validates and layers Codex compatibility configuration", () => {
   assert.equal(DEFAULT_CONFIG.imageGeneration, true);
   assert.equal(DEFAULT_CONFIG.imageDetail, "auto");
-  assert.equal(DEFAULT_CONFIG.webRun, true);
+  assert.equal(DEFAULT_CONFIG.webRun, false);
+  assert.equal(DEFAULT_CONFIG.webSearch, "disabled");
   assert.deepEqual(
     parseConfig({
       fastMode: true,
@@ -172,6 +173,7 @@ void test("applies priority, GPT-5.6 reasoning mode, and native request controls
       ...DEFAULT_CONFIG,
       fastMode: true,
       reasoningMode: "pro",
+      webSearch: "cached",
     },
     { modelId: "gpt-5.6-sol", supportsImageSearch: true },
   );

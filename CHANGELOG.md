@@ -6,6 +6,8 @@
 
 - Adapt the `image_gen.imagegen` descriptions and prompt metadata to Pi while retaining the server-reserved schema.
 - Normalize local image paths before reading them and enforce image-count bounds and edit-selector exclusivity in the executor.
+- Add a concise `web.run` prompt snippet and four high-signal system-prompt guidelines derived from its official description.
+- Disable standalone `web.run` and hosted web search by default; both remain available through settings or environment overrides.
 
 ## 0.0.2 - 2026-08-03
 

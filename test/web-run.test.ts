@@ -136,6 +136,13 @@ void test("registers the complete reserved web.run schema and executes alpha/sea
     },
   );
 
+  assert.equal(tool.promptSnippet, "Search and browse the internet");
+  assert.deepEqual(tool.promptGuidelines, [
+    "Use `web.run` when the user explicitly asks to browse or when answering requires current, niche, high-stakes, or precisely sourced information, including recommendations that may change over time.",
+    'Batch independent `web.run` operations in one call, pass only required parameters, and keep `search_query` to at most four queries; use `response_length: "medium"` or `"long"` when sending four.',
+    "For technical research, prefer primary sources; for OpenAI product questions, inspect local code first and restrict fallback browsing to official OpenAI sites.",
+    "Cite supported claims with direct Markdown links near the relevant text, never expose internal reference IDs, and respect the description's quotation and source word limits.",
+  ]);
   const properties = tool.parameters.properties as Record<string, unknown>;
   assert.deepEqual(Object.keys(properties), [
     "click",

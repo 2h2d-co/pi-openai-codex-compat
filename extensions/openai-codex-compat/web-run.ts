@@ -116,6 +116,13 @@ export default function registerWebRun(
     name: WEB_RUN_TOOL_NAME,
     label: WEB_RUN_TOOL_NAME,
     description: WEB_RUN_DESCRIPTION,
+    promptSnippet: "Search and browse the internet",
+    promptGuidelines: [
+      "Use `web.run` when the user explicitly asks to browse or when answering requires current, niche, high-stakes, or precisely sourced information, including recommendations that may change over time.",
+      'Batch independent `web.run` operations in one call, pass only required parameters, and keep `search_query` to at most four queries; use `response_length: "medium"` or `"long"` when sending four.',
+      "For technical research, prefer primary sources; for OpenAI product questions, inspect local code first and restrict fallback browsing to official OpenAI sites.",
+      "Cite supported claims with direct Markdown links near the relevant text, never expose internal reference IDs, and respect the description's quotation and source word limits.",
+    ],
     parameters: WEB_RUN_PARAMETERS,
     executionMode: "parallel",
     renderShell: "self",
