@@ -406,6 +406,16 @@ void test("registers the Codex freeform tool with model, UI, and failed-history 
   let toolBackground: CodexToolBackground = "subtle";
   registerApplyPatch(pi, () => toolBackground);
   assert.equal(registered?.name, "apply_patch");
+  assert.equal(
+    registered?.promptSnippet,
+    "Apply freeform patches to add, update, move, or delete files",
+  );
+  assert.deepEqual(registered?.promptGuidelines, [
+    "Use `apply_patch` for local file edits.",
+    "Do not create or edit files with `cat` or other shell write tricks.",
+    "Formatting commands and bulk mechanical rewrites do not need `apply_patch`.",
+    "Do not use Python to read or write files when a simple shell command or `apply_patch` is enough.",
+  ]);
   assert.equal(registered?.executionMode, "sequential");
   assert.equal(registered?.renderShell, "self");
   assert.deepEqual(registered?.constrainedSampling, {

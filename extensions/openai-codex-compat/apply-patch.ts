@@ -73,12 +73,12 @@ export default function registerApplyPatch(
     label: APPLY_PATCH_TOOL_NAME,
     description:
       "The `apply_patch` tool can be used to edit files. This is a FREEFORM tool, so do not wrap the patch in JSON.",
-    promptSnippet: "Apply Codex-format patches to add, edit, move, or delete files",
+    promptSnippet: "Apply freeform patches to add, update, move, or delete files",
     promptGuidelines: [
-      "Use apply_patch for local file edits.",
-      "Do not create or edit files with cat or other shell write tricks.",
-      "Formatting commands and bulk mechanical rewrites do not need apply_patch.",
-      "Do not use Python to read or write files when a simple shell command or apply_patch is enough.",
+      "Use `apply_patch` for local file edits.",
+      "Do not create or edit files with `cat` or other shell write tricks.",
+      "Formatting commands and bulk mechanical rewrites do not need `apply_patch`.",
+      "Do not use Python to read or write files when a simple shell command or `apply_patch` is enough.",
     ],
     parameters: Type.Object({
       patch: Type.String({ description: "Raw patch text beginning with *** Begin Patch" }),
