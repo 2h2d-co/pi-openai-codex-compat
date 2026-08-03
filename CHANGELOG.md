@@ -10,6 +10,10 @@
 - Clarify the `apply_patch` prompt snippet, format its system-prompt guidance consistently, and omit the redundant Python file-I/O reminder.
 - Disable standalone `web.run` and hosted web search by default; both remain available through settings or environment overrides.
 
+### Fixed
+
+- Report WebSocket close codes and reasons instead of `[object CloseEvent]`, and preserve an underlying WebSocket error when a close event follows it.
+
 ## 0.0.2 - 2026-08-03
 
 ### Added

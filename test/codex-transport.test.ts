@@ -72,6 +72,86 @@ void test("posts authenticated JSON requests to sibling Codex endpoints", async 
   assert.deepEqual(result, { output: "result" });
 });
 
+void test("reports WebSocket close details and preserves preceding errors", async (t) => {
+  const previousWebSocket = globalThis.WebSocket;
+  let failureMode: "close" | "error-then-close" = "close";
+
+  class FailingWebSocket {
+    readyState = 1;
+    private readonly listeners = new Map<string, Set<(event: unknown) => void>>();
+
+    constructor() {
+      queueMicrotask(() => this.emit("open", {}));
+    }
+
+    addEventListener(type: string, listener: (event: unknown) => void): void {
+      const listeners = this.listeners.get(type) ?? new Set();
+      listeners.add(listener);
+      this.listeners.set(type, listeners);
+    }
+
+    removeEventListener(type: string, listener: (event: unknown) => void): void {
+      this.listeners.get(type)?.delete(listener);
+    }
+
+    send(): void {
+      queueMicrotask(() => {
+        if (failureMode === "error-then-close") {
+          this.emit("error", { message: "underlying socket failure" });
+        }
+        this.readyState = 3;
+        this.emit("close", { code: 1_006, reason: "connection lost", wasClean: false });
+      });
+    }
+
+    close(): void {
+      this.readyState = 3;
+    }
+
+    private emit(type: string, event: unknown): void {
+      for (const listener of this.listeners.get(type) ?? []) listener(event);
+    }
+  }
+
+  Object.defineProperty(globalThis, "WebSocket", {
+    configurable: true,
+    value: FailingWebSocket,
+  });
+  t.after(() => {
+    Object.defineProperty(globalThis, "WebSocket", {
+      configurable: true,
+      value: previousWebSocket,
+    });
+  });
+
+  const transport = new CodexTransport();
+  const options = {
+    apiKey: accessToken(),
+    transport: "websocket" as const,
+  };
+  await assert.rejects(
+    async () => {
+      for await (const _event of transport.request(codexModel(), { input: [] }, options)) {
+        // Consume the stream so its transport error is observed.
+      }
+    },
+    {
+      name: "WebSocketCloseError",
+      message: "WebSocket closed (code 1006, reason: connection lost, wasClean: false)",
+    },
+  );
+
+  failureMode = "error-then-close";
+  await assert.rejects(
+    async () => {
+      for await (const _event of transport.request(codexModel(), { input: [] }, options)) {
+        // Consume the stream so its transport error is observed.
+      }
+    },
+    { message: "underlying socket failure" },
+  );
+});
+
 void test("reuses one WebSocket for compaction and continuation requests", async (t) => {
   const previousWebSocket = globalThis.WebSocket;
   const sent: JsonRecord[] = [];

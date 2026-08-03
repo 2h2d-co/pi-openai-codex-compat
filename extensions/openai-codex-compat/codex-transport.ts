@@ -76,6 +76,27 @@ const websocketFallbackSessions = new Set<string>();
 
 class CodexResponseError extends Error {}
 
+class WebSocketCloseError extends Error {
+  readonly code: number | undefined;
+  readonly reason: string | undefined;
+  readonly wasClean: boolean | undefined;
+
+  constructor(
+    message: string,
+    options: {
+      code: number | undefined;
+      reason: string | undefined;
+      wasClean: boolean | undefined;
+    },
+  ) {
+    super(message);
+    this.name = "WebSocketCloseError";
+    this.code = options.code;
+    this.reason = options.reason;
+    this.wasClean = options.wasClean;
+  }
+}
+
 function nodeOs(): typeof NodeOs | undefined {
   const currentProcess = process as ProcessWithBuiltinModules;
   return currentProcess.getBuiltinModule?.("node:os");
@@ -86,8 +107,44 @@ function nodeZlib(): typeof NodeZlib | undefined {
   return currentProcess.getBuiltinModule?.("node:zlib");
 }
 
-function explain(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
+function extractWebSocketError(event: unknown): Error {
+  if (isObject(event)) {
+    if (typeof event["message"] === "string" && event["message"].length > 0) {
+      return new Error(event["message"]);
+    }
+    const nestedError = event["error"];
+    if (nestedError instanceof Error && nestedError.message.length > 0) return nestedError;
+    if (
+      isObject(nestedError) &&
+      typeof nestedError["message"] === "string" &&
+      nestedError["message"].length > 0
+    ) {
+      return new Error(nestedError["message"]);
+    }
+  }
+  return new Error("WebSocket error");
+}
+
+function extractWebSocketCloseError(
+  event: unknown,
+  context = "WebSocket closed",
+): WebSocketCloseError {
+  const code = isObject(event) && typeof event["code"] === "number" ? event["code"] : undefined;
+  const reason =
+    isObject(event) && typeof event["reason"] === "string" && event["reason"].length > 0
+      ? event["reason"]
+      : undefined;
+  const wasClean =
+    isObject(event) && typeof event["wasClean"] === "boolean" ? event["wasClean"] : undefined;
+  const details = [
+    code === undefined ? undefined : `code ${code}`,
+    reason === undefined ? undefined : `reason: ${reason}`,
+    wasClean === undefined ? undefined : `wasClean: ${String(wasClean)}`,
+  ].filter((detail): detail is string => detail !== undefined);
+  return new WebSocketCloseError(
+    details.length > 0 ? `${context} (${details.join(", ")})` : context,
+    { code, reason, wasClean },
+  );
 }
 
 function sleep(milliseconds: number, signal?: AbortSignal): Promise<void> {
@@ -376,9 +433,9 @@ async function connectWebSocket(
       cleanup();
       resolve(socket);
     };
-    const onError = (event: unknown) => fail(new Error(`WebSocket error: ${explain(event)}`));
+    const onError = (event: unknown) => fail(extractWebSocketError(event));
     const onClose = (event: unknown) =>
-      fail(new Error(`WebSocket closed during connect: ${explain(event)}`));
+      fail(extractWebSocketCloseError(event, "WebSocket closed during connect"));
     const onAbort = () => fail(new Error("Request was aborted"));
 
     try {
@@ -550,12 +607,12 @@ async function* parseWebSocket(
     })();
   };
   const onError = (event: unknown) => {
-    failure = new Error(`WebSocket error: ${explain(event)}`);
+    if (!failure) failure = extractWebSocketError(event);
     done = true;
     notify();
   };
   const onClose = (event: unknown) => {
-    if (!terminal) failure = new Error(`WebSocket closed: ${explain(event)}`);
+    if (!terminal && !failure) failure = extractWebSocketCloseError(event);
     done = true;
     notify();
   };
