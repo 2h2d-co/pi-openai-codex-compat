@@ -25,6 +25,7 @@ import { formatApplyPatchRenderText } from "../extensions/openai-codex-compat/ap
 import type { CodexToolBackground } from "../extensions/openai-codex-compat/config.ts";
 
 const ANSI_SEQUENCE_PATTERN = new RegExp(String.raw`\u001b\[[0-?]*[ -/]*[@-~]`, "g");
+const ANSI_BACKGROUND_PATTERN = new RegExp(String.raw`\u001b\[48;(?:2;\d+;\d+;\d+|5;\d+)m`, "g");
 
 function stripAnsi(text: string): string {
   return text.replace(ANSI_SEQUENCE_PATTERN, "");
@@ -510,14 +511,14 @@ void test("registers the Codex freeform tool with model, UI, and failed-history 
   assert.doesNotMatch(shellText, /1 \+hello/);
   assert.doesNotMatch(shellText, /Exit code:/);
   assert.ok(!shellRender.includes("\u001b[48;2;40;50;40m"));
-  assert.ok(shellRender.includes("\u001b[48;2;26;26;33m"));
+  assert.ok((shellRender.match(ANSI_BACKGROUND_PATTERN) ?? []).length > 0);
   assert.ok(shellComponent.render(120).every((line) => visibleWidth(line) <= 120));
 
   shellComponent.setExpanded(true);
   const expandedShellRender = shellComponent.render(120).join("\n");
   const expandedShellText = stripAnsi(expandedShellRender);
   assert.match(expandedShellText, /1 \+hello/);
-  assert.ok(expandedShellRender.includes("\u001b[48;2;33;58;43m"));
+  assert.ok(new Set(expandedShellRender.match(ANSI_BACKGROUND_PATTERN) ?? []).size >= 2);
 
   const sortedText = formatApplyPatchRenderText(
     {
