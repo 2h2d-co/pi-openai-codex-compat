@@ -7,4 +7,6 @@
 - Native Codex compaction must fail closed and must not intercept `/tree` branch summarization.
 - `apply_patch` must validate all hunks before writes and participate in Pi's file mutation queue.
 - Add changelog entries for user-visible changes under `Unreleased`.
+- Release commits should update the package version, move `Unreleased` entries into the new release section, and use `release: v<version>` as the commit subject.
+- Release tags must be lightweight tags. Create one with `git tag v<version>`; do not use `git tag -a`, `git tag -s`, `git tag -m`, or `cog bump --annotated`.
 - Run `npm run check` and `npm test` before committing meaningful code changes.

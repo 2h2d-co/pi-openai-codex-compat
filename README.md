@@ -349,7 +349,7 @@ The focused Pi AI serializer copy lives under `extensions/openai-codex-compat/ve
 
 ## Release staging
 
-The GitHub Actions workflow stages npm releases when a `v*` tag is pushed. The tag must match `package.json` version and point at a commit whose subject is `release: v<version>`.
+The GitHub Actions workflow stages npm releases when a `v*` tag is pushed. The tag must match the `package.json` version, point at a commit whose subject is `release: v<version>`, and be a lightweight tag. Create it with `git tag v<version>`; do not use `git tag -a`, `git tag -s`, `git tag -m`, or `cog bump --annotated`.
 
 ## Acknowledgements
 

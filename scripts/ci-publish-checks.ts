@@ -53,6 +53,11 @@ function assertCiReleaseGitState(version: string): void {
     throw new Error(`Refusing release because tag "${releaseTag}" does not exist.`);
   }
 
+  const tagObjectType = runGit(["cat-file", "-t", releaseTagRef]);
+  if (tagObjectType !== "commit") {
+    throw new Error(`Refusing release because tag "${releaseTag}" is not a lightweight tag.`);
+  }
+
   const tagCommit = runGit(["rev-parse", `${releaseTagRef}^{commit}`]);
   const head = runGit(["rev-parse", "HEAD"]);
   if (tagCommit !== head) {
