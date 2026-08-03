@@ -72,6 +72,38 @@ void test("posts authenticated JSON requests to sibling Codex endpoints", async 
   assert.deepEqual(result, { output: "result" });
 });
 
+void test("finishes SSE requests when the terminal event arrives before EOF", async () => {
+  let cancelled = false;
+  const terminalEvent = {
+    type: "response.completed",
+    response: { id: "response-1", status: "completed" },
+  };
+  const body = new ReadableStream<Uint8Array>({
+    start(controller) {
+      controller.enqueue(new TextEncoder().encode(`data: ${JSON.stringify(terminalEvent)}\n\n`));
+    },
+    cancel() {
+      cancelled = true;
+    },
+  });
+
+  const events: JsonRecord[] = [];
+  for await (const event of new CodexTransport().request(
+    codexModel(),
+    { input: [] },
+    {
+      apiKey: accessToken(),
+      transport: "sse",
+      fetch: async () => new Response(body, { status: 200 }),
+    },
+  )) {
+    events.push(event);
+  }
+
+  assert.deepEqual(events, [terminalEvent]);
+  assert.equal(cancelled, true);
+});
+
 void test("reports WebSocket close details and preserves preceding errors", async (t) => {
   const previousWebSocket = globalThis.WebSocket;
   let failureMode: "close" | "error-then-close" = "close";
@@ -150,6 +182,278 @@ void test("reports WebSocket close details and preserves preceding errors", asyn
     },
     { message: "underlying socket failure" },
   );
+});
+
+void test("retries WebSocket connection limits before output starts", async (t) => {
+  const previousWebSocket = globalThis.WebSocket;
+  let connections = 0;
+
+  class ConnectionLimitWebSocket {
+    readyState = 1;
+    private readonly limited: boolean;
+    private readonly listeners = new Map<string, Set<(event: unknown) => void>>();
+
+    constructor() {
+      this.limited = connections++ === 0;
+      queueMicrotask(() => this.emit("open", {}));
+    }
+
+    addEventListener(type: string, listener: (event: unknown) => void): void {
+      const listeners = this.listeners.get(type) ?? new Set();
+      listeners.add(listener);
+      this.listeners.set(type, listeners);
+    }
+
+    removeEventListener(type: string, listener: (event: unknown) => void): void {
+      this.listeners.get(type)?.delete(listener);
+    }
+
+    send(): void {
+      const event = this.limited
+        ? { type: "error", error: { code: "websocket_connection_limit_reached" } }
+        : {
+            type: "response.completed",
+            response: { id: "response-1", status: "completed" },
+          };
+      queueMicrotask(() => this.emit("message", { data: JSON.stringify(event) }));
+    }
+
+    close(): void {
+      this.readyState = 3;
+    }
+
+    private emit(type: string, event: unknown): void {
+      for (const listener of this.listeners.get(type) ?? []) listener(event);
+    }
+  }
+
+  Object.defineProperty(globalThis, "WebSocket", {
+    configurable: true,
+    value: ConnectionLimitWebSocket,
+  });
+  t.after(() => {
+    Object.defineProperty(globalThis, "WebSocket", {
+      configurable: true,
+      value: previousWebSocket,
+    });
+  });
+
+  const events: JsonRecord[] = [];
+  for await (const event of new CodexTransport().request(
+    codexModel(),
+    { input: [] },
+    { apiKey: accessToken(), transport: "websocket" },
+  )) {
+    events.push(event);
+  }
+
+  assert.equal(connections, 2);
+  assert.equal(events.at(-1)?.type, "response.completed");
+});
+
+void test("recovers when a cached WebSocket continuation expires", async (t) => {
+  const previousWebSocket = globalThis.WebSocket;
+  const sentBodies: JsonRecord[] = [];
+  let connections = 0;
+
+  class MissingContinuationWebSocket {
+    readyState = 1;
+    private readonly listeners = new Map<string, Set<(event: unknown) => void>>();
+
+    constructor() {
+      connections += 1;
+      queueMicrotask(() => this.emit("open", {}));
+    }
+
+    addEventListener(type: string, listener: (event: unknown) => void): void {
+      const listeners = this.listeners.get(type) ?? new Set();
+      listeners.add(listener);
+      this.listeners.set(type, listeners);
+    }
+
+    removeEventListener(type: string, listener: (event: unknown) => void): void {
+      this.listeners.get(type)?.delete(listener);
+    }
+
+    send(data: string): void {
+      const body = JSON.parse(data) as JsonRecord;
+      sentBodies.push(body);
+      const events =
+        sentBodies.length === 2
+          ? [
+              {
+                type: "error",
+                error: {
+                  code: "previous_response_not_found",
+                  message: "Previous response expired.",
+                },
+              },
+            ]
+          : sentBodies.length === 1
+            ? [
+                {
+                  type: "response.output_item.done",
+                  output_index: 0,
+                  item: {
+                    type: "message",
+                    id: "message-1",
+                    role: "assistant",
+                    status: "completed",
+                    content: [{ type: "output_text", text: "first" }],
+                  },
+                },
+                {
+                  type: "response.completed",
+                  response: { id: "response-1", status: "completed" },
+                },
+              ]
+            : [
+                {
+                  type: "response.completed",
+                  response: { id: "response-2", status: "completed" },
+                },
+              ];
+      queueMicrotask(() => {
+        for (const event of events) this.emit("message", { data: JSON.stringify(event) });
+      });
+    }
+
+    close(): void {
+      this.readyState = 3;
+    }
+
+    private emit(type: string, event: unknown): void {
+      for (const listener of this.listeners.get(type) ?? []) listener(event);
+    }
+  }
+
+  Object.defineProperty(globalThis, "WebSocket", {
+    configurable: true,
+    value: MissingContinuationWebSocket,
+  });
+  t.after(() => {
+    Object.defineProperty(globalThis, "WebSocket", {
+      configurable: true,
+      value: previousWebSocket,
+    });
+  });
+
+  const transport = new CodexTransport();
+  const options = {
+    apiKey: accessToken(),
+    sessionId: "continuation-session",
+    transport: "websocket-cached" as const,
+  };
+  const firstUser = { role: "user", content: [{ type: "input_text", text: "first" }] };
+  const firstAssistant = {
+    type: "message",
+    id: "message-1",
+    role: "assistant",
+    status: "completed",
+    content: [{ type: "output_text", text: "first" }],
+  };
+  const secondUser = { role: "user", content: [{ type: "input_text", text: "second" }] };
+
+  for await (const _event of transport.request(codexModel(), { input: [firstUser] }, options)) {
+    // Establish the cached continuation.
+  }
+  for await (const _event of transport.request(
+    codexModel(),
+    { input: [firstUser, firstAssistant, secondUser] },
+    options,
+  )) {
+    // Recover the expired continuation with full history.
+  }
+
+  assert.equal(connections, 2);
+  assert.equal(sentBodies.length, 3);
+  assert.equal(sentBodies[1]?.previous_response_id, "response-1");
+  assert.deepEqual(sentBodies[1]?.input, [secondUser]);
+  assert.equal(sentBodies[2]?.previous_response_id, undefined);
+  assert.deepEqual(sentBodies[2]?.input, [firstUser, firstAssistant, secondUser]);
+  transport.close("continuation-session");
+});
+
+void test("rejects a pre-aborted request before reusing a cached WebSocket", async (t) => {
+  const previousWebSocket = globalThis.WebSocket;
+  let sends = 0;
+
+  class AbortWebSocket {
+    readyState = 1;
+    private readonly listeners = new Map<string, Set<(event: unknown) => void>>();
+
+    constructor() {
+      queueMicrotask(() => this.emit("open", {}));
+    }
+
+    addEventListener(type: string, listener: (event: unknown) => void): void {
+      const listeners = this.listeners.get(type) ?? new Set();
+      listeners.add(listener);
+      this.listeners.set(type, listeners);
+    }
+
+    removeEventListener(type: string, listener: (event: unknown) => void): void {
+      this.listeners.get(type)?.delete(listener);
+    }
+
+    send(): void {
+      sends += 1;
+      queueMicrotask(() => {
+        this.emit("message", {
+          data: JSON.stringify({
+            type: "response.completed",
+            response: { id: `response-${sends}`, status: "completed" },
+          }),
+        });
+      });
+    }
+
+    close(): void {
+      this.readyState = 3;
+    }
+
+    private emit(type: string, event: unknown): void {
+      for (const listener of this.listeners.get(type) ?? []) listener(event);
+    }
+  }
+
+  Object.defineProperty(globalThis, "WebSocket", {
+    configurable: true,
+    value: AbortWebSocket,
+  });
+  t.after(() => {
+    Object.defineProperty(globalThis, "WebSocket", {
+      configurable: true,
+      value: previousWebSocket,
+    });
+  });
+
+  const transport = new CodexTransport();
+  const options = {
+    apiKey: accessToken(),
+    sessionId: "abort-session",
+    transport: "websocket-cached" as const,
+  };
+  for await (const _event of transport.request(codexModel(), { input: [] }, options)) {
+    // Establish a reusable socket.
+  }
+
+  const controller = new AbortController();
+  controller.abort();
+  await assert.rejects(
+    async () => {
+      for await (const _event of transport.request(
+        codexModel(),
+        { input: [] },
+        { ...options, signal: controller.signal },
+      )) {
+        // The request must fail before an event is sent.
+      }
+    },
+    { message: "Request was aborted" },
+  );
+  assert.equal(sends, 1);
+  transport.close("abort-session");
 });
 
 void test("scopes cached WebSockets to the authenticated account", async (t) => {

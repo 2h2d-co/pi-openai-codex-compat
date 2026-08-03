@@ -15,6 +15,8 @@
 
 - Report WebSocket close codes and reasons instead of `[object CloseEvent]`, and preserve an underlying WebSocket error when a close event follows it.
 - Scope sticky Codex WebSockets to the authenticated account so changing accounts cannot reuse a connection authorized for another account.
+- Recover once from expired WebSocket continuations and connection-limit responses while preserving structured Codex API and protocol errors.
+- Finish SSE requests as soon as a terminal response arrives, even if the response body remains open, and reject pre-aborted cached-WebSocket requests before sending.
 
 ## 0.0.2 - 2026-08-03
 

@@ -23,6 +23,8 @@ const REQUEST_COMPRESSION_ZSTD_LEVEL = 3;
 const DEFAULT_WEBSOCKET_CONNECT_TIMEOUT_MS = 15_000;
 const SESSION_WEBSOCKET_CACHE_TTL_MS = 5 * 60 * 1_000;
 const SESSION_WEBSOCKET_MAX_AGE_MS = 55 * 60 * 1_000;
+const WEBSOCKET_CONNECTION_LIMIT_REACHED_CODE = "websocket_connection_limit_reached";
+const PREVIOUS_RESPONSE_NOT_FOUND_CODE = "previous_response_not_found";
 
 type ProcessWithBuiltinModules = typeof process & {
   getBuiltinModule?: {
@@ -74,7 +76,27 @@ type CachedWebSocket = {
 const websocketSessions = new Map<string, Map<string, CachedWebSocket>>();
 const websocketFallbackSessions = new Set<string>();
 
-class CodexResponseError extends Error {}
+class CodexApiError extends Error {
+  readonly code: string | undefined;
+  readonly payload: JsonRecord;
+
+  constructor(message: string, code: string | undefined, payload: JsonRecord) {
+    super(message);
+    this.name = "CodexApiError";
+    this.code = code;
+    this.payload = payload;
+  }
+}
+
+class CodexProtocolError extends Error {
+  readonly payload: unknown;
+
+  constructor(message: string, payload: unknown, cause: unknown) {
+    super(message, { cause });
+    this.name = "CodexProtocolError";
+    this.payload = payload;
+  }
+}
 
 class WebSocketCloseError extends Error {
   readonly code: number | undefined;
@@ -145,6 +167,22 @@ function extractWebSocketCloseError(
     details.length > 0 ? `${context} (${details.join(", ")})` : context,
     { code, reason, wasClean },
   );
+}
+
+function thrownMessage(error: unknown): string {
+  return error instanceof Error ? error.message || error.name : String(error);
+}
+
+function isCodexNonTransportError(error: unknown): boolean {
+  return error instanceof CodexApiError || error instanceof CodexProtocolError;
+}
+
+function isWebSocketConnectionLimitReachedError(error: unknown): boolean {
+  return error instanceof CodexApiError && error.code === WEBSOCKET_CONNECTION_LIMIT_REACHED_CODE;
+}
+
+function isPreviousResponseNotFoundError(error: unknown): boolean {
+  return error instanceof CodexApiError && error.code === PREVIOUS_RESPONSE_NOT_FOUND_CODE;
 }
 
 function sleep(milliseconds: number, signal?: AbortSignal): Promise<void> {
@@ -346,6 +384,7 @@ async function* parseSse(response: Response, signal?: AbortSignal): AsyncGenerat
     while (true) {
       if (signal?.aborted) throw new Error("Request was aborted");
       const { done, value } = await reader.read();
+      if (signal?.aborted) throw new Error("Request was aborted");
       if (done) break;
       buffer += decoder.decode(value, { stream: true }).replaceAll("\r\n", "\n");
       let boundary = buffer.indexOf("\n\n");
@@ -359,7 +398,16 @@ async function* parseSse(response: Response, signal?: AbortSignal): AsyncGenerat
           .join("\n")
           .trim();
         if (data && data !== "[DONE]") {
-          const parsed = JSON.parse(data) as unknown;
+          let parsed: unknown;
+          try {
+            parsed = JSON.parse(data) as unknown;
+          } catch (error) {
+            throw new CodexProtocolError(
+              `Invalid Codex SSE JSON: ${thrownMessage(error)}`,
+              data,
+              error,
+            );
+          }
           if (!isObject(parsed)) throw new Error("Invalid Codex SSE event");
           yield parsed;
         }
@@ -466,6 +514,7 @@ async function acquireWebSocket(
   signal: AbortSignal | undefined,
   timeoutMs: number,
 ): Promise<{ socket: WebSocketLike; entry?: CachedWebSocket; release(keep: boolean): void }> {
+  if (signal?.aborted) throw new Error("Request was aborted");
   if (sessionId) {
     let accountEntries = websocketSessions.get(sessionId);
     const cached = accountEntries?.get(accountId);
@@ -647,6 +696,7 @@ async function* parseWebSocket(
   signal?.addEventListener("abort", onAbort, { once: true });
   try {
     while (true) {
+      if (signal?.aborted) throw new Error("Request was aborted");
       if (queue.length > 0) {
         yield queue.shift()!;
         continue;
@@ -681,25 +731,41 @@ function normalizeEvent(event: JsonRecord): JsonRecord {
   const type = event.type;
   if (type === "error") {
     const nested = isObject(event["error"]) ? event["error"] : undefined;
-    throw new CodexResponseError(
+    const code =
+      typeof event["code"] === "string"
+        ? event["code"]
+        : typeof nested?.["code"] === "string"
+          ? nested["code"]
+          : undefined;
+    const message =
       typeof event["message"] === "string"
         ? event["message"]
         : typeof nested?.["message"] === "string"
           ? nested["message"]
-          : "Codex request failed",
+          : undefined;
+    throw new CodexApiError(
+      `Codex error: ${message ?? code ?? JSON.stringify(event)}`,
+      code,
+      event,
     );
   }
   if (type === "response.failed") {
     const response = isObject(event.response) ? event.response : undefined;
     const error = isObject(response?.["error"]) ? response["error"] : undefined;
-    throw new CodexResponseError(
+    throw new CodexApiError(
       typeof error?.["message"] === "string" ? error["message"] : "Codex response failed",
+      typeof error?.["code"] === "string" ? error["code"] : undefined,
+      event,
     );
   }
   if (type === "response.done") {
     return { ...event, type: "response.completed" };
   }
   return event;
+}
+
+function isTerminalEvent(event: JsonRecord): boolean {
+  return event.type === "response.completed" || event.type === "response.incomplete";
 }
 
 async function* requestSse(
@@ -715,6 +781,7 @@ async function* requestSse(
   const maxRetries = options.maxRetries ?? DEFAULT_MAX_RETRIES;
 
   for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    if (options.signal?.aborted) throw new Error("Request was aborted");
     const timeoutSignal =
       options.timeoutMs !== undefined && options.timeoutMs > 0
         ? AbortSignal.timeout(options.timeoutMs)
@@ -752,7 +819,9 @@ async function* requestSse(
       throw new Error(errorText || `Codex request failed with status ${response.status}`);
     }
     for await (const event of parseSse(response, options.signal)) {
-      yield normalizeEvent(event);
+      const normalized = normalizeEvent(event);
+      yield normalized;
+      if (isTerminalEvent(normalized)) return;
     }
     return;
   }
@@ -776,6 +845,7 @@ async function* requestWebSocket(
   );
   let keep = true;
   try {
+    if (options.signal?.aborted) throw new Error("Request was aborted");
     const useContinuation =
       options.transport === "auto" || options.transport === "websocket-cached";
     const requestBody =
@@ -881,30 +951,47 @@ export class CodexTransport {
         options.apiKey,
         sessionId ?? crypto.randomUUID(),
       );
-      let emitted = false;
-      try {
-        for await (const event of requestWebSocket(
-          model,
-          body,
-          options,
-          headers,
-          sessionId,
-          accountId,
-        )) {
-          emitted = true;
-          yield event;
+      let retriedConnectionLimit = false;
+      let retriedMissingContinuation = false;
+      while (true) {
+        let emitted = false;
+        try {
+          for await (const event of requestWebSocket(
+            model,
+            body,
+            options,
+            headers,
+            sessionId,
+            accountId,
+          )) {
+            emitted = true;
+            yield event;
+          }
+          return;
+        } catch (error) {
+          const aborted = options.signal?.aborted;
+          const connectionLimitBeforeStart =
+            !emitted && isWebSocketConnectionLimitReachedError(error);
+          if (!aborted && isPreviousResponseNotFoundError(error) && !retriedMissingContinuation) {
+            retriedMissingContinuation = true;
+            continue;
+          }
+          if (!aborted && connectionLimitBeforeStart && !retriedConnectionLimit) {
+            retriedConnectionLimit = true;
+            continue;
+          }
+          if (
+            emitted ||
+            aborted ||
+            (isCodexNonTransportError(error) && !connectionLimitBeforeStart) ||
+            transport === "websocket" ||
+            transport === "websocket-cached"
+          ) {
+            throw error;
+          }
+          if (sessionId) websocketFallbackSessions.add(sessionId);
+          break;
         }
-        return;
-      } catch (error) {
-        if (
-          emitted ||
-          error instanceof CodexResponseError ||
-          transport === "websocket" ||
-          transport === "websocket-cached"
-        ) {
-          throw error;
-        }
-        if (sessionId) websocketFallbackSessions.add(sessionId);
       }
     }
 
