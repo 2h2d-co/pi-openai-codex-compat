@@ -1,7 +1,9 @@
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import type { Model } from "@earendil-works/pi-ai";
 import registerApplyPatch, { APPLY_PATCH_TOOL_NAME } from "./apply-patch.ts";
+import type { CodexToolBackgroundResolver } from "./codex-tool-surface.ts";
 import type { CodexCompatConfig } from "./config.ts";
+import { DEFAULT_CONFIG } from "./config.ts";
 import registerImageGeneration from "./image-generation.ts";
 import { IMAGE_GENERATION_TOOL_NAME, WEB_RUN_TOOL_NAME } from "./namespaced-tools.ts";
 import { isCodexModel } from "./request-options.ts";
@@ -57,8 +59,12 @@ export function syncCodexTools(
   pi.setActiveTools([...active]);
 }
 
-export default function registerCodexTools(pi: ExtensionAPI, resolveConfig: ConfigResolver): void {
-  registerApplyPatch(pi);
-  registerImageGeneration(pi, resolveConfig);
-  registerWebRun(pi, resolveConfig);
+export default function registerCodexTools(
+  pi: ExtensionAPI,
+  resolveConfig: ConfigResolver,
+  resolveToolBackground: CodexToolBackgroundResolver = () => DEFAULT_CONFIG.toolBackground,
+): void {
+  registerApplyPatch(pi, resolveToolBackground);
+  registerImageGeneration(pi, resolveConfig, resolveToolBackground);
+  registerWebRun(pi, resolveConfig, resolveToolBackground);
 }

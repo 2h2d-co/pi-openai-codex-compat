@@ -9,12 +9,15 @@ export type TextVerbosity = "low" | "medium" | "high";
 export type ReasoningSummary = "auto" | "concise" | "detailed" | "off";
 export type ReasoningMode = "standard" | "pro";
 export type ImageDetail = "auto" | "low" | "high" | "original";
+export type CodexToolBackground = "subtle" | "status" | "none";
 
 export interface CodexCompatConfig {
   /** Send OpenAI Codex requests through the priority service tier. */
   fastMode: boolean;
   /** Replace Pi's active edit and write tools with the extension's apply_patch tool. */
   applyPatch: boolean;
+  /** Select the shared background surface for extension-owned Codex tools. */
+  toolBackground: CodexToolBackground;
   /** Expose the standalone Codex image-generation namespace tool. */
   imageGeneration: boolean;
   /** Set input_image.detail when image tool results are returned to the model. */
@@ -36,6 +39,7 @@ export interface CodexCompatConfig {
 export type ConfigLayer = {
   fastMode?: boolean;
   applyPatch?: boolean;
+  toolBackground?: CodexToolBackground;
   imageGeneration?: boolean;
   imageDetail?: ImageDetail;
   webRun?: boolean;
@@ -50,6 +54,7 @@ export const CONFIG_FILE = "openai-codex-compat.json";
 export const DEFAULT_CONFIG: CodexCompatConfig = {
   fastMode: false,
   applyPatch: true,
+  toolBackground: "subtle",
   imageGeneration: true,
   imageDetail: "auto",
   webRun: true,
@@ -64,6 +69,7 @@ const TEXT_VERBOSITIES = new Set<TextVerbosity>(["low", "medium", "high"]);
 const REASONING_SUMMARIES = new Set<ReasoningSummary>(["auto", "concise", "detailed", "off"]);
 const REASONING_MODES = new Set<ReasoningMode>(["standard", "pro"]);
 const IMAGE_DETAILS = new Set<ImageDetail>(["auto", "low", "high", "original"]);
+const CODEX_TOOL_BACKGROUNDS = new Set<CodexToolBackground>(["subtle", "status", "none"]);
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === "object" && !Array.isArray(value);
@@ -79,6 +85,14 @@ export function parseConfig(value: unknown): ConfigLayer {
 
   const applyPatch = value["applyPatch"];
   if (typeof applyPatch === "boolean") layer.applyPatch = applyPatch;
+
+  const toolBackground = value["toolBackground"];
+  if (
+    typeof toolBackground === "string" &&
+    CODEX_TOOL_BACKGROUNDS.has(toolBackground as CodexToolBackground)
+  ) {
+    layer.toolBackground = toolBackground as CodexToolBackground;
+  }
 
   const imageGeneration = value["imageGeneration"];
   if (typeof imageGeneration === "boolean") layer.imageGeneration = imageGeneration;
@@ -149,6 +163,7 @@ export function resolveConfig(
     ...DEFAULT_CONFIG,
     ...(typeof merged.fastMode === "boolean" ? { fastMode: merged.fastMode } : {}),
     ...(typeof merged.applyPatch === "boolean" ? { applyPatch: merged.applyPatch } : {}),
+    ...(merged.toolBackground ? { toolBackground: merged.toolBackground } : {}),
     ...(typeof merged.imageGeneration === "boolean"
       ? { imageGeneration: merged.imageGeneration }
       : {}),
@@ -188,6 +203,7 @@ export function configLayer(config: CodexCompatConfig): ConfigLayer {
   return {
     fastMode: config.fastMode,
     applyPatch: config.applyPatch,
+    toolBackground: config.toolBackground,
     imageGeneration: config.imageGeneration,
     imageDetail: config.imageDetail,
     webRun: config.webRun,

@@ -8,9 +8,16 @@ import {
 import type { Model } from "@earendil-works/pi-ai";
 import { Type } from "typebox";
 import type { CodexCompatConfig } from "./config.ts";
+import type { CodexToolBackgroundResolver } from "./codex-tool-surface.ts";
+import { DEFAULT_CONFIG } from "./config.ts";
 import { isObject, type JsonRecord, type ResponsesItem } from "./codex-protocol.ts";
 import { requestCodexJson, type CodexJsonRequestOptions } from "./codex-transport.ts";
 import { IMAGE_GENERATION_TOOL_NAME } from "./namespaced-tools.ts";
+import {
+  renderImageGenerationCall,
+  renderImageGenerationResult,
+  type ImageGenerationDetails,
+} from "./image-generation-render.ts";
 import { isCodexModel } from "./request-options.ts";
 import { codexToolAuthentication, codexToolHistory } from "./tool-runtime.ts";
 
@@ -64,12 +71,7 @@ const imageGenerationParameters = Type.Unsafe<{
   additionalProperties: false,
 });
 
-export type ImageGenerationDetails = {
-  operation: "generate" | "edit";
-  revisedPrompt: string;
-  savedPath?: string;
-  saveError?: string;
-};
+export type { ImageGenerationDetails } from "./image-generation-render.ts";
 
 type JsonRequester = (
   model: Model<any>,
@@ -281,6 +283,7 @@ The generated image is already displayed to the user. There is no need to render
 export default function registerImageGeneration(
   pi: ExtensionAPI,
   resolveConfig: ConfigResolver,
+  resolveToolBackground: CodexToolBackgroundResolver = () => DEFAULT_CONFIG.toolBackground,
   requestJson: JsonRequester = requestCodexJson,
 ): void {
   pi.registerTool({
@@ -289,6 +292,7 @@ export default function registerImageGeneration(
     description: IMAGE_GENERATION_DESCRIPTION,
     parameters: imageGenerationParameters,
     executionMode: "sequential",
+    renderShell: "self",
     async execute(toolCallId, params, signal, onUpdate, ctx) {
       const model = ctx.model;
       if (!isCodexModel(model)) {
@@ -340,6 +344,12 @@ export default function registerImageGeneration(
           ...(saveError ? { saveError } : {}),
         } satisfies ImageGenerationDetails,
       };
+    },
+    renderCall(args, theme, context) {
+      return renderImageGenerationCall(args, theme, context, resolveToolBackground);
+    },
+    renderResult(result, options, theme, context) {
+      return renderImageGenerationResult(result, options, theme, context, resolveToolBackground);
     },
   });
 }

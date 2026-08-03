@@ -1,11 +1,12 @@
 import type { Theme } from "@earendil-works/pi-coding-agent";
 import { type Component, Container, Text } from "@earendil-works/pi-tui";
 import { type ApplyPatchDetails, previewPatch } from "./apply-patch-engine.ts";
+import { ApplyPatchDiffComponent, isApplyPatchDetails } from "./apply-patch-diff-render.ts";
 import {
-  ApplyPatchDiffComponent,
-  ApplyPatchSurfaceComponent,
-  isApplyPatchDetails,
-} from "./apply-patch-diff-render.ts";
+  CodexToolSurfaceComponent,
+  type CodexToolBackgroundResolver,
+} from "./codex-tool-surface.ts";
+import { DEFAULT_CONFIG } from "./config.ts";
 
 export { formatApplyPatchRenderText } from "./apply-patch-diff-render.ts";
 
@@ -43,6 +44,7 @@ export function renderApplyPatchCall(
   args: ApplyPatchArgs,
   theme: Theme,
   context: ApplyPatchRenderContext,
+  resolveBackground: CodexToolBackgroundResolver = () => DEFAULT_CONFIG.toolBackground,
 ): Component {
   const container = new Container();
   container.addChild(new Text(theme.fg("toolTitle", theme.bold("apply_patch")), 0, 0));
@@ -80,7 +82,9 @@ export function renderApplyPatchCall(
     }
   }
 
-  return new ApplyPatchSurfaceComponent(container, theme, {
+  return new CodexToolSurfaceComponent(container, theme, {
+    background: resolveBackground,
+    status: context.isPartial ? "pending" : context.isError ? "error" : "success",
     top: true,
     bottom: context.isPartial,
   });
@@ -91,6 +95,7 @@ export function renderApplyPatchResult(
   options: { isPartial: boolean },
   theme: Theme,
   context: ApplyPatchRenderContext,
+  resolveBackground: CodexToolBackgroundResolver = () => DEFAULT_CONFIG.toolBackground,
 ): Component {
   if (options.isPartial) return new Container();
 
@@ -106,15 +111,22 @@ export function renderApplyPatchResult(
       : details;
 
   if (renderDetails) {
-    return new ApplyPatchSurfaceComponent(
+    return new CodexToolSurfaceComponent(
       new ApplyPatchDiffComponent(renderDetails, theme, context.cwd, context.expanded),
       theme,
-      { top: false, bottom: true },
+      {
+        background: resolveBackground,
+        status: context.isError ? "error" : "success",
+        top: false,
+        bottom: true,
+      },
     );
   }
   const text = context.isError ? theme.bold(theme.fg("error", "✘ Failed to apply patch")) : "";
   if (!text) return new Container();
-  return new ApplyPatchSurfaceComponent(new Text(text, 0, 0), theme, {
+  return new CodexToolSurfaceComponent(new Text(text, 0, 0), theme, {
+    background: resolveBackground,
+    status: "error",
     top: false,
     bottom: true,
   });

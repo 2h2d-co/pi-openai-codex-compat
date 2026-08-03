@@ -1,13 +1,24 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import test from "node:test";
-import type { ExtensionAPI, ExtensionContext, SessionEntry } from "@earendil-works/pi-coding-agent";
+import type {
+  ExtensionAPI,
+  ExtensionContext,
+  SessionEntry,
+  Theme,
+} from "@earendil-works/pi-coding-agent";
 import type { Model } from "@earendil-works/pi-ai";
 import { DEFAULT_CONFIG } from "../extensions/openai-codex-compat/config.ts";
 import type { JsonRecord } from "../extensions/openai-codex-compat/codex-protocol.ts";
 import { CODEX_NAMESPACED_TOOL_NAMES } from "../extensions/openai-codex-compat/namespaced-tools.ts";
 import { convertResponsesTools } from "../extensions/openai-codex-compat/vendor/pi-ai/openai-responses-serialization.ts";
 import registerWebRun, { recentSearchInput } from "../extensions/openai-codex-compat/web-run.ts";
+
+const ANSI_SEQUENCE_PATTERN = new RegExp(String.raw`\u001b\[[0-?]*[ -/]*[@-~]`, "gu");
+
+function stripAnsi(value: string): string {
+  return value.replace(ANSI_SEQUENCE_PATTERN, "");
+}
 
 function codexModel(): Model<any> {
   return {
@@ -104,12 +115,22 @@ void test("registers the complete reserved web.run schema and executes alpha/sea
   registerWebRun(
     pi,
     () => ({ ...DEFAULT_CONFIG, webSearch: "indexed" }),
+    () => DEFAULT_CONFIG.toolBackground,
     async (_model, path, body, options) => {
       requests.push({ path, body: structuredClone(body), options });
       return {
         encrypted_output: "ignored",
-        output: "Search result",
-        results: [{ type: "text_result", ref_id: "turn0search0" }],
+        output: "Raw search output that should remain collapsed.",
+        results: [
+          {
+            type: "text_result",
+            domain: "example.com",
+            ref_id: "turn0search0",
+            snippet: "A concise source excerpt.",
+            title: "Example search result",
+            url: "https://example.com/result",
+          },
+        ],
       };
     },
   );
@@ -175,6 +196,7 @@ void test("registers the complete reserved web.run schema and executes alpha/sea
   };
   const result = await tool.execute("call-web|fc-web", commands, undefined, undefined, context);
 
+  assert.equal(tool.renderShell, "self");
   assert.equal(requests[0]?.path, "alpha/search");
   assert.deepEqual(requests[0]?.body["commands"], commands);
   assert.deepEqual(requests[0]?.body["settings"], {
@@ -183,8 +205,104 @@ void test("registers the complete reserved web.run schema and executes alpha/sea
   });
   assert.equal(requests[0]?.body["max_output_tokens"], 2_500);
   assert.match(JSON.stringify(requests[0]?.body["input"]), /Find current Pi documentation/);
-  assert.deepEqual(result.content, [{ type: "text", text: "Search result" }]);
+  assert.deepEqual(result.content, [
+    { type: "text", text: "Raw search output that should remain collapsed." },
+  ]);
   assert.deepEqual(result.details, {
-    results: [{ type: "text_result", ref_id: "turn0search0" }],
+    results: [
+      {
+        type: "text_result",
+        domain: "example.com",
+        ref_id: "turn0search0",
+        snippet: "A concise source excerpt.",
+        title: "Example search result",
+        url: "https://example.com/result",
+      },
+    ],
   });
+
+  const theme = {
+    fg: (_color: string, text: string) => text,
+    bold: (text: string) => text,
+    getBgAnsi: (color: string) =>
+      color === "toolPendingBg" ? "\u001b[48;2;40;40;50m" : "\u001b[48;2;40;50;40m",
+    getColorMode: () => "truecolor",
+    name: "dark",
+  } as unknown as Theme;
+  const renderContext = {
+    args: commands,
+    toolCallId: "call-web|fc-web",
+    invalidate() {},
+    lastComponent: undefined,
+    state: {},
+    cwd: "/tmp",
+    executionStarted: true,
+    argsComplete: true,
+    isPartial: false,
+    expanded: false,
+    showImages: false,
+    isError: false,
+  };
+  const callText = stripAnsi(
+    tool.renderCall(commands, theme, renderContext).render(100).join("\n"),
+  );
+  assert.match(callText, /web\.run  search "Pi"/);
+  assert.doesNotMatch(callText, /"search_query":/);
+
+  const collapsed = tool
+    .renderResult(result, { expanded: false, isPartial: false }, theme, renderContext)
+    .render(100)
+    .join("\n");
+  const collapsedText = stripAnsi(collapsed);
+  assert.match(collapsedText, /Found 1 source · example\.com/);
+  assert.doesNotMatch(collapsedText, /Raw search output/);
+  assert.doesNotMatch(collapsedText, /A concise source excerpt/);
+  assert.ok(collapsed.includes("\u001b[48;2;26;26;33m"));
+
+  const expandedText = stripAnsi(
+    tool
+      .renderResult(result, { expanded: true, isPartial: false }, theme, {
+        ...renderContext,
+        expanded: true,
+      })
+      .render(100)
+      .join("\n"),
+  );
+  assert.match(expandedText, /Example search result/);
+  assert.match(expandedText, /turn0search0/);
+  assert.match(expandedText, /https:\/\/example\.com\/result/);
+  assert.match(expandedText, /A concise source excerpt/);
+  assert.doesNotMatch(expandedText, /Raw search output/);
+
+  const navigationResult = {
+    content: [{ type: "text", text: "Opened page title\nL10: expanded page content" }],
+    details: { results: [] },
+  };
+  const navigationContext = {
+    ...renderContext,
+    args: { open: [{ ref_id: "turn0search0", lineno: 10 }] },
+  };
+  const collapsedNavigation = stripAnsi(
+    tool
+      .renderResult(
+        navigationResult,
+        { expanded: false, isPartial: false },
+        theme,
+        navigationContext,
+      )
+      .render(100)
+      .join("\n"),
+  );
+  assert.match(collapsedNavigation, /Opened turn0search0/);
+  assert.doesNotMatch(collapsedNavigation, /expanded page content/);
+  const expandedNavigation = stripAnsi(
+    tool
+      .renderResult(navigationResult, { expanded: true, isPartial: false }, theme, {
+        ...navigationContext,
+        expanded: true,
+      })
+      .render(100)
+      .join("\n"),
+  );
+  assert.match(expandedNavigation, /L10: expanded page content/);
 });

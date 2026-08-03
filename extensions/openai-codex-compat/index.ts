@@ -1,5 +1,10 @@
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { loadConfig, writableConfigPath, type CodexCompatConfig } from "./config.ts";
+import {
+  DEFAULT_CONFIG,
+  loadConfig,
+  writableConfigPath,
+  type CodexCompatConfig,
+} from "./config.ts";
 import { registerCodexProvider } from "./codex-provider.ts";
 import { installCodexFooter } from "./footer.ts";
 import registerCodexModelPolicy from "./model-policy.ts";
@@ -15,6 +20,7 @@ function settingsSummary(ctx: ExtensionContext, config: CodexCompatConfig): stri
     DISPLAY_NAME,
     `fast mode: ${config.fastMode ? "on" : "off"}`,
     `reasoning mode: ${config.reasoningMode}`,
+    `Codex tool background: ${config.toolBackground}`,
     `apply_patch: ${config.applyPatch ? "on" : "off"}`,
     `image_gen.imagegen: ${config.imageGeneration ? "on" : "off"}`,
     `image result detail: ${config.imageDetail}`,
@@ -34,6 +40,7 @@ export default function registerOpenAICodexCompat(pi: ExtensionAPI): void {
     activeConfig ??= loadConfig(ctx.cwd, ctx.isProjectTrusted());
     return activeConfig;
   };
+  const resolveToolBackground = () => activeConfig?.toolBackground ?? DEFAULT_CONFIG.toolBackground;
 
   pi.on("session_start", (event, ctx) => {
     activeConfig = loadConfig(ctx.cwd, ctx.isProjectTrusted());
@@ -43,7 +50,7 @@ export default function registerOpenAICodexCompat(pi: ExtensionAPI): void {
     }
   });
 
-  registerCodexTools(pi, resolveConfig);
+  registerCodexTools(pi, resolveConfig, resolveToolBackground);
   const codexProvider = registerCodexProvider(pi, resolveConfig);
   registerCodexRequestOptions(pi, resolveConfig);
   registerRemoteCompaction(pi, codexProvider, resolveConfig);

@@ -4,7 +4,12 @@ import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-import type { ExtensionAPI, ExtensionContext, SessionEntry } from "@earendil-works/pi-coding-agent";
+import type {
+  ExtensionAPI,
+  ExtensionContext,
+  SessionEntry,
+  Theme,
+} from "@earendil-works/pi-coding-agent";
 import type { Model } from "@earendil-works/pi-ai";
 import registerImageGeneration, {
   recentImageUrls,
@@ -14,6 +19,11 @@ import type { JsonRecord } from "../extensions/openai-codex-compat/codex-protoco
 
 const GENERATED_PNG =
   "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=";
+const ANSI_SEQUENCE_PATTERN = new RegExp(String.raw`\u001b\[[0-?]*[ -/]*[@-~]`, "gu");
+
+function stripAnsi(value: string): string {
+  return value.replace(ANSI_SEQUENCE_PATTERN, "");
+}
 
 function codexModel(): Model<any> {
   return {
@@ -105,6 +115,7 @@ void test("executes generation and recent-image edits through Codex Images", asy
   registerImageGeneration(
     pi,
     () => DEFAULT_CONFIG,
+    () => DEFAULT_CONFIG.toolBackground,
     async (_model, path, body, options) => {
       requests.push({ path, body: structuredClone(body), options });
       return { created: 1, data: [{ b64_json: GENERATED_PNG }] };
@@ -166,6 +177,7 @@ void test("executes generation and recent-image edits through Codex Images", asy
   );
 
   assert.equal(tool.executionMode, "sequential");
+  assert.equal(tool.renderShell, "self");
   assert.equal(requests[0]?.path, "images/generations");
   assert.equal(requests[0]?.body["images"], undefined);
   assert.equal(requests[0]?.body["model"], "gpt-image-2");
@@ -196,4 +208,52 @@ void test("executes generation and recent-image edits through Codex Images", asy
   });
   assert.match(result.content[1]?.text ?? "", /already displayed to the user/);
   assert.match(result.content[1]?.text ?? "", /use the generated image at another path/);
+
+  const theme = {
+    fg: (_color: string, text: string) => text,
+    bold: (text: string) => text,
+    getBgAnsi: (color: string) =>
+      color === "toolPendingBg" ? "\u001b[48;2;40;40;50m" : "\u001b[48;2;40;50;40m",
+    getColorMode: () => "truecolor",
+    name: "dark",
+  } as unknown as Theme;
+  const args = { prompt: "Draw a blue square." };
+  const renderContext = {
+    args,
+    toolCallId: "call-generate|fc-generate",
+    invalidate() {},
+    lastComponent: undefined,
+    state: {},
+    cwd: "/tmp",
+    executionStarted: true,
+    argsComplete: true,
+    isPartial: false,
+    expanded: false,
+    showImages: true,
+    isError: false,
+  };
+  const callText = stripAnsi(tool.renderCall(args, theme, renderContext).render(100).join("\n"));
+  assert.match(callText, /image_gen\.imagegen  generate "Draw a blue square\."/);
+
+  const collapsed = tool
+    .renderResult(generated, { expanded: false, isPartial: false }, theme, renderContext)
+    .render(100)
+    .join("\n");
+  const collapsedText = stripAnsi(collapsed);
+  assert.match(collapsedText, /Generated image/);
+  assert.match(collapsedText, /call-generate\.png/);
+  assert.doesNotMatch(collapsedText, /already displayed/);
+  assert.ok(collapsed.includes("\u001b[48;2;26;26;33m"));
+
+  const expandedText = stripAnsi(
+    tool
+      .renderResult(generated, { expanded: true, isPartial: false }, theme, {
+        ...renderContext,
+        expanded: true,
+      })
+      .render(100)
+      .join("\n"),
+  );
+  assert.match(expandedText, /Prompt\s+Draw a blue square\./);
+  assert.match(expandedText.replace(/\s+/gu, " "), /Saved .*call-generate\.png/);
 });

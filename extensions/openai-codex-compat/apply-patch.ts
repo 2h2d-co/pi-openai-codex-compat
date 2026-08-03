@@ -1,6 +1,8 @@
 import { performance } from "node:perf_hooks";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
+import type { CodexToolBackgroundResolver } from "./codex-tool-surface.ts";
+import { DEFAULT_CONFIG } from "./config.ts";
 import {
   applyPatch,
   type ApplyPatchDetails,
@@ -52,7 +54,10 @@ eof_line: "*** End of File" LF
 
 %import common.LF`;
 
-export default function registerApplyPatch(pi: ExtensionAPI): void {
+export default function registerApplyPatch(
+  pi: ExtensionAPI,
+  resolveToolBackground: CodexToolBackgroundResolver = () => DEFAULT_CONFIG.toolBackground,
+): void {
   const failedDetails = new Map<string, ApplyPatchDetails>();
 
   pi.on("tool_result", (event) => {
@@ -127,7 +132,11 @@ export default function registerApplyPatch(pi: ExtensionAPI): void {
         throw error;
       }
     },
-    renderCall: renderApplyPatchCall,
-    renderResult: renderApplyPatchResult,
+    renderCall(args, theme, context) {
+      return renderApplyPatchCall(args, theme, context, resolveToolBackground);
+    },
+    renderResult(result, options, theme, context) {
+      return renderApplyPatchResult(result, options, theme, context, resolveToolBackground);
+    },
   });
 }

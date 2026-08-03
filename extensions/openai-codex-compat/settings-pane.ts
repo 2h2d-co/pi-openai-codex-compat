@@ -27,6 +27,7 @@ type SettingId =
   | "textVerbosity"
   | "reasoningSummary"
   | "reasoningMode"
+  | "toolBackground"
   | "applyPatch"
   | "imageGeneration"
   | "imageDetail"
@@ -77,6 +78,13 @@ export function settingItems(config: CodexCompatConfig): SettingItem[] {
         "Choose standard or pro execution independently of reasoning effort. Applied only to GPT-5.6 models.",
       currentValue: config.reasoningMode,
       values: ["standard", "pro"],
+    },
+    {
+      id: "toolBackground",
+      label: "Codex tool background",
+      description: "Choose a distinct subtle surface, Pi's normal status colors, or no background.",
+      currentValue: config.toolBackground,
+      values: ["subtle", "status", "none"],
     },
     {
       id: "applyPatch",
@@ -141,6 +149,11 @@ export function settingPatch(id: string, value: string): ConfigLayer | undefined
     case "reasoningMode":
       if (value === "standard" || value === "pro") return { reasoningMode: value };
       return undefined;
+    case "toolBackground":
+      if (value === "subtle" || value === "status" || value === "none") {
+        return { toolBackground: value };
+      }
+      return undefined;
     case "applyPatch":
       return value === "on" || value === "off" ? { applyPatch: value === "on" } : undefined;
     case "imageGeneration":
@@ -171,6 +184,7 @@ function applySettingPatch(config: CodexCompatConfig, patch: ConfigLayer): Codex
   const next: CodexCompatConfig = { ...config };
   if (typeof patch.fastMode === "boolean") next.fastMode = patch.fastMode;
   if (typeof patch.applyPatch === "boolean") next.applyPatch = patch.applyPatch;
+  if (patch.toolBackground) next.toolBackground = patch.toolBackground;
   if (typeof patch.imageGeneration === "boolean") {
     next.imageGeneration = patch.imageGeneration;
   }

@@ -13,6 +13,8 @@
 - Add configurable hosted web search, text verbosity, reasoning summaries, and GPT-5.6 standard/pro reasoning mode.
 - Add configurable image tool-result detail with `auto` as the default.
 - Add a dedicated `/codex-settings` pane backed by `openai-codex-compat.json`, including controls for the extension's additional tools.
+- Add dedicated collapsible renderers for `web.run` and `image_gen.imagegen`, including structured web source cards and image artifact metadata.
+- Add a shared configurable background surface for extension-owned Codex tools.
 
 ### Changed
 
@@ -43,6 +45,8 @@
 - Fail closed to a compact error state when Pi supplies generic or malformed tool-result details instead of crashing the TUI.
 - Place the complete `apply_patch` tool call on a subtle theme-derived neutral surface while preserving stronger added and removed line backgrounds.
 - Add Pi-style horizontal and vertical padding around the `apply_patch` surface while keeping its title and result visually continuous.
+- Render `apply_patch`, `image_gen.imagegen`, and `web.run` on the same theme-derived surface, configurable as `subtle`, Pi `status` colors, or `none`.
+- Collapse `web.run` to operation and source summaries by default while exposing structured results or raw navigation output through `Ctrl+O`.
 
 ### Fixed
 

@@ -22,6 +22,7 @@ import registerApplyPatch, {
 } from "../extensions/openai-codex-compat/apply-patch.ts";
 import { ApplyPatchDiffComponent } from "../extensions/openai-codex-compat/apply-patch-diff-render.ts";
 import { formatApplyPatchRenderText } from "../extensions/openai-codex-compat/apply-patch-render.ts";
+import type { CodexToolBackground } from "../extensions/openai-codex-compat/config.ts";
 
 const ANSI_SEQUENCE_PATTERN = new RegExp(String.raw`\u001b\[[0-?]*[ -/]*[@-~]`, "g");
 
@@ -401,7 +402,8 @@ void test("registers the Codex freeform tool with model, UI, and failed-history 
     },
   } as unknown as ExtensionAPI;
 
-  registerApplyPatch(pi);
+  let toolBackground: CodexToolBackground = "subtle";
+  registerApplyPatch(pi, () => toolBackground);
   assert.equal(registered?.name, "apply_patch");
   assert.equal(registered?.executionMode, "sequential");
   assert.equal(registered?.renderShell, "self");
@@ -456,6 +458,11 @@ void test("registers the Codex freeform tool with model, UI, and failed-history 
   assert.equal(stripAnsi(renderedCall).trim(), "apply_patch");
   assert.equal(renderedCall.split("\n").length, 2);
   assert.ok(renderedCall.includes("\u001b[48;2;26;26;33m"));
+  toolBackground = "none";
+  assert.equal(callComponent.render(120).join("\n").includes("\u001b[48"), false);
+  toolBackground = "status";
+  assert.ok(callComponent.render(120).join("\n").includes("\u001b[48;2;40;50;40m"));
+  toolBackground = "subtle";
 
   const component = registered!.renderResult!(
     result,

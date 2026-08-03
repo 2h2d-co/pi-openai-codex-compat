@@ -10,9 +10,12 @@ import {
 } from "./codex-protocol.ts";
 import { requestCodexJson, type CodexJsonRequestOptions } from "./codex-transport.ts";
 import type { CodexCompatConfig, WebSearchMode } from "./config.ts";
+import type { CodexToolBackgroundResolver } from "./codex-tool-surface.ts";
+import { DEFAULT_CONFIG } from "./config.ts";
 import { WEB_RUN_TOOL_NAME } from "./namespaced-tools.ts";
 import { isCodexModel } from "./request-options.ts";
 import { codexToolAuthentication, codexToolHistory } from "./tool-runtime.ts";
+import { renderWebRunCall, renderWebRunResult, type WebRunDetails } from "./web-run-render.ts";
 import { WEB_RUN_PARAMETERS } from "./web-run-schema.ts";
 
 const SEARCH_ENDPOINT = "alpha/search";
@@ -24,9 +27,7 @@ const WEB_RUN_DESCRIPTION = readFileSync(
   "utf8",
 );
 
-export type WebRunDetails = {
-  results?: unknown[];
-};
+export type { WebRunDetails } from "./web-run-render.ts";
 
 type ConfigResolver = (ctx: ExtensionContext) => CodexCompatConfig;
 type JsonRequester = (
@@ -108,6 +109,7 @@ function externalWebAccess(mode: WebSearchMode): boolean | "indexed" {
 export default function registerWebRun(
   pi: ExtensionAPI,
   resolveConfig: ConfigResolver,
+  resolveToolBackground: CodexToolBackgroundResolver = () => DEFAULT_CONFIG.toolBackground,
   requestJson: JsonRequester = requestCodexJson,
 ): void {
   pi.registerTool({
@@ -116,6 +118,7 @@ export default function registerWebRun(
     description: WEB_RUN_DESCRIPTION,
     parameters: WEB_RUN_PARAMETERS,
     executionMode: "parallel",
+    renderShell: "self",
     async execute(_toolCallId, params, signal, _onUpdate, ctx) {
       const model = ctx.model;
       if (!isCodexModel(model)) {
@@ -150,6 +153,12 @@ export default function registerWebRun(
         content: [{ type: "text", text: response["output"] }],
         details: (results ? { results } : {}) satisfies WebRunDetails,
       };
+    },
+    renderCall(args, theme, context) {
+      return renderWebRunCall(args, theme, context, resolveToolBackground);
+    },
+    renderResult(result, options, theme, context) {
+      return renderWebRunResult(result, options, theme, context, resolveToolBackground);
     },
   });
 }
