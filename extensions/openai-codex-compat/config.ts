@@ -46,7 +46,7 @@ export const CONFIG_ENVIRONMENT_VARIABLES = {
   imageDetail: `${ENV_PREFIX}IMAGE_DETAIL`,
   webRun: `${ENV_PREFIX}WEB_RUN`,
   autoCompactAtPercent: `${ENV_PREFIX}AUTO_COMPACT_AT_PERCENT`,
-  webSearch: `${ENV_PREFIX}WEB_SEARCH`,
+  webSearch: `${ENV_PREFIX}WEB_SEARCH_MODE`,
   textVerbosity: `${ENV_PREFIX}TEXT_VERBOSITY`,
   reasoningSummary: `${ENV_PREFIX}REASONING_SUMMARY`,
   reasoningMode: `${ENV_PREFIX}REASONING_MODE`,

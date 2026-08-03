@@ -194,7 +194,7 @@ Every setting can also be overridden for one Pi process with an environment vari
 | `imageDetail`          | `PI_OPENAI_CODEX_COMPAT_IMAGE_DETAIL`            |
 | `webRun`               | `PI_OPENAI_CODEX_COMPAT_WEB_RUN`                 |
 | `autoCompactAtPercent` | `PI_OPENAI_CODEX_COMPAT_AUTO_COMPACT_AT_PERCENT` |
-| `webSearch`            | `PI_OPENAI_CODEX_COMPAT_WEB_SEARCH`              |
+| `webSearch`            | `PI_OPENAI_CODEX_COMPAT_WEB_SEARCH_MODE`         |
 | `textVerbosity`        | `PI_OPENAI_CODEX_COMPAT_TEXT_VERBOSITY`          |
 | `reasoningSummary`     | `PI_OPENAI_CODEX_COMPAT_REASONING_SUMMARY`       |
 | `reasoningMode`        | `PI_OPENAI_CODEX_COMPAT_REASONING_MODE`          |

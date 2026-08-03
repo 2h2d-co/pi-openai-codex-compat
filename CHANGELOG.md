@@ -4,7 +4,7 @@
 
 ### Added
 
-- Add transient `PI_OPENAI_CODEX_COMPAT_*` environment overrides for every compatibility setting, including common boolean aliases and explicit `off`/`default` percentage-compaction values.
+- Add transient `PI_OPENAI_CODEX_COMPAT_*` environment overrides for every compatibility setting, including common boolean aliases, explicit `off`/`default` percentage-compaction values, and an unambiguous `WEB_SEARCH_MODE` name.
 
 ### Changed
 

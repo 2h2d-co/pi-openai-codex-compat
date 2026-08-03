@@ -84,6 +84,8 @@ void test("validates and layers Codex compatibility configuration", () => {
 });
 
 void test("parses environment overrides with highest precedence", () => {
+  assert.equal(CONFIG_ENVIRONMENT_VARIABLES.webSearch, "PI_OPENAI_CODEX_COMPAT_WEB_SEARCH_MODE");
+
   const environmentConfig = parseEnvironmentConfig({
     [CONFIG_ENVIRONMENT_VARIABLES.fastMode]: "on",
     [CONFIG_ENVIRONMENT_VARIABLES.applyPatch]: "0",
