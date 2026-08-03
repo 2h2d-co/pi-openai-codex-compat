@@ -27,22 +27,19 @@ const GENERATION_ENDPOINT = "images/generations";
 const EDIT_ENDPOINT = "images/edits";
 const GENERATED_IMAGES_DIRECTORY = "generated_images";
 
-const IMAGE_GENERATION_DESCRIPTION = `The \`image_gen.imagegen\` tool enables image generation from descriptions and editing of existing images based on specific instructions. Use it when:
+const IMAGE_GENERATION_DESCRIPTION = `The \`image_gen.imagegen\` tool generates new images from descriptions and edits existing images according to specific instructions. Use it when:
 
 - The user requests an image based on a scene description, such as a diagram, portrait, comic, meme, or any other visual.
-- The user wants to modify an attached or previously generated image with specific changes, including adding or removing elements, altering colors, improving quality/resolution, or transforming the style (e.g., cartoon, oil painting).
+- The user wants to modify a local, attached, or previously generated image by adding or removing elements, changing colors, improving quality or resolution, or transforming its style.
 
 Guidelines:
-- imagegen needs a few minutes to finish. In code-mode, use the first-line @exec directive to give the initial call 120 seconds and the same yield for any waits that follow. Once it finishes, return the image with generatedImage(result).
+- Call \`image_gen.imagegen\` directly without reconfirmation unless required source images are unavailable.
 - Omit both \`referenced_image_paths\` and \`num_last_images_to_include\` when generating a brand new image.
-- For edits, use \`referenced_image_paths\` when every target image has a local file path.
-- If you have not seen a local image yet, use \`view_image\` to inspect it before editing.
-- Use \`num_last_images_to_include\` only when at least one target image has no local file path.
-- Set \`num_last_images_to_include\` to the smallest number of recent conversation images that includes every target image, up to 5.
+- For edits, use \`referenced_image_paths\` when every target image has an absolute local path. Use \`read\` first when you need to inspect a local image.
+- Use \`num_last_images_to_include\` only when at least one target image has no local path, and set it to the smallest number of recent conversation images that includes every target, up to 5.
 - Never provide both \`referenced_image_paths\` and \`num_last_images_to_include\`.
 - If neither mechanism can include every target image, ask the user to attach the missing images again.
-- Directly generate the image without reconfirmation or clarification unless required images must be attached again.
-- Always use this tool for image editing unless the user explicitly requests otherwise. Do not use the \`python\` tool for image editing unless specifically instructed.
+- Generated images are returned, displayed, and saved automatically. Do not embed the image in the final response unless the user asks.
 `;
 
 const imageGenerationParameters = Type.Unsafe<{
@@ -290,6 +287,13 @@ export default function registerImageGeneration(
     name: IMAGE_GENERATION_TOOL_NAME,
     label: IMAGE_GENERATION_TOOL_NAME,
     description: IMAGE_GENERATION_DESCRIPTION,
+    promptSnippet: "Generate new images or edit existing images",
+    promptGuidelines: [
+      "Use image_gen.imagegen directly to generate new images or edit existing images without reconfirmation unless required source images are unavailable.",
+      "For new images, call image_gen.imagegen without referenced_image_paths or num_last_images_to_include.",
+      "For image_gen.imagegen edits, use absolute referenced_image_paths when every target is local; otherwise use the smallest necessary num_last_images_to_include, and use read when you need to inspect a local image.",
+      "Never pass both image selectors to image_gen.imagegen; ask the user to reattach images when every target cannot be referenced.",
+    ],
     parameters: imageGenerationParameters,
     executionMode: "sequential",
     renderShell: "self",

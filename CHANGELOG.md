@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Changed
+
+- Adapt the `image_gen.imagegen` description and prompt metadata to Pi while retaining the server-reserved JSON Schema.
+
 ## 0.0.2 - 2026-08-03
 
 ### Added

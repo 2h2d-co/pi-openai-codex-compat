@@ -121,9 +121,16 @@ void test("executes generation and recent-image edits through Codex Images", asy
       return { created: 1, data: [{ b64_json: GENERATED_PNG }] };
     },
   );
+  assert.equal(tool.promptSnippet, "Generate new images or edit existing images");
+  assert.deepEqual(tool.promptGuidelines, [
+    "Use image_gen.imagegen directly to generate new images or edit existing images without reconfirmation unless required source images are unavailable.",
+    "For new images, call image_gen.imagegen without referenced_image_paths or num_last_images_to_include.",
+    "For image_gen.imagegen edits, use absolute referenced_image_paths when every target is local; otherwise use the smallest necessary num_last_images_to_include, and use read when you need to inspect a local image.",
+    "Never pass both image selectors to image_gen.imagegen; ask the user to reattach images when every target cannot be referenced.",
+  ]);
   assert.equal(
     createHash("sha256").update(tool.description).digest("hex"),
-    "77a992a7c90e45fcd11623a1efa34bfd4c7870697e0aa54ce9b28f690877170e",
+    "e92ffb73c2e0b15307b79902585fea2187236e75c152308259805d146c6e5d63",
   );
   assert.deepEqual(JSON.parse(JSON.stringify(tool.parameters)), {
     type: "object",
