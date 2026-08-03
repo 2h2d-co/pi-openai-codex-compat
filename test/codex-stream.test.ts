@@ -214,3 +214,72 @@ void test("rejects unknown and flat namespace tool calls", async () => {
     );
   }
 });
+
+void test("distinguishes token limits from other incomplete responses", async () => {
+  for (const scenario of [
+    {
+      reason: "max_output_tokens",
+      stopReason: "length",
+      rawStopReason: "incomplete.max_output_tokens",
+      errorMessage: undefined,
+    },
+    {
+      reason: "content_filter",
+      stopReason: "error",
+      rawStopReason: "incomplete.content_filter",
+      errorMessage: "Response incomplete: content_filter",
+    },
+    {
+      reason: undefined,
+      stopReason: "error",
+      rawStopReason: "incomplete",
+      errorMessage: "Response incomplete without a provider reason",
+    },
+  ] as const) {
+    const message = output();
+    await processCodexStream(
+      events([
+        {
+          type: "response.incomplete",
+          response: {
+            id: "resp_incomplete",
+            status: "incomplete",
+            ...(scenario.reason ? { incomplete_details: { reason: scenario.reason } } : {}),
+            usage: { input_tokens: 10, output_tokens: 5, total_tokens: 15 },
+          },
+        },
+      ]),
+      message,
+      createAssistantMessageEventStream(),
+      model,
+      new Map(),
+    );
+
+    assert.equal(message.stopReason, scenario.stopReason);
+    assert.equal(message.rawStopReason, scenario.rawStopReason);
+    assert.equal(message.errorMessage, scenario.errorMessage);
+  }
+});
+
+void test("drops unknown terminal response statuses like Pi AI", async () => {
+  const message = output();
+  await processCodexStream(
+    events([
+      {
+        type: "response.completed",
+        response: {
+          id: "resp_unknown",
+          status: "future_status",
+          usage: { input_tokens: 10, output_tokens: 5, total_tokens: 15 },
+        },
+      },
+    ]),
+    message,
+    createAssistantMessageEventStream(),
+    model,
+    new Map(),
+  );
+
+  assert.equal(message.stopReason, "stop");
+  assert.equal(message.rawStopReason, undefined);
+});

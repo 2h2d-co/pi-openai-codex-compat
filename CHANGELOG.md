@@ -21,6 +21,7 @@
 - Keep SSE fallback sticky after midstream WebSocket failures and use the fallback for later requests regardless of the preferred WebSocket mode.
 - Validate transport timeouts, allow zero to disable the WebSocket connect timeout, report SSE header timeouts clearly, and honor bounded `Retry-After` guidance.
 - Surface concise structured Codex HTTP errors, fail closed on malformed WebSocket events, and retain WebSocket-to-SSE recovery diagnostics on assistant messages.
+- Distinguish output-token truncation from other incomplete Codex responses and preserve the provider's incomplete reason.
 
 ## 0.0.2 - 2026-08-03
 

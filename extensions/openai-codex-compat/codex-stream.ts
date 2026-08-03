@@ -38,6 +38,23 @@ type OutputSlot =
 
 type ToolCallSlot = Extract<OutputSlot, { type: "toolCall" }>;
 
+type CodexResponseStatus =
+  | "completed"
+  | "incomplete"
+  | "failed"
+  | "cancelled"
+  | "queued"
+  | "in_progress";
+
+const CODEX_RESPONSE_STATUSES = new Set<CodexResponseStatus>([
+  "completed",
+  "incomplete",
+  "failed",
+  "cancelled",
+  "queued",
+  "in_progress",
+]);
+
 function outputIndex(event: JsonRecord): number {
   return typeof event["output_index"] === "number" ? event["output_index"] : 0;
 }
@@ -131,10 +148,27 @@ function reasoningText(item: JsonRecord): string {
   return itemContentText(item);
 }
 
-function mapStopReason(status: unknown): AssistantMessage["stopReason"] {
-  if (status === "incomplete") return "length";
-  if (status === "failed" || status === "cancelled") return "error";
-  return "stop";
+function normalizeCodexStatus(status: unknown): CodexResponseStatus | undefined {
+  return typeof status === "string" && CODEX_RESPONSE_STATUSES.has(status as CodexResponseStatus)
+    ? (status as CodexResponseStatus)
+    : undefined;
+}
+
+function mapStopReason(
+  status: CodexResponseStatus | undefined,
+  incompleteReason: string | undefined,
+): { stopReason: AssistantMessage["stopReason"]; errorMessage?: string } {
+  if (status === "incomplete") {
+    if (incompleteReason === "max_output_tokens") return { stopReason: "length" };
+    return {
+      stopReason: "error",
+      errorMessage: incompleteReason
+        ? `Response incomplete: ${incompleteReason}`
+        : "Response incomplete without a provider reason",
+    };
+  }
+  if (status === "failed" || status === "cancelled") return { stopReason: "error" };
+  return { stopReason: "stop" };
 }
 
 export async function processCodexStream(
@@ -288,8 +322,20 @@ export async function processCodexStream(
         });
       }
     }
-    if (typeof response["status"] === "string") output.rawStopReason = response["status"];
-    output.stopReason = mapStopReason(response["status"]);
+    const status = normalizeCodexStatus(response["status"]);
+    const incompleteDetails = isObject(response["incomplete_details"])
+      ? response["incomplete_details"]
+      : undefined;
+    const incompleteReason =
+      typeof incompleteDetails?.["reason"] === "string" ? incompleteDetails["reason"] : undefined;
+    const rawStopReason =
+      status === "incomplete" && incompleteReason ? `${status}.${incompleteReason}` : status;
+    if (rawStopReason === undefined) delete output.rawStopReason;
+    else output.rawStopReason = rawStopReason;
+    const mappedStop = mapStopReason(status, incompleteReason);
+    output.stopReason = mappedStop.stopReason;
+    if (mappedStop.errorMessage === undefined) delete output.errorMessage;
+    else output.errorMessage = mappedStop.errorMessage;
     if (output.stopReason === "stop" && output.content.some((block) => block.type === "toolCall")) {
       output.stopReason = "toolUse";
     }
