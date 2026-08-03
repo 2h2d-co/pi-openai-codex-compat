@@ -64,6 +64,7 @@ export type CodexTransportDiagnostic = {
 
 type CodexTransportOptions = OpenAICodexResponsesOptions & {
   env?: ProviderEnv;
+  onTransportStart?(): void;
   onTransportDiagnostic?(diagnostic: CodexTransportDiagnostic): void;
 };
 
@@ -977,6 +978,7 @@ async function* requestSse(
       }
       throw codexHttpError(response.status, response.statusText, errorText);
     }
+    options.onTransportStart?.();
     for await (const event of parseSse(response, options.signal)) {
       const normalized = normalizeEvent(event);
       yield normalized;
@@ -1134,6 +1136,7 @@ export class CodexTransport {
             timeoutMs,
             connectTimeoutMs,
           )) {
+            if (!emitted) options.onTransportStart?.();
             emitted = true;
             yield event;
           }

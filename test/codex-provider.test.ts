@@ -291,6 +291,144 @@ void test("retains recovered transport diagnostics on assistant messages", async
   assert.deepEqual(message.diagnostics, [diagnostic]);
 });
 
+void test("emits start only when the Codex transport starts", async () => {
+  const user = userEntry("user-1", "hello");
+  const harness = createHarness([user]);
+  const diagnostic: CodexTransportDiagnostic = {
+    type: "provider_transport_failure",
+    timestamp: Date.now(),
+    error: { name: "Error", message: "WebSocket unavailable" },
+    details: {
+      configuredTransport: "auto",
+      fallbackTransport: "sse",
+      eventsEmitted: false,
+      phase: "before_message_stream_start",
+      requestBytes: 123,
+    },
+  };
+  harness.runtime.transport.request = async function* (_model, _body, options) {
+    options.onTransportDiagnostic?.(diagnostic);
+    options.onTransportStart?.();
+    yield* textEvents("hello back");
+  };
+
+  const events = [];
+  const result = harness.runtime.streamSimple(
+    codexModel(),
+    { messages: [user.message as Context["messages"][number]] },
+    { apiKey: accessToken(), sessionId: "session-1", transport: "auto" },
+  );
+  for await (const event of result) events.push(event);
+
+  assert.equal(events[0]?.type, "start");
+  assert.deepEqual(events[0]?.partial.diagnostics, [diagnostic]);
+  assert.equal(events.at(-1)?.type, "done");
+});
+
+void test("normalizes pre-stream failures without emitting start", async () => {
+  const user = userEntry("user-1", "hello");
+  const harness = createHarness([user]);
+  harness.runtime.transport.request = async function* () {
+    yield* [];
+    throw { code: "transport_failed", message: "connection failed" };
+  };
+
+  const events = [];
+  const result = harness.runtime.streamSimple(
+    codexModel(),
+    { messages: [user.message as Context["messages"][number]] },
+    { apiKey: accessToken(), sessionId: "session-1", transport: "auto" },
+  );
+  for await (const event of result) events.push(event);
+
+  assert.deepEqual(
+    events.map((event) => event.type),
+    ["error"],
+  );
+  const errorEvent = events.find((event) => event.type === "error");
+  assert.equal(
+    errorEvent?.error.errorMessage,
+    '{"code":"transport_failed","message":"connection failed"}',
+  );
+});
+
+void test("cleans streaming scratch state and surfaces structured provider errors", async () => {
+  const user = userEntry("user-1", "hello");
+  const harness = createHarness([user]);
+  const failure = Object.assign(new Error("opaque provider failure"), {
+    status: 403,
+    error: { message: "request denied" },
+  });
+  harness.runtime.transport.request = async function* () {
+    yield {
+      type: "response.output_item.added",
+      output_index: 0,
+      item: {
+        type: "function_call",
+        id: "fc_1",
+        call_id: "call_1",
+        name: "tool",
+        arguments: "",
+      },
+    };
+    yield {
+      type: "response.function_call_arguments.delta",
+      output_index: 0,
+      delta: '{"input":',
+    };
+    throw failure;
+  };
+
+  const result = harness.runtime.streamSimple(
+    codexModel(),
+    { messages: [user.message as Context["messages"][number]] },
+    { apiKey: accessToken(), sessionId: "session-1", transport: "auto" },
+  );
+  let failedMessage: AssistantMessage | undefined;
+  for await (const event of result) {
+    if (event.type === "error") failedMessage = event.error;
+  }
+
+  assert.equal(failedMessage?.errorMessage, '403: {"message":"request denied"}');
+  const toolCall = failedMessage?.content.find((block) => block.type === "toolCall");
+  assert.ok(toolCall);
+  assert.equal("partialJson" in toolCall, false);
+  assert.equal("customInput" in toolCall, false);
+});
+
+void test("honors non-object payload replacements like Pi AI", async () => {
+  const user = userEntry("user-1", "hello");
+  const harness = createHarness([user]);
+  let request: unknown;
+  harness.runtime.transport.request = async function* (_model, body) {
+    request = body;
+    yield* textEvents("hello back");
+  };
+
+  await harness.runtime
+    .streamSimple(
+      codexModel(),
+      { messages: [user.message as Context["messages"][number]] },
+      {
+        apiKey: accessToken(),
+        sessionId: "session-1",
+        transport: "sse",
+        onPayload: () => [],
+      },
+    )
+    .result();
+
+  assert.deepEqual(request, []);
+});
+
+void test("rejects missing streamSimple authentication synchronously", () => {
+  const harness = createHarness([userEntry("user-1", "hello")]);
+  assert.throws(
+    () => harness.runtime.streamSimple(codexModel(), { messages: [] }, {}),
+    /No API key for provider: openai-codex/,
+  );
+});
+
 void test("transports dotted Pi tools as native Responses namespaces", async () => {
   const user = userEntry("user-1", "search");
   const harness = createHarness([user]);

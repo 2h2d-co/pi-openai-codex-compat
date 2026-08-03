@@ -49,6 +49,7 @@ import {
   createGrammarToolInputProperties,
   type ResponsesItem as SerializedResponsesItem,
 } from "./vendor/pi-ai/openai-responses-serialization.ts";
+import { formatProviderError } from "./provider-error.ts";
 
 const CODEX_PROVIDER = "openai-codex";
 const CODEX_API = "openai-codex-responses";
@@ -180,6 +181,31 @@ function captureRawEvents(
       }
     },
   };
+}
+
+function startOnFirstEvent(
+  events: AsyncIterable<JsonRecord>,
+  onStart: () => void,
+): AsyncIterable<JsonRecord> {
+  return {
+    async *[Symbol.asyncIterator]() {
+      let started = false;
+      for await (const event of events) {
+        if (!started) {
+          started = true;
+          onStart();
+        }
+        yield event;
+      }
+    },
+  };
+}
+
+function clearStreamingScratchState(message: AssistantMessage): void {
+  for (const block of message.content) {
+    delete (block as { partialJson?: string }).partialJson;
+    delete (block as { customInput?: unknown }).customInput;
+  }
 }
 
 function updateInput(payload: JsonRecord, input: readonly ResponsesItem[]): JsonRecord {
@@ -448,7 +474,7 @@ export class CodexProviderRuntime {
       priority: options.priority,
     });
     const transformed = await options.requestOptions.onPayload?.(payload, options.model);
-    const request = isObject(transformed) ? transformed : payload;
+    const request = transformed === undefined ? payload : (transformed as JsonRecord);
     const compacted = await collectRemoteCompaction(
       this.transport.request(options.model, request, options.requestOptions),
       options.model,
@@ -594,7 +620,7 @@ export class CodexProviderRuntime {
           grammarToolInputProperties,
         );
         const transformed = await requestOptions.onPayload?.(body, model);
-        if (isObject(transformed)) body = transformed;
+        if (transformed !== undefined) body = transformed as JsonRecord;
         if (runtimeSessionId) {
           this.templates.set(runtimeSessionId, {
             modelId: model.id,
@@ -613,18 +639,27 @@ export class CodexProviderRuntime {
 
         const rawItems: ResponsesItem[] = [];
         const responseMetadata: { serviceTier?: string } = {};
+        let startEmitted = false;
+        const emitStart = () => {
+          if (startEmitted) return;
+          startEmitted = true;
+          stream.push({ type: "start", partial: output });
+        };
         const transportRequestOptions = {
           ...requestOptions,
+          onTransportStart: emitStart,
           onTransportDiagnostic(diagnostic: CodexTransportDiagnostic) {
             output.diagnostics = [...(output.diagnostics ?? []), diagnostic];
           },
         };
-        stream.push({ type: "start", partial: output });
         await processCodexStream(
-          captureRawEvents(
-            this.transport.request(model, body, transportRequestOptions),
-            rawItems,
-            responseMetadata,
+          startOnFirstEvent(
+            captureRawEvents(
+              this.transport.request(model, body, transportRequestOptions),
+              rawItems,
+              responseMetadata,
+            ),
+            emitStart,
           ),
           output,
           stream,
@@ -682,8 +717,9 @@ export class CodexProviderRuntime {
         stream.push({ type: "done", reason: output.stopReason, message: output });
         stream.end();
       } catch (error) {
+        clearStreamingScratchState(output);
         output.stopReason = requestOptions.signal?.aborted ? "aborted" : "error";
-        output.errorMessage = error instanceof Error ? error.message : String(error);
+        output.errorMessage = formatProviderError(error);
         stream.push({ type: "error", reason: output.stopReason, error: output });
         stream.end();
       } finally {
@@ -698,6 +734,7 @@ export class CodexProviderRuntime {
     context: Context,
     options?: SimpleStreamOptions,
   ): AssistantMessageEventStream {
+    if (!options?.apiKey) throw new Error(`No API key for provider: ${model.provider}`);
     const effort = options?.reasoning ? clampThinkingLevel(model, options.reasoning) : undefined;
     return this.stream(model, context, {
       ...options,

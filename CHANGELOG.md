@@ -22,6 +22,8 @@
 - Validate transport timeouts, allow zero to disable the WebSocket connect timeout, report SSE header timeouts clearly, and honor bounded `Retry-After` guidance.
 - Surface concise structured Codex HTTP errors, fail closed on malformed WebSocket events, and retain WebSocket-to-SSE recovery diagnostics on assistant messages.
 - Distinguish output-token truncation from other incomplete Codex responses and preserve the provider's incomplete reason.
+- Match Pi AI's Codex stream lifecycle by delaying `start` until transport readiness, cleaning parser scratch state on failure, and normalizing structured or non-Error failures.
+- Honor every non-undefined payload replacement and reject missing `streamSimple` authentication synchronously, matching Pi AI.
 
 ## 0.0.2 - 2026-08-03
 

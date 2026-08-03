@@ -130,6 +130,28 @@ void test("finishes SSE requests when the terminal event arrives before EOF", as
   assert.equal(cancelled, true);
 });
 
+void test("marks SSE transport started after successful response headers", async () => {
+  let starts = 0;
+  const events: JsonRecord[] = [];
+  for await (const event of new CodexTransport().request(
+    codexModel(),
+    { input: [] },
+    {
+      apiKey: accessToken(),
+      transport: "sse",
+      onTransportStart() {
+        starts += 1;
+      },
+      fetch: async () => new Response("", { status: 200 }),
+    },
+  )) {
+    events.push(event);
+  }
+
+  assert.equal(starts, 1);
+  assert.deepEqual(events, []);
+});
+
 void test("aligns cache-affinity headers with retention and length limits", async () => {
   const requestHeaders: Headers[] = [];
   const terminal = `data: ${JSON.stringify({
