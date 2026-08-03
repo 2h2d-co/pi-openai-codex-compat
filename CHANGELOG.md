@@ -47,6 +47,7 @@
 ### Fixed
 
 - Serialize `web.run` with Codex's post-normalization Responses schema, omitting generated `format` and `minimum` annotations that cause reserved-tool declaration rejection.
+- Return successful `web.run` model output as Codex's single `input_text` content-item array while retaining structured search results only in session metadata.
 
 ### Removed
 

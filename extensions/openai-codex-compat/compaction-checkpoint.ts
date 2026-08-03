@@ -15,7 +15,11 @@ import {
   type ResponsesItem,
 } from "./codex-protocol.ts";
 import { nativeResponseOverrides } from "./native-history.ts";
-import { CODEX_NAMESPACED_TOOL_NAMES, splitNamespacedToolName } from "./namespaced-tools.ts";
+import {
+  CODEX_NAMESPACED_TOOL_NAMES,
+  CODEX_TEXT_CONTENT_ITEM_TOOL_RESULT_NAMES,
+  splitNamespacedToolName,
+} from "./namespaced-tools.ts";
 import { convertResponsesMessages } from "./vendor/pi-ai/openai-responses-serialization.ts";
 
 export const CHECKPOINT_ENTRY_TYPE = "openai-codex-compat-remote-compaction";
@@ -132,6 +136,7 @@ function encodeMessages(
       supportsOpenAIGrammarTools: compat?.supportsOpenAIGrammarTools ?? false,
     },
     namespacedToolNames: CODEX_NAMESPACED_TOOL_NAMES,
+    textContentItemToolResultNames: CODEX_TEXT_CONTENT_ITEM_TOOL_RESULT_NAMES,
     toolResultImageDetail: imageDetail,
     ...(nativeAssistantItems ? { nativeAssistantItems } : {}),
   }) as unknown as ResponsesItem[];

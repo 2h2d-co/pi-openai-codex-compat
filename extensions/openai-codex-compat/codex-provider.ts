@@ -38,7 +38,10 @@ import { processCodexStream } from "./codex-stream.ts";
 import { CodexTransport } from "./codex-transport.ts";
 import type { CodexCompatConfig, ImageDetail } from "./config.ts";
 import { nativeResponseData, NATIVE_RESPONSE_ENTRY_TYPE } from "./native-history.ts";
-import { CODEX_NAMESPACED_TOOL_NAMES } from "./namespaced-tools.ts";
+import {
+  CODEX_NAMESPACED_TOOL_NAMES,
+  CODEX_TEXT_CONTENT_ITEM_TOOL_RESULT_NAMES,
+} from "./namespaced-tools.ts";
 import { normalizeReplayItem, stableResponsesJson } from "./responses-replay.ts";
 import {
   convertResponsesTools,
@@ -360,6 +363,7 @@ export class CodexProviderRuntime {
           supportsOpenAIGrammarTools: compat?.supportsOpenAIGrammarTools ?? false,
         },
         namespacedToolNames: CODEX_NAMESPACED_TOOL_NAMES,
+        textContentItemToolResultNames: CODEX_TEXT_CONTENT_ITEM_TOOL_RESULT_NAMES,
         toolResultImageDetail: "auto",
         nativeAssistantItems: nativeItems,
       }) as ResponsesItem[];
@@ -653,6 +657,7 @@ export class CodexProviderRuntime {
               supportsOpenAIGrammarTools: compat?.supportsOpenAIGrammarTools ?? false,
             },
             namespacedToolNames: CODEX_NAMESPACED_TOOL_NAMES,
+            textContentItemToolResultNames: CODEX_TEXT_CONTENT_ITEM_TOOL_RESULT_NAMES,
             toolResultImageDetail:
               (runtimeSessionId
                 ? this.scopes.get(runtimeSessionId)?.config.imageDetail

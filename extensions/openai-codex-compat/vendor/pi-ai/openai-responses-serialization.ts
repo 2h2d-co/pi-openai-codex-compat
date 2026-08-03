@@ -42,6 +42,7 @@ type ConvertResponsesMessagesOptions = {
   toolOptions?: ConvertResponsesToolsOptions;
   nativeAssistantItems?: ReadonlyMap<string, readonly ResponsesItem[]>;
   namespacedToolNames?: ReadonlySet<string>;
+  textContentItemToolResultNames?: ReadonlySet<string>;
   toolResultImageDetail?: ToolResultImageDetail;
 };
 
@@ -431,13 +432,16 @@ function convertToolResultOutput(
   model: Model<any>,
   content: readonly (TextContent | ImageContent)[],
   imageDetail: ToolResultImageDetail,
+  textAsContentItem: boolean,
 ): ToolResultOutput {
-  const textResult = content
-    .filter((item): item is TextContent => item.type === "text")
-    .map((item) => item.text)
-    .join("\n");
+  const textContent = content.filter((item): item is TextContent => item.type === "text");
+  const textResult = textContent.map((item) => item.text).join("\n");
   const images = content.filter((item): item is ImageContent => item.type === "image");
   const hasText = textResult.length > 0;
+
+  if (images.length === 0 && textAsContentItem && textContent.length > 0) {
+    return [{ type: "input_text", text: sanitizeSurrogates(textResult) }];
+  }
 
   if (images.length === 0 || !model.input.includes("image")) {
     return sanitizeSurrogates(
@@ -605,6 +609,8 @@ export function convertResponsesMessages(
         model,
         message.content,
         options?.toolResultImageDetail ?? "auto",
+        message.isError !== true &&
+          (options?.textContentItemToolResultNames?.has(message.toolName) ?? false),
       );
       messages.push({
         type: options?.grammarToolInputProperties?.has(message.toolName)

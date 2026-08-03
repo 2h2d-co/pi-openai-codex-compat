@@ -10,6 +10,7 @@ import {
 } from "../extensions/openai-codex-compat/compaction-checkpoint.ts";
 import {
   CODEX_NAMESPACED_TOOL_NAMES,
+  CODEX_TEXT_CONTENT_ITEM_TOOL_RESULT_NAMES,
   IMAGE_GENERATION_TOOL_NAME,
   WEB_RUN_TOOL_NAME,
 } from "../extensions/openai-codex-compat/namespaced-tools.ts";
@@ -308,6 +309,7 @@ void test("round-trips namespaced calls and deferred namespaced definitions", ()
     includeSystemPrompt: false,
     deferredTools: new Map([[IMAGE_GENERATION_TOOL_NAME, imageGenerationTool]]),
     namespacedToolNames: CODEX_NAMESPACED_TOOL_NAMES,
+    textContentItemToolResultNames: CODEX_TEXT_CONTENT_ITEM_TOOL_RESULT_NAMES,
     toolOptions: {
       strict: null,
       supportsStrictMode: true,
@@ -323,7 +325,11 @@ void test("round-trips namespaced calls and deferred namespaced definitions", ()
     name: "run",
     arguments: '{"query":"Pi"}',
   });
-  assert.equal(converted[1]?.["type"], "function_call_output");
+  assert.deepEqual(converted[1], {
+    type: "function_call_output",
+    call_id: "call_web",
+    output: [{ type: "input_text", text: "result" }],
+  });
   assert.equal(converted[2]?.["type"], "tool_search_call");
   const toolSearchOutput = converted[3];
   assert.ok(toolSearchOutput);
@@ -341,6 +347,29 @@ void test("round-trips namespaced calls and deferred namespaced definitions", ()
         strict: false,
       },
     ],
+  });
+
+  const entries = [
+    {
+      type: "message",
+      id: "assistant-web",
+      parentId: null,
+      timestamp: new Date(1).toISOString(),
+      message: namespacedAssistant,
+    },
+    {
+      type: "message",
+      id: "result-web",
+      parentId: "assistant-web",
+      timestamp: new Date(2).toISOString(),
+      message: namespacedContext.messages[1],
+    },
+  ] as SessionEntry[];
+  const checkpointHistory = encodeSessionEntries(model, entries, [], new Map());
+  assert.deepEqual(checkpointHistory[1], {
+    type: "function_call_output",
+    call_id: "call_web",
+    output: [{ type: "input_text", text: "result" }],
   });
 });
 

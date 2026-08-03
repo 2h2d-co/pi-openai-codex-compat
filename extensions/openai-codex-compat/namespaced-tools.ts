@@ -6,6 +6,11 @@ export const CODEX_NAMESPACED_TOOL_NAMES: ReadonlySet<string> = new Set([
   WEB_RUN_TOOL_NAME,
 ]);
 
+/** Tools whose successful text output Codex transports as `input_text` content items. */
+export const CODEX_TEXT_CONTENT_ITEM_TOOL_RESULT_NAMES: ReadonlySet<string> = new Set([
+  WEB_RUN_TOOL_NAME,
+]);
+
 export type NamespacedToolName = {
   namespace: string;
   name: string;

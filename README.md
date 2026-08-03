@@ -66,7 +66,7 @@ The compatibility baseline is official Codex CLI `0.146.0`, released July 29, 20
 | Sandbox and approvals       | Pi extensions run with full process permissions. `apply_patch`, local image reads, generated-image writes, and sibling Codex endpoints do not use Codex's sandbox, permission-profile, or approval lifecycle.                                                                                                                                    |
 | Image artifact hint         | When image saving succeeds, this package always returns the path hint, says “the generated image,” and has no 1,024-byte cutoff. Official Codex says “a generated image” and omits the hint when it exceeds 1,024 UTF-8 bytes.                                                                                                                   |
 | Image artifacts             | Generated files use Pi's agent directory and the Pi session/tool-call IDs. Official Codex uses its own artifact/output-directory lifecycle.                                                                                                                                                                                                      |
-| Web references              | `web.run` structured results are retained in Pi tool-result details, and hosted native items are preserved for provider replay. Durable reference resolution, hosted citation annotations, clickable citation rendering, and cross-call reference storage are not implemented.                                                                   |
+| Web references              | `web.run` structured results are retained branch-locally in Pi tool-result details rather than Codex extension events, and hosted native items are preserved for provider replay. Durable local reference resolution, hosted citation annotations, and clickable citation rendering are not implemented.                                         |
 | UI                          | Pi renders its own conversation, tools, footer, settings pane, branches, and compaction lifecycle. Only the dedicated `apply_patch` renderer deliberately approximates Codex styling.                                                                                                                                                            |
 
 ### Tool and runtime coverage
@@ -265,7 +265,17 @@ When the image tool result is serialized back to the model, `imageDetail` contro
 
 ## `web.run`
 
-The package registers the dotted Pi tool name `web.run` and serializes it as a native Responses API `web` namespace. Calls are executed through `codex/alpha/search`; plaintext `output` is returned to the model and structured `results` are retained in the Pi tool-result details.
+The package registers the dotted Pi tool name `web.run` and serializes it as a native Responses API `web` namespace. Calls are executed through `codex/alpha/search`. Like Codex, successful model-facing output is the unmodified plaintext `output` wrapped in a single `input_text` content item:
+
+```json
+{
+  "type": "function_call_output",
+  "call_id": "<call-id>",
+  "output": [{ "type": "input_text", "text": "<alpha/search output>" }]
+}
+```
+
+Structured `results` are not sent to the model by either implementation. Codex stores them in extension-backed web-search events; this package stores the equivalent opaque JSON branch-locally in Pi tool-result `details`. Extensions and session readers can inspect those details, while subsequent `web.run` calls resolve model-visible reference IDs through `alpha/search` rather than querying the details directly.
 
 The exposed command schema includes:
 
