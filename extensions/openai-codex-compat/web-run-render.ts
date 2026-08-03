@@ -352,11 +352,11 @@ function actionResultSummary(
       const pages = previewItems(screenshots, (item) => String(item.pageno + 1));
       const capture =
         screenshots.length === 1
-          ? `Captured PDF page${pages ? ` ${pages}` : ""}`
-          : `Captured ${countDescription(screenshots.length, "PDF page")}${
+          ? `Processed PDF page${pages ? ` ${pages}` : ""}`
+          : `Processed ${countDescription(screenshots.length, "PDF page")}${
               pages ? ` ${pages}` : ""
             }`;
-      return detailLine([capture, compactTitle, domain]);
+      return detailLine([capture, "reference only", compactTitle, domain]);
     }
     case "finance":
       return `Quotes for ${previewItems(args.finance, (item) => item.ticker) ?? "requested assets"}`;

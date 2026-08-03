@@ -47,7 +47,7 @@
 - Add Pi-style horizontal and vertical padding around the `apply_patch` surface while keeping its title and result visually continuous.
 - Render `apply_patch`, `image_gen.imagegen`, and `web.run` on the same theme-derived surface, configurable as `subtle`, Pi `status` colors, or `none`.
 - Collapse `web.run` to operation and source summaries by default while exposing detailed action views through `Ctrl+O`.
-- Add polished action-specific `web.run` summaries and expanded cards for image search, page navigation, find, PDF screenshots, finance, weather, sports, and time, including concise display domains, forward-compatible structured-field rendering, and empty/error states.
+- Add polished action-specific `web.run` summaries and expanded cards for image search, page navigation, find, reference-only PDF screenshots, finance, weather, sports, and time, including concise display domains, forward-compatible structured-field rendering, and empty/error states.
 - Show up to 250 characters of image-generation prompts in collapsed tool-call summaries.
 
 ### Fixed

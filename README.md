@@ -286,6 +286,8 @@ Structured `results` are not sent to the model by either implementation. Codex s
 
 The collapsed TUI view provides action-specific summaries for search, image search, page navigation, in-page find, PDF screenshots, finance, weather, sports, and time. `Ctrl+O` expands structured source or image cards, page metadata with line/page gutters, PDF page cards, operation-specific result cards, and readable labeled fields for forward-compatible result types. Citation markers and backend separators are normalized for display, while empty or unavailable operations use compact warning states instead of appearing successful.
 
+Standalone `screenshot` calls return a plaintext PDF-page reference from `alpha/search`, not image bytes or an image content item. The TUI therefore labels these results as reference-only, and the next model request receives the same plaintext reference rather than screenshot pixels.
+
 The exposed command schema includes:
 
 - `search_query`;
