@@ -60,7 +60,7 @@ const imageGenerationParameters = Type.Unsafe<{
       items: {
         type: "string",
         description:
-          "A path that is guaranteed to be absolute and normalized (though it is not guaranteed to be canonicalized or exist on the filesystem).\n\nIMPORTANT: When deserializing an `AbsolutePathBuf`, a base path must be set using [AbsolutePathBufGuard::new]. If no base path is set, the deserialization will fail unless the path being deserialized is already absolute.",
+          "Absolute path to a local PNG, JPEG, GIF, or WebP image to include in an edit. Resolve relative paths against Pi's current working directory before calling the tool. The path does not need to be canonicalized, but the file must exist and be readable by Pi.",
       },
     },
   },
