@@ -877,8 +877,9 @@ async function* parseWebSocket(
   }
 }
 
-function normalizeEvent(event: JsonRecord): JsonRecord {
-  const type = event.type;
+function normalizeEvent(event: JsonRecord): JsonRecord | undefined {
+  const type = typeof event.type === "string" ? event.type : undefined;
+  if (!type) return undefined;
   if (type === "error") {
     const nested = isObject(event["error"]) ? event["error"] : undefined;
     const code =
@@ -999,6 +1000,7 @@ async function* requestSse(
   options.onTransportStart?.();
   for await (const event of parseSse(response, options.signal)) {
     const normalized = normalizeEvent(event);
+    if (!normalized) continue;
     yield normalized;
     if (isTerminalEvent(normalized)) return;
   }
@@ -1033,6 +1035,13 @@ async function* requestWebSocket(
     const responseItems: JsonRecord[] = [];
     let responseId: string | undefined;
     for await (const event of parseWebSocket(acquired.socket, options.signal, timeoutMs)) {
+      if (
+        event.type === "response.created" &&
+        isObject(event.response) &&
+        typeof event.response.id === "string"
+      ) {
+        responseId = event.response.id;
+      }
       if (event.type === "response.output_item.done" && isObject(event.item)) {
         responseItems.push(structuredClone(event.item));
       }
@@ -1055,6 +1064,7 @@ async function* requestWebSocket(
         }
       }
       const normalized = normalizeEvent(event);
+      if (!normalized) continue;
       yield normalized;
       if (isTerminalEvent(normalized)) break;
     }

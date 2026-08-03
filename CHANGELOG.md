@@ -27,6 +27,7 @@
 - Match Pi AI's configured SSE retry behavior for callback, body-read, and otherwise non-terminal response-acquisition failures.
 - Use Pi AI's time-ordered UUIDv7 identifiers for WebSocket requests without session affinity.
 - Stop at terminal WebSocket events and honor aborts while requests wait for session transport ownership or finish streaming.
+- Ignore type-less Codex events before transport start and retain WebSocket continuation IDs supplied by `response.created`.
 
 ## 0.0.2 - 2026-08-03
 

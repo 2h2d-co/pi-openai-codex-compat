@@ -596,6 +596,179 @@ void test("stops WebSocket delivery at the terminal response event", async (t) =
   ]);
 });
 
+void test("ignores type-less WebSocket events before selecting SSE fallback", async (t) => {
+  const previousWebSocket = globalThis.WebSocket;
+
+  class TypelessWebSocket {
+    private readonly listeners = new Map<string, Set<(event: unknown) => void>>();
+
+    constructor() {
+      queueMicrotask(() => this.dispatch("open", {}));
+    }
+
+    addEventListener(type: string, listener: (event: unknown) => void): void {
+      const listeners = this.listeners.get(type) ?? new Set();
+      listeners.add(listener);
+      this.listeners.set(type, listeners);
+    }
+
+    removeEventListener(type: string, listener: (event: unknown) => void): void {
+      this.listeners.get(type)?.delete(listener);
+    }
+
+    send(): void {
+      queueMicrotask(() => this.dispatch("message", { data: "{}" }));
+      setTimeout(() => this.dispatch("error", { message: "socket failed" }), 0);
+    }
+
+    close(): void {}
+
+    private dispatch(type: string, event: unknown): void {
+      for (const listener of this.listeners.get(type) ?? []) listener(event);
+    }
+  }
+
+  Object.defineProperty(globalThis, "WebSocket", {
+    configurable: true,
+    writable: true,
+    value: TypelessWebSocket,
+  });
+  t.after(() => {
+    Object.defineProperty(globalThis, "WebSocket", {
+      configurable: true,
+      writable: true,
+      value: previousWebSocket,
+    });
+  });
+
+  let starts = 0;
+  const diagnostics: CodexTransportDiagnostic[] = [];
+  const terminal = {
+    type: "response.completed",
+    response: { id: "response-sse", status: "completed" },
+  };
+  const events: JsonRecord[] = [];
+  for await (const event of new CodexTransport().request(
+    codexModel(),
+    { input: [] },
+    {
+      apiKey: accessToken(),
+      transport: "websocket",
+      onTransportStart() {
+        starts += 1;
+      },
+      onTransportDiagnostic(diagnostic) {
+        diagnostics.push(diagnostic);
+      },
+      fetch: async () =>
+        new Response(`data: ${JSON.stringify(terminal)}\n\n`, {
+          status: 200,
+          headers: { "content-type": "text/event-stream" },
+        }),
+    },
+  )) {
+    events.push(event);
+  }
+
+  assert.deepEqual(events, [terminal]);
+  assert.equal(starts, 1);
+  assert.equal(diagnostics.length, 1);
+  assert.equal(diagnostics[0]?.details.eventsEmitted, false);
+  assert.equal(diagnostics[0]?.details.fallbackTransport, "sse");
+});
+
+void test("continues from response IDs supplied only by response.created", async (t) => {
+  const previousWebSocket = globalThis.WebSocket;
+  const sentBodies: JsonRecord[] = [];
+
+  class CreatedIdWebSocket {
+    readonly readyState = 1;
+    private readonly listeners = new Map<string, Set<(event: unknown) => void>>();
+
+    constructor() {
+      queueMicrotask(() => this.dispatch("open", {}));
+    }
+
+    addEventListener(type: string, listener: (event: unknown) => void): void {
+      const listeners = this.listeners.get(type) ?? new Set();
+      listeners.add(listener);
+      this.listeners.set(type, listeners);
+    }
+
+    removeEventListener(type: string, listener: (event: unknown) => void): void {
+      this.listeners.get(type)?.delete(listener);
+    }
+
+    send(data: string): void {
+      sentBodies.push(JSON.parse(data) as JsonRecord);
+      const events =
+        sentBodies.length === 1
+          ? [
+              { type: "response.created", response: { id: "response-created" } },
+              { type: "response.completed", response: { status: "completed" } },
+            ]
+          : [
+              {
+                type: "response.completed",
+                response: { id: "response-second", status: "completed" },
+              },
+            ];
+      queueMicrotask(() => {
+        for (const event of events) {
+          this.dispatch("message", { data: JSON.stringify(event) });
+        }
+      });
+    }
+
+    close(): void {}
+
+    private dispatch(type: string, event: unknown): void {
+      for (const listener of this.listeners.get(type) ?? []) listener(event);
+    }
+  }
+
+  Object.defineProperty(globalThis, "WebSocket", {
+    configurable: true,
+    writable: true,
+    value: CreatedIdWebSocket,
+  });
+  t.after(() => {
+    Object.defineProperty(globalThis, "WebSocket", {
+      configurable: true,
+      writable: true,
+      value: previousWebSocket,
+    });
+  });
+
+  const firstInput = { role: "user", content: "first" };
+  const nextInput = { role: "user", content: "next" };
+  const options = {
+    apiKey: accessToken(),
+    sessionId: "created-id-session",
+    transport: "websocket-cached" as const,
+  };
+  const transport = new CodexTransport();
+  for await (const _event of transport.request(
+    codexModel(),
+    { model: "gpt-test", input: [firstInput] },
+    options,
+  )) {
+    // Consume the response.
+  }
+  for await (const _event of transport.request(
+    codexModel(),
+    { model: "gpt-test", input: [firstInput, nextInput] },
+    options,
+  )) {
+    // Consume the response.
+  }
+
+  assert.equal(sentBodies.length, 2);
+  assert.equal(sentBodies[1]?.previous_response_id, "response-created");
+  assert.deepEqual(sentBodies[1]?.input, [nextInput]);
+  transport.close("created-id-session");
+});
+
 void test("retries WebSocket connection limits before output starts", async (t) => {
   const previousWebSocket = globalThis.WebSocket;
   let connections = 0;
