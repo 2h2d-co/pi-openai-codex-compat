@@ -103,15 +103,17 @@ function environmentBoolean(environment: Environment, name: string): boolean | u
 
   switch (raw.trim().toLowerCase()) {
     case "1":
+    case "enabled":
     case "on":
     case "true":
       return true;
     case "0":
+    case "disabled":
     case "off":
     case "false":
       return false;
     default:
-      return invalidEnvironmentValue(name, raw, "true, false, 1, 0, on, or off");
+      return invalidEnvironmentValue(name, raw, "true, false, 1, 0, on, off, enabled, or disabled");
   }
 }
 
@@ -169,7 +171,7 @@ export function parseEnvironmentConfig(environment: Environment = process.env): 
   const rawThreshold = environment[thresholdName];
   if (rawThreshold !== undefined) {
     const value = rawThreshold.trim();
-    if (value.toLowerCase() === "off") {
+    if (value.toLowerCase() === "off" || value.toLowerCase() === "default") {
       layer.autoCompactAtPercent = null;
     } else {
       const threshold = Number(value);
@@ -177,7 +179,7 @@ export function parseEnvironmentConfig(environment: Environment = process.env): 
         invalidEnvironmentValue(
           thresholdName,
           rawThreshold,
-          "a number greater than 0 and at most 100, or off",
+          "a number greater than 0 and at most 100, off, or default",
         );
       }
       layer.autoCompactAtPercent = threshold;

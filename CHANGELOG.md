@@ -4,7 +4,7 @@
 
 ### Added
 
-- Add transient `PI_OPENAI_CODEX_COMPAT_*` environment overrides for every compatibility setting.
+- Add transient `PI_OPENAI_CODEX_COMPAT_*` environment overrides for every compatibility setting, including common boolean aliases and explicit `off`/`default` percentage-compaction values.
 
 ### Changed
 

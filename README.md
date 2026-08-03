@@ -199,7 +199,7 @@ Every setting can also be overridden for one Pi process with an environment vari
 | `reasoningSummary`     | `PI_OPENAI_CODEX_COMPAT_REASONING_SUMMARY`       |
 | `reasoningMode`        | `PI_OPENAI_CODEX_COMPAT_REASONING_MODE`          |
 
-Environment variables have the highest precedence: defaults < global JSON < trusted-project JSON < environment. Boolean values accept `true`/`false`, `1`/`0`, or `on`/`off`. Other settings use the values in the defaults table; `PI_OPENAI_CODEX_COMPAT_AUTO_COMPACT_AT_PERCENT=off` explicitly selects Pi's default compaction lifecycle.
+Environment variables have the highest precedence: defaults < global JSON < trusted-project JSON < environment. Boolean values accept `true`/`false`, `1`/`0`, `on`/`off`, or `enabled`/`disabled`. Other settings use the values in the defaults table; `PI_OPENAI_CODEX_COMPAT_AUTO_COMPACT_AT_PERCENT=off` and `PI_OPENAI_CODEX_COMPAT_AUTO_COMPACT_AT_PERCENT=default` explicitly select Pi's default compaction lifecycle.
 
 Environment-controlled rows are marked `(env)` and locked in `/codex-settings`. Saving the pane does not copy their effective values into JSON, so CLI overrides remain transient. Invalid environment values fail fast with the variable name and accepted values.
 

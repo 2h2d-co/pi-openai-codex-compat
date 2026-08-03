@@ -124,6 +124,14 @@ void test("parses environment overrides with highest precedence", () => {
   );
   assert.deepEqual(
     parseEnvironmentConfig({
+      [CONFIG_ENVIRONMENT_VARIABLES.fastMode]: "enabled",
+      [CONFIG_ENVIRONMENT_VARIABLES.applyPatch]: "disabled",
+      [CONFIG_ENVIRONMENT_VARIABLES.autoCompactAtPercent]: "default",
+    }),
+    { fastMode: true, applyPatch: false, autoCompactAtPercent: null },
+  );
+  assert.deepEqual(
+    parseEnvironmentConfig({
       [CONFIG_ENVIRONMENT_VARIABLES.autoCompactAtPercent]: "off",
     }),
     { autoCompactAtPercent: null },
