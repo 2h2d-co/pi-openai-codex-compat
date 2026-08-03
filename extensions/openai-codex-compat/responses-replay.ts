@@ -24,10 +24,3 @@ export function normalizeReplayItem(item: JsonRecord): JsonRecord {
   }
   return normalized;
 }
-
-export function replayItemsEqual(
-  left: readonly JsonRecord[] | undefined,
-  right: readonly JsonRecord[] | undefined,
-): boolean {
-  return stableResponsesJson(left ?? []) === stableResponsesJson(right ?? []);
-}

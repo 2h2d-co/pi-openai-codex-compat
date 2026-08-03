@@ -707,7 +707,7 @@ void test("ignores type-less WebSocket events before selecting SSE fallback", as
   assert.equal(diagnostics[0]?.details.fallbackTransport, "sse");
 });
 
-void test("continues from response IDs supplied only by response.created", async (t) => {
+void test("continues created response IDs with Pi AI's order-sensitive delta checks", async (t) => {
   const previousWebSocket = globalThis.WebSocket;
   const sentBodies: JsonRecord[] = [];
 
@@ -740,7 +740,7 @@ void test("continues from response IDs supplied only by response.created", async
           : [
               {
                 type: "response.completed",
-                response: { id: "response-second", status: "completed" },
+                response: { id: `response-${String(sentBodies.length)}`, status: "completed" },
               },
             ];
       queueMicrotask(() => {
@@ -772,6 +772,8 @@ void test("continues from response IDs supplied only by response.created", async
 
   const firstInput = { role: "user", content: "first" };
   const nextInput = { role: "user", content: "next" };
+  const thirdInput = { role: "user", content: "third" };
+  const fourthInput = { role: "user", content: "fourth" };
   const options = {
     apiKey: accessToken(),
     sessionId: "created-id-session",
@@ -780,22 +782,53 @@ void test("continues from response IDs supplied only by response.created", async
   const transport = new CodexTransport();
   for await (const _event of transport.request(
     codexModel(),
-    { model: "gpt-test", input: [firstInput] },
+    { model: "gpt-test", instructions: "same", input: [firstInput] },
     options,
   )) {
     // Consume the response.
   }
   for await (const _event of transport.request(
     codexModel(),
-    { model: "gpt-test", input: [firstInput, nextInput] },
+    { model: "gpt-test", instructions: "same", input: [firstInput, nextInput] },
     options,
   )) {
     // Consume the response.
   }
+  for await (const _event of transport.request(
+    codexModel(),
+    {
+      instructions: "same",
+      model: "gpt-test",
+      input: [firstInput, nextInput, thirdInput],
+    },
+    options,
+  )) {
+    // Reordered request fields require a full-context request like Pi AI.
+  }
+  for await (const _event of transport.request(
+    codexModel(),
+    {
+      instructions: "same",
+      model: "gpt-test",
+      input: [{ content: "first", role: "user" }, nextInput, thirdInput, fourthInput],
+    },
+    options,
+  )) {
+    // Reordered history fields also require a full-context request.
+  }
 
-  assert.equal(sentBodies.length, 2);
+  assert.equal(sentBodies.length, 4);
   assert.equal(sentBodies[1]?.previous_response_id, "response-created");
   assert.deepEqual(sentBodies[1]?.input, [nextInput]);
+  assert.equal(sentBodies[2]?.previous_response_id, undefined);
+  assert.deepEqual(sentBodies[2]?.input, [firstInput, nextInput, thirdInput]);
+  assert.equal(sentBodies[3]?.previous_response_id, undefined);
+  assert.deepEqual(sentBodies[3]?.input, [
+    { content: "first", role: "user" },
+    nextInput,
+    thirdInput,
+    fourthInput,
+  ]);
   transport.close("created-id-session");
 });
 

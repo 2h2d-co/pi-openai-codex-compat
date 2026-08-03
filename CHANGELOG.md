@@ -32,6 +32,7 @@
 - Apply service-tier pricing to unsuccessful terminal responses and match Pi AI when total-token usage is absent.
 - Match Pi AI's final-answer phase state, reasoning-part separators, and suppression of empty final tool-call deltas.
 - Retry generic Codex usage-limit responses according to Pi AI's configured SSE retry policy.
+- Require Pi AI's order-sensitive request and history equality before sending cached WebSocket deltas.
 
 ## 0.0.2 - 2026-08-03
 

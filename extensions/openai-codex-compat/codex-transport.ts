@@ -9,7 +9,7 @@ import {
   uuidv7,
 } from "@earendil-works/pi-ai";
 import { isObject, type JsonRecord } from "./codex-protocol.ts";
-import { normalizeReplayItem, replayItemsEqual, stableResponsesJson } from "./responses-replay.ts";
+import { normalizeReplayItem } from "./responses-replay.ts";
 
 /**
  * Focused adaptation of @earendil-works/pi-ai@0.83.0
@@ -743,8 +743,8 @@ function cachedRequestBody(entry: CachedWebSocket, body: JsonRecord): JsonRecord
   const continuation = entry.continuation;
   if (!continuation) return body;
   if (
-    stableResponsesJson(requestWithoutHistory(body)) !==
-    stableResponsesJson(requestWithoutHistory(continuation.lastRequestBody))
+    JSON.stringify(requestWithoutHistory(body)) !==
+    JSON.stringify(requestWithoutHistory(continuation.lastRequestBody))
   ) {
     delete entry.continuation;
     return body;
@@ -757,7 +757,7 @@ function cachedRequestBody(entry: CachedWebSocket, body: JsonRecord): JsonRecord
   const baseline = [...previousInput, ...continuation.lastResponseItems];
   if (
     currentInput.length < baseline.length ||
-    !replayItemsEqual(currentInput.slice(0, baseline.length), baseline)
+    JSON.stringify(currentInput.slice(0, baseline.length)) !== JSON.stringify(baseline)
   ) {
     delete entry.continuation;
     return body;
