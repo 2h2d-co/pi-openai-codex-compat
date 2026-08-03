@@ -36,7 +36,7 @@ import {
 } from "./codex-protocol.ts";
 import { processCodexStream } from "./codex-stream.ts";
 import { CodexTransport } from "./codex-transport.ts";
-import type { CodexCompatConfig } from "./config.ts";
+import type { CodexCompatConfig, ImageDetail } from "./config.ts";
 import { nativeResponseData, NATIVE_RESPONSE_ENTRY_TYPE } from "./native-history.ts";
 import { CODEX_NAMESPACED_TOOL_NAMES } from "./namespaced-tools.ts";
 import { normalizeReplayItem, stableResponsesJson } from "./responses-replay.ts";
@@ -245,6 +245,7 @@ function splitUnsampledUserInput(options: {
   model: Model<any>;
   allTools: readonly ToolInfo[];
   grammarToolInputProperties: GrammarToolInputProperties;
+  imageDetail: ImageDetail;
 }):
   | { kind: "none" | "found"; history: ResponsesItem[]; tail: ResponsesItem[] }
   | { kind: "unsafe" } {
@@ -263,6 +264,7 @@ function splitUnsampledUserInput(options: {
     wireModel: options.model,
     allTools: options.allTools,
     grammarToolInputProperties: options.grammarToolInputProperties,
+    imageDetail: options.imageDetail,
   });
   if (encoded.length === 0 || encoded.length > options.history.length) return { kind: "unsafe" };
 
@@ -358,6 +360,7 @@ export class CodexProviderRuntime {
           supportsOpenAIGrammarTools: compat?.supportsOpenAIGrammarTools ?? false,
         },
         namespacedToolNames: CODEX_NAMESPACED_TOOL_NAMES,
+        toolResultImageDetail: "auto",
         nativeAssistantItems: nativeItems,
       }) as ResponsesItem[];
     }
@@ -366,6 +369,7 @@ export class CodexProviderRuntime {
       wireModel: model,
       allTools: this.pi.getAllTools(),
       grammarToolInputProperties,
+      imageDetail: scope.config.imageDetail,
     });
   }
 
@@ -497,6 +501,7 @@ export class CodexProviderRuntime {
       model,
       allTools: this.pi.getAllTools(),
       grammarToolInputProperties,
+      imageDetail: scope.config.imageDetail,
     });
     if (split.kind === "unsafe") {
       scope.notify(
@@ -648,6 +653,10 @@ export class CodexProviderRuntime {
               supportsOpenAIGrammarTools: compat?.supportsOpenAIGrammarTools ?? false,
             },
             namespacedToolNames: CODEX_NAMESPACED_TOOL_NAMES,
+            toolResultImageDetail:
+              (runtimeSessionId
+                ? this.scopes.get(runtimeSessionId)?.config.imageDetail
+                : undefined) ?? "auto",
           },
         ).filter(
           (item) =>

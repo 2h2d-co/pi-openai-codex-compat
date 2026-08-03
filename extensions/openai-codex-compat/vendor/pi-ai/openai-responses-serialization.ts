@@ -27,11 +27,12 @@ import type {
  */
 
 export type ResponsesItem = Record<string, unknown>;
+export type ToolResultImageDetail = "auto" | "low" | "high" | "original";
 type ToolResultOutput =
   | string
   | Array<
       | { type: "input_text"; text: string }
-      | { type: "input_image"; detail: "auto"; image_url: string }
+      | { type: "input_image"; detail: ToolResultImageDetail; image_url: string }
     >;
 
 type ConvertResponsesMessagesOptions = {
@@ -41,6 +42,7 @@ type ConvertResponsesMessagesOptions = {
   toolOptions?: ConvertResponsesToolsOptions;
   nativeAssistantItems?: ReadonlyMap<string, readonly ResponsesItem[]>;
   namespacedToolNames?: ReadonlySet<string>;
+  toolResultImageDetail?: ToolResultImageDetail;
 };
 
 export type ConvertResponsesToolsOptions = {
@@ -428,6 +430,7 @@ function parseTextSignature(
 function convertToolResultOutput(
   model: Model<any>,
   content: readonly (TextContent | ImageContent)[],
+  imageDetail: ToolResultImageDetail,
 ): ToolResultOutput {
   const textResult = content
     .filter((item): item is TextContent => item.type === "text")
@@ -446,7 +449,7 @@ function convertToolResultOutput(
     ...(hasText ? [{ type: "input_text" as const, text: sanitizeSurrogates(textResult) }] : []),
     ...images.map((image) => ({
       type: "input_image" as const,
-      detail: "auto" as const,
+      detail: imageDetail,
       image_url: `data:${image.mimeType};base64,${image.data}`,
     })),
   ];
@@ -598,7 +601,11 @@ export function convertResponsesMessages(
       messages.push(...output);
     } else if (message.role === "toolResult") {
       const [callId] = message.toolCallId.split("|");
-      const output = convertToolResultOutput(model, message.content);
+      const output = convertToolResultOutput(
+        model,
+        message.content,
+        options?.toolResultImageDetail ?? "auto",
+      );
       messages.push({
         type: options?.grammarToolInputProperties?.has(message.toolName)
           ? "custom_tool_call_output"

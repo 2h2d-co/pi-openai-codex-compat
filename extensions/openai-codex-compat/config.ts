@@ -8,6 +8,7 @@ export type WebSearchMode = "disabled" | "cached" | "indexed" | "live";
 export type TextVerbosity = "low" | "medium" | "high";
 export type ReasoningSummary = "auto" | "concise" | "detailed" | "off";
 export type ReasoningMode = "standard" | "pro";
+export type ImageDetail = "auto" | "low" | "high" | "original";
 
 export interface CodexCompatConfig {
   /** Send OpenAI Codex requests through the priority service tier. */
@@ -16,6 +17,8 @@ export interface CodexCompatConfig {
   applyPatch: boolean;
   /** Expose the standalone Codex image-generation namespace tool. */
   imageGeneration: boolean;
+  /** Set input_image.detail when image tool results are returned to the model. */
+  imageDetail: ImageDetail;
   /** Expose the standalone Codex web-search namespace tool. */
   webRun: boolean;
   /**
@@ -34,6 +37,7 @@ export type ConfigLayer = {
   fastMode?: boolean;
   applyPatch?: boolean;
   imageGeneration?: boolean;
+  imageDetail?: ImageDetail;
   webRun?: boolean;
   autoCompactAtPercent?: number | null;
   webSearch?: WebSearchMode;
@@ -47,6 +51,7 @@ export const DEFAULT_CONFIG: CodexCompatConfig = {
   fastMode: false,
   applyPatch: true,
   imageGeneration: true,
+  imageDetail: "auto",
   webRun: true,
   webSearch: "cached",
   textVerbosity: "low",
@@ -58,6 +63,7 @@ const WEB_SEARCH_MODES = new Set<WebSearchMode>(["disabled", "cached", "indexed"
 const TEXT_VERBOSITIES = new Set<TextVerbosity>(["low", "medium", "high"]);
 const REASONING_SUMMARIES = new Set<ReasoningSummary>(["auto", "concise", "detailed", "off"]);
 const REASONING_MODES = new Set<ReasoningMode>(["standard", "pro"]);
+const IMAGE_DETAILS = new Set<ImageDetail>(["auto", "low", "high", "original"]);
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === "object" && !Array.isArray(value);
@@ -76,6 +82,11 @@ export function parseConfig(value: unknown): ConfigLayer {
 
   const imageGeneration = value["imageGeneration"];
   if (typeof imageGeneration === "boolean") layer.imageGeneration = imageGeneration;
+
+  const imageDetail = value["imageDetail"];
+  if (typeof imageDetail === "string" && IMAGE_DETAILS.has(imageDetail as ImageDetail)) {
+    layer.imageDetail = imageDetail as ImageDetail;
+  }
 
   const webRun = value["webRun"];
   if (typeof webRun === "boolean") layer.webRun = webRun;
@@ -141,6 +152,7 @@ export function resolveConfig(
     ...(typeof merged.imageGeneration === "boolean"
       ? { imageGeneration: merged.imageGeneration }
       : {}),
+    ...(merged.imageDetail ? { imageDetail: merged.imageDetail } : {}),
     ...(typeof merged.webRun === "boolean" ? { webRun: merged.webRun } : {}),
     ...(typeof merged.autoCompactAtPercent === "number"
       ? { autoCompactAtPercent: merged.autoCompactAtPercent }
@@ -177,6 +189,7 @@ export function configLayer(config: CodexCompatConfig): ConfigLayer {
     fastMode: config.fastMode,
     applyPatch: config.applyPatch,
     imageGeneration: config.imageGeneration,
+    imageDetail: config.imageDetail,
     webRun: config.webRun,
     autoCompactAtPercent: config.autoCompactAtPercent ?? null,
     webSearch: config.webSearch,

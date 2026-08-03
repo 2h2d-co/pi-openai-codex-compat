@@ -143,6 +143,7 @@ export default function registerRemoteCompaction(
       const allTools = pi.getAllTools();
       const cached = runtime.latestTemplate(sessionId);
       const matching = cached?.modelId === ctx.model.id ? cached : undefined;
+      const config = resolveConfig(ctx);
       const grammarToolInputProperties =
         matching?.grammarToolInputProperties ??
         fallbackGrammarToolInputProperties(pi.getActiveTools(), ctx.model);
@@ -151,6 +152,7 @@ export default function registerRemoteCompaction(
         wireModel: ctx.model,
         allTools,
         grammarToolInputProperties,
+        imageDetail: config.imageDetail,
         dropLatestFailedAssistant: event.reason === "overflow" && event.willRetry,
       });
       const template =
@@ -174,7 +176,7 @@ export default function registerRemoteCompaction(
           matching?.grammarToolInputProperties ??
           requestGrammarToolInputProperties(template, allTools),
         template,
-        priority: resolveConfig(ctx).fastMode,
+        priority: config.fastMode,
       });
 
       return {

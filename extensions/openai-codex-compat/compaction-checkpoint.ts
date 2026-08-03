@@ -7,6 +7,7 @@ import {
 } from "@earendil-works/pi-coding-agent";
 import type { Message, Model, OpenAIResponsesCompat, Tool } from "@earendil-works/pi-ai";
 import { APPLY_PATCH_LARK_GRAMMAR, APPLY_PATCH_TOOL_NAME } from "./apply-patch.ts";
+import type { ImageDetail } from "./config.ts";
 import {
   installCompactionItem,
   isObject,
@@ -116,6 +117,7 @@ function encodeMessages(
   messages: Message[],
   allTools: readonly ToolInfo[],
   grammarToolInputProperties: GrammarToolInputProperties,
+  imageDetail: ImageDetail,
   nativeAssistantItems?: ReadonlyMap<string, readonly ResponsesItem[]>,
 ): ResponsesItem[] {
   const tools = allTools.map((tool) => asPiTool(tool, grammarToolInputProperties));
@@ -130,6 +132,7 @@ function encodeMessages(
       supportsOpenAIGrammarTools: compat?.supportsOpenAIGrammarTools ?? false,
     },
     namespacedToolNames: CODEX_NAMESPACED_TOOL_NAMES,
+    toolResultImageDetail: imageDetail,
     ...(nativeAssistantItems ? { nativeAssistantItems } : {}),
   }) as unknown as ResponsesItem[];
 }
@@ -139,6 +142,7 @@ export function encodeSessionEntries(
   entries: readonly SessionEntry[],
   allTools: readonly ToolInfo[],
   grammarToolInputProperties: GrammarToolInputProperties = new Map(),
+  imageDetail: ImageDetail = "auto",
   nativeAssistantItems?: ReadonlyMap<string, readonly ResponsesItem[]>,
 ): ResponsesItem[] {
   const messages = entries.flatMap((entry) => sessionEntryToContextMessages(entry));
@@ -147,6 +151,7 @@ export function encodeSessionEntries(
     convertToLlm(messages),
     allTools,
     grammarToolInputProperties,
+    imageDetail,
     nativeAssistantItems,
   );
 }
@@ -240,6 +245,7 @@ export function providerHistory(options: {
   wireModel: Model<any>;
   allTools: readonly ToolInfo[];
   grammarToolInputProperties?: GrammarToolInputProperties;
+  imageDetail?: ImageDetail;
   dropLatestFailedAssistant?: boolean;
 }): ResponsesItem[] {
   const branch = [...options.branch];
@@ -275,6 +281,7 @@ export function providerHistory(options: {
         branch.slice(checkpoint.entryIndex + 1),
         options.allTools,
         options.grammarToolInputProperties,
+        options.imageDetail,
         nativeAssistantItems,
       ),
     ];
@@ -286,6 +293,7 @@ export function providerHistory(options: {
     convertToLlm(context.messages),
     options.allTools,
     options.grammarToolInputProperties ?? new Map(),
+    options.imageDetail ?? "auto",
     nativeAssistantItems,
   );
 }

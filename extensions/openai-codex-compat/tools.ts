@@ -59,6 +59,6 @@ export function syncCodexTools(
 
 export default function registerCodexTools(pi: ExtensionAPI, resolveConfig: ConfigResolver): void {
   registerApplyPatch(pi);
-  registerImageGeneration(pi);
+  registerImageGeneration(pi, resolveConfig);
   registerWebRun(pi, resolveConfig);
 }

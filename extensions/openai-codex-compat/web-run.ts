@@ -221,9 +221,9 @@ export default function registerWebRun(
         throw new Error("web.run is available only with an OpenAI Codex model.");
       }
       const authentication = await codexToolAuthentication(ctx, model);
-      const history = codexToolHistory(pi, ctx, model);
-      const input = recentSearchInput(history);
       const config = resolveConfig(ctx);
+      const history = codexToolHistory(pi, ctx, model, config.imageDetail);
+      const input = recentSearchInput(history);
       const body: JsonRecord = {
         id: ctx.sessionManager.getSessionId(),
         model: model.id,

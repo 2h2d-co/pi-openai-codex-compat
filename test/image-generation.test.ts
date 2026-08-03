@@ -9,6 +9,7 @@ import type { Model } from "@earendil-works/pi-ai";
 import registerImageGeneration, {
   recentImageUrls,
 } from "../extensions/openai-codex-compat/image-generation.ts";
+import { DEFAULT_CONFIG } from "../extensions/openai-codex-compat/config.ts";
 import type { JsonRecord } from "../extensions/openai-codex-compat/codex-protocol.ts";
 
 const GENERATED_PNG =
@@ -101,10 +102,14 @@ void test("executes generation and recent-image edits through Codex Images", asy
     },
     getAllTools: () => [],
   } as unknown as ExtensionAPI;
-  registerImageGeneration(pi, async (_model, path, body, options) => {
-    requests.push({ path, body: structuredClone(body), options });
-    return { created: 1, data: [{ b64_json: GENERATED_PNG }] };
-  });
+  registerImageGeneration(
+    pi,
+    () => DEFAULT_CONFIG,
+    async (_model, path, body, options) => {
+      requests.push({ path, body: structuredClone(body), options });
+      return { created: 1, data: [{ b64_json: GENERATED_PNG }] };
+    },
+  );
   assert.equal(
     createHash("sha256").update(tool.description).digest("hex"),
     "77a992a7c90e45fcd11623a1efa34bfd4c7870697e0aa54ce9b28f690877170e",
@@ -190,4 +195,5 @@ void test("executes generation and recent-image edits through Codex Images", asy
     mimeType: "image/png",
   });
   assert.match(result.content[1]?.text ?? "", /already displayed to the user/);
+  assert.match(result.content[1]?.text ?? "", /use the generated image at another path/);
 });

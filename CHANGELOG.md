@@ -11,6 +11,7 @@
 - Add Codex Images generation/edit execution with generated PNG persistence under the Pi agent directory.
 - Add standalone `alpha/search` execution with structured result persistence in Pi tool-result details and a restricted schema that omits finance, sports, weather, and time queries.
 - Add configurable hosted web search, text verbosity, reasoning summaries, and GPT-5.6 standard/pro reasoning mode.
+- Add configurable image tool-result detail with `auto` as the default.
 - Add a dedicated `/codex-settings` pane backed by `openai-codex-compat.json`, including controls for the extension's additional tools.
 
 ### Changed

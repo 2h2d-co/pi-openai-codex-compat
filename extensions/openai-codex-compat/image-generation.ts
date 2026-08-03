@@ -1,8 +1,13 @@
 import { readFile, mkdir, writeFile } from "node:fs/promises";
 import { dirname, isAbsolute, join } from "node:path";
-import { getAgentDir, type ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import {
+  getAgentDir,
+  type ExtensionAPI,
+  type ExtensionContext,
+} from "@earendil-works/pi-coding-agent";
 import type { Model } from "@earendil-works/pi-ai";
 import { Type } from "typebox";
+import type { CodexCompatConfig } from "./config.ts";
 import { isObject, type JsonRecord, type ResponsesItem } from "./codex-protocol.ts";
 import { requestCodexJson, type CodexJsonRequestOptions } from "./codex-transport.ts";
 import { IMAGE_GENERATION_TOOL_NAME } from "./namespaced-tools.ts";
@@ -72,6 +77,7 @@ type JsonRequester = (
   body: JsonRecord,
   options: CodexJsonRequestOptions,
 ) => Promise<unknown>;
+type ConfigResolver = (ctx: ExtensionContext) => CodexCompatConfig;
 
 type ImageRequest = {
   operation: "generate" | "edit";
@@ -274,6 +280,7 @@ The generated image is already displayed to the user. There is no need to render
 
 export default function registerImageGeneration(
   pi: ExtensionAPI,
+  resolveConfig: ConfigResolver,
   requestJson: JsonRequester = requestCodexJson,
 ): void {
   pi.registerTool({
@@ -291,7 +298,8 @@ export default function registerImageGeneration(
         content: [{ type: "text", text: "Generating image…" }],
         details: undefined,
       });
-      const history = codexToolHistory(pi, ctx, model);
+      const config = resolveConfig(ctx);
+      const history = codexToolHistory(pi, ctx, model, config.imageDetail);
       const request = await imageRequest(params, history);
       const authentication = await codexToolAuthentication(ctx, model);
       const callId = toolCallId.split("|")[0] || toolCallId;

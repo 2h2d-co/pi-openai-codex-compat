@@ -1,10 +1,13 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { Type } from "typebox";
-import type { ToolInfo } from "@earendil-works/pi-coding-agent";
+import type { SessionEntry, ToolInfo } from "@earendil-works/pi-coding-agent";
 import type { AssistantMessage, Context, Model, Tool } from "@earendil-works/pi-ai";
 import { convertResponsesMessages as referenceConvertResponsesMessages } from "@earendil-works/pi-ai/api/openai-responses-shared";
-import { activeResponsesTools } from "../extensions/openai-codex-compat/compaction-checkpoint.ts";
+import {
+  activeResponsesTools,
+  encodeSessionEntries,
+} from "../extensions/openai-codex-compat/compaction-checkpoint.ts";
 import {
   CODEX_NAMESPACED_TOOL_NAMES,
   IMAGE_GENERATION_TOOL_NAME,
@@ -139,6 +142,71 @@ void test("copied Pi AI Responses serialization matches the dependency", () => {
   const reference = referenceConvertResponsesMessages(model, context, allowedProviders, options);
   const copied = copiedConvertResponsesMessages(model, context, allowedProviders, options);
   assert.deepEqual(copied, reference);
+});
+
+void test("configures image detail for image tool-result history", () => {
+  const imageModel = { ...model, input: ["text", "image"] } as Model<any>;
+  const imageAssistant = {
+    ...assistantMessage,
+    content: [
+      {
+        type: "toolCall",
+        id: "call_image|fc_image",
+        name: IMAGE_GENERATION_TOOL_NAME,
+        arguments: { prompt: "Draw it" },
+      },
+    ],
+  } as AssistantMessage;
+  const imageResult = {
+    role: "toolResult" as const,
+    toolCallId: "call_image|fc_image",
+    toolName: IMAGE_GENERATION_TOOL_NAME,
+    content: [
+      { type: "image" as const, data: "aW1hZ2U=", mimeType: "image/png" },
+      { type: "text" as const, text: "The generated image is already displayed." },
+    ],
+    isError: false,
+    timestamp: 2,
+  };
+  const converted = copiedConvertResponsesMessages(
+    imageModel,
+    { messages: [imageAssistant, imageResult] },
+    allowedProviders,
+    {
+      includeSystemPrompt: false,
+      toolResultImageDetail: "original",
+    },
+  );
+
+  assert.deepEqual(converted[1]?.["output"], [
+    { type: "input_text", text: "The generated image is already displayed." },
+    {
+      type: "input_image",
+      detail: "original",
+      image_url: "data:image/png;base64,aW1hZ2U=",
+    },
+  ]);
+
+  const entries = [
+    {
+      type: "message",
+      id: "assistant-image",
+      parentId: null,
+      timestamp: new Date(1).toISOString(),
+      message: imageAssistant,
+    },
+    {
+      type: "message",
+      id: "result-image",
+      parentId: "assistant-image",
+      timestamp: new Date(2).toISOString(),
+      message: imageResult,
+    },
+  ] as SessionEntry[];
+  const checkpointHistory = encodeSessionEntries(imageModel, entries, [], new Map(), "low");
+  const checkpointOutput = checkpointHistory[1]?.["output"];
+  assert.ok(Array.isArray(checkpointOutput));
+  assert.equal((checkpointOutput[1] as Record<string, unknown>)["detail"], "low");
 });
 
 void test("replays native assistant items by response id", () => {

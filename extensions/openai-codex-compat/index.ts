@@ -17,6 +17,7 @@ function settingsSummary(ctx: ExtensionContext, config: CodexCompatConfig): stri
     `reasoning mode: ${config.reasoningMode}`,
     `apply_patch: ${config.applyPatch ? "on" : "off"}`,
     `image_gen.imagegen: ${config.imageGeneration ? "on" : "off"}`,
+    `image result detail: ${config.imageDetail}`,
     `web.run: ${config.webRun ? "on" : "off"}`,
     `web search: ${config.webSearch}`,
     `text verbosity: ${config.textVerbosity}`,

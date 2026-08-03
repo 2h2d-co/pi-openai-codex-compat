@@ -29,6 +29,7 @@ type SettingId =
   | "reasoningMode"
   | "applyPatch"
   | "imageGeneration"
+  | "imageDetail"
   | "webRun"
   | "webSearch"
   | "autoCompactAtPercent";
@@ -92,6 +93,13 @@ export function settingItems(config: CodexCompatConfig): SettingItem[] {
       values: ["off", "on"],
     },
     {
+      id: "imageDetail",
+      label: "Image result detail",
+      description: "Set input_image.detail when image tool results are returned to the model.",
+      currentValue: config.imageDetail,
+      values: ["auto", "low", "high", "original"],
+    },
+    {
       id: "webRun",
       label: "web.run tool",
       description: "Search and browse through the standalone Codex search endpoint.",
@@ -137,6 +145,11 @@ export function settingPatch(id: string, value: string): ConfigLayer | undefined
       return value === "on" || value === "off" ? { applyPatch: value === "on" } : undefined;
     case "imageGeneration":
       return value === "on" || value === "off" ? { imageGeneration: value === "on" } : undefined;
+    case "imageDetail":
+      if (value === "auto" || value === "low" || value === "high" || value === "original") {
+        return { imageDetail: value };
+      }
+      return undefined;
     case "webRun":
       return value === "on" || value === "off" ? { webRun: value === "on" } : undefined;
     case "webSearch":
@@ -161,6 +174,7 @@ function applySettingPatch(config: CodexCompatConfig, patch: ConfigLayer): Codex
   if (typeof patch.imageGeneration === "boolean") {
     next.imageGeneration = patch.imageGeneration;
   }
+  if (patch.imageDetail) next.imageDetail = patch.imageDetail;
   if (typeof patch.webRun === "boolean") next.webRun = patch.webRun;
   if (patch.webSearch) next.webSearch = patch.webSearch;
   if (patch.textVerbosity) next.textVerbosity = patch.textVerbosity;

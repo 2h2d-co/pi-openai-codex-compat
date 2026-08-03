@@ -47,6 +47,7 @@ void test("persists dedicated settings without discarding unknown configuration"
   const savedPath = await saveConfig(cwd, false, {
     fastMode: true,
     imageGeneration: false,
+    imageDetail: "high",
     webRun: false,
     reasoningMode: "pro",
   });
@@ -55,6 +56,7 @@ void test("persists dedicated settings without discarding unknown configuration"
   assert.deepEqual(stored["customFutureSetting"], { keep: true });
   assert.equal(stored["fastMode"], true);
   assert.equal(stored["imageGeneration"], false);
+  assert.equal(stored["imageDetail"], "high");
   assert.equal(stored["webRun"], false);
   assert.equal(stored["reasoningMode"], "pro");
   assert.equal(loadConfig(cwd, false).fastMode, true);
@@ -77,6 +79,7 @@ void test("exposes every request and tool control in the settings pane", () => {
     fastMode: true,
     applyPatch: false,
     imageGeneration: true,
+    imageDetail: "original",
     webRun: false,
     webSearch: "live",
     textVerbosity: "high",
@@ -95,6 +98,7 @@ void test("exposes every request and tool control in the settings pane", () => {
       ["reasoningMode", "pro"],
       ["applyPatch", "off"],
       ["imageGeneration", "on"],
+      ["imageDetail", "original"],
       ["webRun", "off"],
       ["webSearch", "live"],
       ["autoCompactAtPercent", "90%"],
@@ -105,6 +109,9 @@ void test("exposes every request and tool control in the settings pane", () => {
   });
   assert.deepEqual(settingPatch("imageGeneration", "off"), {
     imageGeneration: false,
+  });
+  assert.deepEqual(settingPatch("imageDetail", "high"), {
+    imageDetail: "high",
   });
   assert.deepEqual(settingPatch("webRun", "on"), {
     webRun: true,

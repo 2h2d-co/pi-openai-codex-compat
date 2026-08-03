@@ -1,6 +1,7 @@
 import type { ExtensionAPI, ExtensionContext, SessionEntry } from "@earendil-works/pi-coding-agent";
 import type { Model } from "@earendil-works/pi-ai";
 import { providerHistory } from "./compaction-checkpoint.ts";
+import type { ImageDetail } from "./config.ts";
 import type { ResponsesItem } from "./codex-protocol.ts";
 
 export async function codexToolAuthentication(
@@ -20,10 +21,12 @@ export function codexToolHistory(
   pi: ExtensionAPI,
   ctx: ExtensionContext,
   model: Model<any>,
+  imageDetail: ImageDetail = "auto",
 ): ResponsesItem[] {
   return providerHistory({
     branch: ctx.sessionManager.getBranch() as SessionEntry[],
     wireModel: model,
     allTools: pi.getAllTools(),
+    imageDetail,
   });
 }

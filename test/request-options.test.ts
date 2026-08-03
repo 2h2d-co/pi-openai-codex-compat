@@ -14,12 +14,14 @@ import {
 
 void test("validates and layers Codex compatibility configuration", () => {
   assert.equal(DEFAULT_CONFIG.imageGeneration, true);
+  assert.equal(DEFAULT_CONFIG.imageDetail, "auto");
   assert.equal(DEFAULT_CONFIG.webRun, true);
   assert.deepEqual(
     parseConfig({
       fastMode: true,
       applyPatch: false,
       imageGeneration: false,
+      imageDetail: "original",
       webRun: true,
       autoCompactAtPercent: 85,
       webSearch: "live",
@@ -31,6 +33,7 @@ void test("validates and layers Codex compatibility configuration", () => {
       fastMode: true,
       applyPatch: false,
       imageGeneration: false,
+      imageDetail: "original",
       webRun: true,
       autoCompactAtPercent: 85,
       webSearch: "live",
@@ -44,6 +47,7 @@ void test("validates and layers Codex compatibility configuration", () => {
       fastMode: "yes",
       applyPatch: null,
       imageGeneration: "yes",
+      imageDetail: "medium",
       webRun: null,
       autoCompactAtPercent: 0,
       webSearch: "invalid",
