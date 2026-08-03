@@ -8,7 +8,7 @@ import type {
   Theme,
 } from "@earendil-works/pi-coding-agent";
 import type { Model } from "@earendil-works/pi-ai";
-import { DEFAULT_CONFIG } from "../extensions/openai-codex-compat/config.ts";
+import { DEFAULT_CONFIG, type WebSearchMode } from "../extensions/openai-codex-compat/config.ts";
 import type { JsonRecord } from "../extensions/openai-codex-compat/codex-protocol.ts";
 import { CODEX_NAMESPACED_TOOL_NAMES } from "../extensions/openai-codex-compat/namespaced-tools.ts";
 import { convertResponsesTools } from "../extensions/openai-codex-compat/vendor/pi-ai/openai-responses-serialization.ts";
@@ -100,6 +100,7 @@ void test("retains only the latest two visible user turns for standalone search"
 
 void test("registers the complete reserved web.run schema and executes alpha/search", async () => {
   let tool: any;
+  let webSearch: WebSearchMode = "indexed";
   const requests: Array<{
     path: string;
     body: JsonRecord;
@@ -114,7 +115,7 @@ void test("registers the complete reserved web.run schema and executes alpha/sea
   } as unknown as ExtensionAPI;
   registerWebRun(
     pi,
-    () => ({ ...DEFAULT_CONFIG, webSearch: "indexed" }),
+    () => ({ ...DEFAULT_CONFIG, webSearch }),
     () => DEFAULT_CONFIG.toolBackground,
     async (_model, path, body, options) => {
       requests.push({ path, body: structuredClone(body), options });
@@ -219,6 +220,13 @@ void test("registers the complete reserved web.run schema and executes alpha/sea
         url: "https://example.com/result",
       },
     ],
+  });
+
+  webSearch = "disabled";
+  await tool.execute("call-web-disabled|fc-web-disabled", commands, undefined, undefined, context);
+  assert.deepEqual(requests[1]?.body["settings"], {
+    allowed_callers: ["direct"],
+    external_web_access: false,
   });
 
   const theme = {
