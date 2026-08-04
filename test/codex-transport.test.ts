@@ -119,6 +119,49 @@ void test("formats structured errors from sibling Codex endpoints", async () => 
   );
 });
 
+void test("matches Pi AI's raw and untruncated HTTP error messages", async () => {
+  const longMessage = `upstream-${"x".repeat(4_100)}`;
+  await assert.rejects(
+    requestCodexJson(
+      codexModel(),
+      "alpha/search",
+      {},
+      {
+        apiKey: accessToken(),
+        fetch: async () =>
+          new Response(JSON.stringify({ error: { message: longMessage } }), { status: 400 }),
+      },
+    ),
+    { message: longMessage },
+  );
+
+  await assert.rejects(
+    requestCodexJson(
+      codexModel(),
+      "alpha/search",
+      {},
+      {
+        apiKey: accessToken(),
+        fetch: async () => new Response("  upstream denied  ", { status: 400 }),
+      },
+    ),
+    { message: "  upstream denied  " },
+  );
+
+  await assert.rejects(
+    requestCodexJson(
+      codexModel(),
+      "alpha/search",
+      {},
+      {
+        apiKey: accessToken(),
+        fetch: async () => new Response("", { status: 500 }),
+      },
+    ),
+    { message: "Request failed" },
+  );
+});
+
 void test("finishes SSE requests when the terminal event arrives before EOF", async () => {
   let cancelled = false;
   const terminalEvent = {

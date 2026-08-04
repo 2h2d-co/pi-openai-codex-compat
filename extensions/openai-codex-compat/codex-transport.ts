@@ -21,7 +21,6 @@ const OPENAI_BETA_RESPONSES_WEBSOCKETS = "responses_websockets=2026-02-06";
 const DEFAULT_MAX_RETRIES = 0;
 const BASE_DELAY_MS = 1_000;
 const DEFAULT_MAX_RETRY_DELAY_MS = 60_000;
-const MAX_ERROR_TEXT_LENGTH = 4_000;
 const REQUEST_COMPRESSION_ZSTD_LEVEL = 3;
 const DEFAULT_WEBSOCKET_CONNECT_TIMEOUT_MS = 15_000;
 const SESSION_WEBSOCKET_CACHE_TTL_MS = 5 * 60 * 1_000;
@@ -303,46 +302,36 @@ function validateRetryDelay(delayMs: number, options: CodexTransportOptions): nu
   return delayMs;
 }
 
-function truncateErrorText(text: string): string {
-  return text.length <= MAX_ERROR_TEXT_LENGTH
-    ? text
-    : `${text.slice(0, MAX_ERROR_TEXT_LENGTH)}... [truncated ${text.length - MAX_ERROR_TEXT_LENGTH} chars]`;
-}
-
 function codexHttpError(status: number, statusText: string, raw: string): Error {
-  const fallback =
-    truncateErrorText(raw.trim()) || statusText || `Request failed with status ${status}`;
+  let message = raw || statusText || "Request failed";
+  let friendlyMessage: string | undefined;
   try {
-    const parsed = JSON.parse(raw) as unknown;
-    if (!isObject(parsed) || !isObject(parsed["error"])) return new Error(fallback);
-    const error = parsed["error"];
-    const code =
-      typeof error["code"] === "string"
-        ? error["code"]
-        : typeof error["type"] === "string"
-          ? error["type"]
-          : "";
+    const parsed = JSON.parse(raw) as {
+      error?: {
+        code?: string;
+        type?: string;
+        message?: string;
+        plan_type?: string;
+        resets_at?: number;
+      };
+    };
+    const error = parsed?.error;
+    if (!error) return new Error(message);
+    const code = error.code || error.type || "";
     if (
       status === 429 ||
       /usage_limit_reached|usage_not_included|rate_limit_exceeded/i.test(code)
     ) {
-      const plan =
-        typeof error["plan_type"] === "string" ? ` (${error["plan_type"].toLowerCase()} plan)` : "";
-      const resetMinutes =
-        typeof error["resets_at"] === "number"
-          ? Math.max(0, Math.round((error["resets_at"] * 1_000 - Date.now()) / 60_000))
-          : undefined;
+      const plan = error.plan_type ? ` (${error.plan_type.toLowerCase()} plan)` : "";
+      const resetMinutes = error.resets_at
+        ? Math.max(0, Math.round((error.resets_at * 1_000 - Date.now()) / 60_000))
+        : undefined;
       const reset = resetMinutes === undefined ? "" : ` Try again in ~${String(resetMinutes)} min.`;
-      return new Error(`You have hit your ChatGPT usage limit${plan}.${reset}`.trim());
+      friendlyMessage = `You have hit your ChatGPT usage limit${plan}.${reset}`.trim();
     }
-    return new Error(
-      typeof error["message"] === "string" && error["message"].length > 0
-        ? truncateErrorText(error["message"])
-        : fallback,
-    );
-  } catch {
-    return new Error(fallback);
-  }
+    message = error.message || friendlyMessage || message;
+  } catch {}
+  return new Error(friendlyMessage || message);
 }
 
 function combineAbortSignals(signals: readonly (AbortSignal | undefined)[]): {
