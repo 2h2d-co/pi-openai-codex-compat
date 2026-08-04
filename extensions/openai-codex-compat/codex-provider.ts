@@ -211,14 +211,15 @@ function updateInput(payload: JsonRecord, input: readonly ResponsesItem[]): Json
   return result;
 }
 
-function successfulStopReason(
+function assertSuccessfulOutput(
   message: AssistantMessage,
-): message is AssistantMessage & { stopReason: "stop" | "length" | "toolUse" } {
-  return (
-    message.stopReason === "stop" ||
-    message.stopReason === "length" ||
-    message.stopReason === "toolUse"
-  );
+): asserts message is AssistantMessage & { stopReason: "stop" | "length" | "toolUse" } {
+  if (message.stopReason === "pending") {
+    throw new Error("Codex stream ended without a stop reason");
+  }
+  if (message.stopReason === "error" || message.stopReason === "aborted") {
+    throw new Error(message.errorMessage || "An unknown error occurred");
+  }
 }
 
 function applyServiceTierPricing(
@@ -708,9 +709,7 @@ export class CodexProviderRuntime {
           },
         );
         if (requestOptions.signal?.aborted) throw new Error("Request was aborted");
-        if (!successfulStopReason(output)) {
-          throw new Error(output.errorMessage || "Codex stream ended without a successful stop.");
-        }
+        assertSuccessfulOutput(output);
 
         const compat = model.compat as CodexCompat | undefined;
         const canonicalContext: Context = {

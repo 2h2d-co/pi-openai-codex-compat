@@ -509,5 +509,7 @@ export async function processCodexStream(
     }
   }
 
-  if (!terminal) throw new Error("Codex stream ended before a terminal response event");
+  if (!terminal) {
+    throw new Error("OpenAI Responses stream ended before a terminal response event");
+  }
 }

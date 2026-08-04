@@ -48,7 +48,7 @@ export type CodexTransportDiagnostic = {
   type: "provider_transport_failure";
   timestamp: number;
   error: {
-    name: string;
+    name?: string;
     message: string;
     stack?: string;
     code?: string | number;
@@ -314,23 +314,29 @@ function isPreviousResponseNotFoundError(error: unknown): boolean {
   return error instanceof CodexApiError && error.code === PREVIOUS_RESPONSE_NOT_FOUND_CODE;
 }
 
+function diagnosticError(error: unknown): CodexTransportDiagnostic["error"] {
+  if (!(error instanceof Error)) {
+    return { name: "ThrownValue", message: thrownMessage(error) };
+  }
+  const code = (error as Error & { code?: unknown }).code;
+  return {
+    ...(error.name ? { name: error.name } : {}),
+    message: error.message || error.name,
+    ...(error.stack ? { stack: error.stack } : {}),
+    ...(typeof code === "string" || typeof code === "number" ? { code } : {}),
+  };
+}
+
 function transportDiagnostic(
   error: unknown,
   transport: string,
   emitted: boolean,
   requestBytes: number,
 ): CodexTransportDiagnostic {
-  const normalized = error instanceof Error ? error : new Error(String(error));
-  const code = (normalized as Error & { code?: unknown }).code;
   return {
     type: "provider_transport_failure",
     timestamp: Date.now(),
-    error: {
-      name: normalized.name || "Error",
-      message: normalized.message || normalized.name,
-      ...(normalized.stack ? { stack: normalized.stack } : {}),
-      ...(typeof code === "string" || typeof code === "number" ? { code } : {}),
-    },
+    error: diagnosticError(error),
     details: {
       configuredTransport: transport,
       ...(!emitted ? { fallbackTransport: "sse" as const } : {}),
@@ -694,7 +700,9 @@ async function connectWebSocket(
   timeoutMs: number,
 ): Promise<WebSocketLike> {
   const WebSocketClass = websocketConstructor();
-  if (!WebSocketClass) throw new Error("WebSocket transport is unavailable");
+  if (!WebSocketClass) {
+    throw new Error("WebSocket transport is not available in this runtime");
+  }
   const requestHeaders = headersToRecord(headers);
   delete requestHeaders["OpenAI-Beta"];
 
@@ -731,7 +739,7 @@ async function connectWebSocket(
     try {
       socket = new WebSocketClass(url, { headers: requestHeaders });
     } catch (error) {
-      reject(error);
+      reject(error instanceof Error ? error : new Error(String(error)));
       return;
     }
     socket.addEventListener("open", onOpen);
@@ -986,7 +994,7 @@ async function* parseWebSocket(
       });
     }
     if (failure) throw failure;
-    if (!terminal) throw new Error("WebSocket ended without a terminal response");
+    if (!terminal) throw new Error("WebSocket stream closed before response.completed");
   } finally {
     socket.removeEventListener("message", onMessage);
     socket.removeEventListener("error", onError);
@@ -1013,7 +1021,7 @@ function normalizeEvent(event: JsonRecord): JsonRecord | undefined {
           ? nested["message"]
           : undefined;
     throw new CodexApiError(
-      `Codex error: ${message ?? code ?? JSON.stringify(event)}`,
+      `Codex error: ${message || code || JSON.stringify(event)}`,
       code,
       event,
     );
@@ -1021,11 +1029,9 @@ function normalizeEvent(event: JsonRecord): JsonRecord | undefined {
   if (type === "response.failed") {
     const response = isObject(event.response) ? event.response : undefined;
     const error = isObject(response?.["error"]) ? response["error"] : undefined;
-    throw new CodexApiError(
-      typeof error?.["message"] === "string" ? error["message"] : "Codex response failed",
-      typeof error?.["code"] === "string" ? error["code"] : undefined,
-      event,
-    );
+    const message = typeof error?.["message"] === "string" ? error["message"] : undefined;
+    const code = typeof error?.["code"] === "string" ? error["code"] : undefined;
+    throw new CodexApiError(message || "Codex response failed", code, event);
   }
   if (type === "response.done") {
     return { ...event, type: "response.completed" };

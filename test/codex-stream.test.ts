@@ -392,3 +392,10 @@ void test("drops unknown terminal response statuses like Pi AI", async () => {
   assert.equal(message.stopReason, "stop");
   assert.equal(message.rawStopReason, undefined);
 });
+
+void test("matches Pi AI's missing terminal response error", async () => {
+  await assert.rejects(
+    processCodexStream(events([]), output(), createAssistantMessageEventStream(), model, new Map()),
+    /OpenAI Responses stream ended before a terminal response event/,
+  );
+});

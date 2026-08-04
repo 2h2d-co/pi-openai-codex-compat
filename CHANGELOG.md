@@ -46,6 +46,7 @@
 - Prevent SSE reader cleanup failures from masking the original Codex stream error.
 - Reject malformed Codex credentials whose account identifier is empty.
 - Snapshot cached WebSocket continuation requests through their JSON wire representation so payload-hook values omitted by JSON serialization cannot break completed responses.
+- Match Pi AI's metadata for non-Error WebSocket failures and its fallback wording for unavailable transports and terminal responses without provider details.
 
 ## 0.0.2 - 2026-08-03
 

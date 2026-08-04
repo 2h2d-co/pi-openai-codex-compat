@@ -560,6 +560,31 @@ void test("prices unsuccessful terminal usage before returning the provider erro
   assert.ok(Math.abs(message.usage.cost.total - 0.00004) < 1e-12);
 });
 
+void test("matches Pi AI's fallback message for terminal failures without details", async () => {
+  const user = userEntry("user-1", "hello");
+  const harness = createHarness([user]);
+  harness.runtime.transport.request = async function* () {
+    yield {
+      type: "response.completed",
+      response: {
+        id: "response-failed",
+        status: "failed",
+      },
+    };
+  };
+
+  const message = await harness.runtime
+    .streamSimple(
+      codexModel(),
+      { messages: [user.message as Context["messages"][number]] },
+      { apiKey: accessToken() },
+    )
+    .result();
+
+  assert.equal(message.stopReason, "error");
+  assert.equal(message.errorMessage, "An unknown error occurred");
+});
+
 void test("honors aborts after terminal processing and while waiting for a session request", async () => {
   const user = userEntry("user-1", "hello");
   const context: Context = { messages: [user.message as Context["messages"][number]] };

@@ -835,6 +835,92 @@ void test("ignores type-less WebSocket events before selecting SSE fallback", as
   assert.equal(diagnostics[0]?.details.fallbackTransport, "sse");
 });
 
+void test("matches Pi AI's recovered WebSocket failure diagnostics", async (t) => {
+  const previousWebSocket = globalThis.WebSocket;
+  t.after(() => {
+    Object.defineProperty(globalThis, "WebSocket", {
+      configurable: true,
+      writable: true,
+      value: previousWebSocket,
+    });
+  });
+
+  const terminal = {
+    type: "response.completed",
+    response: { id: "response-sse", status: "completed" },
+  };
+  const request = async (): Promise<CodexTransportDiagnostic> => {
+    const diagnostics: CodexTransportDiagnostic[] = [];
+    for await (const _event of new CodexTransport().request(
+      codexModel(),
+      { input: [] },
+      {
+        apiKey: accessToken(),
+        transport: "websocket",
+        onTransportDiagnostic(diagnostic) {
+          diagnostics.push(diagnostic);
+        },
+        fetch: async () =>
+          new Response(`data: ${JSON.stringify(terminal)}\n\n`, {
+            status: 200,
+            headers: { "content-type": "text/event-stream" },
+          }),
+      },
+    )) {
+      // Consume the SSE recovery response.
+    }
+    assert.equal(diagnostics.length, 1);
+    return diagnostics[0]!;
+  };
+
+  Object.defineProperty(globalThis, "WebSocket", {
+    configurable: true,
+    writable: true,
+    value: undefined,
+  });
+  const unavailable = await request();
+  assert.equal(unavailable.error.message, "WebSocket transport is not available in this runtime");
+
+  class ThrowingWebSocket {
+    private readonly listeners = new Map<string, Set<(event: unknown) => void>>();
+
+    constructor() {
+      queueMicrotask(() => this.dispatch("open", {}));
+    }
+
+    addEventListener(type: string, listener: (event: unknown) => void): void {
+      const listeners = this.listeners.get(type) ?? new Set();
+      listeners.add(listener);
+      this.listeners.set(type, listeners);
+    }
+
+    removeEventListener(type: string, listener: (event: unknown) => void): void {
+      this.listeners.get(type)?.delete(listener);
+    }
+
+    send(): void {
+      throw "socket send failed";
+    }
+
+    close(): void {}
+
+    private dispatch(type: string, event: unknown): void {
+      for (const listener of this.listeners.get(type) ?? []) listener(event);
+    }
+  }
+
+  Object.defineProperty(globalThis, "WebSocket", {
+    configurable: true,
+    writable: true,
+    value: ThrowingWebSocket,
+  });
+  const thrownValue = await request();
+  assert.deepEqual(thrownValue.error, {
+    name: "ThrownValue",
+    message: "socket send failed",
+  });
+});
+
 void test("continues JSON-wire request snapshots with Pi AI's order-sensitive delta checks", async (t) => {
   const previousWebSocket = globalThis.WebSocket;
   const sentBodies: JsonRecord[] = [];
