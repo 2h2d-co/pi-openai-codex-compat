@@ -18,3 +18,10 @@ _.path = ["{{config_root}}/node_modules/.bin"]
 [shell_alias]
 "pi:local" = "command pi --no-extensions -e {{config_root}}"
 "pi:npm" = "command pi --no-extensions -e npm:pi-openai-codex-compat"
+
+[tasks."test:live:codex"]
+description = "Run live Codex continuation tests with gpt-5.6-luna"
+run = '''
+PI_CODEX_LIVE_API_KEY="$(./node_modules/.bin/pi auth print-bearer-token --provider openai-codex --model gpt-5.6-luna)" \
+  npm run test:live:codex
+'''
