@@ -34,6 +34,7 @@ import {
   type JsonRecord,
   type ResponsesItem,
 } from "./codex-protocol.ts";
+import { codexCacheKey } from "./codex-cache-key.ts";
 import { processCodexStream } from "./codex-stream.ts";
 import {
   CodexTransport,
@@ -97,11 +98,6 @@ type CodexCompat = {
   supportsStrictMode?: boolean;
   supportsOpenAIGrammarTools?: boolean;
 };
-
-function clampPromptCacheKey(key: string | undefined): string | undefined {
-  if (key === undefined) return undefined;
-  return Array.from(key).slice(0, 64).join("");
-}
 
 function markerSummary(): string {
   return `OpenAI Codex remote compaction checkpoint (${randomUUID()}).`;
@@ -437,7 +433,8 @@ export class CodexProviderRuntime {
     model: Model<any>,
     context: Context,
     options: OpenAICodexResponsesOptions,
-    sessionId: string | undefined,
+    runtimeSessionId: string | undefined,
+    cacheSessionId: string | undefined,
     grammarToolInputProperties: GrammarToolInputProperties,
   ): JsonRecord {
     const compat = model.compat as CodexCompat | undefined;
@@ -449,12 +446,12 @@ export class CodexProviderRuntime {
       instructions: context.systemPrompt || "You are a helpful assistant.",
       input: this.wireHistory(
         model,
-        Object.assign({}, context, { sessionId }),
+        Object.assign({}, context, { sessionId: runtimeSessionId }),
         grammarToolInputProperties,
       ),
       text: { verbosity: options.textVerbosity ?? "low" },
       include: ["reasoning.encrypted_content"],
-      prompt_cache_key: sessionId,
+      prompt_cache_key: cacheSessionId,
       tool_choice: options.toolChoice ?? "auto",
       parallel_tool_calls: true,
     };
@@ -502,9 +499,7 @@ export class CodexProviderRuntime {
       history: options.history,
       instructions: options.instructions,
       sessionId:
-        options.requestOptions.cacheRetention === "none"
-          ? undefined
-          : clampPromptCacheKey(sessionId),
+        options.requestOptions.cacheRetention === "none" ? undefined : codexCacheKey(sessionId),
       priority: options.priority,
     });
     const transformed = await options.requestOptions.onPayload?.(payload, options.model);
@@ -644,9 +639,7 @@ export class CodexProviderRuntime {
         const accountId = validateCodexAuthentication(model, requestOptions.apiKey);
         releaseRequest = await this.acquireRequest(runtimeSessionId, requestOptions.signal);
         const cacheSessionId =
-          requestOptions.cacheRetention === "none"
-            ? undefined
-            : clampPromptCacheKey(runtimeSessionId);
+          requestOptions.cacheRetention === "none" ? undefined : codexCacheKey(runtimeSessionId);
         const grammarToolInputProperties = createGrammarToolInputProperties(
           context.tools,
           (model.compat as CodexCompat | undefined)?.supportsOpenAIGrammarTools ?? false,
@@ -655,6 +648,7 @@ export class CodexProviderRuntime {
           model,
           context,
           requestOptions,
+          runtimeSessionId,
           cacheSessionId,
           grammarToolInputProperties,
         );

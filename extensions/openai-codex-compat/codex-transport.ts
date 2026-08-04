@@ -8,6 +8,7 @@ import {
   type ProviderHeaders,
   uuidv7,
 } from "@earendil-works/pi-ai";
+import { codexCacheKey } from "./codex-cache-key.ts";
 import { isObject, type JsonRecord } from "./codex-protocol.ts";
 import { normalizeReplayItem } from "./responses-replay.ts";
 
@@ -25,7 +26,6 @@ const REQUEST_COMPRESSION_ZSTD_LEVEL = 3;
 const DEFAULT_WEBSOCKET_CONNECT_TIMEOUT_MS = 15_000;
 const SESSION_WEBSOCKET_CACHE_TTL_MS = 5 * 60 * 1_000;
 const SESSION_WEBSOCKET_MAX_AGE_MS = 55 * 60 * 1_000;
-const OPENAI_PROMPT_CACHE_KEY_MAX_LENGTH = 64;
 const WEBSOCKET_CONNECTION_LIMIT_REACHED_CODE = "websocket_connection_limit_reached";
 const PREVIOUS_RESPONSE_NOT_FOUND_CODE = "previous_response_not_found";
 
@@ -484,14 +484,6 @@ function resolveCodexWebSocketUrl(baseUrl?: string): string {
   if (url.protocol === "https:") url.protocol = "wss:";
   if (url.protocol === "http:") url.protocol = "ws:";
   return url.toString();
-}
-
-function clampPromptCacheKey(key: string | undefined): string | undefined {
-  if (key === undefined) return undefined;
-  const characters = Array.from(key);
-  return characters.length <= OPENAI_PROMPT_CACHE_KEY_MAX_LENGTH
-    ? key
-    : characters.slice(0, OPENAI_PROMPT_CACHE_KEY_MAX_LENGTH).join("");
 }
 
 function baseHeaders(
@@ -1260,7 +1252,7 @@ export class CodexTransport {
     const requestBytes = new TextEncoder().encode(JSON.stringify(body)).byteLength;
     const accountId = options.accountId ?? validateCodexAuthentication(model, options.apiKey);
     const cacheSessionId = options.cacheRetention === "none" ? undefined : options.sessionId;
-    const requestId = clampPromptCacheKey(cacheSessionId);
+    const requestId = codexCacheKey(cacheSessionId);
     const transport = options.transport ?? "auto";
 
     const websocketDisabled = transport !== "sse" && isWebSocketSseFallbackActive(cacheSessionId);

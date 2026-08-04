@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import test from "node:test";
 import type { ExtensionAPI, ExtensionContext, SessionEntry } from "@earendil-works/pi-coding-agent";
 import type { AssistantMessage, Context, Model, Tool } from "@earendil-works/pi-ai";
@@ -130,7 +131,11 @@ function accessToken(): string {
   return `${header}.${claims}.signature`;
 }
 
-function createHarness(initialBranch: SessionEntry[], config: CodexCompatConfig = DEFAULT_CONFIG) {
+function createHarness(
+  initialBranch: SessionEntry[],
+  config: CodexCompatConfig = DEFAULT_CONFIG,
+  sessionId = "session-1",
+) {
   let branch = [...initialBranch];
   const customEntries: Array<{ customType: string; data: unknown }> = [];
   const compactions: Array<{ details: unknown; usage: unknown }> = [];
@@ -152,7 +157,7 @@ function createHarness(initialBranch: SessionEntry[], config: CodexCompatConfig 
   } as unknown as ExtensionAPI;
   const runtime = new CodexProviderRuntime(pi, () => config);
   const manager = {
-    getSessionId: () => "session-1",
+    getSessionId: () => sessionId,
     getBranch: () => branch,
     getLeafId: () => branch.at(-1)?.id ?? null,
     appendCompaction(
@@ -817,7 +822,7 @@ void test("performs percentage compaction before sampling the current user input
   assert.deepEqual(harness.statuses, []);
 });
 
-void test("reconstructs active-branch native responses after a checkpoint", async () => {
+void test("keeps native history separate from hashed or disabled cache identity", async () => {
   const first = userEntry("user-1", "old request");
   const checkpoint = {
     type: "compaction",
@@ -869,7 +874,13 @@ void test("reconstructs active-branch native responses after a checkpoint", asyn
   const assistant = assistantEntry("assistant-search", "native-1", "result");
   (assistant.message as AssistantMessage).responseId = "resp_search";
   const current = userEntry("user-3", "continue", "assistant-search");
-  const harness = createHarness([first, checkpoint, next, native, assistant, current]);
+  const sessionId = `session-${"x".repeat(80)}`;
+  const cacheKey = createHash("sha256").update(sessionId, "utf8").digest("hex");
+  const harness = createHarness(
+    [first, checkpoint, next, native, assistant, current],
+    DEFAULT_CONFIG,
+    sessionId,
+  );
   const requests: JsonRecord[] = [];
   harness.runtime.transport.request = async function* (_model, body) {
     requests.push(structuredClone(body));
@@ -889,15 +900,39 @@ void test("reconstructs active-branch native responses after a checkpoint", asyn
       },
       {
         apiKey: accessToken(),
-        sessionId: "session-1",
+        sessionId,
+        cacheRetention: "none",
         transport: "sse",
       },
     )
     .result();
 
-  const input = requests[0]?.input as JsonRecord[];
-  assert.equal(input[1]?.type, "compaction");
-  assert.ok(input.some((item) => item.type === "web_search_call"));
-  assert.match(JSON.stringify(input.at(-1)), /continue/);
-  assert.doesNotMatch(JSON.stringify(input), /hidden marker/);
+  await harness.runtime
+    .streamSimple(
+      codexModel(),
+      {
+        messages: [
+          first.message as Context["messages"][number],
+          next.message as Context["messages"][number],
+          assistant.message as AssistantMessage,
+          current.message as Context["messages"][number],
+        ],
+      },
+      {
+        apiKey: accessToken(),
+        sessionId,
+        transport: "sse",
+      },
+    )
+    .result();
+
+  assert.equal(requests[0]?.prompt_cache_key, undefined);
+  assert.equal(requests[1]?.prompt_cache_key, cacheKey);
+  for (const request of requests) {
+    const input = request.input as JsonRecord[];
+    assert.equal(input[1]?.type, "compaction");
+    assert.ok(input.some((item) => item.type === "web_search_call"));
+    assert.match(JSON.stringify(input.at(-1)), /continue/);
+    assert.doesNotMatch(JSON.stringify(input), /hidden marker/);
+  }
 });

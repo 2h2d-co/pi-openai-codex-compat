@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import test from "node:test";
 import type { Model } from "@earendil-works/pi-ai";
 import {
@@ -229,6 +230,7 @@ void test("aligns cache-affinity headers with retention and length limits", asyn
     return new Response(terminal, { status: 200 });
   };
   const longSessionId = "s".repeat(80);
+  const hashedSessionId = createHash("sha256").update(longSessionId, "utf8").digest("hex");
   const transport = new CodexTransport();
 
   for await (const _event of transport.request(
@@ -257,7 +259,7 @@ void test("aligns cache-affinity headers with retention and length limits", asyn
     // Consume the response.
   }
 
-  assert.equal(Array.from(requestHeaders[0]?.get("session-id") ?? "").length, 64);
+  assert.equal(requestHeaders[0]?.get("session-id"), hashedSessionId);
   assert.equal(requestHeaders[0]?.get("x-client-request-id"), requestHeaders[0]?.get("session-id"));
   assert.equal(requestHeaders[1]?.get("session-id"), null);
   assert.equal(requestHeaders[1]?.get("x-client-request-id"), null);
