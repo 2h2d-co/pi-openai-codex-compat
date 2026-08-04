@@ -1180,7 +1180,7 @@ export class CodexTransport {
         options.headers,
         accountId,
         options.apiKey,
-        requestId ?? uuidv7(),
+        requestId || uuidv7(),
       );
       let retriedConnectionLimit = false;
       let retriedMissingContinuation = false;

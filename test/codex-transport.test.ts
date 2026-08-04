@@ -1189,7 +1189,7 @@ void test("invalidates and re-establishes continuation after a conversation bran
   transport.close("branch-session");
 });
 
-void test("retries WebSocket connection limits before output starts", async (t) => {
+void test("uses UUIDv7 for empty session IDs and WebSocket connection-limit retries", async (t) => {
   const previousWebSocket = globalThis.WebSocket;
   let connections = 0;
   const requestIds: string[] = [];
@@ -1256,7 +1256,7 @@ void test("retries WebSocket connection limits before output starts", async (t) 
   for await (const event of new CodexTransport().request(
     codexModel(),
     { input: [] },
-    { apiKey: accessToken(), transport: "websocket" },
+    { apiKey: accessToken(), sessionId: "", transport: "websocket" },
   )) {
     events.push(event);
   }
