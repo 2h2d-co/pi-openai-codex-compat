@@ -853,6 +853,88 @@ void test("continues created response IDs with Pi AI's order-sensitive delta che
   transport.close("created-id-session");
 });
 
+void test("sends full context when a payload hook supplies string input", async (t) => {
+  const previousWebSocket = globalThis.WebSocket;
+  const sentBodies: JsonRecord[] = [];
+
+  class StringInputWebSocket {
+    readonly readyState = 1;
+    private readonly listeners = new Map<string, Set<(event: unknown) => void>>();
+
+    constructor() {
+      queueMicrotask(() => this.dispatch("open", {}));
+    }
+
+    addEventListener(type: string, listener: (event: unknown) => void): void {
+      const listeners = this.listeners.get(type) ?? new Set();
+      listeners.add(listener);
+      this.listeners.set(type, listeners);
+    }
+
+    removeEventListener(type: string, listener: (event: unknown) => void): void {
+      this.listeners.get(type)?.delete(listener);
+    }
+
+    send(data: string): void {
+      sentBodies.push(JSON.parse(data) as JsonRecord);
+      const responseNumber = sentBodies.length;
+      queueMicrotask(() => {
+        this.dispatch("message", {
+          data: JSON.stringify({
+            type: "response.completed",
+            response: { id: `response-${String(responseNumber)}`, status: "completed" },
+          }),
+        });
+      });
+    }
+
+    close(): void {}
+
+    private dispatch(type: string, event: unknown): void {
+      for (const listener of this.listeners.get(type) ?? []) listener(event);
+    }
+  }
+
+  Object.defineProperty(globalThis, "WebSocket", {
+    configurable: true,
+    writable: true,
+    value: StringInputWebSocket,
+  });
+  t.after(() => {
+    Object.defineProperty(globalThis, "WebSocket", {
+      configurable: true,
+      writable: true,
+      value: previousWebSocket,
+    });
+  });
+
+  const options = {
+    apiKey: accessToken(),
+    sessionId: "string-input-session",
+    transport: "websocket-cached" as const,
+  };
+  const transport = new CodexTransport();
+  for await (const _event of transport.request(
+    codexModel(),
+    { model: "gpt-test", input: "hook-supplied input" },
+    options,
+  )) {
+    // Consume the response.
+  }
+  for await (const _event of transport.request(
+    codexModel(),
+    { model: "gpt-test", input: "hook-supplied input" },
+    options,
+  )) {
+    // Consume the response.
+  }
+
+  assert.equal(sentBodies.length, 2);
+  assert.equal(sentBodies[1]?.previous_response_id, undefined);
+  assert.equal(sentBodies[1]?.input, "hook-supplied input");
+  transport.close("string-input-session");
+});
+
 void test("continues a multi-step conversation with canonical and native replay items", async (t) => {
   const previousWebSocket = globalThis.WebSocket;
   const sentBodies: JsonRecord[] = [];

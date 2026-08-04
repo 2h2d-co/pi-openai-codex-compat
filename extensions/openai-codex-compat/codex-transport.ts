@@ -756,10 +756,12 @@ function cachedRequestBody(entry: CachedWebSocket, body: JsonRecord): JsonRecord
     return body;
   }
 
-  const currentInput = Array.isArray(body.input) ? body.input.filter(isObject) : [];
-  const previousInput = Array.isArray(continuation.lastRequestBody.input)
-    ? continuation.lastRequestBody.input.filter(isObject)
-    : [];
+  const currentInput = body.input ?? [];
+  const previousInput = continuation.lastRequestBody.input ?? [];
+  if (!Array.isArray(currentInput) || !Array.isArray(previousInput)) {
+    delete entry.continuation;
+    return body;
+  }
   const baseline = [...previousInput, ...continuation.lastResponseItems];
   if (
     currentInput.length < baseline.length ||

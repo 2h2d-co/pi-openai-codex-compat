@@ -34,6 +34,7 @@
 - Retry generic Codex usage-limit responses according to Pi AI's configured SSE retry policy.
 - Require Pi AI's order-sensitive request and history equality before sending cached WebSocket deltas.
 - Cache the exact canonical or native assistant representation replayed by the next turn so harmless response key ordering cannot disable WebSocket continuation.
+- Send full WebSocket context when a payload hook supplies string-valued Responses input instead of incorrectly continuing with an empty delta.
 
 ## 0.0.2 - 2026-08-03
 
