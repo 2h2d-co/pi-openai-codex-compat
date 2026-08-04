@@ -348,9 +348,10 @@ npm run check
 npm test
 ```
 
-Run the credentialed Codex transport tests separately. They use the real
-WebSocket service and ask the model to report all prior history markers after
-each canonical and native continuation:
+Run the credentialed Pi/Codex integration tests separately. They load the real
+extension into headless Pi sessions, use the real WebSocket service, and ask
+the model to report all prior history markers after each text and tool
+continuation:
 
 ```bash
 mise run test:live:codex
