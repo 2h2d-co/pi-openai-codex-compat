@@ -35,6 +35,26 @@ function accessToken(accountId = "account-1"): string {
   return `${header}.${claims}.signature`;
 }
 
+function rawMessageItem(id: string, text: string): JsonRecord {
+  return {
+    id,
+    type: "message",
+    status: "completed",
+    role: "assistant",
+    content: [{ text, type: "output_text", annotations: [] }],
+  };
+}
+
+function canonicalMessageItem(id: string, text: string): JsonRecord {
+  return {
+    type: "message",
+    role: "assistant",
+    content: [{ type: "output_text", text, annotations: [] }],
+    status: "completed",
+    id,
+  };
+}
+
 void test("posts authenticated JSON requests to sibling Codex endpoints", async () => {
   let requestUrl = "";
   let requestInit: RequestInit | undefined;
@@ -833,15 +853,26 @@ void test("continues created response IDs with Pi AI's order-sensitive delta che
   transport.close("created-id-session");
 });
 
-void test("replaces raw continuation items with the provider replay representation", async (t) => {
+void test("continues a multi-step conversation with canonical and native replay items", async (t) => {
   const previousWebSocket = globalThis.WebSocket;
   const sentBodies: JsonRecord[] = [];
+  let connections = 0;
+  const nativeAssistant = {
+    type: "function_call",
+    id: "function-2",
+    call_id: "call-2",
+    name: "read",
+    arguments: "{}",
+    status: "completed",
+    provider_data: { opaque: "native" },
+  };
 
   class ReplayWebSocket {
     readonly readyState = 1;
     private readonly listeners = new Map<string, Set<(event: unknown) => void>>();
 
     constructor() {
+      connections += 1;
       queueMicrotask(() => this.dispatch("open", {}));
     }
 
@@ -857,30 +888,18 @@ void test("replaces raw continuation items with the provider replay representati
 
     send(data: string): void {
       sentBodies.push(JSON.parse(data) as JsonRecord);
-      const events =
-        sentBodies.length === 1
-          ? [
-              {
-                type: "response.output_item.done",
-                item: {
-                  id: "msg-1",
-                  type: "message",
-                  status: "completed",
-                  role: "assistant",
-                  content: [{ text: "answer", type: "output_text", annotations: [] }],
-                },
-              },
-              {
-                type: "response.completed",
-                response: { id: "response-1", status: "completed" },
-              },
-            ]
-          : [
-              {
-                type: "response.completed",
-                response: { id: "response-2", status: "completed" },
-              },
-            ];
+      const turn = sentBodies.length;
+      const item =
+        turn === 2
+          ? nativeAssistant
+          : rawMessageItem(`message-${String(turn)}`, `answer-${String(turn)}`);
+      const events = [
+        { type: "response.output_item.done", item },
+        {
+          type: "response.completed",
+          response: { id: `response-${String(turn)}`, status: "completed" },
+        },
+      ];
       queueMicrotask(() => {
         for (const event of events) {
           this.dispatch("message", { data: JSON.stringify(event) });
@@ -909,21 +928,16 @@ void test("replaces raw continuation items with the provider replay representati
   });
 
   const firstUser = { role: "user", content: "first" };
-  const canonicalAssistant = {
-    type: "message",
-    role: "assistant",
-    content: [{ type: "output_text", text: "answer", annotations: [] }],
-    status: "completed",
-    id: "msg-1",
-  };
-  const nextUser = { role: "user", content: "next" };
-  let continuation: CodexContinuationHandle | undefined;
+  const firstAssistant = canonicalMessageItem("message-1", "answer-1");
+  const secondUser = { role: "user", content: "second" };
+  const thirdUser = { role: "user", content: "third" };
+  const continuations: CodexContinuationHandle[] = [];
   const options = {
     apiKey: accessToken(),
     sessionId: "replay-session",
     transport: "websocket-cached" as const,
     onContinuationReady(handle: CodexContinuationHandle) {
-      continuation = handle;
+      continuations.push(handle);
     },
   };
   const transport = new CodexTransport();
@@ -933,23 +947,164 @@ void test("replaces raw continuation items with the provider replay representati
     { model: "gpt-test", input: [firstUser] },
     options,
   )) {
-    // Establish the raw-derived continuation.
+    // Establish the first continuation.
   }
-  assert.equal(continuation?.responseId, "response-1");
-  assert.equal(continuation?.replaceResponseItems([canonicalAssistant]), true);
+  const firstContinuation = continuations[0];
+  assert.equal(firstContinuation?.responseId, "response-1");
+  assert.equal(firstContinuation?.replaceResponseItems([firstAssistant]), true);
 
   for await (const _event of transport.request(
     codexModel(),
-    { model: "gpt-test", input: [firstUser, canonicalAssistant, nextUser] },
+    { model: "gpt-test", input: [firstUser, firstAssistant, secondUser] },
     options,
   )) {
-    // Consume the canonical continuation.
+    // Continue from the canonical first response.
+  }
+  const secondContinuation = continuations[1];
+  assert.equal(secondContinuation?.responseId, "response-2");
+  assert.equal(firstContinuation?.replaceResponseItems([]), false);
+  assert.equal(secondContinuation?.replaceResponseItems([nativeAssistant]), true);
+
+  for await (const _event of transport.request(
+    codexModel(),
+    {
+      model: "gpt-test",
+      input: [firstUser, firstAssistant, secondUser, nativeAssistant, thirdUser],
+    },
+    options,
+  )) {
+    // Continue from the exact native second response.
   }
 
-  assert.equal(sentBodies.length, 2);
+  assert.equal(connections, 1);
+  assert.equal(sentBodies.length, 3);
+  assert.equal(sentBodies[0]?.previous_response_id, undefined);
+  assert.deepEqual(sentBodies[0]?.input, [firstUser]);
   assert.equal(sentBodies[1]?.previous_response_id, "response-1");
-  assert.deepEqual(sentBodies[1]?.input, [nextUser]);
+  assert.deepEqual(sentBodies[1]?.input, [secondUser]);
+  assert.equal(sentBodies[2]?.previous_response_id, "response-2");
+  assert.deepEqual(sentBodies[2]?.input, [thirdUser]);
   transport.close("replay-session");
+});
+
+void test("invalidates and re-establishes continuation after a conversation branch", async (t) => {
+  const previousWebSocket = globalThis.WebSocket;
+  const sentBodies: JsonRecord[] = [];
+  let connections = 0;
+
+  class BranchWebSocket {
+    readonly readyState = 1;
+    private readonly listeners = new Map<string, Set<(event: unknown) => void>>();
+
+    constructor() {
+      connections += 1;
+      queueMicrotask(() => this.dispatch("open", {}));
+    }
+
+    addEventListener(type: string, listener: (event: unknown) => void): void {
+      const listeners = this.listeners.get(type) ?? new Set();
+      listeners.add(listener);
+      this.listeners.set(type, listeners);
+    }
+
+    removeEventListener(type: string, listener: (event: unknown) => void): void {
+      this.listeners.get(type)?.delete(listener);
+    }
+
+    send(data: string): void {
+      sentBodies.push(JSON.parse(data) as JsonRecord);
+      const turn = sentBodies.length;
+      const events = [
+        {
+          type: "response.output_item.done",
+          item: rawMessageItem(`message-${String(turn)}`, `answer-${String(turn)}`),
+        },
+        {
+          type: "response.completed",
+          response: { id: `response-${String(turn)}`, status: "completed" },
+        },
+      ];
+      queueMicrotask(() => {
+        for (const event of events) {
+          this.dispatch("message", { data: JSON.stringify(event) });
+        }
+      });
+    }
+
+    close(): void {}
+
+    private dispatch(type: string, event: unknown): void {
+      for (const listener of this.listeners.get(type) ?? []) listener(event);
+    }
+  }
+
+  Object.defineProperty(globalThis, "WebSocket", {
+    configurable: true,
+    writable: true,
+    value: BranchWebSocket,
+  });
+  t.after(() => {
+    Object.defineProperty(globalThis, "WebSocket", {
+      configurable: true,
+      writable: true,
+      value: previousWebSocket,
+    });
+  });
+
+  const firstUser = { role: "user", content: "first" };
+  const firstAssistant = canonicalMessageItem("message-1", "answer-1");
+  const secondUser = { role: "user", content: "second" };
+  const secondAssistant = canonicalMessageItem("message-2", "answer-2");
+  const branchedUser = { role: "user", content: "replacement second" };
+  const branchedAssistant = canonicalMessageItem("message-3", "answer-3");
+  const finalUser = { role: "user", content: "final" };
+  let continuation: CodexContinuationHandle | undefined;
+  const options = {
+    apiKey: accessToken(),
+    sessionId: "branch-session",
+    transport: "websocket-cached" as const,
+    onContinuationReady(handle: CodexContinuationHandle) {
+      continuation = handle;
+    },
+  };
+  const transport = new CodexTransport();
+  const request = async (input: JsonRecord[], replayItem: JsonRecord): Promise<void> => {
+    for await (const _event of transport.request(
+      codexModel(),
+      { model: "gpt-test", input },
+      options,
+    )) {
+      // Consume the response.
+    }
+    assert.equal(continuation?.replaceResponseItems([replayItem]), true);
+  };
+
+  await request([firstUser], firstAssistant);
+  await request([firstUser, firstAssistant, secondUser], secondAssistant);
+  await request([firstUser, firstAssistant, branchedUser], branchedAssistant);
+
+  for await (const _event of transport.request(
+    codexModel(),
+    {
+      model: "gpt-test",
+      input: [firstUser, firstAssistant, branchedUser, branchedAssistant, finalUser],
+    },
+    options,
+  )) {
+    // Continue from the new branch response.
+  }
+
+  assert.equal(connections, 1);
+  assert.equal(sentBodies.length, 4);
+  assert.equal(sentBodies[0]?.previous_response_id, undefined);
+  assert.deepEqual(sentBodies[0]?.input, [firstUser]);
+  assert.equal(sentBodies[1]?.previous_response_id, "response-1");
+  assert.deepEqual(sentBodies[1]?.input, [secondUser]);
+  assert.equal(sentBodies[2]?.previous_response_id, undefined);
+  assert.deepEqual(sentBodies[2]?.input, [firstUser, firstAssistant, branchedUser]);
+  assert.equal(sentBodies[3]?.previous_response_id, "response-3");
+  assert.deepEqual(sentBodies[3]?.input, [finalUser]);
+  transport.close("branch-session");
 });
 
 void test("retries WebSocket connection limits before output starts", async (t) => {
