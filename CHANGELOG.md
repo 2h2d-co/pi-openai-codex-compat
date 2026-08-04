@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.0.3 - 2026-08-04
+
 ### Added
 
 - Expose Pi AI-compatible Codex WebSocket debug statistics, reset helpers, and force-close control for connection reuse, continuation deltas, failures, and SSE fallback.
