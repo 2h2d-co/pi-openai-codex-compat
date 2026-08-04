@@ -63,9 +63,15 @@ export type CodexTransportDiagnostic = {
   };
 };
 
+export type CodexContinuationHandle = {
+  readonly responseId: string;
+  replaceResponseItems(items: readonly JsonRecord[]): boolean;
+};
+
 type CodexTransportOptions = OpenAICodexResponsesOptions & {
   accountId?: string;
   env?: ProviderEnv;
+  onContinuationReady?(handle: CodexContinuationHandle): void;
   onTransportStart?(): void;
   onTransportDiagnostic?(diagnostic: CodexTransportDiagnostic): void;
 };
@@ -1076,11 +1082,29 @@ async function* requestWebSocket(
     }
     if (options.signal?.aborted) throw new Error("Request was aborted");
     if (useContinuation && acquired.entry && responseId) {
-      acquired.entry.continuation = {
+      const entry = acquired.entry;
+      const continuation = {
         lastRequestBody: structuredClone(body),
         lastResponseId: responseId,
         lastResponseItems: responseItems.map(normalizeReplayItem),
       };
+      entry.continuation = continuation;
+      if (sessionId) {
+        options.onContinuationReady?.({
+          responseId,
+          replaceResponseItems(items) {
+            if (
+              websocketSessions.get(sessionId)?.get(accountId) !== entry ||
+              entry.continuation !== continuation ||
+              continuation.lastResponseId !== responseId
+            ) {
+              return false;
+            }
+            continuation.lastResponseItems = items.map((item) => structuredClone(item));
+            return true;
+          },
+        });
+      }
     }
   } catch (error) {
     if (acquired.entry) delete acquired.entry.continuation;

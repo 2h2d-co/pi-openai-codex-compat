@@ -5,6 +5,7 @@ import {
   CodexTransport,
   requestCodexJson,
   resolveCodexApiUrl,
+  type CodexContinuationHandle,
   type CodexTransportDiagnostic,
 } from "../extensions/openai-codex-compat/codex-transport.ts";
 import type { JsonRecord } from "../extensions/openai-codex-compat/codex-protocol.ts";
@@ -830,6 +831,125 @@ void test("continues created response IDs with Pi AI's order-sensitive delta che
     fourthInput,
   ]);
   transport.close("created-id-session");
+});
+
+void test("replaces raw continuation items with the provider replay representation", async (t) => {
+  const previousWebSocket = globalThis.WebSocket;
+  const sentBodies: JsonRecord[] = [];
+
+  class ReplayWebSocket {
+    readonly readyState = 1;
+    private readonly listeners = new Map<string, Set<(event: unknown) => void>>();
+
+    constructor() {
+      queueMicrotask(() => this.dispatch("open", {}));
+    }
+
+    addEventListener(type: string, listener: (event: unknown) => void): void {
+      const listeners = this.listeners.get(type) ?? new Set();
+      listeners.add(listener);
+      this.listeners.set(type, listeners);
+    }
+
+    removeEventListener(type: string, listener: (event: unknown) => void): void {
+      this.listeners.get(type)?.delete(listener);
+    }
+
+    send(data: string): void {
+      sentBodies.push(JSON.parse(data) as JsonRecord);
+      const events =
+        sentBodies.length === 1
+          ? [
+              {
+                type: "response.output_item.done",
+                item: {
+                  id: "msg-1",
+                  type: "message",
+                  status: "completed",
+                  role: "assistant",
+                  content: [{ text: "answer", type: "output_text", annotations: [] }],
+                },
+              },
+              {
+                type: "response.completed",
+                response: { id: "response-1", status: "completed" },
+              },
+            ]
+          : [
+              {
+                type: "response.completed",
+                response: { id: "response-2", status: "completed" },
+              },
+            ];
+      queueMicrotask(() => {
+        for (const event of events) {
+          this.dispatch("message", { data: JSON.stringify(event) });
+        }
+      });
+    }
+
+    close(): void {}
+
+    private dispatch(type: string, event: unknown): void {
+      for (const listener of this.listeners.get(type) ?? []) listener(event);
+    }
+  }
+
+  Object.defineProperty(globalThis, "WebSocket", {
+    configurable: true,
+    writable: true,
+    value: ReplayWebSocket,
+  });
+  t.after(() => {
+    Object.defineProperty(globalThis, "WebSocket", {
+      configurable: true,
+      writable: true,
+      value: previousWebSocket,
+    });
+  });
+
+  const firstUser = { role: "user", content: "first" };
+  const canonicalAssistant = {
+    type: "message",
+    role: "assistant",
+    content: [{ type: "output_text", text: "answer", annotations: [] }],
+    status: "completed",
+    id: "msg-1",
+  };
+  const nextUser = { role: "user", content: "next" };
+  let continuation: CodexContinuationHandle | undefined;
+  const options = {
+    apiKey: accessToken(),
+    sessionId: "replay-session",
+    transport: "websocket-cached" as const,
+    onContinuationReady(handle: CodexContinuationHandle) {
+      continuation = handle;
+    },
+  };
+  const transport = new CodexTransport();
+
+  for await (const _event of transport.request(
+    codexModel(),
+    { model: "gpt-test", input: [firstUser] },
+    options,
+  )) {
+    // Establish the raw-derived continuation.
+  }
+  assert.equal(continuation?.responseId, "response-1");
+  assert.equal(continuation?.replaceResponseItems([canonicalAssistant]), true);
+
+  for await (const _event of transport.request(
+    codexModel(),
+    { model: "gpt-test", input: [firstUser, canonicalAssistant, nextUser] },
+    options,
+  )) {
+    // Consume the canonical continuation.
+  }
+
+  assert.equal(sentBodies.length, 2);
+  assert.equal(sentBodies[1]?.previous_response_id, "response-1");
+  assert.deepEqual(sentBodies[1]?.input, [nextUser]);
+  transport.close("replay-session");
 });
 
 void test("retries WebSocket connection limits before output starts", async (t) => {

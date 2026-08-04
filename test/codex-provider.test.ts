@@ -231,6 +231,47 @@ void test("streams ordinary responses without persisting redundant native data",
   assert.equal(harness.customEntries.length, 0);
 });
 
+void test("commits canonical assistant items for WebSocket continuation", async () => {
+  const user = userEntry("user-1", "hello");
+  const harness = createHarness([user]);
+  let replayItems: readonly JsonRecord[] | undefined;
+  harness.runtime.transport.request = async function* (_model, _body, options) {
+    yield* textEvents("hello back");
+    options.onContinuationReady?.({
+      responseId: "resp_text",
+      replaceResponseItems(items) {
+        replayItems = structuredClone(items);
+        return true;
+      },
+    });
+  };
+
+  await harness.runtime
+    .streamSimple(
+      codexModel(),
+      { messages: [user.message as Context["messages"][number]] },
+      {
+        apiKey: accessToken(),
+        sessionId: "session-1",
+        transport: "websocket-cached",
+      },
+    )
+    .result();
+
+  assert.equal(
+    JSON.stringify(replayItems),
+    JSON.stringify([
+      {
+        type: "message",
+        role: "assistant",
+        content: [{ type: "output_text", text: "hello back", annotations: [] }],
+        status: "completed",
+        id: "msg_text",
+      },
+    ]),
+  );
+});
+
 void test("honors disabled cache retention when building provider payloads", async () => {
   const user = userEntry("user-1", "hello");
   const harness = createHarness([user]);
@@ -686,16 +727,18 @@ void test("transports dotted Pi tools as native Responses namespaces", async () 
 void test("persists native output only when Pi cannot round-trip it", async () => {
   const user = userEntry("user-1", "search");
   const harness = createHarness([user]);
-  harness.runtime.transport.request = async function* () {
+  const nativeItem = {
+    type: "web_search_call",
+    id: "ws_1",
+    status: "completed",
+    action: { type: "search", query: "Pi" },
+  };
+  let replayItems: readonly JsonRecord[] | undefined;
+  harness.runtime.transport.request = async function* (_model, _body, options) {
     yield { type: "response.created", response: { id: "resp_search" } };
     yield {
       type: "response.output_item.done",
-      item: {
-        type: "web_search_call",
-        id: "ws_1",
-        status: "completed",
-        action: { type: "search", query: "Pi" },
-      },
+      item: nativeItem,
     };
     yield {
       type: "response.completed",
@@ -705,6 +748,13 @@ void test("persists native output only when Pi cannot round-trip it", async () =
         usage: { input_tokens: 10, output_tokens: 1, total_tokens: 11 },
       },
     };
+    options.onContinuationReady?.({
+      responseId: "resp_search",
+      replaceResponseItems(items) {
+        replayItems = structuredClone(items);
+        return true;
+      },
+    });
   };
 
   const message = await harness.runtime
@@ -723,6 +773,7 @@ void test("persists native output only when Pi cannot round-trip it", async () =
   assert.equal(harness.customEntries.length, 1);
   assert.equal(harness.customEntries[0]?.customType, NATIVE_RESPONSE_ENTRY_TYPE);
   assert.match(JSON.stringify(harness.customEntries[0]?.data), /web_search_call/);
+  assert.equal(JSON.stringify(replayItems), JSON.stringify([nativeItem]));
 });
 
 void test("performs percentage compaction before sampling the current user input", async () => {

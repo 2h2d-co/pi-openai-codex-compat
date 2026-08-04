@@ -38,6 +38,7 @@ import { processCodexStream } from "./codex-stream.ts";
 import {
   CodexTransport,
   validateCodexAuthentication,
+  type CodexContinuationHandle,
   type CodexTransportDiagnostic,
 } from "./codex-transport.ts";
 import type { CodexCompatConfig, ImageDetail } from "./config.ts";
@@ -676,6 +677,7 @@ export class CodexProviderRuntime {
         );
 
         const rawItems: ResponsesItem[] = [];
+        let continuationHandle: CodexContinuationHandle | undefined;
         let startEmitted = false;
         const emitStart = () => {
           if (startEmitted) return;
@@ -685,6 +687,9 @@ export class CodexProviderRuntime {
         const transportRequestOptions = {
           ...requestOptions,
           accountId,
+          onContinuationReady(handle: CodexContinuationHandle) {
+            continuationHandle = handle;
+          },
           onTransportStart: emitStart,
           onTransportDiagnostic(diagnostic: CodexTransportDiagnostic) {
             output.diagnostics = [...(output.diagnostics ?? []), diagnostic];
@@ -743,12 +748,18 @@ export class CodexProviderRuntime {
           (item) =>
             item["type"] !== "function_call_output" && item["type"] !== "custom_tool_call_output",
         );
-        if (rawItems.length > 0 && nativeOverrideRequired(rawItems, canonicalItems)) {
+        const persistNativeItems =
+          rawItems.length > 0 && nativeOverrideRequired(rawItems, canonicalItems);
+        if (persistNativeItems) {
           if (!output.responseId) throw new Error("Codex response is missing a response id.");
           this.pi.appendEntry(
             NATIVE_RESPONSE_ENTRY_TYPE,
             nativeResponseData(model.id, output.responseId, rawItems),
           );
+        }
+        const readyContinuation = continuationHandle;
+        if (readyContinuation && readyContinuation.responseId === output.responseId) {
+          readyContinuation.replaceResponseItems(persistNativeItems ? rawItems : canonicalItems);
         }
 
         stream.push({ type: "done", reason: output.stopReason, message: output });
