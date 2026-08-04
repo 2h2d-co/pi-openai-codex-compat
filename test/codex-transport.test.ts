@@ -197,6 +197,45 @@ void test("finishes SSE requests when the terminal event arrives before EOF", as
   assert.equal(cancelled, true);
 });
 
+void test("preserves SSE read errors when reader cleanup also fails", async () => {
+  const response = {
+    ok: true,
+    status: 200,
+    statusText: "OK",
+    headers: new Headers(),
+    body: {
+      getReader() {
+        return {
+          async read() {
+            throw new Error("SSE body read failed");
+          },
+          async cancel() {},
+          releaseLock() {
+            throw new Error("SSE reader release failed");
+          },
+        };
+      },
+    },
+  } as unknown as Response;
+
+  await assert.rejects(
+    async () => {
+      for await (const _event of new CodexTransport().request(
+        codexModel(),
+        { input: [] },
+        {
+          apiKey: accessToken(),
+          transport: "sse",
+          fetch: async () => response,
+        },
+      )) {
+        // Consume the response.
+      }
+    },
+    { message: "SSE body read failed" },
+  );
+});
+
 void test("marks SSE transport started after successful response headers", async () => {
   let starts = 0;
   const events: JsonRecord[] = [];

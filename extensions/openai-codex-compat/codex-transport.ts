@@ -628,7 +628,9 @@ async function* parseSse(response: Response, signal?: AbortSignal): AsyncGenerat
   } finally {
     signal?.removeEventListener("abort", onAbort);
     await reader.cancel().catch(() => {});
-    reader.releaseLock();
+    try {
+      reader.releaseLock();
+    } catch {}
   }
 }
 
