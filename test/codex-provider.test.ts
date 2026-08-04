@@ -10,7 +10,10 @@ import {
   type CodexCompatConfig,
 } from "../extensions/openai-codex-compat/config.ts";
 import type { JsonRecord } from "../extensions/openai-codex-compat/codex-protocol.ts";
-import type { CodexTransportDiagnostic } from "../extensions/openai-codex-compat/codex-transport.ts";
+import {
+  getOpenAICodexWebSocketDebugStats,
+  type CodexTransportDiagnostic,
+} from "../extensions/openai-codex-compat/codex-transport.ts";
 import { IMAGE_GENERATION_PARAMETERS } from "../extensions/openai-codex-compat/image-generation-schema.ts";
 import { NATIVE_RESPONSE_ENTRY_TYPE } from "../extensions/openai-codex-compat/native-history.ts";
 import { IMAGE_GENERATION_TOOL_NAME } from "../extensions/openai-codex-compat/namespaced-tools.ts";
@@ -524,6 +527,45 @@ void test("validates direct-stream and compaction authentication before payload 
   assert.equal(transportRequests, 0);
 });
 
+void test("discards WebSockets when compaction response validation fails", async () => {
+  const harness = createHarness([userEntry("user-1", "hello")]);
+  let reportedFailure: unknown;
+  harness.runtime.transport.request = async function* (_model, _body, options) {
+    options.onWebSocketResponseHandle?.({
+      discard() {
+        return true;
+      },
+      failParsing(error) {
+        reportedFailure = error;
+        return true;
+      },
+    });
+    yield {
+      type: "response.completed",
+      response: { id: "response-without-compaction", status: "completed" },
+    };
+  };
+
+  await assert.rejects(
+    harness.runtime.compact({
+      model: codexModel(),
+      requestOptions: {
+        apiKey: accessToken(),
+        sessionId: "session-1",
+        transport: "websocket-cached",
+      },
+      history: [],
+      instructions: "Compact",
+      grammarToolInputProperties: new Map(),
+      template: {},
+      priority: false,
+    }),
+    /exactly one is required/,
+  );
+  assert.ok(reportedFailure instanceof Error);
+  assert.match(reportedFailure.message, /exactly one is required/);
+});
+
 void test("prices unsuccessful terminal usage before returning the provider error", async () => {
   const user = userEntry("user-1", "hello");
   const harness = createHarness([user]);
@@ -583,6 +625,166 @@ void test("matches Pi AI's fallback message for terminal failures without detail
 
   assert.equal(message.stopReason, "error");
   assert.equal(message.errorMessage, "An unknown error occurred");
+});
+
+void test("discards downstream-failed WebSockets without activating SSE fallback", async (t) => {
+  const previousWebSocket = globalThis.WebSocket;
+  const closedConnections = new Set<number>();
+  let connections = 0;
+  let fetchRequests = 0;
+
+  class ResponseFailureWebSocket {
+    readyState = 1;
+    private readonly connectionId = ++connections;
+    private readonly listeners = new Map<string, Set<(event: unknown) => void>>();
+
+    constructor() {
+      queueMicrotask(() => this.dispatch("open", {}));
+    }
+
+    addEventListener(type: string, listener: (event: unknown) => void): void {
+      const listeners = this.listeners.get(type) ?? new Set();
+      listeners.add(listener);
+      this.listeners.set(type, listeners);
+    }
+
+    removeEventListener(type: string, listener: (event: unknown) => void): void {
+      this.listeners.get(type)?.delete(listener);
+    }
+
+    send(): void {
+      const responseEvents =
+        this.connectionId === 1
+          ? [
+              {
+                type: "response.output_item.added",
+                output_index: 0,
+                item: {
+                  type: "custom_tool_call",
+                  id: "ctc_invalid",
+                  call_id: "call_invalid",
+                  name: "sample_tool",
+                  input: "",
+                },
+              },
+              {
+                type: "response.custom_tool_call_input.delta",
+                output_index: 0,
+                delta: "abc",
+              },
+              {
+                type: "response.custom_tool_call_input.done",
+                output_index: 0,
+                input: "ab",
+              },
+            ]
+          : this.connectionId === 2
+            ? [
+                {
+                  type: "response.incomplete",
+                  response: {
+                    id: "response-filtered",
+                    status: "incomplete",
+                    incomplete_details: { reason: "content_filter" },
+                  },
+                },
+              ]
+            : textEvents("recovered", "response-recovered");
+      queueMicrotask(() => {
+        for (const event of responseEvents) {
+          this.dispatch("message", { data: JSON.stringify(event) });
+        }
+      });
+    }
+
+    close(): void {
+      this.readyState = 3;
+      closedConnections.add(this.connectionId);
+    }
+
+    private dispatch(type: string, event: unknown): void {
+      for (const listener of this.listeners.get(type) ?? []) listener(event);
+    }
+  }
+
+  Object.defineProperty(globalThis, "WebSocket", {
+    configurable: true,
+    writable: true,
+    value: ResponseFailureWebSocket,
+  });
+  t.after(() => {
+    Object.defineProperty(globalThis, "WebSocket", {
+      configurable: true,
+      writable: true,
+      value: previousWebSocket,
+    });
+  });
+
+  const user = userEntry("user-1", "hello");
+  const harness = createHarness([user]);
+  const context: Context = {
+    messages: [user.message as Context["messages"][number]],
+    tools: [
+      {
+        name: "sample_tool",
+        description: "Sample tool",
+        parameters: Type.Object({ payload: Type.String() }),
+        constrainedSampling: {
+          type: "grammar",
+          variants: { openai_lark: "start: /[a-z]+/" },
+        },
+      },
+    ],
+  };
+  const requestOptions = {
+    apiKey: accessToken(),
+    sessionId: "downstream-failure-session",
+    transport: "websocket-cached" as const,
+    fetch: async () => {
+      fetchRequests += 1;
+      throw new Error("SSE fallback should not be used");
+    },
+  };
+
+  const parserFailure = await harness.runtime
+    .streamSimple(codexModel(), context, requestOptions)
+    .result();
+  assert.equal(parserFailure.stopReason, "error");
+  assert.match(parserFailure.errorMessage ?? "", /changed non-monotonically/);
+  assert.equal(parserFailure.diagnostics?.length, 1);
+  assert.equal(parserFailure.diagnostics?.[0]?.type, "provider_transport_failure");
+  assert.equal(parserFailure.diagnostics?.[0]?.details?.["eventsEmitted"], true);
+
+  const terminalFailure = await harness.runtime
+    .streamSimple(codexModel(), context, requestOptions)
+    .result();
+  assert.equal(terminalFailure.stopReason, "error");
+  assert.equal(terminalFailure.errorMessage, "Response incomplete: content_filter");
+  assert.equal(terminalFailure.diagnostics, undefined);
+
+  const recovered = await harness.runtime
+    .streamSimple(codexModel(), context, requestOptions)
+    .result();
+  assert.equal(recovered.stopReason, "stop");
+  assert.equal(recovered.content.find((block) => block.type === "text")?.text, "recovered");
+
+  assert.equal(connections, 3);
+  assert.equal(fetchRequests, 0);
+  assert.equal(closedConnections.has(1), true);
+  assert.equal(closedConnections.has(2), true);
+  assert.deepEqual(getOpenAICodexWebSocketDebugStats("downstream-failure-session"), {
+    requests: 3,
+    connectionsCreated: 3,
+    connectionsReused: 0,
+    cachedContextRequests: 3,
+    storeTrueRequests: 0,
+    fullContextRequests: 3,
+    deltaRequests: 0,
+    lastInputItems: 1,
+    websocketFailures: 0,
+    sseFallbacks: 0,
+  });
+  harness.runtime.transport.close("downstream-failure-session");
 });
 
 void test("honors aborts after terminal processing and while waiting for a session request", async () => {

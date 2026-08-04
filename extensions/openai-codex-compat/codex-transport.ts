@@ -67,6 +67,11 @@ export type CodexContinuationHandle = {
   replaceResponseItems(items: readonly JsonRecord[]): boolean;
 };
 
+export type CodexWebSocketResponseHandle = {
+  discard(): boolean;
+  failParsing(error: unknown): boolean;
+};
+
 export interface OpenAICodexWebSocketDebugStats {
   requests: number;
   connectionsCreated: number;
@@ -88,6 +93,7 @@ type CodexTransportOptions = OpenAICodexResponsesOptions & {
   accountId?: string;
   env?: ProviderEnv;
   onContinuationReady?(handle: CodexContinuationHandle): void;
+  onWebSocketResponseHandle?(handle: CodexWebSocketResponseHandle): void;
   onTransportStart?(): void;
   onTransportDiagnostic?(diagnostic: CodexTransportDiagnostic): void;
 };
@@ -786,6 +792,10 @@ async function acquireWebSocket(
         reused: true,
         release(keep) {
           if (!keep || !socketReusable(cached.socket)) {
+            if (cached.idleTimer) {
+              clearTimeout(cached.idleTimer);
+              delete cached.idleTimer;
+            }
             closeSocket(cached.socket);
             const currentEntries = websocketSessions.get(sessionId);
             if (currentEntries?.get(accountId) === cached) currentEntries.delete(accountId);
@@ -1139,6 +1149,7 @@ async function* requestWebSocket(
   accountId: string,
   timeoutMs: number | undefined,
   connectTimeoutMs: number,
+  requestBytes: number,
 ): AsyncGenerator<JsonRecord> {
   const acquired = await acquireWebSocket(
     resolveCodexWebSocketUrl(model.baseUrl),
@@ -1148,7 +1159,15 @@ async function* requestWebSocket(
     options.signal,
     connectTimeoutMs,
   );
-  let keep = true;
+  let keep = false;
+  let responseHandleActive = true;
+  const discard = (): boolean => {
+    if (!responseHandleActive) return false;
+    responseHandleActive = false;
+    if (acquired.entry) delete acquired.entry.continuation;
+    acquired.release(false);
+    return true;
+  };
   try {
     if (options.signal?.aborted) throw new Error("Request was aborted");
     const useContinuation =
@@ -1174,6 +1193,16 @@ async function* requestWebSocket(
         delete stats.lastPreviousResponseId;
       }
     }
+    options.onWebSocketResponseHandle?.({
+      discard,
+      failParsing(error) {
+        if (!discard()) return false;
+        options.onTransportDiagnostic?.(
+          transportDiagnostic(error, options.transport ?? "auto", true, requestBytes),
+        );
+        return true;
+      },
+    });
     acquired.socket.send(JSON.stringify({ type: "response.create", ...requestBody }));
     const responseItems: JsonRecord[] = [];
     let responseId: string | undefined;
@@ -1237,11 +1266,12 @@ async function* requestWebSocket(
         });
       }
     }
+    keep = true;
   } catch (error) {
-    if (acquired.entry) delete acquired.entry.continuation;
-    keep = false;
+    responseHandleActive = false;
     throw error;
   } finally {
+    if (!keep && acquired.entry) delete acquired.entry.continuation;
     acquired.release(keep);
   }
 }
@@ -1323,6 +1353,7 @@ export class CodexTransport {
             accountId,
             timeoutMs,
             connectTimeoutMs,
+            requestBytes,
           )) {
             if (!emitted) options.onTransportStart?.();
             emitted = true;

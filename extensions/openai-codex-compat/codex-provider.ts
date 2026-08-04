@@ -41,6 +41,7 @@ import {
   validateCodexAuthentication,
   type CodexContinuationHandle,
   type CodexTransportDiagnostic,
+  type CodexWebSocketResponseHandle,
 } from "./codex-transport.ts";
 import type { CodexCompatConfig, ImageDetail } from "./config.ts";
 import { nativeResponseData, NATIVE_RESPONSE_ENTRY_TYPE } from "./native-history.ts";
@@ -505,14 +506,26 @@ export class CodexProviderRuntime {
     });
     const transformed = await options.requestOptions.onPayload?.(payload, options.model);
     const request = transformed === undefined ? payload : (transformed as JsonRecord);
-    const compacted = await collectRemoteCompaction(
-      this.transport.request(options.model, request, {
-        ...options.requestOptions,
-        accountId,
-      }),
-      options.model,
-      options.priority,
-    );
+    let webSocketResponseHandle: CodexWebSocketResponseHandle | undefined;
+    let compacted: Awaited<ReturnType<typeof collectRemoteCompaction>>;
+    try {
+      compacted = await collectRemoteCompaction(
+        this.transport.request(options.model, request, {
+          ...options.requestOptions,
+          accountId,
+          onWebSocketResponseHandle(handle) {
+            webSocketResponseHandle = handle;
+          },
+        }),
+        options.model,
+        options.priority,
+      );
+    } catch (error) {
+      if (!options.requestOptions.signal?.aborted) {
+        webSocketResponseHandle?.failParsing(error);
+      }
+      throw error;
+    }
     return {
       checkpoint: checkpointData(
         options.model.id,
@@ -673,6 +686,7 @@ export class CodexProviderRuntime {
 
         const rawItems: ResponsesItem[] = [];
         let continuationHandle: CodexContinuationHandle | undefined;
+        let webSocketResponseHandle: CodexWebSocketResponseHandle | undefined;
         let startEmitted = false;
         const emitStart = () => {
           if (startEmitted) return;
@@ -685,31 +699,46 @@ export class CodexProviderRuntime {
           onContinuationReady(handle: CodexContinuationHandle) {
             continuationHandle = handle;
           },
+          onWebSocketResponseHandle(handle: CodexWebSocketResponseHandle) {
+            webSocketResponseHandle = handle;
+          },
           onTransportStart: emitStart,
           onTransportDiagnostic(diagnostic: CodexTransportDiagnostic) {
             output.diagnostics = [...(output.diagnostics ?? []), diagnostic];
           },
         };
-        await processCodexStream(
-          startOnFirstEvent(
-            captureRawEvents(
-              this.transport.request(model, body, transportRequestOptions),
-              rawItems,
+        try {
+          await processCodexStream(
+            startOnFirstEvent(
+              captureRawEvents(
+                this.transport.request(model, body, transportRequestOptions),
+                rawItems,
+              ),
+              emitStart,
             ),
-            emitStart,
-          ),
-          output,
-          stream,
-          model,
-          grammarToolInputProperties,
-          {
-            applyServiceTierPricing(usage, responseServiceTier) {
-              applyServiceTierPricing(usage, model, body.service_tier, responseServiceTier);
+            output,
+            stream,
+            model,
+            grammarToolInputProperties,
+            {
+              applyServiceTierPricing(usage, responseServiceTier) {
+                applyServiceTierPricing(usage, model, body.service_tier, responseServiceTier);
+              },
             },
-          },
-        );
+          );
+        } catch (error) {
+          if (!requestOptions.signal?.aborted) {
+            webSocketResponseHandle?.failParsing(error);
+          }
+          throw error;
+        }
         if (requestOptions.signal?.aborted) throw new Error("Request was aborted");
-        assertSuccessfulOutput(output);
+        try {
+          assertSuccessfulOutput(output);
+        } catch (error) {
+          webSocketResponseHandle?.discard();
+          throw error;
+        }
 
         const compat = model.compat as CodexCompat | undefined;
         const canonicalContext: Context = {
