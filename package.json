@@ -31,6 +31,7 @@
   "scripts": {
     "check": "hk check --all --check",
     "test": "node --test --test-concurrency=1 test/*.test.ts",
+    "test:live:codex": "PI_CODEX_LIVE_TEST=1 node --test --test-concurrency=1 test/codex-transport.live.test.ts",
     "fmt": "oxfmt",
     "lint": "oxlint",
     "lint:fix": "oxlint --fix"
