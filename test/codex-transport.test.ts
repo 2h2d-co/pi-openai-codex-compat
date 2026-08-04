@@ -98,6 +98,26 @@ void test("posts authenticated JSON requests to sibling Codex endpoints", async 
   assert.deepEqual(result, { output: "result" });
 });
 
+void test("rejects an empty Codex account ID before sending", async () => {
+  let fetched = false;
+  await assert.rejects(
+    requestCodexJson(
+      codexModel(),
+      "alpha/search",
+      {},
+      {
+        apiKey: accessToken(""),
+        fetch: async () => {
+          fetched = true;
+          return new Response("{}");
+        },
+      },
+    ),
+    { message: "Failed to extract accountId from token" },
+  );
+  assert.equal(fetched, false);
+});
+
 void test("formats structured errors from sibling Codex endpoints", async () => {
   await assert.rejects(
     requestCodexJson(

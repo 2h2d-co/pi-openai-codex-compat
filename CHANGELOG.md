@@ -44,6 +44,7 @@
 - Keep native Codex history keyed by the complete Pi session identifier even when cache retention is disabled or the backend cache key is shortened.
 - Represent overlong Codex cache identifiers with collision-resistant 64-character SHA-256 hex values instead of truncating them.
 - Prevent SSE reader cleanup failures from masking the original Codex stream error.
+- Reject malformed Codex credentials whose account identifier is empty.
 
 ## 0.0.2 - 2026-08-03
 

@@ -474,7 +474,11 @@ function extractAccountId(token: string): string {
     if (parts.length !== 3) throw new Error("Invalid token");
     const payload = JSON.parse(Buffer.from(parts[1]!, "base64url").toString("utf8")) as JsonRecord;
     const authentication = payload["https://api.openai.com/auth"];
-    if (!isObject(authentication) || typeof authentication["chatgpt_account_id"] !== "string") {
+    if (
+      !isObject(authentication) ||
+      typeof authentication["chatgpt_account_id"] !== "string" ||
+      authentication["chatgpt_account_id"].length === 0
+    ) {
       throw new Error("No account ID");
     }
     return authentication["chatgpt_account_id"];
