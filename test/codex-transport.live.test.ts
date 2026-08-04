@@ -26,7 +26,7 @@ type TurnResult = {
 };
 
 function liveModel(): Model<any> {
-  const id = process.env["PI_CODEX_LIVE_MODEL"] || "gpt-5.6-sol";
+  const id = process.env["PI_CODEX_LIVE_MODEL"] || "gpt-5.6-luna";
   return {
     id,
     name: id,
@@ -87,7 +87,7 @@ function requestBody(options: {
     prompt_cache_key: options.sessionId,
     tool_choice: options.tools ? "required" : "none",
     parallel_tool_calls: false,
-    reasoning: { effort: "low", summary: "auto" },
+    reasoning: { effort: "medium", summary: "auto" },
     ...(options.tools ? { tools: options.tools.map((tool) => structuredClone(tool)) } : {}),
   };
 }

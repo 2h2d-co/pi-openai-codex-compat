@@ -353,9 +353,11 @@ WebSocket service and ask the model to report all prior history markers after
 each canonical and native continuation:
 
 ```bash
-PI_CODEX_LIVE_API_KEY="$(./node_modules/.bin/pi auth print-bearer-token --provider openai-codex --model gpt-5.6-sol)" \
+PI_CODEX_LIVE_API_KEY="$(./node_modules/.bin/pi auth print-bearer-token --provider openai-codex --model gpt-5.6-luna)" \
   npm run test:live:codex
 ```
+
+These tests default to `gpt-5.6-luna` with medium reasoning effort.
 
 The focused Pi AI serializer copy lives under `extensions/openai-codex-compat/vendor/pi-ai/`. The custom Codex provider transport and stream parser are focused adaptations of Pi AI's corresponding implementation. Equivalence and protocol tests cover canonical serialization, native namespace round-trips, raw native replay, sibling Codex JSON endpoints, SSE request behavior, WebSocket reuse, grammar tools, image results, standalone search, and compaction continuation.
 
