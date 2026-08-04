@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Added
+
+- Expose Pi AI-compatible Codex WebSocket debug statistics and reset helpers for connection reuse, continuation deltas, failures, and SSE fallback.
+
 ### Changed
 
 - Rely on Pi's compaction indicator instead of adding a temporary third footer status line during percentage-triggered compaction.

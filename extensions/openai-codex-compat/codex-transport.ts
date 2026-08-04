@@ -67,6 +67,23 @@ export type CodexContinuationHandle = {
   replaceResponseItems(items: readonly JsonRecord[]): boolean;
 };
 
+export interface OpenAICodexWebSocketDebugStats {
+  requests: number;
+  connectionsCreated: number;
+  connectionsReused: number;
+  cachedContextRequests: number;
+  storeTrueRequests: number;
+  fullContextRequests: number;
+  deltaRequests: number;
+  lastInputItems: number;
+  lastDeltaInputItems?: number;
+  lastPreviousResponseId?: string;
+  websocketFailures: number;
+  sseFallbacks: number;
+  websocketFallbackActive?: boolean;
+  lastWebSocketError?: string;
+}
+
 type CodexTransportOptions = OpenAICodexResponsesOptions & {
   accountId?: string;
   env?: ProviderEnv;
@@ -105,6 +122,64 @@ type CachedWebSocket = {
 
 const websocketSessions = new Map<string, Map<string, CachedWebSocket>>();
 const websocketFallbackSessions = new Set<string>();
+const websocketDebugStats = new Map<string, OpenAICodexWebSocketDebugStats>();
+
+function getOrCreateWebSocketDebugStats(sessionId: string): OpenAICodexWebSocketDebugStats {
+  let stats = websocketDebugStats.get(sessionId);
+  if (!stats) {
+    stats = {
+      requests: 0,
+      connectionsCreated: 0,
+      connectionsReused: 0,
+      cachedContextRequests: 0,
+      storeTrueRequests: 0,
+      fullContextRequests: 0,
+      deltaRequests: 0,
+      lastInputItems: 0,
+      websocketFailures: 0,
+      sseFallbacks: 0,
+    };
+    websocketDebugStats.set(sessionId, stats);
+  }
+  return stats;
+}
+
+export function getOpenAICodexWebSocketDebugStats(
+  sessionId: string,
+): OpenAICodexWebSocketDebugStats | undefined {
+  const stats = websocketDebugStats.get(sessionId);
+  return stats ? { ...stats } : undefined;
+}
+
+export function resetOpenAICodexWebSocketDebugStats(sessionId?: string): void {
+  if (sessionId) {
+    websocketDebugStats.delete(sessionId);
+    websocketFallbackSessions.delete(sessionId);
+    return;
+  }
+  websocketDebugStats.clear();
+  websocketFallbackSessions.clear();
+}
+
+function isWebSocketSseFallbackActive(sessionId: string | undefined): boolean {
+  return sessionId ? websocketFallbackSessions.has(sessionId) : false;
+}
+
+function recordWebSocketSseFallback(sessionId: string | undefined): void {
+  if (!sessionId) return;
+  const stats = getOrCreateWebSocketDebugStats(sessionId);
+  stats.sseFallbacks += 1;
+  stats.websocketFallbackActive = isWebSocketSseFallbackActive(sessionId);
+}
+
+function recordWebSocketFailure(sessionId: string | undefined, error: unknown): void {
+  if (!sessionId) return;
+  websocketFallbackSessions.add(sessionId);
+  const stats = getOrCreateWebSocketDebugStats(sessionId);
+  stats.websocketFailures += 1;
+  stats.lastWebSocketError = thrownMessage(error);
+  stats.websocketFallbackActive = true;
+}
 
 class CodexApiError extends Error {
   readonly code: string | undefined;
@@ -659,7 +734,12 @@ async function acquireWebSocket(
   accountId: string,
   signal: AbortSignal | undefined,
   timeoutMs: number,
-): Promise<{ socket: WebSocketLike; entry?: CachedWebSocket; release(keep: boolean): void }> {
+): Promise<{
+  socket: WebSocketLike;
+  entry?: CachedWebSocket;
+  reused: boolean;
+  release(keep: boolean): void;
+}> {
   if (signal?.aborted) throw new Error("Request was aborted");
   if (sessionId) {
     let accountEntries = websocketSessions.get(sessionId);
@@ -674,6 +754,7 @@ async function acquireWebSocket(
       return {
         socket: cached.socket,
         entry: cached,
+        reused: true,
         release(keep) {
           if (!keep || !socketReusable(cached.socket)) {
             closeSocket(cached.socket);
@@ -694,7 +775,7 @@ async function acquireWebSocket(
     }
     if (cached?.busy) {
       const socket = await connectWebSocket(url, headers, signal, timeoutMs);
-      return { socket, release: () => closeSocket(socket) };
+      return { socket, reused: false, release: () => closeSocket(socket) };
     }
 
     const socket = await connectWebSocket(url, headers, signal, timeoutMs);
@@ -708,6 +789,7 @@ async function acquireWebSocket(
     return {
       socket,
       entry,
+      reused: false,
       release(keep) {
         if (!keep || !socketReusable(socket)) {
           closeSocket(socket);
@@ -724,7 +806,7 @@ async function acquireWebSocket(
   }
 
   const socket = await connectWebSocket(url, headers, signal, timeoutMs);
-  return { socket, release: () => closeSocket(socket) };
+  return { socket, reused: false, release: () => closeSocket(socket) };
 }
 
 function requestWithoutHistory(body: JsonRecord): JsonRecord {
@@ -765,6 +847,10 @@ function cachedRequestBody(entry: CachedWebSocket, body: JsonRecord): JsonRecord
     previous_response_id: continuation.lastResponseId,
     input: currentInput.slice(baseline.length),
   };
+}
+
+function requestInputLength(body: JsonRecord): number {
+  return typeof body.input === "string" || Array.isArray(body.input) ? body.input.length : 0;
 }
 
 async function decodeWebSocketData(data: unknown): Promise<string | undefined> {
@@ -1034,6 +1120,24 @@ async function* requestWebSocket(
       options.transport === "auto" || options.transport === "websocket-cached";
     const requestBody =
       useContinuation && acquired.entry ? cachedRequestBody(acquired.entry, body) : body;
+    const stats = sessionId ? getOrCreateWebSocketDebugStats(sessionId) : undefined;
+    if (stats) {
+      stats.requests += 1;
+      if (acquired.reused) stats.connectionsReused += 1;
+      else stats.connectionsCreated += 1;
+      if (useContinuation) stats.cachedContextRequests += 1;
+      if (requestBody.store === true) stats.storeTrueRequests += 1;
+      stats.lastInputItems = requestInputLength(requestBody);
+      if (requestBody.previous_response_id) {
+        stats.deltaRequests += 1;
+        stats.lastDeltaInputItems = requestInputLength(requestBody);
+        stats.lastPreviousResponseId = requestBody.previous_response_id as string;
+      } else {
+        stats.fullContextRequests += 1;
+        delete stats.lastDeltaInputItems;
+        delete stats.lastPreviousResponseId;
+      }
+    }
     acquired.socket.send(JSON.stringify({ type: "response.create", ...requestBody }));
     const responseItems: JsonRecord[] = [];
     let responseId: string | undefined;
@@ -1159,10 +1263,8 @@ export class CodexTransport {
     const requestId = clampPromptCacheKey(cacheSessionId);
     const transport = options.transport ?? "auto";
 
-    const websocketDisabled =
-      transport !== "sse" &&
-      cacheSessionId !== undefined &&
-      websocketFallbackSessions.has(cacheSessionId);
+    const websocketDisabled = transport !== "sse" && isWebSocketSseFallbackActive(cacheSessionId);
+    if (websocketDisabled) recordWebSocketSseFallback(cacheSessionId);
     if (transport !== "sse" && !websocketDisabled) {
       const headers = websocketHeaders(
         model.headers,
@@ -1209,8 +1311,9 @@ export class CodexTransport {
           options.onTransportDiagnostic?.(
             transportDiagnostic(error, transport, emitted, requestBytes),
           );
-          if (cacheSessionId) websocketFallbackSessions.add(cacheSessionId);
+          recordWebSocketFailure(cacheSessionId, error);
           if (emitted) throw error;
+          recordWebSocketSseFallback(cacheSessionId);
           break;
         }
       }
@@ -1234,6 +1337,10 @@ export class CodexTransport {
       }
       websocketSessions.delete(sessionId);
       websocketFallbackSessions.delete(sessionId);
+      const stats = websocketDebugStats.get(sessionId);
+      if (stats?.websocketFallbackActive !== undefined) {
+        stats.websocketFallbackActive = false;
+      }
       return;
     }
     for (const accountEntries of websocketSessions.values()) {
@@ -1244,6 +1351,9 @@ export class CodexTransport {
     }
     websocketSessions.clear();
     websocketFallbackSessions.clear();
+    for (const stats of websocketDebugStats.values()) {
+      if (stats.websocketFallbackActive !== undefined) stats.websocketFallbackActive = false;
+    }
   }
 }
 

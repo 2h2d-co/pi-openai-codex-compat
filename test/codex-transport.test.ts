@@ -3,7 +3,9 @@ import test from "node:test";
 import type { Model } from "@earendil-works/pi-ai";
 import {
   CodexTransport,
+  getOpenAICodexWebSocketDebugStats,
   requestCodexJson,
+  resetOpenAICodexWebSocketDebugStats,
   resolveCodexApiUrl,
   type CodexContinuationHandle,
   type CodexTransportDiagnostic,
@@ -979,6 +981,7 @@ void test("sends full context when a payload hook supplies string input", async 
 });
 
 void test("continues a multi-step conversation with canonical and native replay items", async (t) => {
+  resetOpenAICodexWebSocketDebugStats();
   const previousWebSocket = globalThis.WebSocket;
   const sentBodies: JsonRecord[] = [];
   let connections = 0;
@@ -1109,6 +1112,25 @@ void test("continues a multi-step conversation with canonical and native replay 
   assert.deepEqual(sentBodies[1]?.input, [secondUser]);
   assert.equal(sentBodies[2]?.previous_response_id, "response-2");
   assert.deepEqual(sentBodies[2]?.input, [thirdUser]);
+  const stats = getOpenAICodexWebSocketDebugStats("replay-session");
+  assert.deepEqual(stats, {
+    requests: 3,
+    connectionsCreated: 1,
+    connectionsReused: 2,
+    cachedContextRequests: 3,
+    storeTrueRequests: 0,
+    fullContextRequests: 1,
+    deltaRequests: 2,
+    lastInputItems: 1,
+    lastDeltaInputItems: 1,
+    lastPreviousResponseId: "response-2",
+    websocketFailures: 0,
+    sseFallbacks: 0,
+  });
+  if (stats) stats.requests = 99;
+  assert.equal(getOpenAICodexWebSocketDebugStats("replay-session")?.requests, 3);
+  resetOpenAICodexWebSocketDebugStats("replay-session");
+  assert.equal(getOpenAICodexWebSocketDebugStats("replay-session"), undefined);
   transport.close("replay-session");
 });
 
@@ -1590,6 +1612,7 @@ void test("rejects a pre-aborted request before reusing a cached WebSocket", asy
 });
 
 void test("uses sticky SSE fallback after a midstream WebSocket failure", async (t) => {
+  resetOpenAICodexWebSocketDebugStats("fallback-session");
   const previousWebSocket = globalThis.WebSocket;
   let connections = 0;
   let fetches = 0;
@@ -1681,6 +1704,22 @@ void test("uses sticky SSE fallback after a midstream WebSocket failure", async 
   assert.equal(diagnostics.length, 1);
   assert.equal(diagnostics[0]?.details.phase, "after_message_stream_start");
   assert.equal(diagnostics[0]?.details.fallbackTransport, undefined);
+  assert.deepEqual(getOpenAICodexWebSocketDebugStats("fallback-session"), {
+    requests: 1,
+    connectionsCreated: 1,
+    connectionsReused: 0,
+    cachedContextRequests: 1,
+    storeTrueRequests: 0,
+    fullContextRequests: 1,
+    deltaRequests: 0,
+    lastInputItems: 0,
+    websocketFailures: 1,
+    sseFallbacks: 1,
+    websocketFallbackActive: true,
+    lastWebSocketError: "socket failed after output started",
+  });
+  resetOpenAICodexWebSocketDebugStats("fallback-session");
+  assert.equal(getOpenAICodexWebSocketDebugStats("fallback-session"), undefined);
   transport.close("fallback-session");
 });
 

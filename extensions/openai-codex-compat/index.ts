@@ -13,6 +13,12 @@ import registerCodexRequestOptions from "./request-options.ts";
 import registerCodexSettings from "./settings-pane.ts";
 import registerCodexTools, { syncCodexTools } from "./tools.ts";
 
+export {
+  getOpenAICodexWebSocketDebugStats,
+  resetOpenAICodexWebSocketDebugStats,
+  type OpenAICodexWebSocketDebugStats,
+} from "./codex-transport.ts";
+
 const DISPLAY_NAME = "OpenAI Codex Compat";
 
 function settingsSummary(ctx: ExtensionContext, config: CodexCompatConfig): string {
