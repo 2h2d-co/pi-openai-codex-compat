@@ -14,6 +14,7 @@ import registerCodexSettings from "./settings-pane.ts";
 import registerCodexTools, { syncCodexTools } from "./tools.ts";
 
 export {
+  closeOpenAICodexWebSocketSessions,
   getOpenAICodexWebSocketDebugStats,
   resetOpenAICodexWebSocketDebugStats,
   type OpenAICodexWebSocketDebugStats,

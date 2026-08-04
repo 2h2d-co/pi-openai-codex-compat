@@ -4,7 +4,7 @@
 
 ### Added
 
-- Expose Pi AI-compatible Codex WebSocket debug statistics and reset helpers for connection reuse, continuation deltas, failures, and SSE fallback.
+- Expose Pi AI-compatible Codex WebSocket debug statistics, reset helpers, and force-close control for connection reuse, continuation deltas, failures, and SSE fallback.
 
 ### Changed
 

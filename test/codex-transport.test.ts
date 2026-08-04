@@ -3,6 +3,7 @@ import { createHash } from "node:crypto";
 import test from "node:test";
 import type { Model } from "@earendil-works/pi-ai";
 import {
+  closeOpenAICodexWebSocketSessions,
   CodexTransport,
   getOpenAICodexWebSocketDebugStats,
   requestCodexJson,
@@ -1026,6 +1027,7 @@ void test("continues a multi-step conversation with canonical and native replay 
   const previousWebSocket = globalThis.WebSocket;
   const sentBodies: JsonRecord[] = [];
   let connections = 0;
+  let closes = 0;
   const nativeAssistant = {
     type: "function_call",
     id: "function-2",
@@ -1076,7 +1078,9 @@ void test("continues a multi-step conversation with canonical and native replay 
       });
     }
 
-    close(): void {}
+    close(): void {
+      closes += 1;
+    }
 
     private dispatch(type: string, event: unknown): void {
       for (const listener of this.listeners.get(type) ?? []) listener(event);
@@ -1172,7 +1176,8 @@ void test("continues a multi-step conversation with canonical and native replay 
   assert.equal(getOpenAICodexWebSocketDebugStats("replay-session")?.requests, 3);
   resetOpenAICodexWebSocketDebugStats("replay-session");
   assert.equal(getOpenAICodexWebSocketDebugStats("replay-session"), undefined);
-  transport.close("replay-session");
+  closeOpenAICodexWebSocketSessions("replay-session");
+  assert.equal(closes, 1);
 });
 
 void test("invalidates and re-establishes continuation after a conversation branch", async (t) => {

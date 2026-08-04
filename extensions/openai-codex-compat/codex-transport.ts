@@ -161,6 +161,29 @@ export function resetOpenAICodexWebSocketDebugStats(sessionId?: string): void {
   websocketFallbackSessions.clear();
 }
 
+export function closeOpenAICodexWebSocketSessions(sessionId?: string): void {
+  const closeEntry = (entry: CachedWebSocket): void => {
+    if (entry.idleTimer) clearTimeout(entry.idleTimer);
+    closeSocket(entry.socket, "debug_close");
+  };
+  if (sessionId) {
+    for (const entry of websocketSessions.get(sessionId)?.values() ?? []) closeEntry(entry);
+    websocketSessions.delete(sessionId);
+    websocketFallbackSessions.delete(sessionId);
+    const stats = websocketDebugStats.get(sessionId);
+    if (stats?.websocketFallbackActive !== undefined) stats.websocketFallbackActive = false;
+    return;
+  }
+  for (const accountEntries of websocketSessions.values()) {
+    for (const entry of accountEntries.values()) closeEntry(entry);
+  }
+  websocketSessions.clear();
+  websocketFallbackSessions.clear();
+  for (const stats of websocketDebugStats.values()) {
+    if (stats.websocketFallbackActive !== undefined) stats.websocketFallbackActive = false;
+  }
+}
+
 function isWebSocketSseFallbackActive(sessionId: string | undefined): boolean {
   return sessionId ? websocketFallbackSessions.has(sessionId) : false;
 }
@@ -1324,32 +1347,8 @@ export class CodexTransport {
   }
 
   close(sessionId?: string): void {
-    if (sessionId) {
-      for (const entry of websocketSessions.get(sessionId)?.values() ?? []) {
-        if (entry.idleTimer) clearTimeout(entry.idleTimer);
-        closeSocket(entry.socket, "session_shutdown");
-      }
-      websocketSessions.delete(sessionId);
-      websocketFallbackSessions.delete(sessionId);
-      const stats = websocketDebugStats.get(sessionId);
-      if (stats?.websocketFallbackActive !== undefined) {
-        stats.websocketFallbackActive = false;
-      }
-      return;
-    }
-    for (const accountEntries of websocketSessions.values()) {
-      for (const entry of accountEntries.values()) {
-        if (entry.idleTimer) clearTimeout(entry.idleTimer);
-        closeSocket(entry.socket, "shutdown");
-      }
-    }
-    websocketSessions.clear();
-    websocketFallbackSessions.clear();
-    for (const stats of websocketDebugStats.values()) {
-      if (stats.websocketFallbackActive !== undefined) stats.websocketFallbackActive = false;
-    }
+    closeOpenAICodexWebSocketSessions(sessionId);
   }
 }
 
-const transportCleanup = new CodexTransport();
-registerSessionResourceCleanup((sessionId) => transportCleanup.close(sessionId));
+registerSessionResourceCleanup(closeOpenAICodexWebSocketSessions);
