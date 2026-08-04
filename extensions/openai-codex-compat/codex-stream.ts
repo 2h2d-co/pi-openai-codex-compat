@@ -82,7 +82,7 @@ function appendGrammarDelta(
 ): string | undefined {
   if (buffer.closed) {
     if (close && nextInput === buffer.input) return undefined;
-    throw new Error(`grammar tool input for property "${property}" changed after closure`);
+    throw new Error(`grammar tool input for property "${property}" changed after it was closed`);
   }
   if (!nextInput.startsWith(buffer.input)) {
     throw new Error(`grammar tool input for property "${property}" changed non-monotonically`);

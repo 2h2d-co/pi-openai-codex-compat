@@ -724,11 +724,11 @@ async function connectWebSocket(
       socket.removeEventListener("close", onClose);
       signal?.removeEventListener("abort", onAbort);
     };
-    const fail = (error: Error) => {
+    const fail = (error: Error, closeReason: string) => {
       if (settled) return;
       settled = true;
       cleanup();
-      closeSocket(socket, "connect_failure");
+      closeSocket(socket, closeReason);
       reject(error);
     };
     const onOpen = () => {
@@ -737,10 +737,10 @@ async function connectWebSocket(
       cleanup();
       resolve(socket);
     };
-    const onError = (event: unknown) => fail(extractWebSocketError(event));
+    const onError = (event: unknown) => fail(extractWebSocketError(event), "connect_failure");
     const onClose = (event: unknown) =>
-      fail(extractWebSocketCloseError(event, "WebSocket closed during connect"));
-    const onAbort = () => fail(new Error("Request was aborted"));
+      fail(extractWebSocketCloseError(event, "WebSocket closed during connect"), "connect_failure");
+    const onAbort = () => fail(new Error("Request was aborted"), "aborted");
 
     try {
       socket = new WebSocketClass(url, { headers: requestHeaders });
@@ -754,7 +754,7 @@ async function connectWebSocket(
     signal?.addEventListener("abort", onAbort, { once: true });
     if (timeoutMs > 0) {
       timer = setTimeout(
-        () => fail(new Error(`WebSocket connect timeout after ${timeoutMs}ms`)),
+        () => fail(new Error(`WebSocket connect timeout after ${timeoutMs}ms`), "connect_timeout"),
         timeoutMs,
       );
     }
@@ -808,7 +808,7 @@ async function acquireWebSocket(
       };
     }
     if (cached && !cached.busy) {
-      closeSocket(cached.socket);
+      closeSocket(cached.socket, expired ? "connection_age_limit" : "done");
       accountEntries?.delete(accountId);
       if (accountEntries?.size === 0) websocketSessions.delete(sessionId);
     }
@@ -991,10 +991,14 @@ async function* parseWebSocket(
       await new Promise<void>((resolve, reject) => {
         wake = resolve;
         if (timeoutMs !== undefined && timeoutMs > 0) {
-          const timer = setTimeout(
-            () => reject(new Error(`WebSocket idle timeout after ${timeoutMs}ms`)),
-            timeoutMs,
-          );
+          const timer = setTimeout(() => {
+            const error = new Error(`WebSocket idle timeout after ${timeoutMs}ms`);
+            failure = error;
+            done = true;
+            wake = undefined;
+            closeSocket(socket, "idle_timeout");
+            reject(error);
+          }, timeoutMs);
           const priorWake = wake;
           wake = () => {
             clearTimeout(timer);
@@ -1055,12 +1059,11 @@ function isTerminalEvent(event: JsonRecord): boolean {
 
 async function* requestSse(
   model: Model<any>,
-  body: JsonRecord,
+  bodyJson: string,
   options: CodexTransportOptions,
   headers: Headers,
   timeoutMs: number | undefined,
 ): AsyncGenerator<JsonRecord> {
-  const bodyJson = JSON.stringify(body);
   const compressed = compressBody(bodyJson);
   if (compressed) headers.set("content-encoding", "zstd");
   const requestBody = compressed ?? bodyJson;
@@ -1323,7 +1326,8 @@ export class CodexTransport {
     const timeoutMs = normalizeTimeoutMs(options.timeoutMs);
     const connectTimeoutMs =
       normalizeTimeoutMs(options.websocketConnectTimeoutMs) ?? DEFAULT_WEBSOCKET_CONNECT_TIMEOUT_MS;
-    const requestBytes = new TextEncoder().encode(JSON.stringify(body)).byteLength;
+    const bodyJson = JSON.stringify(body);
+    const requestBytes = new TextEncoder().encode(bodyJson).byteLength;
     const accountId = options.accountId ?? validateCodexAuthentication(model, options.apiKey);
     const cacheSessionId = options.cacheRetention === "none" ? undefined : options.sessionId;
     const requestId = codexCacheKey(cacheSessionId);
@@ -1393,7 +1397,7 @@ export class CodexTransport {
       options.apiKey,
       requestId,
     );
-    yield* requestSse(model, body, options, headers, timeoutMs);
+    yield* requestSse(model, bodyJson, options, headers, timeoutMs);
   }
 
   close(sessionId?: string): void {

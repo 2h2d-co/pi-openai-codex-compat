@@ -48,6 +48,7 @@
 - Snapshot cached WebSocket continuation requests through their JSON wire representation so payload-hook values omitted by JSON serialization cannot break completed responses.
 - Match Pi AI's metadata for non-Error WebSocket failures and its fallback wording for unavailable transports and terminal responses without provider details.
 - Discard WebSockets and continuation state when downstream response parsing or terminal validation fails, report parser diagnostics, and retry a fresh WebSocket on later requests without activating sticky SSE fallback.
+- Reuse one JSON serialization for SSE requests, align outbound WebSocket close reasons, and match Pi AI's closed grammar-input error wording.
 
 ## 0.0.2 - 2026-08-03
 

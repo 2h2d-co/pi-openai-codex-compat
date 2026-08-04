@@ -131,6 +131,43 @@ void test("parses reasoning and grammar tool calls into canonical Pi content", a
   assert.equal(toolCall?.id, "call_1|ctc_1");
 });
 
+void test("matches Pi AI's closed grammar-input error wording", async () => {
+  await assert.rejects(
+    processCodexStream(
+      events([
+        {
+          type: "response.output_item.added",
+          output_index: 0,
+          item: {
+            type: "custom_tool_call",
+            id: "ctc_1",
+            call_id: "call_1",
+            name: "apply_patch",
+            input: "",
+          },
+        },
+        {
+          type: "response.custom_tool_call_input.done",
+          output_index: 0,
+          input: "first",
+        },
+        {
+          type: "response.custom_tool_call_input.done",
+          output_index: 0,
+          input: "changed",
+        },
+      ]),
+      output(),
+      createAssistantMessageEventStream(),
+      model,
+      new Map([["apply_patch", "patch"]]),
+    ),
+    {
+      message: 'grammar tool input for property "patch" changed after it was closed',
+    },
+  );
+});
+
 void test("maps allowlisted Responses namespace calls to dotted Pi tool names", async () => {
   const message = output();
   const stream = createAssistantMessageEventStream();

@@ -218,6 +218,36 @@ void test("finishes SSE requests when the terminal event arrives before EOF", as
   assert.equal(cancelled, true);
 });
 
+void test("serializes SSE request payloads exactly once", async () => {
+  let payloadReads = 0;
+  const request: JsonRecord = { input: [] };
+  Object.defineProperty(request, "marker", {
+    enumerable: true,
+    get() {
+      payloadReads += 1;
+      return payloadReads;
+    },
+  });
+  const terminalEvent = {
+    type: "response.completed",
+    response: { id: "response-1", status: "completed" },
+  };
+
+  for await (const _event of new CodexTransport().request(codexModel(), request, {
+    apiKey: accessToken(),
+    transport: "sse",
+    fetch: async () =>
+      new Response(`data: ${JSON.stringify(terminalEvent)}\n\n`, {
+        status: 200,
+        headers: { "content-type": "text/event-stream" },
+      }),
+  })) {
+    // Consume the response.
+  }
+
+  assert.equal(payloadReads, 1);
+});
+
 void test("preserves SSE read errors when reader cleanup also fails", async () => {
   const response = {
     ok: true,
@@ -379,6 +409,7 @@ void test("validates transport timeouts and reports SSE header timeouts", async 
 
 void test("disables the WebSocket connect timeout when configured as zero", async (t) => {
   const previousWebSocket = globalThis.WebSocket;
+  let closeReason: string | undefined;
 
   class PendingWebSocket {
     addEventListener(): void {}
@@ -386,7 +417,9 @@ void test("disables the WebSocket connect timeout when configured as zero", asyn
     send(): void {
       throw new Error("send should not run before open");
     }
-    close(): void {}
+    close(_code?: number, reason?: string): void {
+      closeReason = reason;
+    }
   }
 
   Object.defineProperty(globalThis, "WebSocket", {
@@ -423,6 +456,137 @@ void test("disables the WebSocket connect timeout when configured as zero", asyn
     { message: "Request was aborted" },
   );
   clearTimeout(timer);
+  assert.equal(closeReason, "aborted");
+});
+
+void test("uses Pi AI's WebSocket timeout and connection-age close reasons", async (t) => {
+  const previousWebSocket = globalThis.WebSocket;
+  const originalDateNow = Date.now;
+  let now = originalDateNow();
+  let mode: "connect-timeout" | "stream-idle" | "complete" = "connect-timeout";
+  let connections = 0;
+  const closeReasons: Array<{ connection: number; reason: string | undefined }> = [];
+  const terminalEvent = {
+    type: "response.completed",
+    response: { id: "response-1", status: "completed" },
+  };
+
+  class CloseReasonWebSocket {
+    readyState = 1;
+    private readonly connection = ++connections;
+    private readonly behavior = mode;
+    private readonly listeners = new Map<string, Set<(event: unknown) => void>>();
+
+    constructor() {
+      if (this.behavior !== "connect-timeout") {
+        queueMicrotask(() => this.dispatch("open", {}));
+      }
+    }
+
+    addEventListener(type: string, listener: (event: unknown) => void): void {
+      const listeners = this.listeners.get(type) ?? new Set();
+      listeners.add(listener);
+      this.listeners.set(type, listeners);
+    }
+
+    removeEventListener(type: string, listener: (event: unknown) => void): void {
+      this.listeners.get(type)?.delete(listener);
+    }
+
+    send(): void {
+      if (this.behavior !== "complete") return;
+      queueMicrotask(() => {
+        this.dispatch("message", { data: JSON.stringify(terminalEvent) });
+      });
+    }
+
+    close(_code?: number, reason?: string): void {
+      this.readyState = 3;
+      closeReasons.push({ connection: this.connection, reason });
+    }
+
+    private dispatch(type: string, event: unknown): void {
+      for (const listener of this.listeners.get(type) ?? []) listener(event);
+    }
+  }
+
+  Object.defineProperty(globalThis, "WebSocket", {
+    configurable: true,
+    writable: true,
+    value: CloseReasonWebSocket,
+  });
+  Date.now = () => now;
+  const transport = new CodexTransport();
+  t.after(() => {
+    transport.close("connection-age-session");
+    Date.now = originalDateNow;
+    Object.defineProperty(globalThis, "WebSocket", {
+      configurable: true,
+      writable: true,
+      value: previousWebSocket,
+    });
+  });
+  const fallback = async () =>
+    new Response(`data: ${JSON.stringify(terminalEvent)}\n\n`, {
+      status: 200,
+      headers: { "content-type": "text/event-stream" },
+    });
+
+  for await (const _event of transport.request(
+    codexModel(),
+    { input: [] },
+    {
+      apiKey: accessToken(),
+      transport: "websocket",
+      websocketConnectTimeoutMs: 1,
+      fetch: fallback,
+    },
+  )) {
+    // Consume the SSE fallback.
+  }
+
+  mode = "stream-idle";
+  for await (const _event of transport.request(
+    codexModel(),
+    { input: [] },
+    {
+      apiKey: accessToken(),
+      transport: "websocket",
+      timeoutMs: 1,
+      fetch: fallback,
+    },
+  )) {
+    // Consume the SSE fallback.
+  }
+
+  mode = "complete";
+  for (let request = 0; request < 2; request++) {
+    for await (const _event of transport.request(
+      codexModel(),
+      { input: [] },
+      {
+        apiKey: accessToken(),
+        sessionId: "connection-age-session",
+        transport: "websocket",
+      },
+    )) {
+      // Consume the WebSocket response.
+    }
+    now += 55 * 60 * 1_000;
+  }
+
+  assert.equal(
+    closeReasons.some((entry) => entry.reason === "connect_timeout"),
+    true,
+  );
+  assert.equal(
+    closeReasons.some((entry) => entry.reason === "idle_timeout"),
+    true,
+  );
+  assert.equal(
+    closeReasons.some((entry) => entry.reason === "connection_age_limit"),
+    true,
+  );
 });
 
 void test("honors server-directed SSE retry delays and their configured cap", async () => {
