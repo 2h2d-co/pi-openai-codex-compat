@@ -124,6 +124,7 @@ function observeRealWebSocketFrames(t: TestContext): JsonRecord[] {
 async function collectTurn(events: AsyncIterable<JsonRecord>): Promise<TurnResult> {
   const items: JsonRecord[] = [];
   let responseId: string | undefined;
+  let completed = false;
   for await (const event of events) {
     if (event.type === "response.created" && isObject(event.response)) {
       if (typeof event.response.id === "string") responseId = event.response.id;
@@ -131,10 +132,19 @@ async function collectTurn(events: AsyncIterable<JsonRecord>): Promise<TurnResul
     if (event.type === "response.output_item.done" && isObject(event.item)) {
       items.push(structuredClone(event.item));
     }
-    if (
-      (event.type === "response.completed" || event.type === "response.incomplete") &&
-      isObject(event.response)
-    ) {
+    assert.notEqual(
+      event.type,
+      "response.incomplete",
+      "Codex returned an incomplete response during a live continuation test",
+    );
+    if (event.type === "response.completed") {
+      assert.ok(isObject(event.response), "Codex completed event did not contain a response");
+      assert.equal(
+        event.response["status"],
+        "completed",
+        "Codex completed event did not report completed status",
+      );
+      completed = true;
       if (typeof event.response.id === "string") responseId = event.response.id;
       if (Array.isArray(event.response["output"])) {
         const terminalItems = event.response["output"].filter(isObject);
@@ -144,6 +154,7 @@ async function collectTurn(events: AsyncIterable<JsonRecord>): Promise<TurnResul
       }
     }
   }
+  assert.equal(completed, true, "Codex response did not complete");
   assert.ok(responseId, "Codex response did not contain a response id");
   return { responseId, items };
 }
