@@ -835,7 +835,7 @@ void test("ignores type-less WebSocket events before selecting SSE fallback", as
   assert.equal(diagnostics[0]?.details.fallbackTransport, "sse");
 });
 
-void test("continues created response IDs with Pi AI's order-sensitive delta checks", async (t) => {
+void test("continues JSON-wire request snapshots with Pi AI's order-sensitive delta checks", async (t) => {
   const previousWebSocket = globalThis.WebSocket;
   const sentBodies: JsonRecord[] = [];
 
@@ -910,14 +910,24 @@ void test("continues created response IDs with Pi AI's order-sensitive delta che
   const transport = new CodexTransport();
   for await (const _event of transport.request(
     codexModel(),
-    { model: "gpt-test", instructions: "same", input: [firstInput] },
+    {
+      model: "gpt-test",
+      instructions: "same",
+      input: [firstInput],
+      omittedFromJson: () => "first",
+    },
     options,
   )) {
     // Consume the response.
   }
   for await (const _event of transport.request(
     codexModel(),
-    { model: "gpt-test", instructions: "same", input: [firstInput, nextInput] },
+    {
+      model: "gpt-test",
+      instructions: "same",
+      input: [firstInput, nextInput],
+      omittedFromJson: () => "second",
+    },
     options,
   )) {
     // Consume the response.
@@ -946,6 +956,8 @@ void test("continues created response IDs with Pi AI's order-sensitive delta che
   }
 
   assert.equal(sentBodies.length, 4);
+  assert.equal(sentBodies[0]?.["omittedFromJson"], undefined);
+  assert.equal(sentBodies[1]?.["omittedFromJson"], undefined);
   assert.equal(sentBodies[1]?.previous_response_id, "response-created");
   assert.deepEqual(sentBodies[1]?.input, [nextInput]);
   assert.equal(sentBodies[2]?.previous_response_id, undefined);

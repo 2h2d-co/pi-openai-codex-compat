@@ -45,6 +45,7 @@
 - Represent overlong Codex cache identifiers with collision-resistant 64-character SHA-256 hex values instead of truncating them.
 - Prevent SSE reader cleanup failures from masking the original Codex stream error.
 - Reject malformed Codex credentials whose account identifier is empty.
+- Snapshot cached WebSocket continuation requests through their JSON wire representation so payload-hook values omitted by JSON serialization cannot break completed responses.
 
 ## 0.0.2 - 2026-08-03
 

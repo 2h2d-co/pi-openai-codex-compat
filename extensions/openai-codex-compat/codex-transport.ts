@@ -831,10 +831,18 @@ async function acquireWebSocket(
 }
 
 function requestWithoutHistory(body: JsonRecord): JsonRecord {
-  const result = structuredClone(body);
+  const result = { ...body };
   delete result.input;
   delete result.previous_response_id;
   return result;
+}
+
+function jsonWireRequestBody(body: JsonRecord): JsonRecord {
+  const snapshot = JSON.parse(JSON.stringify(body)) as unknown;
+  if (!isObject(snapshot)) {
+    throw new Error("Codex request body must serialize to a JSON object");
+  }
+  return snapshot;
 }
 
 function cachedRequestBody(entry: CachedWebSocket, body: JsonRecord): JsonRecord {
@@ -1139,8 +1147,9 @@ async function* requestWebSocket(
     if (options.signal?.aborted) throw new Error("Request was aborted");
     const useContinuation =
       options.transport === "auto" || options.transport === "websocket-cached";
+    const fullBody = useContinuation && acquired.entry ? jsonWireRequestBody(body) : body;
     const requestBody =
-      useContinuation && acquired.entry ? cachedRequestBody(acquired.entry, body) : body;
+      useContinuation && acquired.entry ? cachedRequestBody(acquired.entry, fullBody) : fullBody;
     const stats = sessionId ? getOrCreateWebSocketDebugStats(sessionId) : undefined;
     if (stats) {
       stats.requests += 1;
@@ -1200,7 +1209,7 @@ async function* requestWebSocket(
     if (useContinuation && acquired.entry && responseId) {
       const entry = acquired.entry;
       const continuation = {
-        lastRequestBody: structuredClone(body),
+        lastRequestBody: fullBody,
         lastResponseId: responseId,
         lastResponseItems: responseItems.map(normalizeReplayItem),
       };
