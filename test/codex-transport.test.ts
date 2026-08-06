@@ -11,6 +11,8 @@ import {
   resolveCodexApiUrl,
   type CodexContinuationHandle,
   type CodexTransportDiagnostic,
+  type CodexTransportFailureDiagnostic,
+  type CodexTransportRecoveryDiagnostic,
 } from "../extensions/openai-codex-compat/codex-transport.ts";
 import type { JsonRecord } from "../extensions/openai-codex-compat/codex-protocol.ts";
 
@@ -37,6 +39,26 @@ function accessToken(accountId = "account-1"): string {
     }),
   ).toString("base64url");
   return `${header}.${claims}.signature`;
+}
+
+function transportFailure(
+  diagnostic: CodexTransportDiagnostic | undefined,
+): CodexTransportFailureDiagnostic {
+  assert.ok(diagnostic);
+  if (diagnostic.type !== "provider_transport_failure") {
+    assert.fail(`Expected a transport failure diagnostic, received ${diagnostic.type}`);
+  }
+  return diagnostic;
+}
+
+function transportRecovery(
+  diagnostic: CodexTransportDiagnostic | undefined,
+): CodexTransportRecoveryDiagnostic {
+  assert.ok(diagnostic);
+  if (diagnostic.type !== "codex_transport_recovery") {
+    assert.fail(`Expected a transport recovery diagnostic, received ${diagnostic.type}`);
+  }
+  return diagnostic;
 }
 
 function rawMessageItem(id: string, text: string): JsonRecord {
@@ -994,9 +1016,14 @@ void test("ignores type-less WebSocket events before selecting SSE fallback", as
 
   assert.deepEqual(events, [terminal]);
   assert.equal(starts, 1);
-  assert.equal(diagnostics.length, 1);
-  assert.equal(diagnostics[0]?.details.eventsEmitted, false);
-  assert.equal(diagnostics[0]?.details.fallbackTransport, "sse");
+  assert.equal(diagnostics.length, 2);
+  const failure = transportFailure(diagnostics[0]);
+  assert.equal(failure.details.eventsEmitted, false);
+  assert.equal(failure.details.fallbackTransport, "sse");
+  const recovery = transportRecovery(diagnostics[1]);
+  assert.equal(recovery.details.trigger, "sse_after_websocket_failure");
+  assert.equal(recovery.details.attempts[0]?.transport, "sse");
+  assert.equal(recovery.details.cacheIdentityPreserved, false);
 });
 
 void test("matches Pi AI's recovered WebSocket failure diagnostics", async (t) => {
@@ -1013,7 +1040,7 @@ void test("matches Pi AI's recovered WebSocket failure diagnostics", async (t) =
     type: "response.completed",
     response: { id: "response-sse", status: "completed" },
   };
-  const request = async (): Promise<CodexTransportDiagnostic> => {
+  const request = async (): Promise<CodexTransportFailureDiagnostic> => {
     const diagnostics: CodexTransportDiagnostic[] = [];
     for await (const _event of new CodexTransport().request(
       codexModel(),
@@ -1033,8 +1060,9 @@ void test("matches Pi AI's recovered WebSocket failure diagnostics", async (t) =
     )) {
       // Consume the SSE recovery response.
     }
-    assert.equal(diagnostics.length, 1);
-    return diagnostics[0]!;
+    assert.equal(diagnostics.length, 2);
+    assert.equal(transportRecovery(diagnostics[1]).details.trigger, "sse_after_websocket_failure");
+    return transportFailure(diagnostics[0]);
   };
 
   Object.defineProperty(globalThis, "WebSocket", {
@@ -1088,6 +1116,7 @@ void test("matches Pi AI's recovered WebSocket failure diagnostics", async (t) =
 void test("continues JSON-wire request snapshots with Pi AI's order-sensitive delta checks", async (t) => {
   const previousWebSocket = globalThis.WebSocket;
   const sentBodies: JsonRecord[] = [];
+  const diagnostics: CodexTransportDiagnostic[] = [];
 
   class CreatedIdWebSocket {
     readonly readyState = 1;
@@ -1156,6 +1185,9 @@ void test("continues JSON-wire request snapshots with Pi AI's order-sensitive de
     apiKey: accessToken(),
     sessionId: "created-id-session",
     transport: "websocket-cached" as const,
+    onTransportDiagnostic(diagnostic: CodexTransportDiagnostic) {
+      diagnostics.push(diagnostic);
+    },
   };
   const transport = new CodexTransport();
   for await (const _event of transport.request(
@@ -1219,6 +1251,15 @@ void test("continues JSON-wire request snapshots with Pi AI's order-sensitive de
     thirdInput,
     fourthInput,
   ]);
+  assert.equal(diagnostics.length, 2);
+  const templateBypass = transportRecovery(diagnostics[0]);
+  assert.equal(templateBypass.details.trigger, "local_continuation_bypass");
+  assert.equal(templateBypass.details.continuationBypassReason, "request_template_changed");
+  assert.equal(templateBypass.details.previousResponseId, "response-2");
+  assert.equal(templateBypass.details.attempts[0]?.contextMode, "full");
+  const historyBypass = transportRecovery(diagnostics[1]);
+  assert.equal(historyBypass.details.continuationBypassReason, "history_prefix_changed");
+  assert.equal(historyBypass.details.previousResponseId, "response-3");
   transport.close("created-id-session");
 });
 
@@ -1737,6 +1778,7 @@ void test("does not mask malformed WebSocket events with SSE fallback", async (t
 void test("recovers when a cached WebSocket continuation expires", async (t) => {
   const previousWebSocket = globalThis.WebSocket;
   const sentBodies: JsonRecord[] = [];
+  const diagnostics: CodexTransportDiagnostic[] = [];
   let connections = 0;
 
   class MissingContinuationWebSocket {
@@ -1826,6 +1868,9 @@ void test("recovers when a cached WebSocket continuation expires", async (t) => 
     apiKey: accessToken(),
     sessionId: "continuation-session",
     transport: "websocket-cached" as const,
+    onTransportDiagnostic(diagnostic: CodexTransportDiagnostic) {
+      diagnostics.push(diagnostic);
+    },
   };
   const firstUser = { role: "user", content: [{ type: "input_text", text: "first" }] };
   const firstAssistant = {
@@ -1837,12 +1882,19 @@ void test("recovers when a cached WebSocket continuation expires", async (t) => 
   };
   const secondUser = { role: "user", content: [{ type: "input_text", text: "second" }] };
 
-  for await (const _event of transport.request(codexModel(), { input: [firstUser] }, options)) {
+  for await (const _event of transport.request(
+    codexModel(),
+    { input: [firstUser], prompt_cache_key: "continuation-session" },
+    options,
+  )) {
     // Establish the cached continuation.
   }
   for await (const _event of transport.request(
     codexModel(),
-    { input: [firstUser, firstAssistant, secondUser] },
+    {
+      input: [firstUser, firstAssistant, secondUser],
+      prompt_cache_key: "continuation-session",
+    },
     options,
   )) {
     // Recover the expired continuation with full history.
@@ -1854,6 +1906,41 @@ void test("recovers when a cached WebSocket continuation expires", async (t) => 
   assert.deepEqual(sentBodies[1]?.input, [secondUser]);
   assert.equal(sentBodies[2]?.previous_response_id, undefined);
   assert.deepEqual(sentBodies[2]?.input, [firstUser, firstAssistant, secondUser]);
+  assert.equal(diagnostics.length, 1);
+  const recovery = transportRecovery(diagnostics[0]);
+  assert.equal(recovery.details.trigger, "previous_response_not_found");
+  assert.equal(recovery.details.previousResponseId, "response-1");
+  assert.equal(recovery.details.cacheAffinityEnabled, true);
+  assert.equal(recovery.details.cacheIdentityPreserved, true);
+  assert.equal(recovery.details.promptKeyAndHeaderAligned, true);
+  assert.deepEqual(
+    recovery.details.attempts.map((attempt) => ({
+      transport: attempt.transport,
+      connection: attempt.connection,
+      contextMode: attempt.contextMode,
+      inputItems: attempt.inputItems,
+      fullInputItems: attempt.fullInputItems,
+      outcome: attempt.outcome,
+    })),
+    [
+      {
+        transport: "websocket",
+        connection: "reused",
+        contextMode: "delta",
+        inputItems: 1,
+        fullInputItems: 3,
+        outcome: "previous_response_not_found",
+      },
+      {
+        transport: "websocket",
+        connection: "new",
+        contextMode: "full",
+        inputItems: 3,
+        fullInputItems: 3,
+        outcome: "retry_scheduled",
+      },
+    ],
+  );
   transport.close("continuation-session");
 });
 
@@ -2029,9 +2116,15 @@ void test("uses sticky SSE fallback after a midstream WebSocket failure", async 
 
   assert.equal(connections, 1);
   assert.equal(fetches, 1);
-  assert.equal(diagnostics.length, 1);
-  assert.equal(diagnostics[0]?.details.phase, "after_message_stream_start");
-  assert.equal(diagnostics[0]?.details.fallbackTransport, undefined);
+  assert.equal(diagnostics.length, 2);
+  const failure = transportFailure(diagnostics[0]);
+  assert.equal(failure.details.phase, "after_message_stream_start");
+  assert.equal(failure.details.fallbackTransport, undefined);
+  const recovery = transportRecovery(diagnostics[1]);
+  assert.equal(recovery.details.trigger, "sticky_sse_after_websocket_failure");
+  assert.equal(recovery.details.cacheIdentityPreserved, true);
+  assert.equal(recovery.details.accountIdentityPreserved, true);
+  assert.equal(recovery.details.attempts[0]?.transport, "sse");
   assert.deepEqual(getOpenAICodexWebSocketDebugStats("fallback-session"), {
     requests: 1,
     connectionsCreated: 1,

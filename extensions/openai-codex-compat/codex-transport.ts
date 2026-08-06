@@ -44,7 +44,7 @@ export type CodexJsonRequestOptions = {
   fetch?: typeof fetch;
 };
 
-export type CodexTransportDiagnostic = {
+export type CodexTransportFailureDiagnostic = {
   type: "provider_transport_failure";
   timestamp: number;
   error: {
@@ -61,6 +61,46 @@ export type CodexTransportDiagnostic = {
     requestBytes: number;
   };
 };
+
+export type CodexContinuationBypassReason =
+  | "request_template_changed"
+  | "non_array_input"
+  | "history_prefix_changed";
+
+type CodexTransportRecoveryAttempt = {
+  transport: "websocket" | "sse";
+  connection?: "new" | "reused";
+  contextMode: "full" | "delta";
+  inputItems: number;
+  fullInputItems: number;
+  fullRequestBytes: number;
+  wireRequestBytes: number;
+  outcome: "selected" | "previous_response_not_found" | "retry_scheduled";
+};
+
+export type CodexTransportRecoveryDiagnostic = {
+  type: "codex_transport_recovery";
+  timestamp: number;
+  details: {
+    trigger:
+      | "previous_response_not_found"
+      | "local_continuation_bypass"
+      | "sse_after_websocket_failure"
+      | "sticky_sse_after_websocket_failure";
+    configuredTransport: string;
+    previousResponseId?: string;
+    continuationBypassReason?: CodexContinuationBypassReason;
+    attempts: CodexTransportRecoveryAttempt[];
+    cacheAffinityEnabled: boolean;
+    cacheIdentityPreserved?: boolean;
+    promptKeyAndHeaderAligned: boolean;
+    accountIdentityPreserved?: boolean;
+  };
+};
+
+export type CodexTransportDiagnostic =
+  | CodexTransportFailureDiagnostic
+  | CodexTransportRecoveryDiagnostic;
 
 export type CodexContinuationHandle = {
   readonly responseId: string;
@@ -126,8 +166,19 @@ type CachedWebSocket = {
   };
 };
 
+type CacheIdentitySnapshot = {
+  promptCacheKey: string | undefined;
+  sessionHeader: string | null;
+  clientRequestHeader: string | null;
+  accountId: string;
+};
+
+type WebSocketFallbackSession = {
+  cacheIdentity: CacheIdentitySnapshot;
+};
+
 const websocketSessions = new Map<string, Map<string, CachedWebSocket>>();
-const websocketFallbackSessions = new Set<string>();
+const websocketFallbackSessions = new Map<string, WebSocketFallbackSession>();
 const websocketDebugStats = new Map<string, OpenAICodexWebSocketDebugStats>();
 
 function getOrCreateWebSocketDebugStats(sessionId: string): OpenAICodexWebSocketDebugStats {
@@ -194,6 +245,12 @@ function isWebSocketSseFallbackActive(sessionId: string | undefined): boolean {
   return sessionId ? websocketFallbackSessions.has(sessionId) : false;
 }
 
+function webSocketFallbackSession(
+  sessionId: string | undefined,
+): WebSocketFallbackSession | undefined {
+  return sessionId ? websocketFallbackSessions.get(sessionId) : undefined;
+}
+
 function recordWebSocketSseFallback(sessionId: string | undefined): void {
   if (!sessionId) return;
   const stats = getOrCreateWebSocketDebugStats(sessionId);
@@ -201,9 +258,13 @@ function recordWebSocketSseFallback(sessionId: string | undefined): void {
   stats.websocketFallbackActive = isWebSocketSseFallbackActive(sessionId);
 }
 
-function recordWebSocketFailure(sessionId: string | undefined, error: unknown): void {
+function recordWebSocketFailure(
+  sessionId: string | undefined,
+  error: unknown,
+  cacheIdentity: CacheIdentitySnapshot,
+): void {
   if (!sessionId) return;
-  websocketFallbackSessions.add(sessionId);
+  websocketFallbackSessions.set(sessionId, { cacheIdentity });
   const stats = getOrCreateWebSocketDebugStats(sessionId);
   stats.websocketFailures += 1;
   stats.lastWebSocketError = thrownMessage(error);
@@ -320,7 +381,7 @@ function isPreviousResponseNotFoundError(error: unknown): boolean {
   return error instanceof CodexApiError && error.code === PREVIOUS_RESPONSE_NOT_FOUND_CODE;
 }
 
-function diagnosticError(error: unknown): CodexTransportDiagnostic["error"] {
+function diagnosticError(error: unknown): CodexTransportFailureDiagnostic["error"] {
   if (!(error instanceof Error)) {
     return { name: "ThrownValue", message: thrownMessage(error) };
   }
@@ -338,7 +399,7 @@ function transportDiagnostic(
   transport: string,
   emitted: boolean,
   requestBytes: number,
-): CodexTransportDiagnostic {
+): CodexTransportFailureDiagnostic {
   return {
     type: "provider_transport_failure",
     timestamp: Date.now(),
@@ -476,6 +537,81 @@ function combineAbortSignals(signals: readonly (AbortSignal | undefined)[]): {
   };
 }
 
+function webSocketRecoveryAttempt(
+  attempt: CodexWebSocketAttempt,
+  outcome: CodexTransportRecoveryAttempt["outcome"],
+): CodexTransportRecoveryAttempt {
+  return {
+    transport: "websocket",
+    connection: attempt.connection,
+    contextMode: attempt.contextMode,
+    inputItems: attempt.inputItems,
+    fullInputItems: attempt.fullInputItems,
+    fullRequestBytes: attempt.fullRequestBytes,
+    wireRequestBytes: attempt.wireRequestBytes,
+    outcome,
+  };
+}
+
+function sseRecoveryAttempt(body: JsonRecord, requestBytes: number): CodexTransportRecoveryAttempt {
+  const inputItems = requestInputLength(body);
+  return {
+    transport: "sse",
+    contextMode: "full",
+    inputItems,
+    fullInputItems: inputItems,
+    fullRequestBytes: requestBytes,
+    wireRequestBytes: requestBytes,
+    outcome: "selected",
+  };
+}
+
+function transportRecoveryDiagnostic(options: {
+  trigger: CodexTransportRecoveryDiagnostic["details"]["trigger"];
+  configuredTransport: string;
+  attempts: CodexTransportRecoveryAttempt[];
+  cacheIdentity: CacheIdentitySnapshot;
+  previousResponseId?: string;
+  continuationBypassReason?: CodexContinuationBypassReason;
+  previousCacheIdentity?: CacheIdentitySnapshot;
+  cacheIdentityPreserved?: boolean;
+  accountIdentityPreserved?: boolean;
+}): CodexTransportRecoveryDiagnostic {
+  return {
+    type: "codex_transport_recovery",
+    timestamp: Date.now(),
+    details: {
+      trigger: options.trigger,
+      configuredTransport: options.configuredTransport,
+      ...(options.previousResponseId ? { previousResponseId: options.previousResponseId } : {}),
+      ...(options.continuationBypassReason
+        ? { continuationBypassReason: options.continuationBypassReason }
+        : {}),
+      attempts: options.attempts,
+      cacheAffinityEnabled: cacheAffinityEnabled(options.cacheIdentity),
+      ...(options.cacheIdentityPreserved !== undefined
+        ? { cacheIdentityPreserved: options.cacheIdentityPreserved }
+        : options.previousCacheIdentity
+          ? {
+              cacheIdentityPreserved: sameCacheIdentity(
+                options.previousCacheIdentity,
+                options.cacheIdentity,
+              ),
+            }
+          : {}),
+      ...(options.accountIdentityPreserved !== undefined
+        ? { accountIdentityPreserved: options.accountIdentityPreserved }
+        : options.previousCacheIdentity
+          ? {
+              accountIdentityPreserved:
+                options.previousCacheIdentity.accountId === options.cacheIdentity.accountId,
+            }
+          : {}),
+      promptKeyAndHeaderAligned: promptKeyAndHeaderAligned(options.cacheIdentity),
+    },
+  };
+}
+
 function headersToRecord(headers: Headers): Record<string, string> {
   return Object.fromEntries(headers.entries());
 }
@@ -597,6 +733,43 @@ function websocketHeaders(
   headers.set("x-client-request-id", requestId);
   headers.set("session-id", requestId);
   return headers;
+}
+
+function cacheIdentitySnapshot(
+  body: JsonRecord,
+  headers: Headers,
+  accountId: string,
+): CacheIdentitySnapshot {
+  return {
+    promptCacheKey: typeof body.prompt_cache_key === "string" ? body.prompt_cache_key : undefined,
+    sessionHeader: headers.get("session-id"),
+    clientRequestHeader: headers.get("x-client-request-id"),
+    accountId,
+  };
+}
+
+function cacheAffinityEnabled(identity: CacheIdentitySnapshot): boolean {
+  return Boolean(identity.promptCacheKey || identity.sessionHeader || identity.clientRequestHeader);
+}
+
+function promptKeyAndHeaderAligned(identity: CacheIdentitySnapshot): boolean {
+  return Boolean(
+    identity.promptCacheKey &&
+    identity.promptCacheKey === identity.sessionHeader &&
+    identity.promptCacheKey === identity.clientRequestHeader,
+  );
+}
+
+function sameCacheIdentity(a: CacheIdentitySnapshot, b: CacheIdentitySnapshot): boolean {
+  return (
+    a.promptCacheKey === b.promptCacheKey &&
+    a.sessionHeader === b.sessionHeader &&
+    a.clientRequestHeader === b.clientRequestHeader
+  );
+}
+
+function serializedBytes(value: string): number {
+  return new TextEncoder().encode(value).byteLength;
 }
 
 function compressBody(body: string): Uint8Array | undefined {
@@ -863,22 +1036,57 @@ function jsonWireRequestBody(body: JsonRecord): JsonRecord {
   return snapshot;
 }
 
-function cachedRequestBody(entry: CachedWebSocket, body: JsonRecord): JsonRecord {
+type CachedRequestDecision = {
+  body: JsonRecord;
+  contextMode: "full" | "delta";
+  previousResponseId?: string;
+  bypassReason?: CodexContinuationBypassReason;
+  cacheIdentityPreserved?: boolean;
+};
+
+type CodexWebSocketAttempt = {
+  connection: "new" | "reused";
+  contextMode: "full" | "delta";
+  inputItems: number;
+  fullInputItems: number;
+  fullRequestBytes: number;
+  wireRequestBytes: number;
+  previousResponseId?: string;
+  bypassReason?: CodexContinuationBypassReason;
+  cacheIdentityPreserved?: boolean;
+};
+
+function cachedRequestBody(entry: CachedWebSocket, body: JsonRecord): CachedRequestDecision {
   const continuation = entry.continuation;
-  if (!continuation) return body;
+  if (!continuation) return { body, contextMode: "full" };
+  const previousResponseId = continuation.lastResponseId;
+  const cacheIdentityPreserved =
+    continuation.lastRequestBody.prompt_cache_key === body.prompt_cache_key;
   if (
     JSON.stringify(requestWithoutHistory(body)) !==
     JSON.stringify(requestWithoutHistory(continuation.lastRequestBody))
   ) {
     delete entry.continuation;
-    return body;
+    return {
+      body,
+      contextMode: "full",
+      previousResponseId,
+      bypassReason: "request_template_changed",
+      cacheIdentityPreserved,
+    };
   }
 
   const currentInput = body.input ?? [];
   const previousInput = continuation.lastRequestBody.input ?? [];
   if (!Array.isArray(currentInput) || !Array.isArray(previousInput)) {
     delete entry.continuation;
-    return body;
+    return {
+      body,
+      contextMode: "full",
+      previousResponseId,
+      bypassReason: "non_array_input",
+      cacheIdentityPreserved,
+    };
   }
   const baseline = [...previousInput, ...continuation.lastResponseItems];
   if (
@@ -886,13 +1094,24 @@ function cachedRequestBody(entry: CachedWebSocket, body: JsonRecord): JsonRecord
     JSON.stringify(currentInput.slice(0, baseline.length)) !== JSON.stringify(baseline)
   ) {
     delete entry.continuation;
-    return body;
+    return {
+      body,
+      contextMode: "full",
+      previousResponseId,
+      bypassReason: "history_prefix_changed",
+      cacheIdentityPreserved,
+    };
   }
 
   return {
-    ...body,
-    previous_response_id: continuation.lastResponseId,
-    input: currentInput.slice(baseline.length),
+    body: {
+      ...body,
+      previous_response_id: previousResponseId,
+      input: currentInput.slice(baseline.length),
+    },
+    contextMode: "delta",
+    previousResponseId,
+    cacheIdentityPreserved,
   };
 }
 
@@ -1153,6 +1372,7 @@ async function* requestWebSocket(
   timeoutMs: number | undefined,
   connectTimeoutMs: number,
   requestBytes: number,
+  onAttempt: (attempt: CodexWebSocketAttempt) => void,
 ): AsyncGenerator<JsonRecord> {
   const acquired = await acquireWebSocket(
     resolveCodexWebSocketUrl(model.baseUrl),
@@ -1176,8 +1396,26 @@ async function* requestWebSocket(
     const useContinuation =
       options.transport === "auto" || options.transport === "websocket-cached";
     const fullBody = useContinuation && acquired.entry ? jsonWireRequestBody(body) : body;
-    const requestBody =
-      useContinuation && acquired.entry ? cachedRequestBody(acquired.entry, fullBody) : fullBody;
+    const decision =
+      useContinuation && acquired.entry
+        ? cachedRequestBody(acquired.entry, fullBody)
+        : ({ body: fullBody, contextMode: "full" } satisfies CachedRequestDecision);
+    const requestBody = decision.body;
+    const fullRequestJson = JSON.stringify({ type: "response.create", ...fullBody });
+    const wireRequestJson = JSON.stringify({ type: "response.create", ...requestBody });
+    onAttempt({
+      connection: acquired.reused ? "reused" : "new",
+      contextMode: decision.contextMode,
+      inputItems: requestInputLength(requestBody),
+      fullInputItems: requestInputLength(fullBody),
+      fullRequestBytes: serializedBytes(fullRequestJson),
+      wireRequestBytes: serializedBytes(wireRequestJson),
+      ...(decision.previousResponseId ? { previousResponseId: decision.previousResponseId } : {}),
+      ...(decision.bypassReason ? { bypassReason: decision.bypassReason } : {}),
+      ...(decision.cacheIdentityPreserved === undefined
+        ? {}
+        : { cacheIdentityPreserved: decision.cacheIdentityPreserved }),
+    });
     const stats = sessionId ? getOrCreateWebSocketDebugStats(sessionId) : undefined;
     if (stats) {
       stats.requests += 1;
@@ -1206,7 +1444,7 @@ async function* requestWebSocket(
         return true;
       },
     });
-    acquired.socket.send(JSON.stringify({ type: "response.create", ...requestBody }));
+    acquired.socket.send(wireRequestJson);
     const responseItems: JsonRecord[] = [];
     let responseId: string | undefined;
     for await (const event of parseWebSocket(acquired.socket, options.signal, timeoutMs)) {
@@ -1327,13 +1565,26 @@ export class CodexTransport {
     const connectTimeoutMs =
       normalizeTimeoutMs(options.websocketConnectTimeoutMs) ?? DEFAULT_WEBSOCKET_CONNECT_TIMEOUT_MS;
     const bodyJson = JSON.stringify(body);
-    const requestBytes = new TextEncoder().encode(bodyJson).byteLength;
+    const requestBytes = serializedBytes(bodyJson);
     const accountId = options.accountId ?? validateCodexAuthentication(model, options.apiKey);
     const cacheSessionId = options.cacheRetention === "none" ? undefined : options.sessionId;
     const requestId = codexCacheKey(cacheSessionId);
     const transport = options.transport ?? "auto";
 
     const websocketDisabled = transport !== "sse" && isWebSocketSseFallbackActive(cacheSessionId);
+    let sseRecovery:
+      | {
+          trigger: "sse_after_websocket_failure" | "sticky_sse_after_websocket_failure";
+          previousCacheIdentity: CacheIdentitySnapshot;
+        }
+      | undefined;
+    const existingFallback = webSocketFallbackSession(cacheSessionId);
+    if (websocketDisabled && existingFallback) {
+      sseRecovery = {
+        trigger: "sticky_sse_after_websocket_failure",
+        previousCacheIdentity: existingFallback.cacheIdentity,
+      };
+    }
     if (websocketDisabled) recordWebSocketSseFallback(cacheSessionId);
     if (transport !== "sse" && !websocketDisabled) {
       const headers = websocketHeaders(
@@ -1343,10 +1594,12 @@ export class CodexTransport {
         options.apiKey,
         requestId || uuidv7(),
       );
+      const webSocketCacheIdentity = cacheIdentitySnapshot(body, headers, accountId);
       let retriedConnectionLimit = false;
       let retriedMissingContinuation = false;
       while (true) {
         let emitted = false;
+        let attempt: CodexWebSocketAttempt | undefined;
         try {
           for await (const event of requestWebSocket(
             model,
@@ -1358,6 +1611,26 @@ export class CodexTransport {
             timeoutMs,
             connectTimeoutMs,
             requestBytes,
+            (currentAttempt) => {
+              attempt = currentAttempt;
+              if (!currentAttempt.bypassReason) return;
+              options.onTransportDiagnostic?.(
+                transportRecoveryDiagnostic({
+                  trigger: "local_continuation_bypass",
+                  configuredTransport: transport,
+                  attempts: [webSocketRecoveryAttempt(currentAttempt, "selected")],
+                  cacheIdentity: webSocketCacheIdentity,
+                  ...(currentAttempt.previousResponseId
+                    ? { previousResponseId: currentAttempt.previousResponseId }
+                    : {}),
+                  continuationBypassReason: currentAttempt.bypassReason,
+                  ...(currentAttempt.cacheIdentityPreserved === undefined
+                    ? {}
+                    : { cacheIdentityPreserved: currentAttempt.cacheIdentityPreserved }),
+                  accountIdentityPreserved: true,
+                }),
+              );
+            },
           )) {
             if (!emitted) options.onTransportStart?.();
             emitted = true;
@@ -1370,6 +1643,33 @@ export class CodexTransport {
             !emitted && isWebSocketConnectionLimitReachedError(error);
           if (!aborted && isPreviousResponseNotFoundError(error) && !retriedMissingContinuation) {
             retriedMissingContinuation = true;
+            if (attempt) {
+              options.onTransportDiagnostic?.(
+                transportRecoveryDiagnostic({
+                  trigger: "previous_response_not_found",
+                  configuredTransport: transport,
+                  attempts: [
+                    webSocketRecoveryAttempt(attempt, "previous_response_not_found"),
+                    {
+                      transport: "websocket",
+                      connection: "new",
+                      contextMode: "full",
+                      inputItems: attempt.fullInputItems,
+                      fullInputItems: attempt.fullInputItems,
+                      fullRequestBytes: attempt.fullRequestBytes,
+                      wireRequestBytes: attempt.fullRequestBytes,
+                      outcome: "retry_scheduled",
+                    },
+                  ],
+                  cacheIdentity: webSocketCacheIdentity,
+                  ...(attempt.previousResponseId
+                    ? { previousResponseId: attempt.previousResponseId }
+                    : {}),
+                  cacheIdentityPreserved: true,
+                  accountIdentityPreserved: true,
+                }),
+              );
+            }
             continue;
           }
           if (!aborted && connectionLimitBeforeStart && !retriedConnectionLimit) {
@@ -1382,9 +1682,13 @@ export class CodexTransport {
           options.onTransportDiagnostic?.(
             transportDiagnostic(error, transport, emitted, requestBytes),
           );
-          recordWebSocketFailure(cacheSessionId, error);
+          recordWebSocketFailure(cacheSessionId, error, webSocketCacheIdentity);
           if (emitted) throw error;
           recordWebSocketSseFallback(cacheSessionId);
+          sseRecovery = {
+            trigger: "sse_after_websocket_failure",
+            previousCacheIdentity: webSocketCacheIdentity,
+          };
           break;
         }
       }
@@ -1397,6 +1701,18 @@ export class CodexTransport {
       options.apiKey,
       requestId,
     );
+    if (sseRecovery) {
+      const sseCacheIdentity = cacheIdentitySnapshot(body, headers, accountId);
+      options.onTransportDiagnostic?.(
+        transportRecoveryDiagnostic({
+          trigger: sseRecovery.trigger,
+          configuredTransport: transport,
+          attempts: [sseRecoveryAttempt(body, requestBytes)],
+          cacheIdentity: sseCacheIdentity,
+          previousCacheIdentity: sseRecovery.previousCacheIdentity,
+        }),
+      );
+    }
     yield* requestSse(model, bodyJson, options, headers, timeoutMs);
   }
 

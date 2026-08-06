@@ -340,6 +340,65 @@ void test("retains recovered transport diagnostics on assistant messages", async
   assert.deepEqual(message.diagnostics, [diagnostic]);
 });
 
+void test("persists transparent Codex recovery diagnostics on successful assistants", async () => {
+  const user = userEntry("user-1", "hello");
+  const harness = createHarness([user]);
+  const diagnostic: CodexTransportDiagnostic = {
+    type: "codex_transport_recovery",
+    timestamp: Date.now(),
+    details: {
+      trigger: "previous_response_not_found",
+      configuredTransport: "auto",
+      previousResponseId: "response-previous",
+      attempts: [
+        {
+          transport: "websocket",
+          connection: "reused",
+          contextMode: "delta",
+          inputItems: 1,
+          fullInputItems: 3,
+          fullRequestBytes: 300,
+          wireRequestBytes: 100,
+          outcome: "previous_response_not_found",
+        },
+        {
+          transport: "websocket",
+          connection: "new",
+          contextMode: "full",
+          inputItems: 3,
+          fullInputItems: 3,
+          fullRequestBytes: 300,
+          wireRequestBytes: 300,
+          outcome: "retry_scheduled",
+        },
+      ],
+      cacheAffinityEnabled: true,
+      cacheIdentityPreserved: true,
+      promptKeyAndHeaderAligned: true,
+      accountIdentityPreserved: true,
+    },
+  };
+  harness.runtime.transport.request = async function* (_model, _body, options) {
+    options.onTransportDiagnostic?.(diagnostic);
+    yield* textEvents("hello back");
+  };
+
+  const message = await harness.runtime
+    .streamSimple(
+      codexModel(),
+      { messages: [user.message as Context["messages"][number]] },
+      {
+        apiKey: accessToken(),
+        sessionId: "session-1",
+        transport: "auto",
+      },
+    )
+    .result();
+
+  assert.equal(message.stopReason, "stop");
+  assert.deepEqual(message.diagnostics, [diagnostic]);
+});
+
 void test("emits start only when the Codex transport starts", async () => {
   const user = userEntry("user-1", "hello");
   const harness = createHarness([user]);

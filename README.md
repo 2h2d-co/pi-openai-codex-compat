@@ -224,6 +224,8 @@ The extension handles native compaction for `openai-codex`. It follows the Codex
 
 Ordinary responses and compaction use the same extension-managed SSE/WebSocket transport. The provider stores a native response override only when Pi's canonical assistant representation cannot round-trip the provider output exactly; normal text, reasoning, and tool responses therefore do not duplicate session data. Native overrides are associated with canonical assistants by response id and replayed only when they are present on the active Pi branch.
 
+Transparent continuation and transport recovery is recorded in the resulting assistant message's `diagnostics` array in Pi's session JSONL. `codex_transport_recovery` entries identify rejected or locally bypassed WebSocket continuations and WebSocket-to-SSE recovery, including the attempted request modes, rejected response id, and whether cache and account affinity were preserved.
+
 Any model switch is rejected while the active branch contains a native Codex checkpoint because checkpoints are model-specific. Navigate to a branch before the checkpoint or start a new session before switching. Toggling fast mode does not change the model id or invalidate the checkpoint.
 
 Native compaction fails closed for Codex models: a failed compaction is cancelled instead of silently replacing the opaque state with a local text summary. Other providers continue to use Pi's default compaction behavior. `/tree` branch summarization is intentionally not intercepted.
