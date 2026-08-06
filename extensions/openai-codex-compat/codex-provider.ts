@@ -363,11 +363,7 @@ export class CodexProviderRuntime {
     this.prewarmedTemplates.add(key);
 
     const cacheSessionId = codexCacheKey(sessionId);
-    const prewarmBody = withCodexRequestMetadata(
-      updateInput(options.body, []),
-      cacheSessionId,
-      "prewarm",
-    );
+    const prewarmBody = withCodexRequestMetadata(options.body, cacheSessionId, "prewarm");
     try {
       await this.transport.prewarm(options.model, prewarmBody, {
         ...options.requestOptions,

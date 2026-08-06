@@ -240,7 +240,7 @@ void test("streams ordinary responses without persisting redundant native data",
   assert.equal(harness.customEntries.length, 0);
 });
 
-void test("prewarms the static request template before the first WebSocket turn", async () => {
+void test("prewarms the complete first request before its WebSocket turn", async () => {
   const user = userEntry("user-1", "hello");
   const harness = createHarness([user]);
   const prewarms: JsonRecord[] = [];
@@ -269,7 +269,7 @@ void test("prewarms the static request template before the first WebSocket turn"
   assert.equal(prewarms.length, 1);
   const prewarm = prewarms[0];
   assert.ok(prewarm);
-  assert.deepEqual(prewarm.input, []);
+  assert.equal((prewarm.input as unknown[]).length, 1);
   const prewarmMetadata = prewarm["client_metadata"] as JsonRecord;
   assert.match(String(prewarmMetadata["x-codex-turn-metadata"]), /"request_kind":"prewarm"/);
   assert.equal(requests.length, 1);

@@ -222,7 +222,7 @@ The extension handles native compaction for `openai-codex`. It follows the Codex
 3. Retain approximately 64,000 tokens of recent user, developer, and system context.
 4. Persist the opaque checkpoint in the Pi session and replay it on later requests.
 
-Ordinary responses and compaction use the same extension-managed SSE/WebSocket transport. Before the first WebSocket turn for a session and model, the provider performs a best-effort v2 `generate: false` prewarm of the static request template. Retryable WebSocket failures before model-visible output receive up to five fresh-connection retries with Codex-style exponential backoff before the session switches to sticky SSE. Failures after model-visible output still fail closed rather than risk duplicate text or tool calls.
+Ordinary responses and compaction use the same extension-managed SSE/WebSocket transport. Before the first WebSocket turn for a session and model, the provider performs a best-effort v2 `generate: false` prewarm of the complete first request, then generates from its continuation. Retryable WebSocket failures before model-visible output receive up to five fresh-connection retries with Codex-style exponential backoff before the session switches to sticky SSE. Failures after model-visible output still fail closed rather than risk duplicate text or tool calls.
 
 The provider stores a native response override only when Pi's canonical assistant representation cannot round-trip the provider output exactly; normal text, reasoning, and tool responses therefore do not duplicate session data. Native overrides are associated with canonical assistants by response id and replayed only when they are present on the active Pi branch.
 

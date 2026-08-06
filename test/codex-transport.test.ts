@@ -1227,7 +1227,7 @@ void test("retries fresh WebSockets before selecting SSE fallback", async (t) =>
   closeOpenAICodexWebSocketSessions("retry-session");
 });
 
-void test("prewarms WebSocket context and continues with the first turn input", async (t) => {
+void test("prewarms the first WebSocket request and generates from its continuation", async (t) => {
   const previousWebSocket = globalThis.WebSocket;
   const sentBodies: JsonRecord[] = [];
   const diagnostics: CodexTransportDiagnostic[] = [];
@@ -1287,6 +1287,7 @@ void test("prewarms WebSocket context and continues with the first turn input", 
   });
 
   const transport = new CodexTransport();
+  const user = { role: "user", content: "hello" };
   const options = {
     apiKey: accessToken(),
     sessionId: "prewarm-session",
@@ -1301,14 +1302,13 @@ void test("prewarms WebSocket context and continues with the first turn input", 
       {
         model: "gpt-test",
         instructions: "same",
-        input: [],
+        input: [user],
         client_metadata: { request_kind: "prewarm" },
       },
       options,
     ),
     true,
   );
-  const user = { role: "user", content: "hello" };
   for await (const _event of transport.request(
     codexModel(),
     {
@@ -1324,10 +1324,10 @@ void test("prewarms WebSocket context and continues with the first turn input", 
 
   assert.equal(sentBodies.length, 2);
   assert.equal(sentBodies[0]?.["generate"], false);
-  assert.deepEqual(sentBodies[0]?.input, []);
+  assert.deepEqual(sentBodies[0]?.input, [user]);
   assert.equal(sentBodies[1]?.["generate"], undefined);
   assert.equal(sentBodies[1]?.previous_response_id, "response-prewarm");
-  assert.deepEqual(sentBodies[1]?.input, [user]);
+  assert.deepEqual(sentBodies[1]?.input, []);
   assert.equal(diagnostics.at(-1)?.type, "codex_transport_prewarm");
   if (diagnostics.at(-1)?.type === "codex_transport_prewarm") {
     assert.deepEqual(diagnostics.at(-1)?.details, {
