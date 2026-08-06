@@ -561,6 +561,7 @@ void test("uses Pi AI's WebSocket timeout and connection-age close reasons", asy
       apiKey: accessToken(),
       transport: "websocket",
       websocketConnectTimeoutMs: 1,
+      websocketMaxRetries: 0,
       fetch: fallback,
     },
   )) {
@@ -575,6 +576,7 @@ void test("uses Pi AI's WebSocket timeout and connection-age close reasons", asy
       apiKey: accessToken(),
       transport: "websocket",
       timeoutMs: 1,
+      websocketMaxRetries: 0,
       fetch: fallback,
     },
   )) {
@@ -802,6 +804,12 @@ void test("reports WebSocket close details and preserves preceding errors", asyn
         this.emit("message", {
           data: JSON.stringify({ type: "response.created", response: { id: "response-1" } }),
         });
+        this.emit("message", {
+          data: JSON.stringify({
+            type: "response.output_item.added",
+            item: { type: "message", role: "assistant", content: [] },
+          }),
+        });
         setTimeout(() => {
           if (failureMode === "error-then-close") {
             this.emit("error", { message: "underlying socket failure" });
@@ -836,6 +844,7 @@ void test("reports WebSocket close details and preserves preceding errors", asyn
   const options = {
     apiKey: accessToken(),
     transport: "websocket" as const,
+    websocketMaxRetries: 0,
   };
   await assert.rejects(
     async () => {
@@ -998,6 +1007,7 @@ void test("ignores type-less WebSocket events before selecting SSE fallback", as
     {
       apiKey: accessToken(),
       transport: "websocket",
+      websocketMaxRetries: 0,
       onTransportStart() {
         starts += 1;
       },
@@ -1048,6 +1058,7 @@ void test("matches Pi AI's recovered WebSocket failure diagnostics", async (t) =
       {
         apiKey: accessToken(),
         transport: "websocket",
+        websocketMaxRetries: 0,
         onTransportDiagnostic(diagnostic) {
           diagnostics.push(diagnostic);
         },
@@ -1111,6 +1122,220 @@ void test("matches Pi AI's recovered WebSocket failure diagnostics", async (t) =
     name: "ThrownValue",
     message: "socket send failed",
   });
+});
+
+void test("retries fresh WebSockets before selecting SSE fallback", async (t) => {
+  const previousWebSocket = globalThis.WebSocket;
+  let connections = 0;
+  let sseRequests = 0;
+  const diagnostics: CodexTransportDiagnostic[] = [];
+
+  class RetryingWebSocket {
+    readonly readyState = 1;
+    private readonly connection = ++connections;
+    private readonly listeners = new Map<string, Set<(event: unknown) => void>>();
+
+    constructor() {
+      queueMicrotask(() => this.dispatch("open", {}));
+    }
+
+    addEventListener(type: string, listener: (event: unknown) => void): void {
+      const listeners = this.listeners.get(type) ?? new Set();
+      listeners.add(listener);
+      this.listeners.set(type, listeners);
+    }
+
+    removeEventListener(type: string, listener: (event: unknown) => void): void {
+      this.listeners.get(type)?.delete(listener);
+    }
+
+    send(): void {
+      queueMicrotask(() => {
+        if (this.connection < 3) {
+          this.dispatch("error", { message: `socket failure ${String(this.connection)}` });
+          return;
+        }
+        this.dispatch("message", {
+          data: JSON.stringify({
+            type: "response.completed",
+            response: { id: "response-retried", status: "completed" },
+          }),
+        });
+      });
+    }
+
+    close(): void {}
+
+    private dispatch(type: string, event: unknown): void {
+      for (const listener of this.listeners.get(type) ?? []) listener(event);
+    }
+  }
+
+  Object.defineProperty(globalThis, "WebSocket", {
+    configurable: true,
+    writable: true,
+    value: RetryingWebSocket,
+  });
+  t.after(() => {
+    Object.defineProperty(globalThis, "WebSocket", {
+      configurable: true,
+      writable: true,
+      value: previousWebSocket,
+    });
+  });
+
+  const events: JsonRecord[] = [];
+  for await (const event of new CodexTransport().request(
+    codexModel(),
+    { input: [] },
+    {
+      apiKey: accessToken(),
+      sessionId: "retry-session",
+      transport: "websocket-cached",
+      websocketMaxRetries: 5,
+      websocketRetryBaseDelayMs: 0,
+      onTransportDiagnostic(diagnostic) {
+        diagnostics.push(diagnostic);
+      },
+      fetch: async () => {
+        sseRequests += 1;
+        throw new Error("SSE should not be selected");
+      },
+    },
+  )) {
+    events.push(event);
+  }
+
+  assert.equal(connections, 3);
+  assert.equal(sseRequests, 0);
+  assert.equal(events.at(-1)?.type, "response.completed");
+  assert.deepEqual(
+    diagnostics.map((diagnostic) =>
+      diagnostic.type === "codex_transport_recovery"
+        ? [
+            diagnostic.details.trigger,
+            diagnostic.details.retryNumber,
+            diagnostic.details.maxRetries,
+          ]
+        : diagnostic.type,
+    ),
+    [
+      ["websocket_retry", 1, 5],
+      ["websocket_retry", 2, 5],
+    ],
+  );
+  closeOpenAICodexWebSocketSessions("retry-session");
+});
+
+void test("prewarms WebSocket context and continues with the first turn input", async (t) => {
+  const previousWebSocket = globalThis.WebSocket;
+  const sentBodies: JsonRecord[] = [];
+  const diagnostics: CodexTransportDiagnostic[] = [];
+
+  class PrewarmWebSocket {
+    readonly readyState = 1;
+    private readonly listeners = new Map<string, Set<(event: unknown) => void>>();
+
+    constructor() {
+      queueMicrotask(() => this.dispatch("open", {}));
+    }
+
+    addEventListener(type: string, listener: (event: unknown) => void): void {
+      const listeners = this.listeners.get(type) ?? new Set();
+      listeners.add(listener);
+      this.listeners.set(type, listeners);
+    }
+
+    removeEventListener(type: string, listener: (event: unknown) => void): void {
+      this.listeners.get(type)?.delete(listener);
+    }
+
+    send(data: string): void {
+      sentBodies.push(JSON.parse(data) as JsonRecord);
+      const responseId = sentBodies.length === 1 ? "response-prewarm" : "response-turn";
+      queueMicrotask(() => {
+        this.dispatch("message", {
+          data: JSON.stringify({ type: "response.created", response: { id: responseId } }),
+        });
+        this.dispatch("message", {
+          data: JSON.stringify({
+            type: "response.completed",
+            response: { id: responseId, status: "completed" },
+          }),
+        });
+      });
+    }
+
+    close(): void {}
+
+    private dispatch(type: string, event: unknown): void {
+      for (const listener of this.listeners.get(type) ?? []) listener(event);
+    }
+  }
+
+  Object.defineProperty(globalThis, "WebSocket", {
+    configurable: true,
+    writable: true,
+    value: PrewarmWebSocket,
+  });
+  t.after(() => {
+    Object.defineProperty(globalThis, "WebSocket", {
+      configurable: true,
+      writable: true,
+      value: previousWebSocket,
+    });
+  });
+
+  const transport = new CodexTransport();
+  const options = {
+    apiKey: accessToken(),
+    sessionId: "prewarm-session",
+    transport: "websocket-cached" as const,
+    onTransportDiagnostic(diagnostic: CodexTransportDiagnostic) {
+      diagnostics.push(diagnostic);
+    },
+  };
+  assert.equal(
+    await transport.prewarm(
+      codexModel(),
+      {
+        model: "gpt-test",
+        instructions: "same",
+        input: [],
+        client_metadata: { request_kind: "prewarm" },
+      },
+      options,
+    ),
+    true,
+  );
+  const user = { role: "user", content: "hello" };
+  for await (const _event of transport.request(
+    codexModel(),
+    {
+      model: "gpt-test",
+      instructions: "same",
+      input: [user],
+      client_metadata: { request_kind: "turn" },
+    },
+    options,
+  )) {
+    // Consume the first real response.
+  }
+
+  assert.equal(sentBodies.length, 2);
+  assert.equal(sentBodies[0]?.["generate"], false);
+  assert.deepEqual(sentBodies[0]?.input, []);
+  assert.equal(sentBodies[1]?.["generate"], undefined);
+  assert.equal(sentBodies[1]?.previous_response_id, "response-prewarm");
+  assert.deepEqual(sentBodies[1]?.input, [user]);
+  assert.equal(diagnostics.at(-1)?.type, "codex_transport_prewarm");
+  if (diagnostics.at(-1)?.type === "codex_transport_prewarm") {
+    assert.deepEqual(diagnostics.at(-1)?.details, {
+      outcome: "completed",
+      continuationReady: true,
+    });
+  }
+  transport.close("prewarm-session");
 });
 
 void test("continues JSON-wire request snapshots with Pi AI's order-sensitive delta checks", async (t) => {
@@ -1494,6 +1719,7 @@ void test("continues a multi-step conversation with canonical and native replay 
     lastPreviousResponseId: "response-2",
     websocketFailures: 0,
     sseFallbacks: 0,
+    prewarmRequests: 0,
   });
   if (stats) stats.requests = 99;
   assert.equal(getOpenAICodexWebSocketDebugStats("replay-session")?.requests, 3);
@@ -2057,6 +2283,12 @@ void test("uses sticky SSE fallback after a midstream WebSocket failure", async 
         this.emit("message", {
           data: JSON.stringify({ type: "response.created", response: { id: "response-1" } }),
         });
+        this.emit("message", {
+          data: JSON.stringify({
+            type: "response.output_item.added",
+            item: { type: "reasoning", id: "reasoning-1", summary: [] },
+          }),
+        });
         setTimeout(() => this.emit("error", { message: "socket failed after output started" }), 0);
       });
     }
@@ -2136,6 +2368,7 @@ void test("uses sticky SSE fallback after a midstream WebSocket failure", async 
     lastInputItems: 0,
     websocketFailures: 1,
     sseFallbacks: 1,
+    prewarmRequests: 0,
     websocketFallbackActive: true,
     lastWebSocketError: "socket failed after output started",
   });

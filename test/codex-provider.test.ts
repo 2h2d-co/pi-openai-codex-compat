@@ -159,6 +159,7 @@ function createHarness(
     },
   } as unknown as ExtensionAPI;
   const runtime = new CodexProviderRuntime(pi, () => config);
+  runtime.transport.prewarm = async () => false;
   const manager = {
     getSessionId: () => sessionId,
     getBranch: () => branch,
@@ -237,6 +238,44 @@ void test("streams ordinary responses without persisting redundant native data",
   assert.equal(message.responseId, "resp_text");
   assert.equal(requests.length, 1);
   assert.equal(harness.customEntries.length, 0);
+});
+
+void test("prewarms the static request template before the first WebSocket turn", async () => {
+  const user = userEntry("user-1", "hello");
+  const harness = createHarness([user]);
+  const prewarms: JsonRecord[] = [];
+  const requests: JsonRecord[] = [];
+  harness.runtime.transport.prewarm = async (_model, body) => {
+    prewarms.push(structuredClone(body));
+    return true;
+  };
+  harness.runtime.transport.request = async function* (_model, body) {
+    requests.push(structuredClone(body));
+    yield* textEvents("hello back");
+  };
+
+  await harness.runtime
+    .streamSimple(
+      codexModel(),
+      { messages: [user.message as Context["messages"][number]] },
+      {
+        apiKey: accessToken(),
+        sessionId: "session-1",
+        transport: "auto",
+      },
+    )
+    .result();
+
+  assert.equal(prewarms.length, 1);
+  const prewarm = prewarms[0];
+  assert.ok(prewarm);
+  assert.deepEqual(prewarm.input, []);
+  const prewarmMetadata = prewarm["client_metadata"] as JsonRecord;
+  assert.match(String(prewarmMetadata["x-codex-turn-metadata"]), /"request_kind":"prewarm"/);
+  assert.equal(requests.length, 1);
+  const request = requests[0];
+  assert.ok(request);
+  assert.equal((request.input as unknown[]).length, 1);
 });
 
 void test("commits canonical assistant items for WebSocket continuation", async () => {
@@ -842,6 +881,7 @@ void test("discards downstream-failed WebSockets without activating SSE fallback
     lastInputItems: 1,
     websocketFailures: 0,
     sseFallbacks: 0,
+    prewarmRequests: 0,
   });
   harness.runtime.transport.close("downstream-failure-session");
 });

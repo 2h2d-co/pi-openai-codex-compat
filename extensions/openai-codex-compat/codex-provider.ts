@@ -35,6 +35,7 @@ import {
   type ResponsesItem,
 } from "./codex-protocol.ts";
 import { codexCacheKey } from "./codex-cache-key.ts";
+import { withCodexRequestMetadata } from "./codex-metadata.ts";
 import { processCodexStream } from "./codex-stream.ts";
 import {
   CodexTransport,
@@ -305,6 +306,7 @@ export class CodexProviderRuntime {
   readonly transport = new CodexTransport();
   private readonly scopes = new Map<string, RuntimeScope>();
   private readonly templates = new Map<string, RequestTemplate>();
+  private readonly prewarmedTemplates = new Set<string>();
   private readonly requestTails = new Map<string, Promise<void>>();
   private readonly pi: ExtensionAPI;
   private readonly resolveConfig: ConfigResolver;
@@ -333,8 +335,51 @@ export class CodexProviderRuntime {
   clearSession(sessionId: string): void {
     this.scopes.delete(sessionId);
     this.templates.delete(sessionId);
+    for (const key of this.prewarmedTemplates) {
+      if (key.startsWith(`${sessionId}\0`)) this.prewarmedTemplates.delete(key);
+    }
     this.requestTails.delete(sessionId);
     this.transport.close(sessionId);
+  }
+
+  private async maybePrewarm(options: {
+    model: Model<any>;
+    body: JsonRecord;
+    requestOptions: OpenAICodexResponsesOptions;
+    accountId: string;
+    diagnostics: CodexTransportDiagnostic[];
+  }): Promise<void> {
+    const sessionId = options.requestOptions.sessionId;
+    if (
+      !sessionId ||
+      options.requestOptions.cacheRetention === "none" ||
+      options.requestOptions.transport === "sse" ||
+      !Array.isArray(options.body.input)
+    ) {
+      return;
+    }
+    const key = `${sessionId}\0${options.model.id}`;
+    if (this.prewarmedTemplates.has(key)) return;
+    this.prewarmedTemplates.add(key);
+
+    const cacheSessionId = codexCacheKey(sessionId);
+    const prewarmBody = withCodexRequestMetadata(
+      updateInput(options.body, []),
+      cacheSessionId,
+      "prewarm",
+    );
+    try {
+      await this.transport.prewarm(options.model, prewarmBody, {
+        ...options.requestOptions,
+        accountId: options.accountId,
+        onTransportDiagnostic(diagnostic) {
+          options.diagnostics.push(diagnostic);
+        },
+      });
+    } catch {
+      // Warmup is best-effort. The transport has already activated sticky SSE
+      // after exhausting its WebSocket retry budget.
+    }
   }
 
   private async acquireRequest(
@@ -441,7 +486,7 @@ export class CodexProviderRuntime {
   ): JsonRecord {
     const compat = model.compat as CodexCompat | undefined;
     const toolPlacement = splitDeferredTools(context, Boolean(compat?.supportsToolSearch));
-    const body: JsonRecord = {
+    let body: JsonRecord = {
       model: model.id,
       store: false,
       stream: true,
@@ -457,6 +502,7 @@ export class CodexProviderRuntime {
       tool_choice: options.toolChoice ?? "auto",
       parallel_tool_calls: true,
     };
+    body = withCodexRequestMetadata(body, cacheSessionId, "turn");
     if (options.temperature !== undefined) body["temperature"] = options.temperature;
     if (options.serviceTier !== undefined) body.service_tier = options.serviceTier;
     if (toolPlacement.immediate.length > 0) {
@@ -495,15 +541,19 @@ export class CodexProviderRuntime {
     const sessionId = options.requestOptions.sessionId;
     if (!sessionId) throw new Error("Codex compaction requires a Pi session id.");
     const accountId = validateCodexAuthentication(options.model, options.requestOptions.apiKey);
-    const payload = remoteCompactionPayload({
-      template: options.template,
-      modelId: options.model.id,
-      history: options.history,
-      instructions: options.instructions,
-      sessionId:
-        options.requestOptions.cacheRetention === "none" ? undefined : codexCacheKey(sessionId),
-      priority: options.priority,
-    });
+    const payload = withCodexRequestMetadata(
+      remoteCompactionPayload({
+        template: options.template,
+        modelId: options.model.id,
+        history: options.history,
+        instructions: options.instructions,
+        sessionId:
+          options.requestOptions.cacheRetention === "none" ? undefined : codexCacheKey(sessionId),
+        priority: options.priority,
+      }),
+      options.requestOptions.cacheRetention === "none" ? undefined : codexCacheKey(sessionId),
+      "compaction",
+    );
     const transformed = await options.requestOptions.onPayload?.(payload, options.model);
     const request = transformed === undefined ? payload : (transformed as JsonRecord);
     let webSocketResponseHandle: CodexWebSocketResponseHandle | undefined;
@@ -685,6 +735,15 @@ export class CodexProviderRuntime {
         );
 
         const rawItems: ResponsesItem[] = [];
+        const prewarmDiagnostics: CodexTransportDiagnostic[] = [];
+        await this.maybePrewarm({
+          model,
+          body,
+          requestOptions,
+          accountId,
+          diagnostics: prewarmDiagnostics,
+        });
+        if (prewarmDiagnostics.length > 0) output.diagnostics = prewarmDiagnostics;
         let continuationHandle: CodexContinuationHandle | undefined;
         let webSocketResponseHandle: CodexWebSocketResponseHandle | undefined;
         let startEmitted = false;

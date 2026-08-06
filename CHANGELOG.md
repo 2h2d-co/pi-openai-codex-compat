@@ -5,6 +5,12 @@
 ### Added
 
 - Persist structured Codex transport-recovery diagnostics on assistant messages for rejected or locally bypassed WebSocket continuations and WebSocket-to-SSE recovery, including request modes, cache-affinity preservation, and rejected response ids.
+- Prewarm the first WebSocket request template with Responses v2 `generate: false` and persist whether it established continuation state.
+- Send Pi-derived Codex session, thread, turn, and request-kind metadata through `client_metadata` and compatible request headers.
+
+### Changed
+
+- Retry retryable WebSocket failures on up to five fresh connections before selecting sticky SSE when no model-visible output has been emitted.
 
 ### Fixed
 

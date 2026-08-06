@@ -28,6 +28,7 @@ export interface JsonRecord {
   prompt_cache_key?: unknown;
   tools?: unknown;
   service_tier?: unknown;
+  client_metadata?: unknown;
   chatgpt_account_id?: unknown;
   message?: unknown;
   item?: unknown;
