@@ -197,6 +197,18 @@ void test("applies priority, GPT-5.6 reasoning mode, and native request controls
   });
 });
 
+void test("omits the default GPT-5.6 reasoning mode", () => {
+  const result = applyCodexRequestOptions(
+    {
+      reasoning: { effort: "high", summary: "concise", mode: "pro" },
+    },
+    DEFAULT_CONFIG,
+    { modelId: "gpt-5.6-sol", supportsImageSearch: false },
+  );
+
+  assert.deepEqual(result["reasoning"], { effort: "high", summary: "auto" });
+});
+
 void test("disables request tools and omits unsupported reasoning mode and summary", () => {
   const disabled = applyCodexRequestOptions(
     {

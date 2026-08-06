@@ -60,8 +60,8 @@ export function applyCodexRequestOptions(
     } else {
       updatedReasoning["summary"] = config.reasoningSummary;
     }
-    if (supportsReasoningMode(options.modelId)) {
-      updatedReasoning["mode"] = config.reasoningMode;
+    if (supportsReasoningMode(options.modelId) && config.reasoningMode === "pro") {
+      updatedReasoning["mode"] = "pro";
     } else {
       Reflect.deleteProperty(updatedReasoning, "mode");
     }

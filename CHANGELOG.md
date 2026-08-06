@@ -6,6 +6,10 @@
 
 - Persist structured Codex transport-recovery diagnostics on assistant messages for rejected or locally bypassed WebSocket continuations and WebSocket-to-SSE recovery, including request modes, cache-affinity preservation, and rejected response ids.
 
+### Fixed
+
+- Omit `reasoning.mode` for the default GPT-5.6 standard mode and send the field only when pro mode is selected.
+
 ## 0.0.3 - 2026-08-04
 
 ### Added
