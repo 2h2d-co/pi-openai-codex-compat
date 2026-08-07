@@ -7,7 +7,11 @@ import {
   visibleWidth,
   wrapTextWithAnsi,
 } from "@earendil-works/pi-tui";
-import type { AppliedPatchChange, ApplyPatchDetails } from "./apply-patch-engine.ts";
+import {
+  type AppliedPatchChange,
+  type ApplyPatchDetails,
+  coalesceAppliedPatchChangesForRendering,
+} from "./apply-patch-engine.ts";
 import { usesLightToolPalette } from "./codex-tool-surface.ts";
 
 type DiffLineKind = "add" | "delete" | "context";
@@ -154,7 +158,7 @@ export function isApplyPatchDetails(value: unknown): value is ApplyPatchDetails 
 
 function sortedChanges(details: ApplyPatchDetails, cwd: string): AppliedPatchChange[] {
   if (!isApplyPatchDetails(details)) return [];
-  return details.changes.toSorted((left, right) =>
+  return coalesceAppliedPatchChangesForRendering(details.changes, cwd).toSorted((left, right) =>
     comparePaths(resolve(cwd, left.path), resolve(cwd, right.path)),
   );
 }

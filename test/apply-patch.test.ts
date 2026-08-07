@@ -118,6 +118,66 @@ void test("applies add, update, and delete hunks with Codex result details", asy
   await assert.rejects(readFile(join(cwd, "obsolete.txt"), "utf8"), { code: "ENOENT" });
 });
 
+void test("renders repeated operations on one path as one final-state diff", async (t) => {
+  const cwd = await workspace(t);
+  const theme = {
+    fg: (_color: string, text: string) => text,
+    bold: (text: string) => text,
+  } as unknown as Theme;
+  await writeFile(join(cwd, "replaced.txt"), "shared\nold\n");
+
+  const replacementPatch = `*** Begin Patch
+*** Delete File: replaced.txt
+*** Add File: replaced.txt
++shared
++new
++extra
+*** End Patch`;
+  const replacementPreview = await previewPatch(cwd, replacementPatch);
+  assert.equal(replacementPreview.changes.length, 1);
+  assert.equal(replacementPreview.changes[0]?.kind, "update");
+  assert.match(
+    formatApplyPatchRenderText(replacementPreview, theme, cwd),
+    /^• Edited replaced\.txt \(\+2 -1\)/,
+  );
+
+  const replacement = await applyPatch(cwd, replacementPatch);
+
+  assert.deepEqual(
+    replacement.changes.map((change) => change.kind),
+    ["delete", "add"],
+  );
+  const replacementText = formatApplyPatchRenderText(replacement, theme, cwd);
+  assert.match(replacementText, /^• Edited replaced\.txt \(\+2 -1\)/);
+  assert.doesNotMatch(replacementText, /Edited 2 files/);
+  assert.match(replacementText, /-2 old/);
+  assert.match(replacementText, /\+2 new/);
+
+  await writeFile(join(cwd, "updated.txt"), "first\nsecond\nthird\n");
+  const repeatedUpdate = await applyPatch(
+    cwd,
+    `*** Begin Patch
+*** Update File: updated.txt
+@@
+-first
++FIRST
+*** Update File: updated.txt
+@@
+-second
++SECOND
+*** End Patch`,
+  );
+
+  assert.equal(repeatedUpdate.changes.length, 2);
+  const repeatedUpdateText = formatApplyPatchRenderText(repeatedUpdate, theme, cwd);
+  assert.match(repeatedUpdateText, /^• Edited updated\.txt \(\+2 -2\)/);
+  assert.doesNotMatch(repeatedUpdateText, /Edited 2 files/);
+  assert.match(repeatedUpdateText, /-1 first/);
+  assert.match(repeatedUpdateText, /\+1 FIRST/);
+  assert.match(repeatedUpdateText, /-2 second/);
+  assert.match(repeatedUpdateText, /\+2 SECOND/);
+});
+
 void test("matches Codex overwrite semantics for add and move", async (t) => {
   const cwd = await workspace(t);
   await writeFile(join(cwd, "duplicate.txt"), "old content\n");

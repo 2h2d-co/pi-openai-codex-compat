@@ -34,6 +34,7 @@
 - Normalize missing, empty, and `functions` namespaces for Responses Lite function and custom calls, preserve the server's flat default calls in continuation history, and reject invalid default-namespace members before sending.
 - Omit `reasoning.mode` for the default GPT-5.6 standard mode and send the field only when pro mode is selected.
 - Continue interrupted Codex tasks automatically after an exact output-token-limit response, including after successful Pi threshold compaction, without treating incomplete WebSocket responses as completed continuation state.
+- Render delete-and-recreate replacements and repeated in-place `apply_patch` operations as one logical file with a recomputed initial-to-final diff instead of counting the path multiple times.
 
 ## 0.0.3 - 2026-08-04
 

@@ -674,6 +674,90 @@ function diffDetails(
   return { displayDiff, additions, deletions };
 }
 
+function initialContent(change: AppliedPatchChange): string | undefined {
+  if (change.kind === "add") return change.overwrittenContent;
+  if (change.kind === "delete") return change.content;
+  return change.oldContent;
+}
+
+function finalContent(change: AppliedPatchChange): string | undefined {
+  if (change.kind === "delete") return undefined;
+  if (change.kind === "add") return change.content;
+  return change.newContent;
+}
+
+export function coalesceAppliedPatchChangesForRendering(
+  changes: readonly AppliedPatchChange[],
+  cwd: string,
+): AppliedPatchChange[] {
+  const groups = new Map<string, { firstIndex: number; changes: AppliedPatchChange[] }>();
+  const rendered: Array<{ index: number; change: AppliedPatchChange }> = [];
+
+  for (const [index, change] of changes.entries()) {
+    if (change.kind === "update" && change.moveTo) {
+      // Moves span source and destination identities, so retain their existing operation-level row.
+      rendered.push({ index, change });
+      continue;
+    }
+    const key = resolvePatchPath(cwd, change.path);
+    const group = groups.get(key);
+    if (group) {
+      group.changes.push(change);
+    } else {
+      groups.set(key, { firstIndex: index, changes: [change] });
+    }
+  }
+
+  for (const group of groups.values()) {
+    const first = group.changes[0]!;
+    const last = group.changes.at(-1)!;
+    if (group.changes.length === 1) {
+      rendered.push({ index: group.firstIndex, change: first });
+      continue;
+    }
+
+    const oldContent = initialContent(first);
+    const newContent = finalContent(last);
+    if (oldContent === undefined) {
+      if (newContent === undefined) continue;
+      rendered.push({
+        index: group.firstIndex,
+        change: {
+          kind: "add",
+          path: first.path,
+          content: newContent,
+          ...diffDetails("", newContent),
+        },
+      });
+      continue;
+    }
+    if (newContent === undefined) {
+      rendered.push({
+        index: group.firstIndex,
+        change: {
+          kind: "delete",
+          path: first.path,
+          content: oldContent,
+          ...diffDetails(oldContent, ""),
+        },
+      });
+      continue;
+    }
+    rendered.push({
+      index: group.firstIndex,
+      change: {
+        kind: "update",
+        path: first.path,
+        oldContent,
+        newContent,
+        ...diffDetails(oldContent, newContent),
+      },
+    });
+  }
+
+  return rendered.toSorted((left, right) => left.index - right.index).map(({ change }) => change);
+}
+
 function emptyDetails(): ApplyPatchDetails {
   return {
     status: "completed",
@@ -883,10 +967,10 @@ export async function previewPatch(cwd: string, patch: string): Promise<ApplyPat
   const operations = resolveOperations(cwd, parsed.operations);
   await verifyOperations(operations);
   const details = emptyDetails();
-  const changes = new Map<string, AppliedPatchChange>();
+  const changes: AppliedPatchChange[] = [];
   for (const operation of operations) {
     if (operation.kind === "add") {
-      changes.set(operation.absolutePath, {
+      changes.push({
         kind: "add",
         path: operation.path,
         content: operation.content,
@@ -897,7 +981,7 @@ export async function previewPatch(cwd: string, patch: string): Promise<ApplyPat
         operation.absolutePath,
         `Failed to read ${operation.absolutePath}`,
       );
-      changes.set(operation.absolutePath, {
+      changes.push({
         kind: "delete",
         path: operation.path,
         content,
@@ -909,7 +993,7 @@ export async function previewPatch(cwd: string, patch: string): Promise<ApplyPat
         `Failed to read file to update ${operation.absolutePath}`,
       );
       const newContent = deriveNewContent(oldContent, operation.chunks, operation.absolutePath);
-      changes.set(operation.absolutePath, {
+      changes.push({
         kind: "update",
         path: operation.path,
         ...(operation.moveTo ? { moveTo: operation.moveTo } : {}),
@@ -919,7 +1003,7 @@ export async function previewPatch(cwd: string, patch: string): Promise<ApplyPat
       });
     }
   }
-  details.changes = [...changes.values()];
+  details.changes = coalesceAppliedPatchChangesForRendering(changes, cwd);
   for (const change of details.changes) {
     if (change.kind === "add") details.added.push(change.path);
     else if (change.kind === "delete") details.deleted.push(change.path);
