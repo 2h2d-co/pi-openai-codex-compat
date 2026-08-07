@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import extension from "../extensions/openai-codex-compat/index.ts";
+import extension from "../extensions/index.ts";
 
 void test("registers the combined Codex compatibility extension", () => {
   const commands: string[] = [];

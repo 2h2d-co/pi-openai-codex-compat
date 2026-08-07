@@ -26,7 +26,7 @@ import {
 import registerOutputLimitContinuation from "../extensions/openai-codex-compat/output-limit-continuation.ts";
 
 const rootDir = resolve(dirname(fileURLToPath(import.meta.url)), "..");
-const extensionPath = resolve(rootDir, "extensions/openai-codex-compat/index.ts");
+const extensionPath = resolve(rootDir, "extensions/index.ts");
 const CODEX_PROVIDER = "openai-codex";
 const CODEX_API = "openai-codex-responses";
 const MODEL_ID = "gpt-5.6-sol";

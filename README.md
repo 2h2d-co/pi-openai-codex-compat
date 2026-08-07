@@ -393,7 +393,13 @@ mise run test:live:codex
 The task obtains the local Codex bearer token and runs the tests with
 `gpt-5.6-luna` at medium reasoning effort.
 
-The focused Pi AI serializer copy lives under `extensions/openai-codex-compat/vendor/pi-ai/`. The custom Codex provider transport and stream parser are focused adaptations of Pi AI's corresponding implementation. Equivalence and protocol tests cover canonical serialization, native namespace round-trips, raw native replay, sibling Codex JSON endpoints, SSE request behavior, WebSocket reuse, grammar tools, image results, standalone search, and compaction continuation.
+The public package entrypoint is `extensions/index.ts`; implementation modules remain under
+`extensions/openai-codex-compat/`. The focused Pi AI serializer copy lives under
+`extensions/openai-codex-compat/vendor/pi-ai/`. The custom Codex provider transport and stream
+parser are focused adaptations of Pi AI's corresponding implementation. Equivalence and protocol
+tests cover canonical serialization, native namespace round-trips, raw native replay, sibling Codex
+JSON endpoints, SSE request behavior, WebSocket reuse, grammar tools, image results, standalone
+search, and compaction continuation.
 
 ## Release staging
 

@@ -28,7 +28,7 @@ const LIVE_TEST_ENABLED = process.env["PI_CODEX_LIVE_TEST"] === "1";
 const LIVE_TEST_TIMEOUT_MS = 4 * 60 * 1_000;
 const CODEX_PROVIDER = "openai-codex";
 const rootDir = resolve(dirname(fileURLToPath(import.meta.url)), "..");
-const extensionPath = resolve(rootDir, "extensions/openai-codex-compat/index.ts");
+const extensionPath = resolve(rootDir, "extensions/index.ts");
 
 type HistoryMode = "text" | "tool";
 

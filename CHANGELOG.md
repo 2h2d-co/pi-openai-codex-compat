@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Fixed
+
+- Avoid repeating the extension name in Pi's startup display.
+
 ## 0.0.4 - 2026-08-07
 
 ### Added

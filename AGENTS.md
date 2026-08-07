@@ -2,7 +2,7 @@
 
 - This project is a Pi package with a TypeScript extension entrypoint.
 - Pi extensions run with full system permissions; keep side effects explicit and documented.
-- Keep the package entrypoint compositional: provider, compaction, request-option, and tool behavior belongs in focused modules under `extensions/openai-codex-compat/`.
+- Keep `extensions/index.ts` as a thin public entrypoint; provider, compaction, request-option, and tool behavior belongs in focused modules under `extensions/openai-codex-compat/`.
 - Preserve canonical `openai-codex` assistant history when changing fast-mode request behavior.
 - Native Codex compaction must fail closed and must not intercept `/tree` branch summarization.
 - `apply_patch` must validate all hunks before writes and participate in Pi's file mutation queue.

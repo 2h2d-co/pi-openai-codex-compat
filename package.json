@@ -20,7 +20,7 @@
     "url": "git+https://github.com/2h2d-co/pi-openai-codex-compat.git"
   },
   "files": [
-    "extensions/openai-codex-compat",
+    "extensions",
     "README.md",
     "CHANGELOG.md",
     "LICENSE",
@@ -58,7 +58,7 @@
   },
   "pi": {
     "extensions": [
-      "./extensions/openai-codex-compat/index.ts"
+      "./extensions/index.ts"
     ]
   }
 }

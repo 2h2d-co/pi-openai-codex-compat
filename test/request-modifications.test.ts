@@ -19,7 +19,7 @@ import { getBuiltinModels } from "@earendil-works/pi-ai/providers/all";
 import { CONFIG_FILE } from "../extensions/openai-codex-compat/config.ts";
 
 const rootDir = resolve(dirname(fileURLToPath(import.meta.url)), "..");
-const extensionPath = resolve(rootDir, "extensions/openai-codex-compat/index.ts");
+const extensionPath = resolve(rootDir, "extensions/index.ts");
 const CODEX_PROVIDER = "openai-codex";
 const MODEL_ID = "gpt-5.6-sol";
 const ACCOUNT_ID_CLAIM = "https://api.openai.com/auth";
