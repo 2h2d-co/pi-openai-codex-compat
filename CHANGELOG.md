@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.0.4 - 2026-08-07
+
 ### Added
 
 - Persist and send the official Codex installation/window request identity used for backend affinity, advancing the window after successful compaction.
