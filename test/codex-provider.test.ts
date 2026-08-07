@@ -9,7 +9,7 @@ import {
   DEFAULT_CONFIG,
   type CodexCompatConfig,
 } from "../extensions/openai-codex-compat/config.ts";
-import type { JsonRecord } from "../extensions/openai-codex-compat/codex-protocol.ts";
+import { isObject, type JsonRecord } from "../extensions/openai-codex-compat/codex-protocol.ts";
 import {
   getOpenAICodexWebSocketDebugStats,
   type CodexTransportDiagnostic,
@@ -18,12 +18,26 @@ import { IMAGE_GENERATION_PARAMETERS } from "../extensions/openai-codex-compat/i
 import { NATIVE_RESPONSE_ENTRY_TYPE } from "../extensions/openai-codex-compat/native-history.ts";
 import { IMAGE_GENERATION_TOOL_NAME } from "../extensions/openai-codex-compat/namespaced-tools.ts";
 import { CHECKPOINT_ENTRY_TYPE } from "../extensions/openai-codex-compat/compaction-checkpoint.ts";
+import {
+  CODEX_TURN_METADATA_HEADER,
+  responsesCompactionV2Metadata,
+} from "../extensions/openai-codex-compat/codex-metadata.ts";
+import {
+  CODEX_THREAD_MARKER_ENTRY_TYPE,
+  type CodexThreadMarkerData,
+} from "../extensions/openai-codex-compat/codex-thread-lineage.ts";
 
 type MessageEntry = Extract<SessionEntry, { type: "message" }>;
 
-function codexModel(): Model<any> {
+const MANUAL_COMPACTION_METADATA = responsesCompactionV2Metadata(
+  "manual",
+  "user_requested",
+  "standalone_turn",
+);
+
+function codexModel(id = "gpt-test"): Model<any> {
   return {
-    id: "gpt-test",
+    id,
     name: "GPT Test",
     api: "openai-codex-responses",
     provider: "openai-codex",
@@ -138,6 +152,7 @@ function createHarness(
   initialBranch: SessionEntry[],
   config: CodexCompatConfig = DEFAULT_CONFIG,
   sessionId = "session-1",
+  responseRetryPolicy = { maxRetries: 0, baseDelayMs: 0 },
 ) {
   let branch = [...initialBranch];
   const customEntries: Array<{ customType: string; data: unknown }> = [];
@@ -158,7 +173,12 @@ function createHarness(
       } as SessionEntry);
     },
   } as unknown as ExtensionAPI;
-  const runtime = new CodexProviderRuntime(pi, () => config);
+  const runtime = new CodexProviderRuntime(
+    pi,
+    () => config,
+    "11111111-1111-4111-8111-111111111111",
+    responseRetryPolicy,
+  );
   runtime.transport.prewarm = async () => false;
   const manager = {
     getSessionId: () => sessionId,
@@ -209,6 +229,7 @@ function createHarness(
   runtime.captureScope(extensionContext);
   return {
     runtime,
+    extensionContext,
     branch: () => branch,
     customEntries,
     compactions,
@@ -240,13 +261,15 @@ void test("streams ordinary responses without persisting redundant native data",
   assert.equal(harness.customEntries.length, 0);
 });
 
-void test("prewarms the complete first request before its WebSocket turn", async () => {
+void test("prewarms only the static prefix before its first WebSocket turn", async () => {
   const user = userEntry("user-1", "hello");
   const harness = createHarness([user]);
   const prewarms: JsonRecord[] = [];
+  let prewarmCacheDiagnostics: JsonRecord | undefined;
   const requests: JsonRecord[] = [];
-  harness.runtime.transport.prewarm = async (_model, body) => {
+  harness.runtime.transport.prewarm = async (_model, body, options) => {
     prewarms.push(structuredClone(body));
+    prewarmCacheDiagnostics = options.cacheDiagnostics as unknown as JsonRecord;
     return true;
   };
   harness.runtime.transport.request = async function* (_model, body) {
@@ -269,13 +292,438 @@ void test("prewarms the complete first request before its WebSocket turn", async
   assert.equal(prewarms.length, 1);
   const prewarm = prewarms[0];
   assert.ok(prewarm);
-  assert.equal((prewarm.input as unknown[]).length, 1);
+  assert.equal((prewarm.input as unknown[]).length, 0);
   const prewarmMetadata = prewarm["client_metadata"] as JsonRecord;
   assert.match(String(prewarmMetadata["x-codex-turn-metadata"]), /"request_kind":"prewarm"/);
+  assert.equal(prewarmMetadata["turn_id"], "");
+  assert.doesNotMatch(String(prewarmMetadata["x-codex-turn-metadata"]), /turn_started_at_unix_ms/);
   assert.equal(requests.length, 1);
   const request = requests[0];
   assert.ok(request);
   assert.equal((request.input as unknown[]).length, 1);
+  const requestMetadata = request["client_metadata"] as JsonRecord;
+  assert.notEqual(requestMetadata["turn_id"], "");
+  assert.equal(prewarmCacheDiagnostics?.["prewarmMode"], "static");
+  assert.equal(prewarmCacheDiagnostics?.["staticInputItems"], 0);
+});
+
+void test("sends GPT-5.6 requests through the Responses Lite envelope", async () => {
+  const user = userEntry("user-1", "hello");
+  const harness = createHarness([user], {
+    ...DEFAULT_CONFIG,
+    responsesLite: true,
+  });
+  let prewarm: JsonRecord | undefined;
+  let prewarmCacheDiagnostics: JsonRecord | undefined;
+  let request: JsonRecord | undefined;
+  harness.runtime.transport.prewarm = async (_model, body, options) => {
+    prewarm = structuredClone(body);
+    prewarmCacheDiagnostics = options.cacheDiagnostics as unknown as JsonRecord;
+    return true;
+  };
+  harness.runtime.transport.request = async function* (_model, body) {
+    request = structuredClone(body);
+    yield* textEvents("hello back");
+  };
+
+  await harness.runtime
+    .streamSimple(
+      codexModel("gpt-5.6-sol"),
+      {
+        systemPrompt: "Stable instructions",
+        messages: [user.message as Context["messages"][number]],
+      },
+      {
+        apiKey: accessToken(),
+        sessionId: "session-1",
+        transport: "auto",
+      },
+    )
+    .result();
+
+  assert.ok(request);
+  assert.equal(request.instructions, undefined);
+  assert.equal(request.tools, undefined);
+  assert.equal(request.parallel_tool_calls, false);
+  assert.equal((request["reasoning"] as JsonRecord)["context"], "all_turns");
+  const input = request.input as JsonRecord[];
+  assert.equal(input[0]?.type, "additional_tools");
+  assert.deepEqual(input[1], {
+    type: "message",
+    role: "developer",
+    content: [{ type: "input_text", text: "Stable instructions" }],
+  });
+  assert.equal(input[2]?.role, "user");
+  assert.ok(prewarm);
+  assert.deepEqual(prewarm.input, input.slice(0, 2));
+  assert.equal(prewarmCacheDiagnostics?.["envelope"], "responses_lite");
+  assert.equal(prewarmCacheDiagnostics?.["staticInputItems"], 2);
+});
+
+void test("uses ordinary Responses when Responses Lite is disabled", async () => {
+  const user = userEntry("user-1", "hello");
+  const report: Tool = {
+    name: "report",
+    description: "Report status",
+    parameters: Type.Object({ status: Type.String() }),
+  };
+  const harness = createHarness([user]);
+  harness.runtime.updateSessionConfig("session-1", {
+    ...DEFAULT_CONFIG,
+    responsesLite: false,
+  });
+  let request: JsonRecord | undefined;
+  let cacheDiagnostics: JsonRecord | undefined;
+  harness.runtime.transport.request = async function* (_model, body, options) {
+    request = structuredClone(body);
+    cacheDiagnostics = options.cacheDiagnostics as unknown as JsonRecord;
+    yield* textEvents("hello back");
+  };
+
+  await harness.runtime
+    .streamSimple(
+      codexModel("gpt-5.6-sol"),
+      {
+        systemPrompt: "Stable instructions",
+        messages: [user.message as Context["messages"][number]],
+        tools: [report],
+      },
+      {
+        apiKey: accessToken(),
+        sessionId: "session-1",
+        transport: "sse",
+        temperature: 0.7,
+      },
+    )
+    .result();
+
+  assert.ok(request);
+  assert.equal(request.instructions, "Stable instructions");
+  assert.deepEqual(request.tools, [
+    {
+      type: "function",
+      name: "report",
+      description: "Report status",
+      parameters: report.parameters,
+      strict: false,
+    },
+  ]);
+  assert.equal(request["temperature"], undefined);
+  assert.equal(request.parallel_tool_calls, true);
+  assert.equal((request.input as JsonRecord[])[0]?.role, "user");
+  assert.equal(
+    (request["client_metadata"] as JsonRecord)[
+      "ws_request_header_x_openai_internal_codex_responses_lite"
+    ],
+    undefined,
+  );
+  assert.equal(cacheDiagnostics?.["envelope"], "responses");
+  assert.equal(cacheDiagnostics?.["staticInputItems"], 0);
+});
+
+void test("reuses one turn id throughout an agent run", async () => {
+  const user = userEntry("user-1", "hello");
+  const harness = createHarness([user]);
+  const turnIds: string[] = [];
+  harness.runtime.transport.request = async function* (_model, body) {
+    const metadata = body["client_metadata"] as JsonRecord;
+    turnIds.push(String(metadata["turn_id"]));
+    yield* textEvents("hello back", `response-${String(turnIds.length)}`);
+  };
+  const context = { messages: [user.message as Context["messages"][number]] };
+  const options = {
+    apiKey: accessToken(),
+    sessionId: "session-1",
+    transport: "sse" as const,
+  };
+
+  harness.runtime.beginAgentTurn(harness.extensionContext);
+  await harness.runtime.streamSimple(codexModel(), context, options).result();
+  await harness.runtime.streamSimple(codexModel(), context, options).result();
+  harness.runtime.endAgentTurn(harness.extensionContext);
+  harness.runtime.beginAgentTurn(harness.extensionContext);
+  await harness.runtime.streamSimple(codexModel(), context, options).result();
+  harness.runtime.endAgentTurn(harness.extensionContext);
+
+  assert.equal(turnIds.length, 3);
+  assert.equal(turnIds[0], turnIds[1]);
+  assert.notEqual(turnIds[1], turnIds[2]);
+});
+
+void test("switches branch thread metadata while preserving prompt-cache identity", async () => {
+  const root = userEntry("user-1", "root");
+  const harness = createHarness([root]);
+  const requests: JsonRecord[] = [];
+  const closedSessions: Array<string | undefined> = [];
+  harness.runtime.transport.close = (sessionId) => {
+    closedSessions.push(sessionId);
+  };
+  harness.runtime.transport.request = async function* (_model, body) {
+    requests.push(structuredClone(body));
+    if (
+      Array.isArray(body.input) &&
+      body.input.some((item) => isObject(item) && item.type === "compaction_trigger")
+    ) {
+      yield* compactionEvents();
+      return;
+    }
+    yield* textEvents("done", `response-${String(requests.length)}`);
+  };
+  const options = {
+    apiKey: accessToken(),
+    sessionId: "session-1",
+    transport: "sse" as const,
+  };
+
+  await harness.runtime
+    .streamSimple(
+      codexModel(),
+      { messages: [root.message as Context["messages"][number]] },
+      options,
+    )
+    .result();
+  await harness.runtime.compact({
+    model: codexModel(),
+    requestOptions: {
+      apiKey: accessToken(),
+      sessionId: "session-1",
+      transport: "sse",
+    },
+    history: [],
+    instructions: "Compact",
+    grammarToolInputProperties: new Map(),
+    template: {},
+    priority: false,
+    compactionMetadata: MANUAL_COMPACTION_METADATA,
+  });
+
+  const markerData: CodexThreadMarkerData = {
+    version: 1,
+    sessionId: "session-1",
+    threadId: "019fd600-abcb-7ba3-972c-b289f0a08206",
+    forkedFromThreadId: "session-1",
+    branchParentEntryId: "user-1",
+  };
+  harness.branch().push({
+    type: "custom",
+    id: "thread-marker",
+    parentId: "user-1",
+    timestamp: new Date().toISOString(),
+    customType: CODEX_THREAD_MARKER_ENTRY_TYPE,
+    data: markerData,
+  } as SessionEntry);
+  const branchUser = userEntry("user-2", "branch", "thread-marker");
+  harness.branch().push(branchUser);
+  harness.runtime.captureScope(harness.extensionContext);
+
+  await harness.runtime
+    .streamSimple(
+      codexModel(),
+      {
+        messages: [
+          root.message as Context["messages"][number],
+          branchUser.message as Context["messages"][number],
+        ],
+      },
+      options,
+    )
+    .result();
+
+  harness.branch().splice(1);
+  harness.runtime.captureScope(harness.extensionContext);
+  await harness.runtime
+    .streamSimple(
+      codexModel(),
+      { messages: [root.message as Context["messages"][number]] },
+      options,
+    )
+    .result();
+
+  assert.deepEqual(closedSessions, ["session-1", "session-1"]);
+  assert.equal(requests[0]?.prompt_cache_key, "session-1");
+  assert.equal(requests[2]?.prompt_cache_key, "session-1");
+  assert.equal(requests[3]?.prompt_cache_key, "session-1");
+  const rootMetadata = requests[0]?.["client_metadata"] as JsonRecord;
+  const branchMetadata = requests[2]?.["client_metadata"] as JsonRecord;
+  const resumedRootMetadata = requests[3]?.["client_metadata"] as JsonRecord;
+  assert.equal(rootMetadata["thread_id"], "session-1");
+  assert.equal(branchMetadata["thread_id"], markerData.threadId);
+  assert.equal(branchMetadata["x-codex-window-id"], `${markerData.threadId}:0`);
+  assert.equal(resumedRootMetadata["x-codex-window-id"], "session-1:1");
+  const branchTurnMetadata = JSON.parse(
+    String(branchMetadata[CODEX_TURN_METADATA_HEADER]),
+  ) as JsonRecord;
+  assert.equal(branchTurnMetadata["forked_from_thread_id"], "session-1");
+});
+
+void test("continues response.completed end_turn false without synthetic input", async () => {
+  const user = userEntry("user-1", "finish the task");
+  const harness = createHarness([user]);
+  const requests: JsonRecord[] = [];
+  harness.runtime.transport.request = async function* (_model, body) {
+    requests.push(structuredClone(body));
+    const responseNumber = requests.length;
+    const responseEvents = textEvents(
+      responseNumber === 1 ? "first phase" : "second phase",
+      `resp_${String(responseNumber)}`,
+    );
+    if (responseNumber === 1) {
+      const terminal = responseEvents.at(-1);
+      assert.ok(terminal && isObject(terminal.response));
+      terminal.response["end_turn"] = false;
+    }
+    yield* responseEvents;
+  };
+
+  const message = await harness.runtime
+    .streamSimple(
+      codexModel(),
+      { messages: [user.message as Context["messages"][number]] },
+      {
+        apiKey: accessToken(),
+        sessionId: "session-1",
+        transport: "sse",
+      },
+    )
+    .result();
+
+  assert.equal(requests.length, 2);
+  assert.equal(message.responseId, "resp_2");
+  assert.equal(message.stopReason, "stop");
+  assert.deepEqual(
+    message.content.filter((block) => block.type === "text").map((block) => block.text),
+    ["first phase", "second phase"],
+  );
+  assert.equal(message.usage.input, 20);
+  assert.equal(message.usage.output, 10);
+  assert.equal(message.usage.cacheRead, 0);
+  assert.equal(message.usage.cacheWrite, 0);
+  assert.equal(message.usage.reasoning, 0);
+  assert.equal(message.usage.totalTokens, 30);
+  assert.ok(Math.abs(message.usage.cost.input - 0.00002) < 1e-12);
+  assert.ok(Math.abs(message.usage.cost.output - 0.00002) < 1e-12);
+  assert.ok(Math.abs(message.usage.cost.total - 0.00004) < 1e-12);
+  const firstRequest = requests[0];
+  const secondRequest = requests[1];
+  assert.ok(firstRequest);
+  assert.ok(secondRequest);
+  const firstInput = firstRequest.input as JsonRecord[];
+  const secondInput = secondRequest.input as JsonRecord[];
+  assert.deepEqual(secondInput.slice(0, firstInput.length), firstInput);
+  assert.equal(secondInput.at(-1)?.type, "message");
+  assert.equal(secondInput.at(-1)?.role, "assistant");
+  assert.match(JSON.stringify(secondInput.at(-1)), /first phase/);
+  assert.equal(
+    (firstRequest["client_metadata"] as JsonRecord)["turn_id"],
+    (secondRequest["client_metadata"] as JsonRecord)["turn_id"],
+  );
+  assert.equal(harness.customEntries.length, 1);
+  assert.match(JSON.stringify(harness.customEntries[0]?.data), /first phase.*second phase/);
+});
+
+void test("resamples retryable failed and incomplete responses from completed output history", async () => {
+  for (const firstTerminal of ["response.failed", "response.incomplete"] as const) {
+    const user = userEntry("user-1", `test ${firstTerminal}`);
+    const harness = createHarness([user], DEFAULT_CONFIG, `session-${firstTerminal}`, {
+      maxRetries: 1,
+      baseDelayMs: 0,
+    });
+    const requests: JsonRecord[] = [];
+    harness.runtime.transport.request = async function* (_model, body) {
+      requests.push(structuredClone(body));
+      if (requests.length === 2) {
+        yield* textEvents("after retry", "resp_recovered");
+        return;
+      }
+
+      const firstEvents = textEvents("before retry", "resp_retryable");
+      firstEvents[firstEvents.length - 1] =
+        firstTerminal === "response.failed"
+          ? {
+              type: "response.failed",
+              response: {
+                id: "resp_retryable",
+                status: "failed",
+                error: { code: "rate_limit_exceeded", message: "retry this response" },
+                usage: { input_tokens: 4, output_tokens: 2, total_tokens: 6 },
+              },
+            }
+          : {
+              type: "response.incomplete",
+              response: {
+                id: "resp_retryable",
+                status: "incomplete",
+                incomplete_details: { reason: "content_filter" },
+                usage: { input_tokens: 4, output_tokens: 2, total_tokens: 6 },
+              },
+            };
+      yield* firstEvents;
+    };
+
+    const message = await harness.runtime
+      .streamSimple(
+        codexModel(),
+        { messages: [user.message as Context["messages"][number]] },
+        {
+          apiKey: accessToken(),
+          sessionId: `session-${firstTerminal}`,
+          transport: "sse",
+        },
+      )
+      .result();
+
+    assert.equal(requests.length, 2);
+    assert.equal(message.stopReason, "stop");
+    assert.equal(message.responseId, "resp_recovered");
+    assert.deepEqual(
+      message.content.filter((block) => block.type === "text").map((block) => block.text),
+      ["before retry", "after retry"],
+    );
+    assert.equal(message.usage.input, 14);
+    assert.equal(message.usage.output, 7);
+    const firstInput = requests[0]?.input as JsonRecord[];
+    const secondInput = requests[1]?.input as JsonRecord[];
+    assert.deepEqual(secondInput.slice(0, firstInput.length), firstInput);
+    assert.match(JSON.stringify(secondInput.slice(firstInput.length)), /before retry/);
+    assert.equal(harness.customEntries.length, 1);
+    assert.match(JSON.stringify(harness.customEntries[0]?.data), /before retry.*after retry/);
+  }
+});
+
+void test("does not resample official fatal response.failed codes", async () => {
+  const user = userEntry("user-1", "invalid request");
+  const harness = createHarness([user], DEFAULT_CONFIG, "session-fatal-response", {
+    maxRetries: 1,
+    baseDelayMs: 0,
+  });
+  let requests = 0;
+  harness.runtime.transport.request = async function* () {
+    requests += 1;
+    yield {
+      type: "response.failed",
+      response: {
+        id: "resp_fatal",
+        status: "failed",
+        error: { code: "invalid_prompt", message: "Invalid request." },
+      },
+    };
+  };
+
+  const message = await harness.runtime
+    .streamSimple(
+      codexModel(),
+      { messages: [user.message as Context["messages"][number]] },
+      {
+        apiKey: accessToken(),
+        sessionId: "session-fatal-response",
+        transport: "sse",
+      },
+    )
+    .result();
+
+  assert.equal(requests, 1);
+  assert.equal(message.stopReason, "error");
+  assert.equal(message.errorMessage, "Invalid request.");
 });
 
 void test("commits canonical assistant items for WebSocket continuation", async () => {
@@ -317,6 +765,76 @@ void test("commits canonical assistant items for WebSocket continuation", async 
       },
     ]),
   );
+});
+
+void test("preserves flat default tool calls in Responses Lite continuations", async () => {
+  const user = userEntry("user-1", "hello");
+  const harness = createHarness([user], {
+    ...DEFAULT_CONFIG,
+    responsesLite: true,
+  });
+  let replayItems: readonly JsonRecord[] | undefined;
+  harness.runtime.transport.request = async function* (_model, _body, options) {
+    yield { type: "response.created", response: { id: "resp_tool" } };
+    yield {
+      type: "response.output_item.done",
+      item: {
+        id: "fc_report",
+        type: "function_call",
+        status: "completed",
+        call_id: "call_report",
+        name: "report",
+        arguments: "{}",
+      },
+    };
+    yield {
+      type: "response.completed",
+      response: {
+        id: "resp_tool",
+        status: "completed",
+        usage: { input_tokens: 10, output_tokens: 5, total_tokens: 15 },
+      },
+    };
+    options.onContinuationReady?.({
+      responseId: "resp_tool",
+      replaceResponseItems(items) {
+        replayItems = structuredClone(items);
+        return true;
+      },
+    });
+  };
+
+  const tool = {
+    name: "report",
+    description: "Report",
+    parameters: Type.Object({}),
+  } as Tool;
+  const message = await harness.runtime
+    .streamSimple(
+      codexModel("gpt-5.6-sol"),
+      {
+        messages: [user.message as Context["messages"][number]],
+        tools: [tool],
+      },
+      {
+        apiKey: accessToken(),
+        sessionId: "session-1",
+        transport: "websocket-cached",
+      },
+    )
+    .result();
+
+  assert.equal(message.stopReason, "toolUse");
+  assert.deepEqual(replayItems, [
+    {
+      type: "function_call",
+      id: "fc_report",
+      call_id: "call_report",
+      name: "report",
+      arguments: "{}",
+    },
+  ]);
+  assert.equal(harness.customEntries.length, 0);
 });
 
 void test("honors disabled cache retention when building provider payloads", async () => {
@@ -389,6 +907,14 @@ void test("persists transparent Codex recovery diagnostics on successful assista
       trigger: "previous_response_not_found",
       configuredTransport: "auto",
       previousResponseId: "response-previous",
+      cacheIdentity: {
+        promptCacheKey: "session-1",
+        sessionHeader: "session-1",
+        threadHeader: "session-1",
+        clientRequestHeader: "session-1",
+        routingHint: null,
+        accountId: "account-1",
+      },
       attempts: [
         {
           transport: "websocket",
@@ -618,6 +1144,7 @@ void test("validates direct-stream and compaction authentication before payload 
       grammarToolInputProperties: new Map(),
       template: {},
       priority: false,
+      compactionMetadata: MANUAL_COMPACTION_METADATA,
     }),
     /Failed to extract accountId from token/,
   );
@@ -657,11 +1184,54 @@ void test("discards WebSockets when compaction response validation fails", async
       grammarToolInputProperties: new Map(),
       template: {},
       priority: false,
+      compactionMetadata: MANUAL_COMPACTION_METADATA,
     }),
     /exactly one is required/,
   );
   assert.ok(reportedFailure instanceof Error);
   assert.match(reportedFailure.message, /exactly one is required/);
+});
+
+void test("advances Codex window metadata after successful direct compaction", async () => {
+  const user = userEntry("user-1", "continue");
+  const harness = createHarness([user]);
+  const requests: JsonRecord[] = [];
+  harness.runtime.transport.request = async function* (_model, body) {
+    requests.push(structuredClone(body));
+    if (requests.length === 1) yield* compactionEvents();
+    else yield* textEvents("continued", "resp_continued");
+  };
+
+  await harness.runtime.compact({
+    model: codexModel(),
+    requestOptions: {
+      apiKey: accessToken(),
+      sessionId: "session-1",
+      transport: "sse",
+    },
+    history: [],
+    instructions: "Compact",
+    grammarToolInputProperties: new Map(),
+    template: {},
+    priority: false,
+    compactionMetadata: MANUAL_COMPACTION_METADATA,
+  });
+  await harness.runtime
+    .streamSimple(
+      codexModel(),
+      { messages: [user.message as Context["messages"][number]] },
+      {
+        apiKey: accessToken(),
+        sessionId: "session-1",
+        transport: "sse",
+      },
+    )
+    .result();
+
+  const compactMetadata = requests[0]?.["client_metadata"] as JsonRecord;
+  const turnMetadata = requests[1]?.["client_metadata"] as JsonRecord;
+  assert.equal(compactMetadata["x-codex-window-id"], "session-1:0");
+  assert.equal(turnMetadata["x-codex-window-id"], "session-1:1");
 });
 
 void test("prices unsuccessful terminal usage before returning the provider error", async () => {
@@ -858,7 +1428,10 @@ void test("discards downstream-failed WebSockets without activating SSE fallback
     .result();
   assert.equal(terminalFailure.stopReason, "error");
   assert.equal(terminalFailure.errorMessage, "Response incomplete: content_filter");
-  assert.equal(terminalFailure.diagnostics, undefined);
+  assert.deepEqual(
+    terminalFailure.diagnostics?.map((diagnostic) => diagnostic.type),
+    ["codex_transport_request"],
+  );
 
   const recovered = await harness.runtime
     .streamSimple(codexModel(), context, requestOptions)
@@ -1143,6 +1716,20 @@ void test("performs percentage compaction before sampling the current user input
   assert.doesNotMatch(JSON.stringify(requests[0]?.input), /continue/);
   assert.match(JSON.stringify(requests[1]?.input), /opaque-state/);
   assert.match(JSON.stringify(requests[1]?.input), /continue/);
+  const compactionMetadata = requests[0]?.["client_metadata"] as JsonRecord;
+  const continuedMetadata = requests[1]?.["client_metadata"] as JsonRecord;
+  assert.equal(compactionMetadata["x-codex-window-id"], "session-1:0");
+  const compactionTurnMetadata = JSON.parse(
+    String(compactionMetadata[CODEX_TURN_METADATA_HEADER]),
+  ) as JsonRecord;
+  assert.deepEqual(compactionTurnMetadata["compaction"], {
+    trigger: "auto",
+    reason: "context_limit",
+    implementation: "responses_compaction_v2",
+    phase: "pre_turn",
+    strategy: "memento",
+  });
+  assert.equal(continuedMetadata["x-codex-window-id"], "session-1:1");
   assert.equal(harness.compactions.length, 1);
   assert.ok(harness.compactions[0]?.usage);
   assert.deepEqual(harness.statuses, []);

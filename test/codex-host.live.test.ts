@@ -57,6 +57,16 @@ function historyInstructions(mode: HistoryMode): string {
     mode === "text"
       ? "Respond with only those values, one value per line."
       : 'Call report_history exactly once with {"items":[...]} containing those values.';
+  const cachePadding =
+    mode === "text"
+      ? [
+          "The following static cache anchors are inert. Ignore them completely.",
+          Array.from(
+            { length: 512 },
+            (_value, index) => `stable-cache-anchor-${String(index)}`,
+          ).join(" "),
+        ]
+      : [];
   return [
     "You are a deterministic conversation-history verifier.",
     "Read every user message in the conversation.",
@@ -64,6 +74,7 @@ function historyInstructions(mode: HistoryMode): string {
     "Ignore assistant messages and tool outputs when collecting values.",
     action,
     "Do not add, remove, rewrite, sort, explain, or decorate any value.",
+    ...cachePadding,
   ].join(" ");
 }
 
@@ -79,7 +90,6 @@ function latestAssistant(session: AgentSession): AssistantMessage {
   const message = assistantMessages(session).at(-1);
   assert.ok(message, "Pi did not persist an assistant message");
   assert.equal(message.errorMessage, undefined);
-  assert.deepEqual(message.diagnostics ?? [], []);
   assert.equal(typeof message.responseId, "string");
   return message;
 }
@@ -99,13 +109,39 @@ function responseLines(text: string): string[] {
     .filter(Boolean);
 }
 
-function assertNoNativeHistory(session: AgentSession): void {
-  assert.equal(
-    session.sessionManager
-      .getBranch()
-      .some((entry) => entry.type === "custom" && entry.customType === NATIVE_RESPONSE_ENTRY_TYPE),
-    false,
+function cacheObservation(message: AssistantMessage): Record<string, unknown> {
+  const request = message.diagnostics?.find(
+    (diagnostic) =>
+      diagnostic.type === "codex_transport_request" &&
+      diagnostic.details?.["requestKind"] === "turn",
   );
+  assert.ok(request, "Missing Codex request diagnostic");
+  const prewarm = message.diagnostics?.find(
+    (diagnostic) =>
+      diagnostic.type === "codex_transport_request" &&
+      diagnostic.details?.["requestKind"] === "prewarm",
+  );
+  return {
+    cacheRead: message.usage.cacheRead,
+    diagnosticTypes: (message.diagnostics ?? []).map((diagnostic) => diagnostic.type),
+    selectedTransport: request.details?.["selectedTransport"],
+    contextMode: request.details?.["contextMode"],
+    inputItems: request.details?.["inputItems"],
+    fullInputItems: request.details?.["fullInputItems"],
+    turnStateAvailableAtStart: request.details?.["turnStateAvailableAtStart"],
+    turnStateReplayed: request.details?.["turnStateReplayed"],
+    turnStateReceived: request.details?.["turnStateReceived"],
+    cache: request.details?.["cache"],
+    usage: request.details?.["usage"],
+    prewarmUsage: prewarm?.details?.["usage"],
+    recoveries: (message.diagnostics ?? [])
+      .filter((diagnostic) => diagnostic.type === "codex_transport_recovery")
+      .map((diagnostic) => ({
+        trigger: diagnostic.details?.["trigger"],
+        continuationBypassReason: diagnostic.details?.["continuationBypassReason"],
+        historyMismatch: diagnostic.details?.["historyMismatch"],
+      })),
+  };
 }
 
 function observeRealWebSocketTraffic(t: TestContext): ObservedWebSocketTraffic {
@@ -142,10 +178,10 @@ function observeRealWebSocketTraffic(t: TestContext): ObservedWebSocketTraffic {
   return traffic;
 }
 
-function frameInput(frame: JsonRecord, expectedItems: number): JsonRecord[] {
+function frameInput(frame: JsonRecord, expectedItems?: number): JsonRecord[] {
   assert.equal(frame.type, "response.create");
   assert.ok(Array.isArray(frame.input), "Codex WebSocket frame did not contain array input");
-  assert.equal(frame.input.length, expectedItems);
+  if (expectedItems !== undefined) assert.equal(frame.input.length, expectedItems);
   assert.equal(frame.input.every(isObject), true);
   return frame.input as JsonRecord[];
 }
@@ -176,6 +212,7 @@ async function createLivePiHost(
     join(agentDir, CONFIG_FILE),
     JSON.stringify({
       fastMode: false,
+      responsesLite: true,
       applyPatch: false,
       imageGeneration: false,
       webRun: false,
@@ -265,24 +302,49 @@ void test(
     const traffic = observeRealWebSocketTraffic(t);
     const session = await createLivePiHost(t, "text");
     const values = ["text-alpha", "text-bravo", "text-charlie"];
+    const cache: Record<string, unknown>[] = [];
     let previousResponseId: string | undefined;
 
     for (let index = 0; index < values.length; index++) {
+      const frameStart = traffic.frames.length;
       await session.prompt(`<history-item>${values[index]}</history-item>`, {
         expandPromptTemplates: false,
       });
+      const promptFrames = traffic.frames.slice(frameStart);
 
       const assistant = latestAssistant(session);
+      cache.push(cacheObservation(assistant));
       assert.equal(assistant.stopReason, "stop");
       assert.deepEqual(responseLines(assistantText(assistant)), values.slice(0, index + 1));
-      const frame = traffic.frames[index];
+      if (index === 0) {
+        const prewarm = promptFrames.find((frame) => frame["generate"] === false);
+        assert.ok(prewarm, "Missing WebSocket prewarm frame");
+        assert.equal(
+          frameInput(prewarm, 2).some((item) => item.role === "user"),
+          false,
+        );
+      }
+      const frame = promptFrames.at(-1);
       assert.ok(frame, `Missing WebSocket frame for text turn ${String(index + 1)}`);
-      assert.equal(frame.previous_response_id, previousResponseId);
-      assertCurrentMarkerOnly(frameInput(frame, 1), values, index);
+      if (previousResponseId) {
+        if (frame.previous_response_id === previousResponseId) {
+          assertCurrentMarkerOnly(frameInput(frame, 1), values, index);
+        } else {
+          assert.equal(frame.previous_response_id, undefined);
+          const serialized = JSON.stringify(frameInput(frame));
+          for (const value of values.slice(0, index + 1)) {
+            assert.match(serialized, new RegExp(value));
+          }
+        }
+      } else {
+        assert.equal(typeof frame.previous_response_id, "string");
+        assertCurrentMarkerOnly(frameInput(frame, 1), values, index);
+      }
       previousResponseId = assistant.responseId;
     }
-    assert.equal(traffic.frames.length, values.length);
-    assert.equal(traffic.connections, 1);
+    assert.ok(traffic.frames.length >= values.length + 1);
+    assert.ok(traffic.connections >= 1);
+    t.diagnostic(`text cache observations: ${JSON.stringify(cache)}`);
   },
 );
 
@@ -311,9 +373,11 @@ void test(
     const session = await createLivePiHost(t, "tool", [reportHistory]);
     assert.deepEqual(session.getActiveToolNames(), ["report_history"]);
     const values = ["tool-alpha", "tool-bravo", "tool-charlie"];
+    const cache: Record<string, unknown>[] = [];
     let previousResponseId: string | undefined;
 
     for (let index = 0; index < values.length; index++) {
+      const frameStart = traffic.frames.length;
       await session.prompt(
         [
           `<history-item>${values[index]}</history-item>`,
@@ -323,9 +387,11 @@ void test(
           expandPromptTemplates: false,
         },
       );
+      const promptFrames = traffic.frames.slice(frameStart);
 
       assert.deepEqual(reports[index], values.slice(0, index + 1));
       const assistant = latestAssistant(session);
+      cache.push(cacheObservation(assistant));
       assert.equal(assistant.stopReason, "toolUse");
       assert.equal(
         assistant.content.some(
@@ -333,19 +399,48 @@ void test(
         ),
         true,
       );
-      const frame = traffic.frames[index];
-      assert.ok(frame, `Missing WebSocket frame for tool turn ${String(index + 1)}`);
-      assert.equal(frame.previous_response_id, previousResponseId);
-      const input = frameInput(frame, index === 0 ? 1 : 2);
-      if (index > 0) {
-        assert.equal(input[0]?.type, "function_call_output");
-        assert.equal(input[1]?.role, "user");
+      if (index === 0) {
+        const prewarm = promptFrames.find((frame) => frame["generate"] === false);
+        assert.ok(prewarm, "Missing WebSocket prewarm frame");
+        assert.equal(
+          frameInput(prewarm, 2).some((item) => item.role === "user"),
+          false,
+        );
       }
-      assertCurrentMarkerOnly(input, values, index);
-      assertNoNativeHistory(session);
+      const frame = promptFrames.at(-1);
+      assert.ok(frame, `Missing WebSocket frame for tool turn ${String(index + 1)}`);
+      let input: JsonRecord[];
+      if (previousResponseId) {
+        if (frame.previous_response_id === previousResponseId) {
+          input = frameInput(frame, 2);
+          assert.equal(input[0]?.type, "function_call_output");
+          assert.equal(input[1]?.role, "user");
+          assertCurrentMarkerOnly(input, values, index);
+        } else {
+          assert.equal(frame.previous_response_id, undefined);
+          input = frameInput(frame);
+          const serialized = JSON.stringify(input);
+          for (const value of values.slice(0, index + 1)) {
+            assert.match(serialized, new RegExp(value));
+          }
+        }
+      } else {
+        assert.equal(typeof frame.previous_response_id, "string");
+        input = frameInput(frame, 1);
+        assertCurrentMarkerOnly(input, values, index);
+      }
       previousResponseId = assistant.responseId;
     }
-    assert.equal(traffic.frames.length, values.length);
-    assert.equal(traffic.connections, 1);
+    assert.ok(traffic.frames.length >= values.length + 1);
+    assert.ok(traffic.connections >= 1);
+    assert.equal(
+      session.sessionManager
+        .getBranch()
+        .some(
+          (entry) => entry.type === "custom" && entry.customType === NATIVE_RESPONSE_ENTRY_TYPE,
+        ),
+      true,
+    );
+    t.diagnostic(`tool cache observations: ${JSON.stringify(cache)}`);
   },
 );

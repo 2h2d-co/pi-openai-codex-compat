@@ -17,7 +17,12 @@ import {
   type SimpleStreamOptions,
   type Tool,
   type Usage,
+  uuidv7,
 } from "@earendil-works/pi-ai";
+import {
+  codexCacheDiagnosticContext,
+  type CodexCacheDiagnosticContext,
+} from "./codex-cache-diagnostics.ts";
 import {
   checkpointData,
   providerHistory,
@@ -35,16 +40,25 @@ import {
   type ResponsesItem,
 } from "./codex-protocol.ts";
 import { codexCacheKey } from "./codex-cache-key.ts";
-import { withCodexRequestMetadata } from "./codex-metadata.ts";
-import { processCodexStream } from "./codex-stream.ts";
+import { resolveCodexInstallationId } from "./codex-installation.ts";
+import {
+  type CodexCompactionMetadata,
+  type CodexMetadataIdentity,
+  responsesCompactionV2Metadata,
+  withCodexRequestMetadata,
+} from "./codex-metadata.ts";
+import { resolveCodexThreadIdentity, type CodexThreadIdentity } from "./codex-thread-lineage.ts";
+import { applyResponsesLite } from "./responses-lite.ts";
+import { processCodexStream, type CodexStreamAttemptState } from "./codex-stream.ts";
 import {
   CodexTransport,
+  CodexTurnState,
   validateCodexAuthentication,
   type CodexContinuationHandle,
   type CodexTransportDiagnostic,
   type CodexWebSocketResponseHandle,
 } from "./codex-transport.ts";
-import type { CodexCompatConfig, ImageDetail } from "./config.ts";
+import { DEFAULT_CONFIG, type CodexCompatConfig, type ImageDetail } from "./config.ts";
 import { nativeResponseData, NATIVE_RESPONSE_ENTRY_TYPE } from "./native-history.ts";
 import {
   CODEX_NAMESPACED_TOOL_NAMES,
@@ -95,10 +109,31 @@ type RequestTemplate = {
   requestOptions: OpenAICodexResponsesOptions;
 };
 
+type ActiveAgentTurn = {
+  turnId: string;
+  startedAtUnixMs: number;
+  turnState: CodexTurnState;
+};
+
 type CodexCompat = {
   supportsToolSearch?: boolean;
   supportsStrictMode?: boolean;
   supportsOpenAIGrammarTools?: boolean;
+};
+
+type CodexTerminalState = {
+  type?: "response.completed" | "response.incomplete" | "response.failed";
+  response?: JsonRecord;
+};
+
+export type CodexResponseRetryPolicy = {
+  maxRetries: number;
+  baseDelayMs: number;
+};
+
+const DEFAULT_RESPONSE_RETRY_POLICY: CodexResponseRetryPolicy = {
+  maxRetries: 5,
+  baseDelayMs: 200,
 };
 
 function markerSummary(): string {
@@ -155,6 +190,7 @@ function nativeOverrideRequired(
 function captureRawEvents(
   events: AsyncIterable<JsonRecord>,
   items: ResponsesItem[],
+  terminalState?: CodexTerminalState,
 ): AsyncIterable<JsonRecord> {
   return {
     async *[Symbol.asyncIterator]() {
@@ -163,13 +199,28 @@ function captureRawEvents(
           items.push(structuredClone(event.item));
         }
         if (
-          (event.type === "response.completed" || event.type === "response.incomplete") &&
+          (event.type === "response.completed" ||
+            event.type === "response.incomplete" ||
+            event.type === "response.failed") &&
           isObject(event.response) &&
           Array.isArray(event.response["output"])
         ) {
           const terminalItems = event.response["output"].filter(isResponsesItem);
           if (terminalItems.length > 0) {
             items.splice(0, items.length, ...terminalItems.map((item) => structuredClone(item)));
+          }
+        }
+        if (
+          terminalState &&
+          (event.type === "response.completed" ||
+            event.type === "response.incomplete" ||
+            event.type === "response.failed")
+        ) {
+          terminalState.type = event.type;
+          if (isObject(event.response)) {
+            terminalState.response = structuredClone(event.response);
+          } else {
+            delete terminalState.response;
           }
         }
         yield event;
@@ -201,6 +252,92 @@ function clearStreamingScratchState(message: AssistantMessage): void {
     delete (block as { partialJson?: string }).partialJson;
     delete (block as { customInput?: unknown }).customInput;
   }
+}
+
+function emptyUsage(): Usage {
+  return {
+    input: 0,
+    output: 0,
+    cacheRead: 0,
+    cacheWrite: 0,
+    totalTokens: 0,
+    cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+  };
+}
+
+function discardIncompleteAttemptContent(
+  message: AssistantMessage,
+  attempt: CodexStreamAttemptState,
+): void {
+  const incomplete = [...attempt.startedContentIndexes]
+    .filter((index) => !attempt.completedContentIndexes.has(index))
+    .sort((left, right) => right - left);
+  for (const index of incomplete) message.content.splice(index, 1);
+}
+
+function accumulateUsage(previous: Usage, current: Usage): Usage {
+  const previousReasoning = previous.reasoning;
+  const currentReasoning = current.reasoning;
+  return {
+    input: previous.input + current.input,
+    output: previous.output + current.output,
+    cacheRead: previous.cacheRead + current.cacheRead,
+    cacheWrite: previous.cacheWrite + current.cacheWrite,
+    ...(previousReasoning === undefined && currentReasoning === undefined
+      ? {}
+      : { reasoning: (previousReasoning ?? 0) + (currentReasoning ?? 0) }),
+    totalTokens: previous.totalTokens + current.totalTokens,
+    cost: {
+      input: previous.cost.input + current.cost.input,
+      output: previous.cost.output + current.cost.output,
+      cacheRead: previous.cost.cacheRead + current.cost.cacheRead,
+      cacheWrite: previous.cost.cacheWrite + current.cost.cacheWrite,
+      total: previous.cost.total + current.cost.total,
+    },
+  };
+}
+
+function retryableResponseFailure(response: JsonRecord | undefined): boolean {
+  const error = isObject(response?.["error"]) ? response["error"] : undefined;
+  const code = typeof error?.["code"] === "string" ? error["code"].toLowerCase() : "";
+  return !(
+    code === "context_length_exceeded" ||
+    code === "insufficient_quota" ||
+    code === "usage_not_included" ||
+    code === "cyber_policy" ||
+    code === "invalid_prompt" ||
+    code === "bio_policy"
+  );
+}
+
+function responseRetryDelayMs(baseDelayMs: number, attempt: number): number {
+  if (baseDelayMs <= 0) return 0;
+  const exponential = baseDelayMs * 2 ** Math.max(0, attempt - 1);
+  return Math.floor(exponential * (0.9 + Math.random() * 0.2));
+}
+
+function waitForResponseRetry(milliseconds: number, signal?: AbortSignal): Promise<void> {
+  if (signal?.aborted) return Promise.reject(new Error("Request was aborted"));
+  if (milliseconds <= 0) return Promise.resolve();
+  return new Promise((resolve, reject) => {
+    const onAbort = () => {
+      clearTimeout(timer);
+      reject(new Error("Request was aborted"));
+    };
+    const timer = setTimeout(() => {
+      signal?.removeEventListener("abort", onAbort);
+      resolve();
+    }, milliseconds);
+    signal?.addEventListener("abort", onAbort, { once: true });
+  });
+}
+
+function continueResponseBody(
+  body: JsonRecord,
+  responseItems: readonly ResponsesItem[],
+): JsonRecord | undefined {
+  if (!Array.isArray(body.input) || !body.input.every(isResponsesItem)) return undefined;
+  return updateInput(body, [...body.input, ...responseItems]);
 }
 
 function updateInput(payload: JsonRecord, input: readonly ResponsesItem[]): JsonRecord {
@@ -308,12 +445,36 @@ export class CodexProviderRuntime {
   private readonly templates = new Map<string, RequestTemplate>();
   private readonly prewarmedTemplates = new Set<string>();
   private readonly requestTails = new Map<string, Promise<void>>();
+  private readonly activeAgentTurns = new Map<string, ActiveAgentTurn>();
+  private readonly windowNumbers = new Map<string, number>();
+  private readonly activeThreadIds = new Map<string, string>();
   private readonly pi: ExtensionAPI;
   private readonly resolveConfig: ConfigResolver;
+  private readonly installationId: string;
+  private readonly responseRetryPolicy: CodexResponseRetryPolicy;
 
-  constructor(pi: ExtensionAPI, resolveConfig: ConfigResolver) {
+  constructor(
+    pi: ExtensionAPI,
+    resolveConfig: ConfigResolver,
+    installationId: string = randomUUID(),
+    responseRetryPolicy: Partial<CodexResponseRetryPolicy> = {},
+  ) {
     this.pi = pi;
     this.resolveConfig = resolveConfig;
+    this.installationId = installationId;
+    const maxRetries = responseRetryPolicy.maxRetries ?? DEFAULT_RESPONSE_RETRY_POLICY.maxRetries;
+    const baseDelayMs =
+      responseRetryPolicy.baseDelayMs ?? DEFAULT_RESPONSE_RETRY_POLICY.baseDelayMs;
+    if (!Number.isFinite(maxRetries) || maxRetries < 0) {
+      throw new Error(`Invalid Codex response maxRetries: ${String(maxRetries)}`);
+    }
+    if (!Number.isFinite(baseDelayMs) || baseDelayMs < 0) {
+      throw new Error(`Invalid Codex response baseDelayMs: ${String(baseDelayMs)}`);
+    }
+    this.responseRetryPolicy = {
+      maxRetries: Math.floor(maxRetries),
+      baseDelayMs: Math.floor(baseDelayMs),
+    };
   }
 
   captureScope(ctx: ExtensionContext): void {
@@ -332,42 +493,144 @@ export class CodexProviderRuntime {
     });
   }
 
-  clearSession(sessionId: string): void {
-    this.scopes.delete(sessionId);
-    this.templates.delete(sessionId);
+  beginAgentTurn(ctx: ExtensionContext): void {
+    this.activeAgentTurns.set(ctx.sessionManager.getSessionId(), {
+      turnId: uuidv7(),
+      startedAtUnixMs: Date.now(),
+      turnState: new CodexTurnState(),
+    });
+  }
+
+  endAgentTurn(ctx: ExtensionContext): void {
+    this.activeAgentTurns.delete(ctx.sessionManager.getSessionId());
+  }
+
+  updateSessionConfig(sessionId: string, config: CodexCompatConfig): void {
+    const scope = this.scopes.get(sessionId);
+    if (scope) scope.config = config;
+  }
+
+  private responsesLiteEnabled(sessionId: string | undefined): boolean {
+    return (
+      (sessionId ? this.scopes.get(sessionId)?.config.responsesLite : undefined) ??
+      DEFAULT_CONFIG.responsesLite
+    );
+  }
+
+  private agentTurn(sessionId: string | undefined): ActiveAgentTurn {
+    return (
+      (sessionId ? this.activeAgentTurns.get(sessionId) : undefined) ?? {
+        turnId: uuidv7(),
+        startedAtUnixMs: Date.now(),
+        turnState: new CodexTurnState(),
+      }
+    );
+  }
+
+  private metadataIdentity(
+    metadataSessionId: string | undefined,
+    turn?: ActiveAgentTurn,
+    runtimeSessionId = metadataSessionId,
+  ): CodexMetadataIdentity {
+    const thread: Partial<CodexThreadIdentity> = runtimeSessionId
+      ? this.threadIdentity(runtimeSessionId)
+      : metadataSessionId
+        ? { threadId: metadataSessionId }
+        : {};
+    const windowKey =
+      runtimeSessionId && thread.threadId ? `${runtimeSessionId}\0${thread.threadId}` : undefined;
+    return {
+      installationId: this.installationId,
+      ...(thread.threadId ? { threadId: thread.threadId } : {}),
+      ...(thread.forkedFromThreadId ? { forkedFromThreadId: thread.forkedFromThreadId } : {}),
+      windowNumber: windowKey ? (this.windowNumbers.get(windowKey) ?? 0) : 0,
+      ...(turn ? { turnStartedAtUnixMs: turn.startedAtUnixMs } : {}),
+      threadSource: "user",
+      // Pi extensions execute without Codex's platform sandbox.
+      sandbox: "none",
+    };
+  }
+
+  private threadIdentity(sessionId: string): CodexThreadIdentity {
+    const branch = this.scopes.get(sessionId)?.manager.getBranch() as SessionEntry[] | undefined;
+    return resolveCodexThreadIdentity(sessionId, branch ?? []);
+  }
+
+  private clearPrewarmState(sessionId: string): void {
     for (const key of this.prewarmedTemplates) {
       if (key.startsWith(`${sessionId}\0`)) this.prewarmedTemplates.delete(key);
     }
+  }
+
+  private activateThread(sessionId: string | undefined): void {
+    if (!sessionId) return;
+    const threadId = this.threadIdentity(sessionId).threadId;
+    const previous = this.activeThreadIds.get(sessionId);
+    if (previous && previous !== threadId) {
+      this.transport.close(sessionId);
+      this.clearPrewarmState(sessionId);
+    }
+    this.activeThreadIds.set(sessionId, threadId);
+  }
+
+  private advanceWindow(sessionId: string): void {
+    const threadId = this.threadIdentity(sessionId).threadId;
+    const key = `${sessionId}\0${threadId}`;
+    this.windowNumbers.set(key, (this.windowNumbers.get(key) ?? 0) + 1);
+  }
+
+  clearSession(sessionId: string): void {
+    this.scopes.delete(sessionId);
+    this.templates.delete(sessionId);
+    this.clearPrewarmState(sessionId);
     this.requestTails.delete(sessionId);
+    this.activeAgentTurns.delete(sessionId);
+    for (const key of this.windowNumbers.keys()) {
+      if (key.startsWith(`${sessionId}\0`)) this.windowNumbers.delete(key);
+    }
+    this.activeThreadIds.delete(sessionId);
     this.transport.close(sessionId);
   }
 
   private async maybePrewarm(options: {
     model: Model<any>;
     body: JsonRecord;
+    fullBody: JsonRecord;
     requestOptions: OpenAICodexResponsesOptions;
     accountId: string;
     diagnostics: CodexTransportDiagnostic[];
+    turnState: CodexTurnState;
+    cacheDiagnostics: CodexCacheDiagnosticContext;
   }): Promise<void> {
     const sessionId = options.requestOptions.sessionId;
     if (
       !sessionId ||
       options.requestOptions.cacheRetention === "none" ||
       options.requestOptions.transport === "sse" ||
-      !Array.isArray(options.body.input)
+      !Array.isArray(options.body.input) ||
+      !Array.isArray(options.fullBody.input)
     ) {
       return;
     }
-    const key = `${sessionId}\0${options.model.id}`;
+    const key = `${sessionId}\0${options.model.id}\0${options.cacheDiagnostics.envelope}`;
     if (this.prewarmedTemplates.has(key)) return;
     this.prewarmedTemplates.add(key);
 
     const cacheSessionId = codexCacheKey(sessionId);
-    const prewarmBody = withCodexRequestMetadata(options.body, cacheSessionId, "prewarm");
+    const prewarmBody = withCodexRequestMetadata(
+      options.body,
+      cacheSessionId,
+      { kind: "prewarm" },
+      "",
+      this.metadataIdentity(cacheSessionId, undefined, sessionId),
+    );
     try {
       await this.transport.prewarm(options.model, prewarmBody, {
         ...options.requestOptions,
         accountId: options.accountId,
+        turnState: options.turnState,
+        cacheDiagnostics: options.cacheDiagnostics,
+        requestKind: "prewarm",
         onTransportDiagnostic(diagnostic) {
           options.diagnostics.push(diagnostic);
         },
@@ -453,7 +716,7 @@ export class CodexProviderRuntime {
         grammarToolInputProperties,
         deferredTools: splitDeferredTools(context, Boolean(compat?.supportsToolSearch)).deferred,
         toolOptions: {
-          strict: null,
+          strict: false,
           supportsStrictMode: compat?.supportsStrictMode ?? true,
           supportsOpenAIGrammarTools: compat?.supportsOpenAIGrammarTools ?? false,
         },
@@ -479,6 +742,7 @@ export class CodexProviderRuntime {
     runtimeSessionId: string | undefined,
     cacheSessionId: string | undefined,
     grammarToolInputProperties: GrammarToolInputProperties,
+    turnId: string,
   ): JsonRecord {
     const compat = model.compat as CodexCompat | undefined;
     const toolPlacement = splitDeferredTools(context, Boolean(compat?.supportsToolSearch));
@@ -497,13 +761,23 @@ export class CodexProviderRuntime {
       prompt_cache_key: cacheSessionId,
       tool_choice: options.toolChoice ?? "auto",
       parallel_tool_calls: true,
+      tools: [],
     };
-    body = withCodexRequestMetadata(body, cacheSessionId, "turn");
-    if (options.temperature !== undefined) body["temperature"] = options.temperature;
+    body = withCodexRequestMetadata(
+      body,
+      cacheSessionId,
+      { kind: "turn" },
+      turnId,
+      this.metadataIdentity(
+        cacheSessionId,
+        this.activeAgentTurns.get(runtimeSessionId ?? ""),
+        runtimeSessionId,
+      ),
+    );
     if (options.serviceTier !== undefined) body.service_tier = options.serviceTier;
     if (toolPlacement.immediate.length > 0) {
       body.tools = convertResponsesTools(toolPlacement.immediate, {
-        strict: null,
+        strict: false,
         supportsStrictMode: compat?.supportsStrictMode ?? true,
         supportsOpenAIGrammarTools: compat?.supportsOpenAIGrammarTools ?? false,
         namespacedToolNames: CODEX_NAMESPACED_TOOL_NAMES,
@@ -533,9 +807,16 @@ export class CodexProviderRuntime {
     instructions: string;
     grammarToolInputProperties: GrammarToolInputProperties;
     priority: boolean;
+    compactionMetadata: CodexCompactionMetadata;
+    agentTurn?: ActiveAgentTurn;
+    responsesLiteEnabled?: boolean;
   }): Promise<{ checkpoint: CheckpointData; usage?: Usage }> {
     const sessionId = options.requestOptions.sessionId;
     if (!sessionId) throw new Error("Codex compaction requires a Pi session id.");
+    this.activateThread(sessionId);
+    const agentTurn = options.agentTurn ?? this.agentTurn(sessionId);
+    const responsesLiteEnabled =
+      options.responsesLiteEnabled ?? this.responsesLiteEnabled(sessionId);
     const accountId = validateCodexAuthentication(options.model, options.requestOptions.apiKey);
     const payload = withCodexRequestMetadata(
       remoteCompactionPayload({
@@ -548,10 +829,29 @@ export class CodexProviderRuntime {
         priority: options.priority,
       }),
       options.requestOptions.cacheRetention === "none" ? undefined : codexCacheKey(sessionId),
-      "compaction",
+      { kind: "compaction", compaction: options.compactionMetadata },
+      agentTurn.turnId,
+      this.metadataIdentity(
+        options.requestOptions.cacheRetention === "none" ? undefined : codexCacheKey(sessionId),
+        agentTurn,
+        sessionId,
+      ),
     );
     const transformed = await options.requestOptions.onPayload?.(payload, options.model);
-    const request = transformed === undefined ? payload : (transformed as JsonRecord);
+    const ordinaryRequest = transformed === undefined ? payload : (transformed as JsonRecord);
+    const request = applyResponsesLite(ordinaryRequest, options.model.id, responsesLiteEnabled);
+    const staticRequest = applyResponsesLite(
+      updateInput(ordinaryRequest, []),
+      options.model.id,
+      responsesLiteEnabled,
+    );
+    const cacheDiagnostics = codexCacheDiagnosticContext(
+      ordinaryRequest,
+      request,
+      staticRequest,
+      options.model.id,
+      responsesLiteEnabled,
+    );
     let webSocketResponseHandle: CodexWebSocketResponseHandle | undefined;
     let compacted: Awaited<ReturnType<typeof collectRemoteCompaction>>;
     try {
@@ -559,6 +859,9 @@ export class CodexProviderRuntime {
         this.transport.request(options.model, request, {
           ...options.requestOptions,
           accountId,
+          requestKind: "compaction",
+          turnState: agentTurn.turnState,
+          cacheDiagnostics,
           onWebSocketResponseHandle(handle) {
             webSocketResponseHandle = handle;
           },
@@ -589,12 +892,16 @@ export class CodexProviderRuntime {
     options: OpenAICodexResponsesOptions,
     body: JsonRecord,
     grammarToolInputProperties: GrammarToolInputProperties,
+    agentTurn: ActiveAgentTurn,
+    responsesLiteEnabled: boolean,
   ): Promise<JsonRecord> {
     const sessionId = options.sessionId;
     const scope = sessionId ? this.scopes.get(sessionId) : undefined;
     const threshold = scope?.config.autoCompactAtPercent;
+    if (!sessionId || !scope) {
+      return body;
+    }
     if (
-      !scope ||
       threshold === undefined ||
       scope.contextPercent === null ||
       scope.contextPercent < threshold ||
@@ -645,6 +952,9 @@ export class CodexProviderRuntime {
           : context.systemPrompt || "You are a helpful assistant.",
       grammarToolInputProperties,
       priority: scope.config.fastMode,
+      compactionMetadata: responsesCompactionV2Metadata("auto", "context_limit", "pre_turn"),
+      agentTurn,
+      responsesLiteEnabled,
     });
     const firstKeptEntryId = userEntryAfterLastSampled(branch)?.id ?? scope.manager.getLeafId();
     if (!firstKeptEntryId || typeof scope.manager.appendCompaction !== "function") {
@@ -665,7 +975,15 @@ export class CodexProviderRuntime {
       `OpenAI Codex context compacted at ${scope.contextPercent.toFixed(1)}% and will continue.`,
       "info",
     );
-    return updateInput(body, compacted.checkpoint.history);
+    this.advanceWindow(sessionId);
+    const cacheSessionId = options.cacheRetention === "none" ? undefined : codexCacheKey(sessionId);
+    return withCodexRequestMetadata(
+      updateInput(body, compacted.checkpoint.history),
+      cacheSessionId,
+      { kind: "turn" },
+      agentTurn.turnId,
+      this.metadataIdentity(cacheSessionId, agentTurn, sessionId),
+    );
   }
 
   stream(
@@ -682,14 +1000,7 @@ export class CodexProviderRuntime {
         api: CODEX_API,
         provider: model.provider,
         model: model.id,
-        usage: {
-          input: 0,
-          output: 0,
-          cacheRead: 0,
-          cacheWrite: 0,
-          totalTokens: 0,
-          cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
-        },
+        usage: emptyUsage(),
         stopReason: "pending",
         timestamp: Date.now(),
       };
@@ -698,8 +1009,11 @@ export class CodexProviderRuntime {
       try {
         const accountId = validateCodexAuthentication(model, requestOptions.apiKey);
         releaseRequest = await this.acquireRequest(runtimeSessionId, requestOptions.signal);
+        this.activateThread(runtimeSessionId);
         const cacheSessionId =
           requestOptions.cacheRetention === "none" ? undefined : codexCacheKey(runtimeSessionId);
+        const agentTurn = this.agentTurn(runtimeSessionId);
+        const responsesLiteEnabled = this.responsesLiteEnabled(runtimeSessionId);
         const grammarToolInputProperties = createGrammarToolInputProperties(
           context.tools,
           (model.compat as CodexCompat | undefined)?.supportsOpenAIGrammarTools ?? false,
@@ -711,6 +1025,7 @@ export class CodexProviderRuntime {
           runtimeSessionId,
           cacheSessionId,
           grammarToolInputProperties,
+          agentTurn.turnId,
         );
         const transformed = await requestOptions.onPayload?.(body, model);
         if (transformed !== undefined) body = transformed as JsonRecord;
@@ -728,16 +1043,35 @@ export class CodexProviderRuntime {
           requestOptions,
           body,
           grammarToolInputProperties,
+          agentTurn,
+          responsesLiteEnabled,
+        );
+        const ordinaryBody = body;
+        const staticBody = applyResponsesLite(
+          updateInput(ordinaryBody, []),
+          model.id,
+          responsesLiteEnabled,
+        );
+        body = applyResponsesLite(ordinaryBody, model.id, responsesLiteEnabled);
+        const cacheDiagnostics = codexCacheDiagnosticContext(
+          ordinaryBody,
+          body,
+          staticBody,
+          model.id,
+          responsesLiteEnabled,
         );
 
         const rawItems: ResponsesItem[] = [];
         const prewarmDiagnostics: CodexTransportDiagnostic[] = [];
         await this.maybePrewarm({
           model,
-          body,
+          body: staticBody,
+          fullBody: body,
           requestOptions,
           accountId,
           diagnostics: prewarmDiagnostics,
+          turnState: agentTurn.turnState,
+          cacheDiagnostics,
         });
         if (prewarmDiagnostics.length > 0) output.diagnostics = prewarmDiagnostics;
         let continuationHandle: CodexContinuationHandle | undefined;
@@ -751,6 +1085,9 @@ export class CodexProviderRuntime {
         const transportRequestOptions = {
           ...requestOptions,
           accountId,
+          requestKind: "turn" as const,
+          turnState: agentTurn.turnState,
+          cacheDiagnostics,
           onContinuationReady(handle: CodexContinuationHandle) {
             continuationHandle = handle;
           },
@@ -762,38 +1099,95 @@ export class CodexProviderRuntime {
             output.diagnostics = [...(output.diagnostics ?? []), diagnostic];
           },
         };
-        try {
-          await processCodexStream(
-            startOnFirstEvent(
-              captureRawEvents(
-                this.transport.request(model, body, transportRequestOptions),
-                rawItems,
+        let responseRequests = 0;
+        let responseRetries = 0;
+        while (true) {
+          responseRequests += 1;
+          const attemptItems: ResponsesItem[] = [];
+          const terminalState: CodexTerminalState = {};
+          const attemptState: CodexStreamAttemptState = {
+            startedContentIndexes: new Set(),
+            completedContentIndexes: new Set(),
+          };
+          const usageBeforeAttempt = structuredClone(output.usage);
+          output.usage = emptyUsage();
+          try {
+            await processCodexStream(
+              startOnFirstEvent(
+                captureRawEvents(
+                  this.transport.request(model, body, transportRequestOptions),
+                  attemptItems,
+                  terminalState,
+                ),
+                emitStart,
               ),
-              emitStart,
-            ),
-            output,
-            stream,
-            model,
-            grammarToolInputProperties,
-            {
-              applyServiceTierPricing(usage, responseServiceTier) {
-                applyServiceTierPricing(usage, model, body.service_tier, responseServiceTier);
+              output,
+              stream,
+              model,
+              grammarToolInputProperties,
+              {
+                attemptState,
+                applyServiceTierPricing(usage, responseServiceTier) {
+                  applyServiceTierPricing(usage, model, body.service_tier, responseServiceTier);
+                },
               },
-            },
-          );
-        } catch (error) {
-          if (!requestOptions.signal?.aborted) {
-            webSocketResponseHandle?.failParsing(error);
+            );
+          } catch (error) {
+            output.usage = usageBeforeAttempt;
+            if (!requestOptions.signal?.aborted) {
+              webSocketResponseHandle?.failParsing(error);
+            }
+            throw error;
           }
-          throw error;
+          output.usage = accumulateUsage(usageBeforeAttempt, output.usage);
+          rawItems.push(...attemptItems.map((item) => structuredClone(item)));
+
+          const nextBody = continueResponseBody(body, attemptItems);
+          const attemptHasToolCall = [...attemptState.completedContentIndexes].some(
+            (index) => output.content[index]?.type === "toolCall",
+          );
+          discardIncompleteAttemptContent(output, attemptState);
+          const retryableTerminal =
+            terminalState.type === "response.incomplete" ||
+            (terminalState.type === "response.failed" &&
+              retryableResponseFailure(terminalState.response));
+          if (
+            retryableTerminal &&
+            nextBody &&
+            responseRetries < this.responseRetryPolicy.maxRetries
+          ) {
+            responseRetries += 1;
+            body = nextBody;
+            output.stopReason = "pending";
+            delete output.errorMessage;
+            delete output.rawStopReason;
+            await waitForResponseRetry(
+              responseRetryDelayMs(this.responseRetryPolicy.baseDelayMs, responseRetries),
+              requestOptions.signal,
+            );
+            continue;
+          }
+
+          if (
+            terminalState.type === "response.completed" &&
+            terminalState.response?.["end_turn"] === false &&
+            !attemptHasToolCall
+          ) {
+            if (!nextBody) {
+              throw new Error(
+                "Codex requested a follow-up response, but its completed output could not be appended to request history.",
+              );
+            }
+            responseRetries = 0;
+            body = nextBody;
+            output.stopReason = "pending";
+            delete output.errorMessage;
+            delete output.rawStopReason;
+            continue;
+          }
+          break;
         }
         if (requestOptions.signal?.aborted) throw new Error("Request was aborted");
-        try {
-          assertSuccessfulOutput(output);
-        } catch (error) {
-          webSocketResponseHandle?.discard();
-          throw error;
-        }
 
         const compat = model.compat as CodexCompat | undefined;
         const canonicalContext: Context = {
@@ -810,7 +1204,7 @@ export class CodexProviderRuntime {
             deferredTools: splitDeferredTools(context, Boolean(compat?.supportsToolSearch))
               .deferred,
             toolOptions: {
-              strict: null,
+              strict: false,
               supportsStrictMode: compat?.supportsStrictMode ?? true,
               supportsOpenAIGrammarTools: compat?.supportsOpenAIGrammarTools ?? false,
             },
@@ -826,7 +1220,8 @@ export class CodexProviderRuntime {
             item["type"] !== "function_call_output" && item["type"] !== "custom_tool_call_output",
         );
         const persistNativeItems =
-          rawItems.length > 0 && nativeOverrideRequired(rawItems, canonicalItems);
+          rawItems.length > 0 &&
+          (responseRequests > 1 || nativeOverrideRequired(rawItems, canonicalItems));
         if (persistNativeItems) {
           if (!output.responseId) throw new Error("Codex response is missing a response id.");
           this.pi.appendEntry(
@@ -834,8 +1229,18 @@ export class CodexProviderRuntime {
             nativeResponseData(model.id, output.responseId, rawItems),
           );
         }
+        try {
+          assertSuccessfulOutput(output);
+        } catch (error) {
+          webSocketResponseHandle?.discard();
+          throw error;
+        }
         const readyContinuation = continuationHandle;
-        if (readyContinuation && readyContinuation.responseId === output.responseId) {
+        if (
+          responseRequests === 1 &&
+          readyContinuation &&
+          readyContinuation.responseId === output.responseId
+        ) {
           readyContinuation.replaceResponseItems(persistNativeItems ? rawItems : canonicalItems);
         }
 
@@ -879,6 +1284,7 @@ export class CodexProviderRuntime {
     grammarToolInputProperties: GrammarToolInputProperties;
     template: JsonRecord;
     priority: boolean;
+    compactionMetadata: CodexCompactionMetadata;
   }): Promise<{ checkpoint: CheckpointData; usage?: Usage }> {
     validateCodexAuthentication(options.model, options.requestOptions.apiKey);
     const release = await this.acquireRequest(
@@ -886,7 +1292,10 @@ export class CodexProviderRuntime {
       options.requestOptions.signal,
     );
     try {
-      return await this.performCompaction(options);
+      const compacted = await this.performCompaction(options);
+      const sessionId = options.requestOptions.sessionId;
+      if (sessionId) this.advanceWindow(sessionId);
+      return compacted;
     } finally {
       release();
     }
@@ -897,7 +1306,7 @@ export function registerCodexProvider(
   pi: ExtensionAPI,
   resolveConfig: ConfigResolver,
 ): CodexProviderRuntime {
-  const runtime = new CodexProviderRuntime(pi, resolveConfig);
+  const runtime = new CodexProviderRuntime(pi, resolveConfig, resolveCodexInstallationId());
   pi.on("session_start", (_event, ctx) => {
     const base =
       ctx.modelRegistry.getRegisteredNativeProvider(CODEX_PROVIDER) ??
@@ -905,5 +1314,7 @@ export function registerCodexProvider(
     if (!base) throw new Error("Pi's built-in OpenAI Codex provider is unavailable.");
     pi.registerProvider(runtime.createProvider(base));
   });
+  pi.on("agent_start", (_event, ctx) => runtime.beginAgentTurn(ctx));
+  pi.on("agent_end", (_event, ctx) => runtime.endAgentTurn(ctx));
   return runtime;
 }

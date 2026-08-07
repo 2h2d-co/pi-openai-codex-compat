@@ -6,6 +6,7 @@ import { CHECKPOINT_ENTRY_TYPE } from "../extensions/openai-codex-compat/compact
 import { CodexProviderRuntime } from "../extensions/openai-codex-compat/codex-provider.ts";
 import { DEFAULT_CONFIG } from "../extensions/openai-codex-compat/config.ts";
 import type { JsonRecord } from "../extensions/openai-codex-compat/codex-protocol.ts";
+import { CODEX_TURN_METADATA_HEADER } from "../extensions/openai-codex-compat/codex-metadata.ts";
 import registerRemoteCompaction from "../extensions/openai-codex-compat/remote-compaction.ts";
 
 function codexModel(): Model<any> {
@@ -136,12 +137,82 @@ void test("routes manual compaction through the custom provider runtime", async 
   assert.deepEqual((request.input as JsonRecord[]).at(-1), {
     type: "compaction_trigger",
   });
+  const metadata = request.client_metadata as JsonRecord;
+  const turnMetadata = JSON.parse(String(metadata[CODEX_TURN_METADATA_HEADER])) as JsonRecord;
+  assert.deepEqual(turnMetadata["compaction"], {
+    trigger: "manual",
+    reason: "user_requested",
+    implementation: "responses_compaction_v2",
+    phase: "standalone_turn",
+    strategy: "memento",
+  });
   assert.equal(result.compaction.details.kind, CHECKPOINT_ENTRY_TYPE);
   assert.equal(
     (result.compaction.details.history as JsonRecord[]).at(-1)?.encrypted_content,
     "opaque-state",
   );
   assert.ok(result.compaction.usage);
+});
+
+void test("classifies every Pi compaction lifecycle in official Codex metadata", async (t) => {
+  const cases = [
+    {
+      reason: "manual",
+      willRetry: false,
+      expected: {
+        trigger: "manual",
+        reason: "user_requested",
+        implementation: "responses_compaction_v2",
+        phase: "standalone_turn",
+        strategy: "memento",
+      },
+    },
+    {
+      reason: "threshold",
+      willRetry: false,
+      expected: {
+        trigger: "auto",
+        reason: "context_limit",
+        implementation: "responses_compaction_v2",
+        phase: "pre_turn",
+        strategy: "memento",
+      },
+    },
+    {
+      reason: "overflow",
+      willRetry: true,
+      expected: {
+        trigger: "auto",
+        reason: "context_limit",
+        implementation: "responses_compaction_v2",
+        phase: "mid_turn",
+        strategy: "memento",
+      },
+    },
+  ] as const;
+
+  for (const candidate of cases) {
+    await t.test(candidate.reason, async () => {
+      const user = userEntry("user-1", "Remember BLUE-42.");
+      const harness = createHarness([user]);
+      const handler = harness.handlers.get("session_before_compact");
+      assert.ok(handler);
+      await handler(
+        {
+          branchEntries: [user],
+          preparation: { firstKeptEntryId: "user-1", tokensBefore: 50_000 },
+          reason: candidate.reason,
+          willRetry: candidate.willRetry,
+          signal: new AbortController().signal,
+        },
+        harness.context,
+      );
+
+      const metadata = harness.requests[0]?.client_metadata as JsonRecord;
+      const turnMetadata = JSON.parse(String(metadata[CODEX_TURN_METADATA_HEADER])) as JsonRecord;
+      assert.deepEqual(turnMetadata["compaction"], candidate.expected);
+    });
+  }
 });
 
 void test("captures session scope and suppresses Pi's marker summary", () => {

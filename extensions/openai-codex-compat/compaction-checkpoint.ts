@@ -77,7 +77,7 @@ function asResponsesTool(
     name: tool.name,
     description: tool.description,
     parameters: tool.parameters as unknown,
-    strict: null,
+    strict: false,
   };
 }
 
@@ -131,7 +131,7 @@ function encodeMessages(
     grammarToolInputProperties,
     deferredTools: new Map(tools.map((tool) => [tool.name, tool])),
     toolOptions: {
-      strict: null,
+      strict: false,
       supportsStrictMode: compat?.supportsStrictMode ?? true,
       supportsOpenAIGrammarTools: compat?.supportsOpenAIGrammarTools ?? false,
     },

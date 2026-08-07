@@ -16,6 +16,8 @@ export const ENV_PREFIX = "PI_OPENAI_CODEX_COMPAT_";
 export interface CodexCompatConfig {
   /** Send OpenAI Codex requests through the priority service tier. */
   fastMode: boolean;
+  /** Use Codex's Responses Lite envelope on supported GPT-5.6 models. */
+  responsesLite: boolean;
   /** Replace Pi's active edit and write tools with the extension's apply_patch tool. */
   applyPatch: boolean;
   /** Select the shared background surface for extension-owned Codex tools. */
@@ -40,6 +42,7 @@ export interface CodexCompatConfig {
 
 export const CONFIG_ENVIRONMENT_VARIABLES = {
   fastMode: `${ENV_PREFIX}FAST_MODE`,
+  responsesLite: `${ENV_PREFIX}RESPONSES_LITE`,
   applyPatch: `${ENV_PREFIX}APPLY_PATCH`,
   toolBackground: `${ENV_PREFIX}TOOL_BACKGROUND`,
   imageGeneration: `${ENV_PREFIX}IMAGE_GENERATION`,
@@ -54,6 +57,7 @@ export const CONFIG_ENVIRONMENT_VARIABLES = {
 
 export type ConfigLayer = {
   fastMode?: boolean;
+  responsesLite?: boolean;
   applyPatch?: boolean;
   toolBackground?: CodexToolBackground;
   imageGeneration?: boolean;
@@ -69,6 +73,7 @@ export type ConfigLayer = {
 export const CONFIG_FILE = "openai-codex-compat.json";
 export const DEFAULT_CONFIG: CodexCompatConfig = {
   fastMode: false,
+  responsesLite: false,
   applyPatch: true,
   toolBackground: "subtle",
   imageGeneration: true,
@@ -140,6 +145,9 @@ export function parseEnvironmentConfig(environment: Environment = process.env): 
 
   const fastMode = environmentBoolean(environment, CONFIG_ENVIRONMENT_VARIABLES.fastMode);
   if (fastMode !== undefined) layer.fastMode = fastMode;
+
+  const responsesLite = environmentBoolean(environment, CONFIG_ENVIRONMENT_VARIABLES.responsesLite);
+  if (responsesLite !== undefined) layer.responsesLite = responsesLite;
 
   const applyPatch = environmentBoolean(environment, CONFIG_ENVIRONMENT_VARIABLES.applyPatch);
   if (applyPatch !== undefined) layer.applyPatch = applyPatch;
@@ -225,6 +233,9 @@ export function parseConfig(value: unknown): ConfigLayer {
   const fastMode = value["fastMode"];
   if (typeof fastMode === "boolean") layer.fastMode = fastMode;
 
+  const responsesLite = value["responsesLite"];
+  if (typeof responsesLite === "boolean") layer.responsesLite = responsesLite;
+
   const applyPatch = value["applyPatch"];
   if (typeof applyPatch === "boolean") layer.applyPatch = applyPatch;
 
@@ -305,6 +316,7 @@ export function resolveConfig(
   return {
     ...DEFAULT_CONFIG,
     ...(typeof merged.fastMode === "boolean" ? { fastMode: merged.fastMode } : {}),
+    ...(typeof merged.responsesLite === "boolean" ? { responsesLite: merged.responsesLite } : {}),
     ...(typeof merged.applyPatch === "boolean" ? { applyPatch: merged.applyPatch } : {}),
     ...(merged.toolBackground ? { toolBackground: merged.toolBackground } : {}),
     ...(typeof merged.imageGeneration === "boolean"
@@ -349,6 +361,7 @@ export function loadConfig(
 export function configLayer(config: CodexCompatConfig): ConfigLayer {
   return {
     fastMode: config.fastMode,
+    responsesLite: config.responsesLite,
     applyPatch: config.applyPatch,
     toolBackground: config.toolBackground,
     imageGeneration: config.imageGeneration,

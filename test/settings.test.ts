@@ -47,6 +47,7 @@ void test("persists dedicated settings without discarding unknown configuration"
   );
   const savedPath = await saveConfig(cwd, false, {
     fastMode: true,
+    responsesLite: false,
     toolBackground: "none",
     imageGeneration: false,
     imageDetail: "high",
@@ -57,6 +58,7 @@ void test("persists dedicated settings without discarding unknown configuration"
 
   assert.deepEqual(stored["customFutureSetting"], { keep: true });
   assert.equal(stored["fastMode"], true);
+  assert.equal(stored["responsesLite"], false);
   assert.equal(stored["toolBackground"], "none");
   assert.equal(stored["imageGeneration"], false);
   assert.equal(stored["imageDetail"], "high");
@@ -80,6 +82,7 @@ void test("updates an existing trusted project settings file instead of global s
 void test("exposes every request and tool control in the settings pane", () => {
   const config = {
     fastMode: true,
+    responsesLite: false,
     toolBackground: "status",
     applyPatch: false,
     imageGeneration: true,
@@ -97,6 +100,7 @@ void test("exposes every request and tool control in the settings pane", () => {
     items.map((item) => [item.id, item.currentValue]),
     [
       ["fastMode", "on"],
+      ["responsesLite", "off"],
       ["textVerbosity", "high"],
       ["reasoningSummary", "detailed"],
       ["reasoningMode", "pro"],
@@ -111,6 +115,9 @@ void test("exposes every request and tool control in the settings pane", () => {
   );
   assert.deepEqual(settingPatch("reasoningMode", "standard"), {
     reasoningMode: "standard",
+  });
+  assert.deepEqual(settingPatch("responsesLite", "on"), {
+    responsesLite: true,
   });
   assert.deepEqual(settingPatch("toolBackground", "none"), {
     toolBackground: "none",

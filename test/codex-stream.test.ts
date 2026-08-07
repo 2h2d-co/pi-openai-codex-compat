@@ -222,6 +222,105 @@ void test("maps allowlisted Responses namespace calls to dotted Pi tool names", 
   assert.deepEqual(toolCall?.arguments, { search_query: [{ q: "Pi" }] });
 });
 
+void test("maps the Responses Lite functions namespace to bare Pi tool names", async () => {
+  const message = output();
+
+  await processCodexStream(
+    events([
+      {
+        type: "response.output_item.added",
+        output_index: 0,
+        item: {
+          type: "function_call",
+          id: "fc_read",
+          call_id: "call_read",
+          namespace: "functions",
+          name: "read",
+          arguments: "",
+        },
+      },
+      {
+        type: "response.output_item.done",
+        output_index: 0,
+        item: {
+          type: "function_call",
+          id: "fc_read",
+          call_id: "call_read",
+          namespace: "functions",
+          name: "read",
+          arguments: '{"path":"README.md"}',
+        },
+      },
+      {
+        type: "response.completed",
+        response: {
+          id: "resp_read",
+          status: "completed",
+          usage: { input_tokens: 10, output_tokens: 5, total_tokens: 15 },
+        },
+      },
+    ]),
+    message,
+    createAssistantMessageEventStream(),
+    model,
+    new Map(),
+  );
+
+  const toolCall = message.content.find((block) => block.type === "toolCall");
+  assert.equal(toolCall?.name, "read");
+  assert.deepEqual(toolCall?.arguments, { path: "README.md" });
+});
+
+void test("maps default-namespaced custom calls to bare Pi tool names", async () => {
+  for (const namespace of ["", "functions"]) {
+    const message = output();
+    await processCodexStream(
+      events([
+        {
+          type: "response.output_item.added",
+          output_index: 0,
+          item: {
+            type: "custom_tool_call",
+            id: "ctc_patch",
+            call_id: "call_patch",
+            namespace,
+            name: "apply_patch",
+            input: "",
+          },
+        },
+        {
+          type: "response.output_item.done",
+          output_index: 0,
+          item: {
+            type: "custom_tool_call",
+            id: "ctc_patch",
+            call_id: "call_patch",
+            namespace,
+            name: "apply_patch",
+            input: "*** Begin Patch\n*** End Patch",
+          },
+        },
+        {
+          type: "response.completed",
+          response: {
+            id: "resp_patch",
+            status: "completed",
+            usage: { input_tokens: 10, output_tokens: 5, total_tokens: 15 },
+          },
+        },
+      ]),
+      message,
+      createAssistantMessageEventStream(),
+      model,
+      new Map([["apply_patch", "patch"]]),
+    );
+
+    const toolCall = message.content.find((block) => block.type === "toolCall");
+    assert.equal(toolCall?.name, "apply_patch");
+    assert.deepEqual(toolCall?.arguments, { patch: "*** Begin Patch\n*** End Patch" });
+  }
+});
+
 void test("matches Pi AI phase, reasoning, and final tool-delta events", async () => {
   const message = output();
   const pushed: Array<{ type: string; delta?: string; stopReason?: string }> = [];
@@ -405,6 +504,34 @@ void test("distinguishes token limits from other incomplete responses", async ()
     assert.equal(message.rawStopReason, scenario.rawStopReason);
     assert.equal(message.errorMessage, scenario.errorMessage);
   }
+});
+
+void test("preserves response.failed details as a terminal provider error", async () => {
+  const message = output();
+  await processCodexStream(
+    events([
+      {
+        type: "response.failed",
+        response: {
+          id: "resp_failed",
+          status: "failed",
+          error: { code: "rate_limit_exceeded", message: "retry this response" },
+          usage: { input_tokens: 10, output_tokens: 2, total_tokens: 12 },
+        },
+      },
+    ]),
+    message,
+    createAssistantMessageEventStream(),
+    model,
+    new Map(),
+  );
+
+  assert.equal(message.responseId, "resp_failed");
+  assert.equal(message.stopReason, "error");
+  assert.equal(message.rawStopReason, "failed");
+  assert.equal(message.errorMessage, "retry this response");
+  assert.equal(message.usage.input, 10);
+  assert.equal(message.usage.output, 2);
 });
 
 void test("drops unknown terminal response statuses like Pi AI", async () => {

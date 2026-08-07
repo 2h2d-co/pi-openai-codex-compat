@@ -4,17 +4,36 @@
 
 ### Added
 
-- Persist structured Codex transport-recovery diagnostics on assistant messages for rejected or locally bypassed WebSocket continuations and WebSocket-to-SSE recovery, including request modes, cache-affinity preservation, and rejected response ids.
-- Prewarm the complete first WebSocket request with Responses v2 `generate: false`, generate from its continuation, and persist whether it established continuation state.
-- Send Pi-derived Codex session, thread, turn, and request-kind metadata through `client_metadata` and compatible request headers.
+- Persist and send the official Codex installation/window request identity used for backend affinity, advancing the window after successful compaction.
+- Persist structured Codex transport-recovery diagnostics on assistant messages for rejected or locally bypassed WebSocket continuations and WebSocket-to-SSE recovery, including request modes, cache-affinity preservation, and exact response ids.
+- Prewarm only the static instruction/tool prefix with Responses v2 `generate: false`, generate the dynamic conversation from its continuation, and persist whether prewarm established continuation state.
+- Send Pi-derived Codex session, thread, turn, and request-kind metadata through `client_metadata` and compatible request headers, with one turn id shared across each Pi agent run.
+- Capture server-issued Codex turn state once per agent run, replay it across WebSocket retries, SSE requests, and WebSocket-to-SSE fallback, and include the exact value in transport diagnostics.
+- Persist cache diagnostics with exact session, account, cache, turn, response, and routing-state identifiers alongside transport selection, full/delta request sizes, static-prefix fingerprints, and reported cache read/write usage.
+- Record the exact baseline and current history items when local WebSocket continuation validation rejects a changed prefix.
+- Persist hidden thread markers for finalized `/tree` branches, send branch-specific Codex thread/fork/window lineage while retaining the root prompt-cache identity, and reset WebSocket continuation state when switching threads.
+- Add a default-off `responsesLite` setting, environment override, and `/codex-settings` control for switching supported GPT-5.6 models between ordinary Responses and Responses Lite.
+- Use Codex's Responses Lite input envelope, metadata, request header, tool grouping, and all-turn reasoning context for GPT-5.6 Sol, Terra, and Luna.
 
 ### Changed
 
+- Align Responses Lite with current Codex default-tool namespaces, HTTP/WebSocket metadata placement, prewarm identity, and per-request WebSocket timing metadata.
+- Align ordinary function declarations with Codex's explicit `strict: false` and ignore Pi's generic temperature option because Codex Responses has no temperature request field.
+- Send the official thread-scoped `x-client-request-id` on Responses HTTP/SSE requests and require all prompt-cache affinity identifiers to match before diagnostics report alignment.
+- Continue provider-owned sampling when `response.completed.end_turn` is false, and resample retryable `response.failed` and `response.incomplete` events from the completed output history already received.
+- Send official nested Responses Compaction v2 metadata, classifying manual, threshold, provider-boundary, and overflow compaction by trigger, reason, phase, implementation, and strategy.
+- Align first-party Codex Responses, WebSocket, and compaction requests with the official model-and-tier routing hint.
+- Match official Codex request continuity more closely by always serializing the ordinary `tools` array, omitting the legacy SSE beta header, ignoring response-only stream options and internal item metadata during WebSocket delta comparison, retaining healthy session sockets, and applying jittered retry backoff.
+- Resample retryable SSE HTTP failures and dropped streams up to five times before model-visible output while preserving cache and account identity; fail closed after visible output.
 - Retry retryable WebSocket failures on up to five fresh connections before selecting sticky SSE when no model-visible output has been emitted.
+- Treat WebSocket response metadata as non-visible during retry decisions and send the Responses Lite HTTP marker only on SSE while retaining its WebSocket body metadata.
 
 ### Fixed
 
+- Preserve completed native output items, discard only unfinished attempt content, and accumulate usage across provider-owned response resampling.
+- Normalize missing, empty, and `functions` namespaces for Responses Lite function and custom calls, preserve the server's flat default calls in continuation history, and reject invalid default-namespace members before sending.
 - Omit `reasoning.mode` for the default GPT-5.6 standard mode and send the field only when pro mode is selected.
+- Continue interrupted Codex tasks automatically after an exact output-token-limit response, including after successful Pi threshold compaction, without treating incomplete WebSocket responses as completed continuation state.
 
 ## 0.0.3 - 2026-08-04
 

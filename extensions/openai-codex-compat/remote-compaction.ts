@@ -16,6 +16,7 @@ import {
 } from "./compaction-checkpoint.ts";
 import { loadConfig, type CodexCompatConfig } from "./config.ts";
 import type { CodexProviderRuntime } from "./codex-provider.ts";
+import { responsesCompactionV2Metadata, type CodexCompactionMetadata } from "./codex-metadata.ts";
 import { APPLY_PATCH_INPUT_PROPERTY, APPLY_PATCH_TOOL_NAME } from "./apply-patch.ts";
 
 const CODEX_PROVIDER = "openai-codex";
@@ -106,6 +107,17 @@ function explain(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
+function compactionMetadata(reason: SessionBeforeCompactEvent["reason"]): CodexCompactionMetadata {
+  switch (reason) {
+    case "manual":
+      return responsesCompactionV2Metadata("manual", "user_requested", "standalone_turn");
+    case "threshold":
+      return responsesCompactionV2Metadata("auto", "context_limit", "pre_turn");
+    case "overflow":
+      return responsesCompactionV2Metadata("auto", "context_limit", "mid_turn");
+  }
+}
+
 export default function registerRemoteCompaction(
   pi: ExtensionAPI,
   runtime: CodexProviderRuntime,
@@ -177,6 +189,7 @@ export default function registerRemoteCompaction(
           requestGrammarToolInputProperties(template, allTools),
         template,
         priority: config.fastMode,
+        compactionMetadata: compactionMetadata(event.reason),
       });
 
       return {

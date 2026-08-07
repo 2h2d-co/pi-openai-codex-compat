@@ -20,6 +20,9 @@ mise.local.toml
 # Local backups
 .backup/
 
+# Local source references
+/.reference/
+
 # OS files
 .DS_Store
 

@@ -16,6 +16,7 @@ import {
 } from "../extensions/openai-codex-compat/request-options.ts";
 
 void test("validates and layers Codex compatibility configuration", () => {
+  assert.equal(DEFAULT_CONFIG.responsesLite, false);
   assert.equal(DEFAULT_CONFIG.imageGeneration, true);
   assert.equal(DEFAULT_CONFIG.imageDetail, "auto");
   assert.equal(DEFAULT_CONFIG.webRun, false);
@@ -23,6 +24,7 @@ void test("validates and layers Codex compatibility configuration", () => {
   assert.deepEqual(
     parseConfig({
       fastMode: true,
+      responsesLite: false,
       applyPatch: false,
       imageGeneration: false,
       imageDetail: "original",
@@ -35,6 +37,7 @@ void test("validates and layers Codex compatibility configuration", () => {
     }),
     {
       fastMode: true,
+      responsesLite: false,
       applyPatch: false,
       imageGeneration: false,
       imageDetail: "original",
@@ -49,6 +52,7 @@ void test("validates and layers Codex compatibility configuration", () => {
   assert.deepEqual(
     parseConfig({
       fastMode: "yes",
+      responsesLite: "yes",
       applyPatch: null,
       imageGeneration: "yes",
       imageDetail: "medium",
@@ -89,6 +93,7 @@ void test("parses environment overrides with highest precedence", () => {
 
   const environmentConfig = parseEnvironmentConfig({
     [CONFIG_ENVIRONMENT_VARIABLES.fastMode]: "on",
+    [CONFIG_ENVIRONMENT_VARIABLES.responsesLite]: "off",
     [CONFIG_ENVIRONMENT_VARIABLES.applyPatch]: "0",
     [CONFIG_ENVIRONMENT_VARIABLES.toolBackground]: "status",
     [CONFIG_ENVIRONMENT_VARIABLES.imageGeneration]: "false",
@@ -103,6 +108,7 @@ void test("parses environment overrides with highest precedence", () => {
 
   assert.deepEqual(environmentConfig, {
     fastMode: true,
+    responsesLite: false,
     applyPatch: false,
     toolBackground: "status",
     imageGeneration: false,
@@ -128,10 +134,16 @@ void test("parses environment overrides with highest precedence", () => {
   assert.deepEqual(
     parseEnvironmentConfig({
       [CONFIG_ENVIRONMENT_VARIABLES.fastMode]: "enabled",
+      [CONFIG_ENVIRONMENT_VARIABLES.responsesLite]: "disabled",
       [CONFIG_ENVIRONMENT_VARIABLES.applyPatch]: "disabled",
       [CONFIG_ENVIRONMENT_VARIABLES.autoCompactAtPercent]: "default",
     }),
-    { fastMode: true, applyPatch: false, autoCompactAtPercent: null },
+    {
+      fastMode: true,
+      responsesLite: false,
+      applyPatch: false,
+      autoCompactAtPercent: null,
+    },
   );
   assert.deepEqual(
     parseEnvironmentConfig({

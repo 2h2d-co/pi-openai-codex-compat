@@ -28,6 +28,7 @@ const COMMAND_NAME = "codex-settings";
 
 type SettingId =
   | "fastMode"
+  | "responsesLite"
   | "textVerbosity"
   | "reasoningSummary"
   | "reasoningMode"
@@ -62,6 +63,13 @@ export function settingItems(
       label: "Fast mode",
       description: "Send requests through OpenAI's priority service tier.",
       currentValue: toggleValue(config.fastMode),
+      values: ["off", "on"],
+    },
+    {
+      id: "responsesLite",
+      label: "Responses Lite",
+      description: "Use Codex's Responses Lite envelope on supported GPT-5.6 models.",
+      currentValue: toggleValue(config.responsesLite),
       values: ["off", "on"],
     },
     {
@@ -155,6 +163,8 @@ export function settingPatch(id: string, value: string): ConfigLayer | undefined
   switch (id as SettingId) {
     case "fastMode":
       return value === "on" || value === "off" ? { fastMode: value === "on" } : undefined;
+    case "responsesLite":
+      return value === "on" || value === "off" ? { responsesLite: value === "on" } : undefined;
     case "textVerbosity":
       if (value === "low" || value === "medium" || value === "high") {
         return { textVerbosity: value };
@@ -202,6 +212,7 @@ export function settingPatch(id: string, value: string): ConfigLayer | undefined
 function applySettingPatch(config: CodexCompatConfig, patch: ConfigLayer): CodexCompatConfig {
   const next: CodexCompatConfig = { ...config };
   if (typeof patch.fastMode === "boolean") next.fastMode = patch.fastMode;
+  if (typeof patch.responsesLite === "boolean") next.responsesLite = patch.responsesLite;
   if (typeof patch.applyPatch === "boolean") next.applyPatch = patch.applyPatch;
   if (patch.toolBackground) next.toolBackground = patch.toolBackground;
   if (typeof patch.imageGeneration === "boolean") {

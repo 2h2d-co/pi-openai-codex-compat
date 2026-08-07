@@ -8,9 +8,11 @@ import {
 import { registerCodexProvider } from "./codex-provider.ts";
 import { installCodexFooter } from "./footer.ts";
 import registerCodexModelPolicy from "./model-policy.ts";
+import registerOutputLimitContinuation from "./output-limit-continuation.ts";
 import registerRemoteCompaction from "./remote-compaction.ts";
 import registerCodexRequestOptions from "./request-options.ts";
 import registerCodexSettings from "./settings-pane.ts";
+import registerCodexThreadLineage from "./codex-thread-lineage.ts";
 import registerCodexTools, { syncCodexTools } from "./tools.ts";
 
 export {
@@ -26,6 +28,7 @@ function settingsSummary(ctx: ExtensionContext, config: CodexCompatConfig): stri
   return [
     DISPLAY_NAME,
     `fast mode: ${config.fastMode ? "on" : "off"}`,
+    `Responses Lite: ${config.responsesLite ? "on" : "off"}`,
     `reasoning mode: ${config.reasoningMode}`,
     `Codex tool background: ${config.toolBackground}`,
     `apply_patch: ${config.applyPatch ? "on" : "off"}`,
@@ -58,14 +61,17 @@ export default function registerOpenAICodexCompat(pi: ExtensionAPI): void {
   });
 
   registerCodexTools(pi, resolveConfig, resolveToolBackground);
+  registerCodexThreadLineage(pi);
   const codexProvider = registerCodexProvider(pi, resolveConfig);
   registerCodexRequestOptions(pi, resolveConfig);
+  registerOutputLimitContinuation(pi);
   registerRemoteCompaction(pi, codexProvider, resolveConfig);
   registerCodexModelPolicy(pi, resolveConfig);
   registerCodexSettings(pi, {
     getConfig: resolveConfig,
     onChange(config, ctx) {
       activeConfig = config;
+      codexProvider.updateSessionConfig(ctx.sessionManager.getSessionId(), config);
       syncCodexTools(pi, ctx.model, config);
     },
   });

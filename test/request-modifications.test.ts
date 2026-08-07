@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { createServer, type IncomingHttpHeaders } from "node:http";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { test, type TestContext } from "node:test";
@@ -196,6 +196,7 @@ void test("modifies requests on the canonical OpenAI Codex provider", async (t) 
     join(agentDir, CONFIG_FILE),
     JSON.stringify({
       fastMode: true,
+      responsesLite: true,
       applyPatch: false,
       webSearch: "live",
       textVerbosity: "high",
@@ -249,7 +250,7 @@ void test("modifies requests on the canonical OpenAI Codex provider", async (t) 
     agentDir,
     modelRuntime,
     settingsManager,
-    sessionManager: SessionManager.inMemory(cwd),
+    sessionManager: SessionManager.create(cwd, join(tempRoot, "sessions")),
     resourceLoader,
     model,
     thinkingLevel: "high",
@@ -268,6 +269,10 @@ void test("modifies requests on the canonical OpenAI Codex provider", async (t) 
   assert.equal(request.method, "POST");
   assert.equal(request.url, "/codex/responses");
   assert.equal(request.headers.authorization, `Bearer ${fakeCodexToken()}`);
+  assert.equal(
+    request.headers["x-client-request-id"],
+    (request.body["client_metadata"] as Record<string, unknown>)["thread_id"],
+  );
   assert.equal(request.body["model"], MODEL_ID);
   assert.equal(request.body["service_tier"], "priority");
   assert.deepEqual(request.body["text"], { verbosity: "high" });
@@ -275,18 +280,51 @@ void test("modifies requests on the canonical OpenAI Codex provider", async (t) 
     effort: "high",
     summary: "detailed",
     mode: "pro",
+    context: "all_turns",
   });
-  assert.deepEqual(request.body["tools"], [
-    {
-      type: "web_search",
-      external_web_access: true,
-      search_content_types: ["text", "image"],
-    },
-  ]);
+  assert.equal(request.body["instructions"], undefined);
+  assert.equal(request.body["tools"], undefined);
+  assert.deepEqual((request.body["input"] as Record<string, unknown>[])[0], {
+    type: "additional_tools",
+    role: "developer",
+    tools: [],
+  });
+  assert.equal(request.headers["x-openai-internal-codex-responses-lite"], "true");
+  assert.equal(
+    (request.body["client_metadata"] as Record<string, unknown>)[
+      "ws_request_header_x_openai_internal_codex_responses_lite"
+    ],
+    undefined,
+  );
 
   const messages = assistantMessages(result.session);
   assert.equal(messages.length, 1);
   assert.equal(messages[0]?.provider, CODEX_PROVIDER);
   assert.equal(messages[0]?.api, "openai-codex-responses");
   assert.equal(messages[0]?.usage.cost.total, 0.0004);
+  const requestDiagnostic = messages[0]?.diagnostics?.find(
+    (diagnostic) => diagnostic.type === "codex_transport_request",
+  );
+  const requestDetails = requestDiagnostic?.details as Record<string, unknown> | undefined;
+  const cacheDetails = requestDetails?.["cache"] as Record<string, unknown> | undefined;
+  assert.equal(requestDetails?.["selectedTransport"], "sse");
+  assert.equal(requestDetails?.["accountId"], "acct_test");
+  assert.equal(requestDetails?.["responseId"], "resp_text");
+  assert.equal(typeof requestDetails?.["sessionId"], "string");
+  assert.equal(typeof requestDetails?.["promptCacheKey"], "string");
+  assert.equal(typeof requestDetails?.["turnId"], "string");
+  assert.equal(cacheDetails?.["envelope"], "responses_lite");
+  assert.equal(cacheDetails?.["staticInputItems"], 2);
+  assert.deepEqual(requestDetails?.["usage"], {
+    inputTokens: 10,
+    cachedTokens: 0,
+    cacheWriteTokens: 0,
+  });
+
+  const sessionFile = result.session.sessionFile;
+  assert.ok(sessionFile);
+  const persisted = await readFile(sessionFile, "utf8");
+  assert.match(persisted, /"type":"codex_transport_request"/);
+  assert.match(persisted, /acct_test|resp_text/);
+  assert.doesNotMatch(persisted, /refresh_test/);
 });

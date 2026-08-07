@@ -1,5 +1,6 @@
 export const IMAGE_GENERATION_TOOL_NAME = "image_gen.imagegen";
 export const WEB_RUN_TOOL_NAME = "web.run";
+export const DEFAULT_FUNCTION_NAMESPACE = "functions";
 
 export const CODEX_NAMESPACED_TOOL_NAMES: ReadonlySet<string> = new Set([
   IMAGE_GENERATION_TOOL_NAME,
@@ -35,6 +36,7 @@ export function namespacedToolCallName(namespace: unknown, name: unknown): strin
   if (typeof namespace !== "string" || typeof name !== "string") {
     throw new Error("Codex returned a namespaced tool call without a valid namespace and name.");
   }
+  if (namespace === "" || namespace === DEFAULT_FUNCTION_NAMESPACE) return name;
   const toolName = `${namespace}.${name}`;
   if (!CODEX_NAMESPACED_TOOL_NAMES.has(toolName)) {
     throw new Error(`Codex returned an unsupported namespaced tool call: ${toolName}`);

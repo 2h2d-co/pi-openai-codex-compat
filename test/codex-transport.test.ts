@@ -3,8 +3,10 @@ import { createHash } from "node:crypto";
 import test from "node:test";
 import type { Model } from "@earendil-works/pi-ai";
 import {
+  CODEX_WS_REQUEST_START_METADATA_KEY,
   closeOpenAICodexWebSocketSessions,
   CodexTransport,
+  CodexTurnState,
   getOpenAICodexWebSocketDebugStats,
   requestCodexJson,
   resetOpenAICodexWebSocketDebugStats,
@@ -240,6 +242,33 @@ void test("finishes SSE requests when the terminal event arrives before EOF", as
   assert.equal(cancelled, true);
 });
 
+void test("delivers response.failed to the provider-owned resampling loop", async () => {
+  const terminalEvent = {
+    type: "response.failed",
+    response: {
+      id: "response-failed",
+      status: "failed",
+      error: { code: "rate_limit_exceeded", message: "retry this response" },
+    },
+  };
+  const events: JsonRecord[] = [];
+
+  for await (const event of new CodexTransport().request(
+    codexModel(),
+    { input: [] },
+    {
+      apiKey: accessToken(),
+      transport: "sse",
+      fetch: async () =>
+        new Response(`data: ${JSON.stringify(terminalEvent)}\n\n`, { status: 200 }),
+    },
+  )) {
+    events.push(event);
+  }
+
+  assert.deepEqual(events, [terminalEvent]);
+});
+
 void test("serializes SSE request payloads exactly once", async () => {
   let payloadReads = 0;
   const request: JsonRecord = { input: [] };
@@ -299,6 +328,7 @@ void test("preserves SSE read errors when reader cleanup also fails", async () =
         {
           apiKey: accessToken(),
           transport: "sse",
+          sseStreamMaxRetries: 0,
           fetch: async () => response,
         },
       )) {
@@ -311,6 +341,10 @@ void test("preserves SSE read errors when reader cleanup also fails", async () =
 
 void test("marks SSE transport started after successful response headers", async () => {
   let starts = 0;
+  const terminalEvent = {
+    type: "response.completed",
+    response: { id: "response-1", status: "completed" },
+  };
   const events: JsonRecord[] = [];
   for await (const event of new CodexTransport().request(
     codexModel(),
@@ -321,18 +355,20 @@ void test("marks SSE transport started after successful response headers", async
       onTransportStart() {
         starts += 1;
       },
-      fetch: async () => new Response("", { status: 200 }),
+      fetch: async () =>
+        new Response(`data: ${JSON.stringify(terminalEvent)}\n\n`, { status: 200 }),
     },
   )) {
     events.push(event);
   }
 
   assert.equal(starts, 1);
-  assert.deepEqual(events, []);
+  assert.deepEqual(events, [terminalEvent]);
 });
 
 void test("aligns cache-affinity headers with retention and length limits", async () => {
   const requestHeaders: Headers[] = [];
+  const diagnostics: CodexTransportDiagnostic[] = [];
   const terminal = `data: ${JSON.stringify({
     type: "response.completed",
     response: { id: "response-1", status: "completed" },
@@ -347,11 +383,21 @@ void test("aligns cache-affinity headers with retention and length limits", asyn
 
   for await (const _event of transport.request(
     codexModel(),
-    { input: [] },
+    {
+      model: "gpt-5.6-sol",
+      service_tier: "priority",
+      input: [],
+      prompt_cache_key: hashedSessionId,
+      client_metadata: { session_id: hashedSessionId, thread_id: hashedSessionId },
+    },
     {
       apiKey: accessToken(),
       sessionId: longSessionId,
       transport: "sse",
+      turnState: new CodexTurnState(),
+      onTransportDiagnostic(diagnostic) {
+        diagnostics.push(diagnostic);
+      },
       fetch: fetcher,
     },
   )) {
@@ -365,6 +411,10 @@ void test("aligns cache-affinity headers with retention and length limits", asyn
       sessionId: "no-cache-session",
       cacheRetention: "none",
       transport: "sse",
+      turnState: new CodexTurnState(),
+      onTransportDiagnostic(diagnostic) {
+        diagnostics.push(diagnostic);
+      },
       fetch: fetcher,
     },
   )) {
@@ -372,9 +422,87 @@ void test("aligns cache-affinity headers with retention and length limits", asyn
   }
 
   assert.equal(requestHeaders[0]?.get("session-id"), hashedSessionId);
-  assert.equal(requestHeaders[0]?.get("x-client-request-id"), requestHeaders[0]?.get("session-id"));
+  assert.equal(requestHeaders[0]?.get("thread-id"), hashedSessionId);
+  assert.equal(requestHeaders[0]?.get("x-client-request-id"), hashedSessionId);
+  assert.equal(requestHeaders[0]?.get("openai-beta"), null);
+  assert.equal(requestHeaders[0]?.get("x-codex-routing-hint"), "model=gpt-5.6-sol;tier=priority");
   assert.equal(requestHeaders[1]?.get("session-id"), null);
   assert.equal(requestHeaders[1]?.get("x-client-request-id"), null);
+  const requestDiagnostics = diagnostics.filter(
+    (diagnostic) => diagnostic.type === "codex_transport_request",
+  );
+  assert.equal(requestDiagnostics[0]?.details.promptKeyAndHeaderAligned, true);
+  assert.equal(requestDiagnostics[1]?.details.promptKeyAndHeaderAligned, false);
+});
+
+void test("captures and replays SSE turn state with exact diagnostic values", async () => {
+  const turnState = new CodexTurnState();
+  const requestHeaders: Headers[] = [];
+  const diagnostics: CodexTransportDiagnostic[] = [];
+  let requests = 0;
+  const terminal = `data: ${JSON.stringify({
+    type: "response.completed",
+    response: {
+      id: "response-1",
+      status: "completed",
+      usage: {
+        input_tokens: 20,
+        output_tokens: 1,
+        input_tokens_details: { cached_tokens: 12, cache_write_tokens: 3 },
+      },
+    },
+  })}\n\n`;
+  const fetcher: typeof fetch = async (_input, init) => {
+    requests += 1;
+    requestHeaders.push(new Headers(init?.headers));
+    return new Response(terminal, {
+      status: 200,
+      ...(requests === 1 ? { headers: { "x-codex-turn-state": "opaque-routing-state" } } : {}),
+    });
+  };
+  const transport = new CodexTransport();
+  const options = {
+    apiKey: accessToken(),
+    sessionId: "turn-state-sse",
+    transport: "sse" as const,
+    turnState,
+    fetch: fetcher,
+    onTransportDiagnostic(diagnostic: CodexTransportDiagnostic) {
+      diagnostics.push(diagnostic);
+    },
+  };
+
+  for await (const _event of transport.request(codexModel(), { input: [] }, options)) {
+    // Consume the first response.
+  }
+  for await (const _event of transport.request(codexModel(), { input: [] }, options)) {
+    // Consume the second response.
+  }
+
+  assert.equal(requestHeaders[0]?.get("x-codex-turn-state"), null);
+  assert.equal(requestHeaders[1]?.get("x-codex-turn-state"), "opaque-routing-state");
+  const requestDiagnostics = diagnostics.filter(
+    (diagnostic) => diagnostic.type === "codex_transport_request",
+  );
+  assert.equal(requestDiagnostics.length, 2);
+  assert.deepEqual(requestDiagnostics[0]?.details.usage, {
+    inputTokens: 20,
+    cachedTokens: 12,
+    cacheWriteTokens: 3,
+  });
+  assert.equal(requestDiagnostics[0]?.details.turnStateAvailableAtStart, false);
+  assert.equal(requestDiagnostics[0]?.details.turnStateReplayed, false);
+  assert.equal(requestDiagnostics[0]?.details.turnStateReceived, true);
+  assert.equal(requestDiagnostics[0]?.details.sessionId, "turn-state-sse");
+  assert.equal(requestDiagnostics[0]?.details.accountId, "account-1");
+  assert.equal(requestDiagnostics[0]?.details.responseId, "response-1");
+  assert.equal(requestDiagnostics[0]?.details.turnStateReceivedValue, "opaque-routing-state");
+  assert.equal(requestDiagnostics[1]?.details.turnStateAvailableAtStart, true);
+  assert.equal(requestDiagnostics[1]?.details.turnStateReplayed, true);
+  assert.equal(requestDiagnostics[1]?.details.turnStateReceived, false);
+  assert.equal(requestDiagnostics[1]?.details.turnStateAtStart, "opaque-routing-state");
+  assert.equal(requestDiagnostics[1]?.details.turnStateReplayedValue, "opaque-routing-state");
+  assert.match(JSON.stringify(diagnostics), /opaque-routing-state/);
 });
 
 void test("validates transport timeouts and reports SSE header timeouts", async () => {
@@ -408,6 +536,7 @@ void test("validates transport timeouts and reports SSE header timeouts", async 
           apiKey: accessToken(),
           transport: "sse",
           timeoutMs: 5,
+          sseStreamMaxRetries: 0,
           fetch: async (_input, init) =>
             new Promise<Response>((_resolve, reject) => {
               const signal = init?.signal;
@@ -481,7 +610,7 @@ void test("disables the WebSocket connect timeout when configured as zero", asyn
   assert.equal(closeReason, "aborted");
 });
 
-void test("uses Pi AI's WebSocket timeout and connection-age close reasons", async (t) => {
+void test("uses Codex WebSocket timeouts without proactively expiring healthy sockets", async (t) => {
   const previousWebSocket = globalThis.WebSocket;
   const originalDateNow = Date.now;
   let now = originalDateNow();
@@ -609,8 +738,9 @@ void test("uses Pi AI's WebSocket timeout and connection-age close reasons", asy
   );
   assert.equal(
     closeReasons.some((entry) => entry.reason === "connection_age_limit"),
-    true,
+    false,
   );
+  assert.equal(connections, 3);
 });
 
 void test("honors server-directed SSE retry delays and their configured cap", async () => {
@@ -666,7 +796,73 @@ void test("honors server-directed SSE retry delays and their configured cap", as
   );
 });
 
-void test("retries non-transient SSE response errors when configured like Pi AI", async () => {
+void test("resamples retryable SSE HTTP failures with the stream budget", async () => {
+  const terminal = `data: ${JSON.stringify({
+    type: "response.completed",
+    response: { id: "response-1", status: "completed" },
+  })}\n\n`;
+  const diagnostics: CodexTransportDiagnostic[] = [];
+  let requests = 0;
+  for await (const _event of new CodexTransport().request(
+    codexModel(),
+    { input: [], prompt_cache_key: "sse-http-retry" },
+    {
+      apiKey: accessToken(),
+      sessionId: "sse-http-retry",
+      transport: "sse",
+      maxRetries: 0,
+      sseStreamMaxRetries: 1,
+      sseStreamRetryBaseDelayMs: 0,
+      onTransportDiagnostic(diagnostic) {
+        diagnostics.push(diagnostic);
+      },
+      fetch: async () => {
+        requests += 1;
+        return requests === 1
+          ? new Response('{"error":{"code":"temporarily_unavailable"}}', { status: 503 })
+          : new Response(terminal, { status: 200 });
+      },
+    },
+  )) {
+    // Consume the successful resampling attempt.
+  }
+
+  assert.equal(requests, 2);
+  const recovery = diagnostics.find((diagnostic) => diagnostic.type === "codex_transport_recovery");
+  assert.equal(recovery?.details.trigger, "sse_stream_retry");
+  assert.equal(recovery?.details.cacheIdentityPreserved, true);
+  assert.match(recovery?.details.error?.message ?? "", /temporarily_unavailable/);
+});
+
+void test("does not retry non-transient SSE response errors", async () => {
+  let requests = 0;
+  await assert.rejects(
+    async () => {
+      for await (const _event of new CodexTransport().request(
+        codexModel(),
+        { input: [] },
+        {
+          apiKey: accessToken(),
+          transport: "sse",
+          maxRetries: 1,
+          fetch: async () => {
+            requests += 1;
+            return new Response('{"error":{"code":"invalid_request","message":"bad request"}}', {
+              status: 400,
+            });
+          },
+        },
+      )) {
+        // Invalid requests must reach Pi immediately.
+      }
+    },
+    { message: "bad request" },
+  );
+
+  assert.equal(requests, 1);
+});
+
+void test("retries transient SSE rate limits", async () => {
   const terminal = `data: ${JSON.stringify({
     type: "response.completed",
     response: { id: "response-1", status: "completed" },
@@ -682,9 +878,13 @@ void test("retries non-transient SSE response errors when configured like Pi AI"
       fetch: async () => {
         requests += 1;
         return requests === 1
-          ? new Response('{"error":{"code":"invalid_request","message":"bad request"}}', {
-              status: 400,
-            })
+          ? new Response(
+              '{"error":{"code":"rate_limit_exceeded","message":"temporarily overloaded"}}',
+              {
+                status: 429,
+                headers: { "retry-after-ms": "0" },
+              },
+            )
           : new Response(terminal, { status: 200 });
       },
     },
@@ -695,34 +895,31 @@ void test("retries non-transient SSE response errors when configured like Pi AI"
   assert.equal(requests, 2);
 });
 
-void test("retries generic usage-limit responses like Pi AI", async () => {
-  const terminal = `data: ${JSON.stringify({
-    type: "response.completed",
-    response: { id: "response-1", status: "completed" },
-  })}\n\n`;
+void test("does not resample terminal SSE usage limits", async () => {
   let requests = 0;
-  for await (const _event of new CodexTransport().request(
-    codexModel(),
-    { input: [] },
-    {
-      apiKey: accessToken(),
-      transport: "sse",
-      maxRetries: 1,
-      fetch: async () => {
-        requests += 1;
-        return requests === 1
-          ? new Response('{"error":{"code":"temporary_limit","message":"usage limit"}}', {
-              status: 429,
-              headers: { "retry-after-ms": "0" },
-            })
-          : new Response(terminal, { status: 200 });
-      },
+  await assert.rejects(
+    async () => {
+      for await (const _event of new CodexTransport().request(
+        codexModel(),
+        { input: [] },
+        {
+          apiKey: accessToken(),
+          transport: "sse",
+          fetch: async () => {
+            requests += 1;
+            return new Response(
+              '{"error":{"code":"usage_limit_reached","message":"limit reached","plan_type":"plus"}}',
+              { status: 429 },
+            );
+          },
+        },
+      )) {
+        // Terminal account limits must reach Pi immediately.
+      }
     },
-  )) {
-    // Consume the successful retry.
-  }
-
-  assert.equal(requests, 2);
+    { message: "You have hit your ChatGPT usage limit (plus plan)." },
+  );
+  assert.equal(requests, 1);
 });
 
 void test("normalizes AbortError without retrying", async () => {
@@ -773,6 +970,83 @@ void test("does not retry SSE protocol errors after streaming starts", async () 
       }
     },
     { name: "CodexProtocolError" },
+  );
+  assert.equal(requests, 1);
+});
+
+void test("retries dropped SSE streams before model-visible output", async () => {
+  let requests = 0;
+  const diagnostics: CodexTransportDiagnostic[] = [];
+  const completed = {
+    type: "response.completed",
+    response: { id: "response-2", status: "completed" },
+  };
+
+  const events: JsonRecord[] = [];
+  for await (const event of new CodexTransport().request(
+    codexModel(),
+    { model: "gpt-test", input: [], prompt_cache_key: "sse-retry-session" },
+    {
+      apiKey: accessToken(),
+      sessionId: "sse-retry-session",
+      transport: "sse",
+      sseStreamMaxRetries: 1,
+      sseStreamRetryBaseDelayMs: 0,
+      onTransportDiagnostic(diagnostic) {
+        diagnostics.push(diagnostic);
+      },
+      fetch: async () => {
+        requests += 1;
+        const event =
+          requests === 1 ? { type: "response.created", response: { id: "response-1" } } : completed;
+        return new Response(`data: ${JSON.stringify(event)}\n\n`, { status: 200 });
+      },
+    },
+  )) {
+    events.push(event);
+  }
+
+  assert.equal(requests, 2);
+  assert.deepEqual(events, [
+    { type: "response.created", response: { id: "response-1" } },
+    completed,
+  ]);
+  const recovery = diagnostics.find((diagnostic) => diagnostic.type === "codex_transport_recovery");
+  assert.equal(recovery?.details.trigger, "sse_stream_retry");
+  assert.equal(recovery?.details.cacheIdentityPreserved, true);
+  assert.equal(recovery?.details.retryNumber, 1);
+  assert.equal(recovery?.details.maxRetries, 1);
+  assert.equal(recovery?.details.error?.message, "Codex SSE stream ended before a terminal event");
+});
+
+void test("does not retry dropped SSE streams after model-visible output", async () => {
+  let requests = 0;
+  await assert.rejects(
+    async () => {
+      for await (const _event of new CodexTransport().request(
+        codexModel(),
+        { input: [] },
+        {
+          apiKey: accessToken(),
+          transport: "sse",
+          sseStreamMaxRetries: 1,
+          sseStreamRetryBaseDelayMs: 0,
+          fetch: async () => {
+            requests += 1;
+            return new Response(
+              `data: ${JSON.stringify({
+                type: "response.output_text.delta",
+                delta: "visible",
+              })}\n\n`,
+              { status: 200 },
+            );
+          },
+        },
+      )) {
+        // The first visible delta is emitted, then EOF fails closed.
+      }
+    },
+    { message: "Codex SSE stream ended before a terminal event" },
   );
   assert.equal(requests, 1);
 });
@@ -1227,6 +1501,239 @@ void test("retries fresh WebSockets before selecting SSE fallback", async (t) =>
   closeOpenAICodexWebSocketSessions("retry-session");
 });
 
+void test("replays WebSocket turn state on a fresh retry after metadata", async (t) => {
+  const previousWebSocket = globalThis.WebSocket;
+  const turnState = new CodexTurnState();
+  const sentBodies: JsonRecord[] = [];
+  const handshakeHeaders: Headers[] = [];
+  const diagnostics: CodexTransportDiagnostic[] = [];
+  let connections = 0;
+
+  class TurnStateRetryWebSocket {
+    readonly readyState = 1;
+    private readonly connection = ++connections;
+    private readonly listeners = new Map<string, Set<(event: unknown) => void>>();
+
+    constructor(_url: string, options?: { headers?: Record<string, string> }) {
+      handshakeHeaders.push(new Headers(options?.headers));
+      queueMicrotask(() => this.dispatch("open", {}));
+    }
+
+    addEventListener(type: string, listener: (event: unknown) => void): void {
+      const listeners = this.listeners.get(type) ?? new Set();
+      listeners.add(listener);
+      this.listeners.set(type, listeners);
+    }
+
+    removeEventListener(type: string, listener: (event: unknown) => void): void {
+      this.listeners.get(type)?.delete(listener);
+    }
+
+    send(data: string): void {
+      sentBodies.push(JSON.parse(data) as JsonRecord);
+      if (this.connection === 1) {
+        queueMicrotask(() => {
+          this.dispatch("message", {
+            data: JSON.stringify({
+              type: "response.metadata",
+              headers: { "X-Codex-Turn-State": "opaque-ws-state" },
+            }),
+          });
+          setTimeout(() => this.dispatch("error", new Error("socket reset")), 0);
+        });
+        return;
+      }
+      queueMicrotask(() => {
+        this.dispatch("message", {
+          data: JSON.stringify({
+            type: "response.completed",
+            response: { id: "response-retried", status: "completed" },
+          }),
+        });
+      });
+    }
+
+    close(): void {}
+
+    private dispatch(type: string, event: unknown): void {
+      for (const listener of this.listeners.get(type) ?? []) listener(event);
+    }
+  }
+
+  Object.defineProperty(globalThis, "WebSocket", {
+    configurable: true,
+    writable: true,
+    value: TurnStateRetryWebSocket,
+  });
+  t.after(() => {
+    Object.defineProperty(globalThis, "WebSocket", {
+      configurable: true,
+      writable: true,
+      value: previousWebSocket,
+    });
+  });
+
+  const events: JsonRecord[] = [];
+  const body = {
+    model: "gpt-5.6-sol",
+    input: [],
+    client_metadata: {
+      "x-codex-installation-id": "installation-1",
+      "x-codex-window-id": "turn-state-retry:0",
+      thread_id: "turn-state-retry",
+      ws_request_header_x_openai_internal_codex_responses_lite: "true",
+    },
+  };
+  for await (const event of new CodexTransport().request(codexModel(), body, {
+    apiKey: accessToken(),
+    sessionId: "turn-state-retry",
+    transport: "websocket-cached",
+    turnState,
+    websocketMaxRetries: 1,
+    websocketRetryBaseDelayMs: 0,
+    onTransportDiagnostic(diagnostic) {
+      diagnostics.push(diagnostic);
+    },
+    fetch: async () => {
+      throw new Error("SSE should not be selected");
+    },
+  })) {
+    events.push(event);
+  }
+
+  assert.equal(connections, 2);
+  assert.equal(sentBodies.length, 2);
+  const firstBody = sentBodies[0];
+  const secondBody = sentBodies[1];
+  assert.ok(firstBody);
+  assert.ok(secondBody);
+  assert.equal((firstBody["client_metadata"] as JsonRecord)["x-codex-turn-state"], undefined);
+  assert.equal(
+    (secondBody["client_metadata"] as JsonRecord)["x-codex-turn-state"],
+    "opaque-ws-state",
+  );
+  assert.equal(
+    (firstBody["client_metadata"] as JsonRecord)[
+      "ws_request_header_x_openai_internal_codex_responses_lite"
+    ],
+    "true",
+  );
+  assert.equal(
+    (secondBody["client_metadata"] as JsonRecord)[
+      "ws_request_header_x_openai_internal_codex_responses_lite"
+    ],
+    "true",
+  );
+  assert.match(
+    String((firstBody["client_metadata"] as JsonRecord)[CODEX_WS_REQUEST_START_METADATA_KEY]),
+    /^\d+$/,
+  );
+  assert.match(
+    String((secondBody["client_metadata"] as JsonRecord)[CODEX_WS_REQUEST_START_METADATA_KEY]),
+    /^\d+$/,
+  );
+  assert.equal(handshakeHeaders[0]?.get("x-openai-internal-codex-responses-lite"), null);
+  assert.equal(handshakeHeaders[0]?.get("x-codex-routing-hint"), "model=gpt-5.6-sol");
+  assert.equal(events.at(-1)?.type, "response.completed");
+  const recovery = diagnostics.find((diagnostic) => diagnostic.type === "codex_transport_recovery");
+  assert.equal(recovery?.details.attempts[0]?.turnStateReplayed, false);
+  assert.equal(recovery?.details.cacheIdentity.installationId, "installation-1");
+  assert.equal(recovery?.details.cacheIdentity.windowId, "turn-state-retry:0");
+  assert.equal(recovery?.details.cacheIdentity.routingHint, "model=gpt-5.6-sol");
+  const selected = diagnostics.find((diagnostic) => diagnostic.type === "codex_transport_request");
+  assert.equal(selected?.details.turnStateAvailableAtStart, false);
+  assert.equal(selected?.details.turnStateReplayed, true);
+  assert.equal(selected?.details.turnStateReceived, true);
+  assert.equal(selected?.details.sessionId, "turn-state-retry");
+  assert.equal(selected?.details.accountId, "account-1");
+  assert.equal(selected?.details.responseId, "response-retried");
+  assert.equal(selected?.details.turnStateReplayedValue, "opaque-ws-state");
+  assert.equal(selected?.details.turnStateReceivedValue, "opaque-ws-state");
+  assert.match(JSON.stringify(diagnostics), /opaque-ws-state/);
+  closeOpenAICodexWebSocketSessions("turn-state-retry");
+});
+
+void test("replays WebSocket turn state on SSE fallback", async (t) => {
+  const previousWebSocket = globalThis.WebSocket;
+  const turnState = new CodexTurnState();
+  let sseHeaders: Headers | undefined;
+
+  class TurnStateFallbackWebSocket {
+    readonly readyState = 1;
+    private readonly listeners = new Map<string, Set<(event: unknown) => void>>();
+
+    constructor() {
+      queueMicrotask(() => this.dispatch("open", {}));
+    }
+
+    addEventListener(type: string, listener: (event: unknown) => void): void {
+      const listeners = this.listeners.get(type) ?? new Set();
+      listeners.add(listener);
+      this.listeners.set(type, listeners);
+    }
+
+    removeEventListener(type: string, listener: (event: unknown) => void): void {
+      this.listeners.get(type)?.delete(listener);
+    }
+
+    send(): void {
+      queueMicrotask(() => {
+        this.dispatch("message", {
+          data: JSON.stringify({
+            type: "response.metadata",
+            headers: { "x-codex-turn-state": "opaque-fallback-state" },
+          }),
+        });
+        setTimeout(() => this.dispatch("error", new Error("socket reset")), 0);
+      });
+    }
+
+    close(): void {}
+
+    private dispatch(type: string, event: unknown): void {
+      for (const listener of this.listeners.get(type) ?? []) listener(event);
+    }
+  }
+
+  Object.defineProperty(globalThis, "WebSocket", {
+    configurable: true,
+    writable: true,
+    value: TurnStateFallbackWebSocket,
+  });
+  t.after(() => {
+    Object.defineProperty(globalThis, "WebSocket", {
+      configurable: true,
+      writable: true,
+      value: previousWebSocket,
+    });
+  });
+
+  const terminal = `data: ${JSON.stringify({
+    type: "response.completed",
+    response: { id: "response-fallback", status: "completed" },
+  })}\n\n`;
+  for await (const _event of new CodexTransport().request(
+    codexModel(),
+    { input: [] },
+    {
+      apiKey: accessToken(),
+      sessionId: "turn-state-fallback",
+      transport: "websocket-cached",
+      turnState,
+      websocketMaxRetries: 0,
+      fetch: async (_input, init) => {
+        sseHeaders = new Headers(init?.headers);
+        return new Response(terminal, { status: 200 });
+      },
+    },
+  )) {
+    // Consume the recovered response.
+  }
+
+  assert.equal(sseHeaders?.get("x-codex-turn-state"), "opaque-fallback-state");
+  closeOpenAICodexWebSocketSessions("turn-state-fallback");
+});
+
 void test("prewarms the first WebSocket request and generates from its continuation", async (t) => {
   const previousWebSocket = globalThis.WebSocket;
   const sentBodies: JsonRecord[] = [];
@@ -1338,7 +1845,102 @@ void test("prewarms the first WebSocket request and generates from its continuat
   transport.close("prewarm-session");
 });
 
-void test("continues JSON-wire request snapshots with Pi AI's order-sensitive delta checks", async (t) => {
+void test("does not treat incomplete WebSocket responses as completed continuation state", async (t) => {
+  const previousWebSocket = globalThis.WebSocket;
+  const sentBodies: JsonRecord[] = [];
+  let continuationReady = 0;
+
+  class IncompleteWebSocket {
+    readonly readyState = 1;
+    private readonly listeners = new Map<string, Set<(event: unknown) => void>>();
+
+    constructor() {
+      queueMicrotask(() => this.dispatch("open", {}));
+    }
+
+    addEventListener(type: string, listener: (event: unknown) => void): void {
+      const listeners = this.listeners.get(type) ?? new Set();
+      listeners.add(listener);
+      this.listeners.set(type, listeners);
+    }
+
+    removeEventListener(type: string, listener: (event: unknown) => void): void {
+      this.listeners.get(type)?.delete(listener);
+    }
+
+    send(data: string): void {
+      sentBodies.push(JSON.parse(data) as JsonRecord);
+      const responseNumber = sentBodies.length;
+      queueMicrotask(() => {
+        this.dispatch("message", {
+          data: JSON.stringify({
+            type: responseNumber === 1 ? "response.incomplete" : "response.completed",
+            response: {
+              id: `response-${String(responseNumber)}`,
+              status: responseNumber === 1 ? "incomplete" : "completed",
+              ...(responseNumber === 1
+                ? { incomplete_details: { reason: "max_output_tokens" } }
+                : {}),
+            },
+          }),
+        });
+      });
+    }
+
+    close(): void {}
+
+    private dispatch(type: string, event: unknown): void {
+      for (const listener of this.listeners.get(type) ?? []) listener(event);
+    }
+  }
+
+  Object.defineProperty(globalThis, "WebSocket", {
+    configurable: true,
+    writable: true,
+    value: IncompleteWebSocket,
+  });
+  t.after(() => {
+    Object.defineProperty(globalThis, "WebSocket", {
+      configurable: true,
+      writable: true,
+      value: previousWebSocket,
+    });
+  });
+
+  const firstInput = { role: "user", content: "first" };
+  const continuationInput = { role: "user", content: "continue" };
+  const options = {
+    apiKey: accessToken(),
+    sessionId: "incomplete-continuation-session",
+    transport: "websocket-cached" as const,
+    onContinuationReady() {
+      continuationReady += 1;
+    },
+  };
+  const transport = new CodexTransport();
+  for await (const _event of transport.request(
+    codexModel(),
+    { model: "gpt-test", input: [firstInput] },
+    options,
+  )) {
+    // Consume the incomplete response.
+  }
+  for await (const _event of transport.request(
+    codexModel(),
+    { model: "gpt-test", input: [firstInput, continuationInput] },
+    options,
+  )) {
+    // Consume the completed response.
+  }
+
+  assert.equal(sentBodies.length, 2);
+  assert.equal(sentBodies[1]?.previous_response_id, undefined);
+  assert.deepEqual(sentBodies[1]?.input, [firstInput, continuationInput]);
+  assert.equal(continuationReady, 1);
+  transport.close("incomplete-continuation-session");
+});
+
+void test("matches official Codex semantic WebSocket delta comparisons", async (t) => {
   const previousWebSocket = globalThis.WebSocket;
   const sentBodies: JsonRecord[] = [];
   const diagnostics: CodexTransportDiagnostic[] = [];
@@ -1406,6 +2008,7 @@ void test("continues JSON-wire request snapshots with Pi AI's order-sensitive de
   const nextInput = { role: "user", content: "next" };
   const thirdInput = { role: "user", content: "third" };
   const fourthInput = { role: "user", content: "fourth" };
+  const changedFirstInput = { role: "user", content: "changed first" };
   const options = {
     apiKey: accessToken(),
     sessionId: "created-id-session",
@@ -1421,6 +2024,7 @@ void test("continues JSON-wire request snapshots with Pi AI's order-sensitive de
       model: "gpt-test",
       instructions: "same",
       input: [firstInput],
+      stream_options: { reasoning_summary_delivery: "sequential_cutoff" },
       omittedFromJson: () => "first",
     },
     options,
@@ -1432,7 +2036,14 @@ void test("continues JSON-wire request snapshots with Pi AI's order-sensitive de
     {
       model: "gpt-test",
       instructions: "same",
-      input: [firstInput, nextInput],
+      input: [
+        {
+          ...firstInput,
+          internal_chat_message_metadata_passthrough: { turn_id: "turn-1" },
+        },
+        nextInput,
+      ],
+      stream_options: { reasoning_summary_delivery: "none" },
       omittedFromJson: () => "second",
     },
     options,
@@ -1448,7 +2059,7 @@ void test("continues JSON-wire request snapshots with Pi AI's order-sensitive de
     },
     options,
   )) {
-    // Reordered request fields require a full-context request like Pi AI.
+    // JSON object order is not model context.
   }
   for await (const _event of transport.request(
     codexModel(),
@@ -1459,32 +2070,42 @@ void test("continues JSON-wire request snapshots with Pi AI's order-sensitive de
     },
     options,
   )) {
-    // Reordered history fields also require a full-context request.
+    // Internal item metadata and JSON object order are not model context.
+  }
+  for await (const _event of transport.request(
+    codexModel(),
+    {
+      instructions: "same",
+      model: "gpt-test",
+      input: [changedFirstInput, nextInput, thirdInput, fourthInput],
+    },
+    options,
+  )) {
+    // A model-visible history change must bypass continuation with exact diagnostics.
   }
 
-  assert.equal(sentBodies.length, 4);
+  assert.equal(sentBodies.length, 5);
   assert.equal(sentBodies[0]?.["omittedFromJson"], undefined);
   assert.equal(sentBodies[1]?.["omittedFromJson"], undefined);
   assert.equal(sentBodies[1]?.previous_response_id, "response-created");
   assert.deepEqual(sentBodies[1]?.input, [nextInput]);
-  assert.equal(sentBodies[2]?.previous_response_id, undefined);
-  assert.deepEqual(sentBodies[2]?.input, [firstInput, nextInput, thirdInput]);
-  assert.equal(sentBodies[3]?.previous_response_id, undefined);
-  assert.deepEqual(sentBodies[3]?.input, [
-    { content: "first", role: "user" },
-    nextInput,
-    thirdInput,
-    fourthInput,
-  ]);
-  assert.equal(diagnostics.length, 2);
-  const templateBypass = transportRecovery(diagnostics[0]);
-  assert.equal(templateBypass.details.trigger, "local_continuation_bypass");
-  assert.equal(templateBypass.details.continuationBypassReason, "request_template_changed");
-  assert.equal(templateBypass.details.previousResponseId, "response-2");
-  assert.equal(templateBypass.details.attempts[0]?.contextMode, "full");
-  const historyBypass = transportRecovery(diagnostics[1]);
-  assert.equal(historyBypass.details.continuationBypassReason, "history_prefix_changed");
-  assert.equal(historyBypass.details.previousResponseId, "response-3");
+  assert.equal(sentBodies[2]?.previous_response_id, "response-2");
+  assert.deepEqual(sentBodies[2]?.input, [thirdInput]);
+  assert.equal(sentBodies[3]?.previous_response_id, "response-3");
+  assert.deepEqual(sentBodies[3]?.input, [fourthInput]);
+  assert.equal(sentBodies[4]?.previous_response_id, undefined);
+  assert.deepEqual(sentBodies[4]?.input, [changedFirstInput, nextInput, thirdInput, fourthInput]);
+  assert.equal(diagnostics.length, 1);
+  assert.equal(diagnostics[0]?.type, "codex_transport_recovery");
+  if (diagnostics[0]?.type === "codex_transport_recovery") {
+    assert.deepEqual(diagnostics[0].details.historyMismatch, {
+      index: 0,
+      baselineInputItems: 4,
+      currentInputItems: 4,
+      baselineItem: firstInput,
+      currentItem: changedFirstInput,
+    });
+  }
   transport.close("created-id-session");
 });
 

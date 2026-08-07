@@ -41,6 +41,12 @@ type ToolCallSlot = Extract<OutputSlot, { type: "toolCall" }>;
 
 type ProcessCodexStreamOptions = {
   applyServiceTierPricing?(usage: Usage, responseServiceTier: string | undefined): void;
+  attemptState?: CodexStreamAttemptState;
+};
+
+export type CodexStreamAttemptState = {
+  startedContentIndexes: Set<number>;
+  completedContentIndexes: Set<number>;
 };
 
 type CodexResponseStatus =
@@ -66,6 +72,18 @@ function outputIndex(event: JsonRecord): number {
 
 function stringValue(value: unknown): string {
   return typeof value === "string" ? value : "";
+}
+
+function piToolCallName(item: JsonRecord): string {
+  const wireName = stringValue(item.name);
+  const name =
+    item["namespace"] === undefined
+      ? wireName
+      : namespacedToolCallName(item["namespace"], wireName);
+  if (item["namespace"] === undefined && CODEX_NAMESPACED_TOOL_NAMES.has(name)) {
+    throw new Error(`Codex returned namespaced tool "${name}" as a flat function call.`);
+  }
+  return name;
 }
 
 function encodeTextSignature(id: string, phase: unknown): string {
@@ -216,15 +234,24 @@ export async function processCodexStream(
     });
   };
 
+  const trackStarted = <TSlot extends OutputSlot>(slot: TSlot): TSlot => {
+    options?.attemptState?.startedContentIndexes.add(slot.contentIndex);
+    return slot;
+  };
+
+  const trackCompleted = (slot: OutputSlot): void => {
+    options?.attemptState?.completedContentIndexes.add(slot.contentIndex);
+  };
+
   const createSlot = (index: number, item: JsonRecord): OutputSlot | undefined => {
     if (item.type === "reasoning") {
       const block: ThinkingContent = { type: "thinking", thinking: "" };
       output.content.push(block);
-      const slot = {
+      const slot = trackStarted({
         type: "thinking",
         block,
         contentIndex: output.content.length - 1,
-      } satisfies OutputSlot;
+      } satisfies OutputSlot);
       slots.set(index, slot);
       stream.push({ type: "thinking_start", contentIndex: slot.contentIndex, partial: output });
       return slot;
@@ -233,24 +260,17 @@ export async function processCodexStream(
       applyMessagePhaseStopReason(item);
       const block: TextContent = { type: "text", text: "" };
       output.content.push(block);
-      const slot = {
+      const slot = trackStarted({
         type: "text",
         block,
         contentIndex: output.content.length - 1,
-      } satisfies OutputSlot;
+      } satisfies OutputSlot);
       slots.set(index, slot);
       stream.push({ type: "text_start", contentIndex: slot.contentIndex, partial: output });
       return slot;
     }
     if (item.type === "function_call") {
-      const wireName = stringValue(item.name);
-      const name =
-        item["namespace"] === undefined
-          ? wireName
-          : namespacedToolCallName(item["namespace"], wireName);
-      if (item["namespace"] === undefined && CODEX_NAMESPACED_TOOL_NAMES.has(name)) {
-        throw new Error(`Codex returned namespaced tool "${name}" as a flat function call.`);
-      }
+      const name = piToolCallName(item);
       const block: StreamingToolCall = {
         type: "toolCall",
         id: `${stringValue(item["call_id"])}|${stringValue(item.id)}`,
@@ -259,17 +279,17 @@ export async function processCodexStream(
         partialJson: typeof item.arguments === "string" ? item.arguments : "",
       };
       output.content.push(block);
-      const slot = {
+      const slot = trackStarted({
         type: "toolCall",
         block,
         contentIndex: output.content.length - 1,
-      } satisfies OutputSlot;
+      } satisfies OutputSlot);
       slots.set(index, slot);
       stream.push({ type: "toolcall_start", contentIndex: slot.contentIndex, partial: output });
       return slot;
     }
     if (item.type === "custom_tool_call") {
-      const name = stringValue(item.name);
+      const name = piToolCallName(item);
       const property = grammarToolInputProperties.get(name) ?? "input";
       const input = typeof item["input"] === "string" ? item["input"] : "";
       const block: StreamingToolCall = {
@@ -283,11 +303,11 @@ export async function processCodexStream(
         },
       };
       output.content.push(block);
-      const slot = {
+      const slot = trackStarted({
         type: "toolCall",
         block,
         contentIndex: output.content.length - 1,
-      } satisfies OutputSlot;
+      } satisfies OutputSlot);
       slots.set(index, slot);
       stream.push({ type: "toolcall_start", contentIndex: slot.contentIndex, partial: output });
       return slot;
@@ -448,6 +468,7 @@ export async function processCodexStream(
           content: slot.block.thinking,
           partial: output,
         });
+        trackCompleted(slot);
         slots.delete(index);
       } else if (item.type === "message" && slot?.type === "text") {
         slot.block.text = itemContentText(item);
@@ -460,17 +481,14 @@ export async function processCodexStream(
           content: slot.block.text,
           partial: output,
         });
+        trackCompleted(slot);
         slots.delete(index);
       } else if (
         item.type === "function_call" &&
         slot?.type === "toolCall" &&
         slot.block.partialJson !== undefined
       ) {
-        if (item["namespace"] !== undefined) {
-          slot.block.name = namespacedToolCallName(item["namespace"], item.name);
-        } else if (typeof item.name === "string" && CODEX_NAMESPACED_TOOL_NAMES.has(item.name)) {
-          throw new Error(`Codex returned namespaced tool "${item.name}" as a flat function call.`);
-        }
+        slot.block.name = piToolCallName(item);
         const argumentsJson =
           typeof item.arguments === "string" ? item.arguments : slot.block.partialJson || "{}";
         slot.block.arguments = parseStreamingJson(argumentsJson);
@@ -481,8 +499,10 @@ export async function processCodexStream(
           toolCall: slot.block,
           partial: output,
         });
+        trackCompleted(slot);
         slots.delete(index);
       } else if (item.type === "custom_tool_call" && slot?.type === "toolCall") {
+        slot.block.name = piToolCallName(item);
         const input = typeof item["input"] === "string" ? item["input"] : customInput(slot.block);
         pushToolDelta(slot, appendCustomInput(slot.block, input, true));
         delete slot.block.customInput;
@@ -492,6 +512,7 @@ export async function processCodexStream(
           toolCall: slot.block,
           partial: output,
         });
+        trackCompleted(slot);
         slots.delete(index);
       }
     } else if (
@@ -500,12 +521,17 @@ export async function processCodexStream(
     ) {
       finalize(event.response);
     } else if (event.type === "response.failed") {
-      terminal = true;
       const response = isObject(event.response) ? event.response : undefined;
+      if (response) {
+        finalize(response);
+      } else {
+        terminal = true;
+      }
+      output.stopReason = "error";
+      output.rawStopReason ??= "failed";
       const error = isObject(response?.["error"]) ? response["error"] : undefined;
-      throw new Error(
-        typeof error?.["message"] === "string" ? error["message"] : "Codex response failed",
-      );
+      output.errorMessage =
+        typeof error?.["message"] === "string" ? error["message"] : "Codex response failed";
     }
   }
 
