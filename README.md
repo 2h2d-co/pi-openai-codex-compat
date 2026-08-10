@@ -379,6 +379,7 @@ mise install
 npm install
 npm run check
 npm test
+npm run pack:dry
 ```
 
 Run the credentialed Pi/Codex integration tests separately. They load the real

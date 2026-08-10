@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Added
+
+- Add `npm run pack:dry` to inspect the npm package contents before release.
+
 ### Changed
 
 - Require Pi 0.84.x, use Pi 0.84.1 as the development integration baseline, and preserve Pi 0.84 header removals across Codex tools and native compaction.
