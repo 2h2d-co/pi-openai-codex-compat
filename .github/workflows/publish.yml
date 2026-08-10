@@ -11,21 +11,26 @@ concurrency:
   group: npm-stage-publish
   cancel-in-progress: false
 
+env:
+  EXPECTED_PACKAGE_NAME: pi-openai-codex-compat
+
 jobs:
-  stage:
-    name: Stage npm package
+  build:
+    name: Build npm package
     runs-on: ubuntu-latest
-    environment: npm-publish
     permissions:
       contents: read
-      id-token: write # Required for npm trusted publishing provenance.
+    outputs:
+      artifact-digest: ${{ steps.upload.outputs.artifact-digest }}
+      artifact-id: ${{ steps.upload.outputs.artifact-id }}
 
     steps:
       - name: Check out repository
-        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
           persist-credentials: false
+          ref: ${{ github.sha }}
 
       - name: Set up Node.js and npm
         uses: jdx/mise-action@e6a8b3978addb5a52f2b4cd9d91eafa7f0ab959d # v4.2.0
@@ -39,15 +44,300 @@ jobs:
         run: node ./scripts/ci-publish-checks.ts
 
       - name: Install dependencies
-        run: npm ci
+        run: npm ci --ignore-scripts
 
       - name: Check
         run: npm run check
+
       - name: Test
         run: npm test
 
-      - name: Stage package on npm
-        run: npm stage publish --tag "$NPM_DIST_TAG" --allow-directory=all --provenance
+      - name: Pack package
+        id: package
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -z "${ACTIONS_ID_TOKEN_REQUEST_TOKEN:-}"
+          test -z "${ACTIONS_ID_TOKEN_REQUEST_URL:-}"
+
+          package_dir="$RUNNER_TEMP/npm-package"
+          mkdir -p "$package_dir"
+          pack_output=$(npm pack --json --ignore-scripts --pack-destination "$package_dir" --allow-directory=all)
+          archive_name=$(node -e '
+            const chunks = [];
+            process.stdin.on("data", (chunk) => chunks.push(chunk));
+            process.stdin.on("end", () => {
+              const result = JSON.parse(Buffer.concat(chunks).toString());
+              if (!Array.isArray(result) || result.length !== 1 || typeof result[0]?.filename !== "string") {
+                throw new Error("npm pack did not report exactly one package archive");
+              }
+              process.stdout.write(result[0].filename);
+            });
+          ' <<< "$pack_output")
+          archive="$package_dir/$archive_name"
+          test -f "$archive"
+
+          (
+            cd "$package_dir"
+            shasum -a 256 "$archive_name" > "$archive_name.sha256"
+            shasum -a 256 -c "$archive_name.sha256"
+          )
+
+          echo "archive=$archive" >> "$GITHUB_OUTPUT"
+          echo "checksum=$archive.sha256" >> "$GITHUB_OUTPUT"
+
+      - name: Inspect package archive
+        shell: bash
         env:
-          NPM_CONFIG_ALLOW_DIRECTORY: all
-          NPM_DIST_TAG: "${{ steps.release.outputs.npm_tag }}"
+          ARCHIVE: ${{ steps.package.outputs.archive }}
+        run: |
+          set -euo pipefail
+          actual_files=$(tar -tzf "$ARCHIVE" | LC_ALL=C sort)
+          expected_files=$(
+            while IFS= read -r file; do
+              test -n "$file" && printf 'package/%s\n' "$file"
+            done < .github/npm-package-files |
+              LC_ALL=C sort
+          )
+          if [[ $actual_files != "$expected_files" ]]; then
+            echo "npm package contains unexpected files" >&2
+            diff -u <(printf '%s\n' "$expected_files") <(printf '%s\n' "$actual_files") || true
+            exit 1
+          fi
+
+      - name: Upload package archive
+        id: upload
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: npm-package-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            ${{ steps.package.outputs.archive }}
+            ${{ steps.package.outputs.checksum }}
+          if-no-files-found: error
+          retention-days: 30
+
+  stage:
+    name: Stage npm package
+    needs: build
+    runs-on: ubuntu-latest
+    environment: npm-publish
+    permissions:
+      attestations: write # Required to persist the package artifact attestation.
+      contents: read
+      id-token: write # Required for attestation signing and npm trusted publishing.
+    steps:
+      - name: Check out release commit
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+          ref: ${{ github.sha }}
+
+      - name: Set up npm publishing client
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "26.6.0" # Bundles the project-pinned npm 11.18.0 client.
+          package-manager-cache: false
+
+      - name: Verify npm publishing client
+        run: |
+          test "$(node --version)" = v26.6.0
+          test "$(npm --version)" = 11.18.0
+
+      - name: Download package archive
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          artifact-ids: ${{ needs.build.outputs.artifact-id }}
+          path: npm-package
+
+      - name: Validate release package
+        id: release
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if [[ $(git cat-file -t "refs/tags/$GITHUB_REF_NAME") != commit ]]; then
+            echo "release tag $GITHUB_REF_NAME must be a lightweight tag" >&2
+            exit 1
+          fi
+          tag_commit=$(git rev-parse "refs/tags/$GITHUB_REF_NAME^{commit}")
+          if [[ $tag_commit != "$GITHUB_SHA" ]]; then
+            echo "release tag $GITHUB_REF_NAME does not point to workflow commit $GITHUB_SHA" >&2
+            exit 1
+          fi
+          if ! git merge-base --is-ancestor "$tag_commit" origin/main; then
+            echo "release tag $GITHUB_REF_NAME does not point to a commit on origin/main" >&2
+            exit 1
+          fi
+          subject=$(git log -1 --pretty=%s "$tag_commit")
+          if [[ $subject != "release: $GITHUB_REF_NAME" ]]; then
+            echo "release commit subject $subject does not match release: $GITHUB_REF_NAME" >&2
+            exit 1
+          fi
+          git -c gpg.format=ssh \
+            -c gpg.ssh.allowedSignersFile="$GITHUB_WORKSPACE/.github/release-signers" \
+            verify-commit "$tag_commit"
+          expected_digest=$(git log -1 \
+            --format='%(trailers:key=Npm-Artifact-SHA256,valueonly)' \
+            "$tag_commit")
+          if [[ ! $expected_digest =~ ^[0-9a-f]{64}$ ]]; then
+            echo "release commit is missing a valid Npm-Artifact-SHA256 trailer" >&2
+            exit 1
+          fi
+
+          mapfile -t archives < <(find npm-package -maxdepth 1 -type f -name '*.tgz' -print)
+          if (( ${#archives[@]} != 1 )); then
+            echo "expected exactly one npm package archive, found ${#archives[@]}" >&2
+            exit 1
+          fi
+          archive=$(realpath "${archives[0]}")
+          checksum="$archive.sha256"
+          test -f "$checksum"
+          (
+            cd "$(dirname "$archive")"
+            shasum -a 256 -c "$(basename "$checksum")"
+          )
+          actual_digest=$(shasum -a 256 "$archive" | awk '{print $1}')
+          if [[ $actual_digest != "$expected_digest" ]]; then
+            echo "package digest $actual_digest does not match signed local digest $expected_digest" >&2
+            exit 1
+          fi
+
+          actual_files=$(tar -tzf "$archive" | LC_ALL=C sort)
+          expected_files=$(
+            while IFS= read -r file; do
+              test -n "$file" && printf 'package/%s\n' "$file"
+            done < .github/npm-package-files |
+              LC_ALL=C sort
+          )
+          if [[ $actual_files != "$expected_files" ]]; then
+            echo "npm package contains unexpected files" >&2
+            diff -u <(printf '%s\n' "$expected_files") <(printf '%s\n' "$actual_files") || true
+            exit 1
+          fi
+
+          mapfile -t package_metadata < <(
+            tar -xOf "$archive" package/package.json |
+              EXPECTED_PACKAGE_NAME="$EXPECTED_PACKAGE_NAME" node -e '
+                const chunks = [];
+                process.stdin.on("data", (chunk) => chunks.push(chunk));
+                process.stdin.on("end", () => {
+                  const manifest = JSON.parse(Buffer.concat(chunks).toString());
+                  if (
+                    manifest.name !== process.env.EXPECTED_PACKAGE_NAME ||
+                    typeof manifest.version !== "string"
+                  ) {
+                    throw new Error("unexpected package name or version");
+                  }
+                  const scripts =
+                    manifest.scripts && typeof manifest.scripts === "object"
+                      ? manifest.scripts
+                      : {};
+                  const forbidden = ["preinstall", "install", "postinstall"].filter(
+                    (name) => typeof scripts[name] === "string",
+                  );
+                  if (forbidden.length > 0) {
+                    throw new Error(
+                      "install lifecycle scripts are forbidden: " + forbidden.join(", "),
+                    );
+                  }
+                  const bundled =
+                    manifest.bundledDependencies ?? manifest.bundleDependencies;
+                  if (
+                    bundled === true ||
+                    (Array.isArray(bundled) && bundled.length > 0)
+                  ) {
+                    throw new Error("bundled dependencies are forbidden");
+                  }
+                  console.log(manifest.name);
+                  console.log(manifest.version);
+                });
+              '
+          )
+          if (( ${#package_metadata[@]} != 2 )); then
+            echo "could not read package identity" >&2
+            exit 1
+          fi
+          package_name=${package_metadata[0]}
+          version=${package_metadata[1]}
+          if [[ $GITHUB_REF_NAME != "v$version" ]]; then
+            echo "release tag $GITHUB_REF_NAME does not match package version $version" >&2
+            exit 1
+          fi
+
+          prerelease=${version#*-}
+          if [[ $prerelease == "$version" ]]; then
+            npm_tag=latest
+          else
+            npm_tag=${prerelease%%.*}
+            if [[ ! $npm_tag =~ ^[a-z][a-z0-9-]*$ || $npm_tag == latest ]]; then
+              echo "package version $version produces invalid npm dist-tag $npm_tag" >&2
+              exit 1
+            fi
+          fi
+
+          {
+            echo "archive=$archive"
+            echo "checksum=$checksum"
+          } >> "$GITHUB_ENV"
+          {
+            echo "npm_tag=$npm_tag"
+            echo "package_name=$package_name"
+            echo "version=$version"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Attest package archive
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        with:
+          subject-path: |
+            ${{ env.archive }}
+            ${{ env.checksum }}
+
+      - name: Stage package on npm
+        id: stage
+        shell: bash
+        env:
+          ARTIFACT_DIGEST: ${{ needs.build.outputs.artifact-digest }}
+          ARTIFACT_ID: ${{ needs.build.outputs.artifact-id }}
+          NPM_DIST_TAG: ${{ steps.release.outputs.npm_tag }}
+          PACKAGE_NAME: ${{ steps.release.outputs.package_name }}
+          PACKAGE_VERSION: ${{ steps.release.outputs.version }}
+        run: |
+          set -euo pipefail
+          stage_output=$(npm stage publish "$archive" \
+            --tag "$NPM_DIST_TAG" \
+            --access public \
+            --provenance \
+            --json)
+          stage_id=$(node -e '
+            const chunks = [];
+            process.stdin.on("data", (chunk) => chunks.push(chunk));
+            process.stdin.on("end", () => {
+              const result = JSON.parse(Buffer.concat(chunks).toString());
+              const records =
+                result && typeof result === "object"
+                  ? [result, ...Object.values(result)]
+                  : [];
+              const stagedPackage = records.find(
+                (value) =>
+                  value &&
+                  typeof value === "object" &&
+                  typeof value.stageId === "string",
+              );
+              if (!stagedPackage) {
+                throw new Error("npm did not report a stage ID");
+              }
+              process.stdout.write(stagedPackage.stageId);
+            });
+          ' <<< "$stage_output")
+          printf '%s\n' "$stage_output"
+          echo "stage_id=$stage_id" >> "$GITHUB_OUTPUT"
+          {
+            echo "## npm package staged"
+            echo
+            echo "- Package: \`$PACKAGE_NAME@$PACKAGE_VERSION\`"
+            echo "- Dist-tag: \`$NPM_DIST_TAG\`"
+            echo "- Stage ID: \`$stage_id\`"
+            echo "- Build artifact ID: \`$ARTIFACT_ID\`"
+            echo "- Build artifact digest: \`$ARTIFACT_DIGEST\`"
+          } >> "$GITHUB_STEP_SUMMARY"
