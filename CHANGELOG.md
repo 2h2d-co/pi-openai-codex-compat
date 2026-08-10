@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.0.6 - 2026-08-10
+
 ### Added
 
 - Add `npm run pack:dry` to inspect the npm package contents before release.
