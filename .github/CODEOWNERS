@@ -1,0 +1,14 @@
+# Release trust boundary
+/.github/CODEOWNERS @kaanozdokmeci
+/.github/workflows/** @kaanozdokmeci
+/.github/actions/** @kaanozdokmeci
+/.github/release-signers @kaanozdokmeci
+/.github/npm-package-files @kaanozdokmeci
+/scripts/release.ts @kaanozdokmeci
+
+# Dependency and toolchain policy
+/package.json @kaanozdokmeci
+/package-lock.json @kaanozdokmeci
+/.npmrc @kaanozdokmeci
+/mise.toml @kaanozdokmeci
+/mise.lock @kaanozdokmeci
