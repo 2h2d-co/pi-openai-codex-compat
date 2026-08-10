@@ -21,7 +21,7 @@ import { normalizeReplayItem, stableResponsesJson } from "./responses-replay.ts"
 import { applyResponsesLiteHeaders, responsesLiteSsePayload } from "./responses-lite.ts";
 
 /**
- * Focused adaptation of @earendil-works/pi-ai@0.83.0
+ * Focused adaptation of @earendil-works/pi-ai@0.84.1
  * src/api/openai-codex-responses.ts transport behavior.
  */
 

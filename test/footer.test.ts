@@ -42,6 +42,13 @@ void test("appends non-default Codex settings to the default second footer line"
     getContextUsage: () => ({ tokens: 0, contextWindow: 100_000, percent: 0 }),
     modelRegistry: {
       isUsingOAuth: () => true,
+      getProvider: () => ({
+        auth: {
+          oauth: {
+            isSubscription: true,
+          },
+        },
+      }),
     },
     ui: {
       setFooter(factory: typeof footerFactory) {
@@ -70,5 +77,6 @@ void test("appends non-default Codex settings to the default second footer line"
 
   assert.equal(lines.length, 2);
   assert.match(lines[1]!, /gpt-5\.6-sol • xhigh • fast • pro • verbosity high • summary detailed/);
+  assert.match(lines[1]!, /\$0\.000 \(sub\)/);
   footer.dispose?.();
 });

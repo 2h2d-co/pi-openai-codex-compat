@@ -6,7 +6,7 @@ import type {
   SessionEntry,
   ToolInfo,
 } from "@earendil-works/pi-coding-agent";
-import type { Model, OpenAICodexResponsesOptions } from "@earendil-works/pi-ai";
+import type { Model, OpenAICodexResponsesOptions, ProviderHeaders } from "@earendil-works/pi-ai";
 import { addRemoteCompactionFeature, type JsonRecord } from "./codex-protocol.ts";
 import {
   activeResponsesTools,
@@ -40,12 +40,10 @@ function appendFeatureHeader(headers: Record<string, string | null>): void {
   else headers["x-codex-beta-features"] = addRemoteCompactionFeature(undefined);
 }
 
-function featureHeaders(headers: Record<string, string> | undefined): Record<string, string> {
-  const result: Record<string, string | null> = { ...headers };
+function featureHeaders(headers: ProviderHeaders | undefined): ProviderHeaders {
+  const result: ProviderHeaders = { ...headers };
   appendFeatureHeader(result);
-  return Object.fromEntries(
-    Object.entries(result).filter((entry): entry is [string, string] => entry[1] !== null),
-  );
+  return result;
 }
 
 function markerSummary(): string {

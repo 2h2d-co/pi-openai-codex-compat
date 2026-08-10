@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+### Changed
+
+- Require Pi 0.84.x, use Pi 0.84.1 as the development integration baseline, and preserve Pi 0.84 header removals across Codex tools and native compaction.
+
+### Fixed
+
+- Support Pi 0.84's subscription-aware default footer without crashing during startup.
+
 ## 0.0.5 - 2026-08-07
 
 ### Fixed

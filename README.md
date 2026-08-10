@@ -20,7 +20,7 @@ Pi provides the Codex OAuth flow and model catalog. At session start, this packa
 ## Requirements
 
 - Node.js 22.19 or newer
-- Pi `>=0.83.0 <0.84.0`
+- Pi `>=0.84.0 <0.85.0`
 - An OpenAI Codex login in Pi
 
 Authenticate through Pi if needed:

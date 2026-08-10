@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import type { ExtensionAPI, ExtensionContext, SessionEntry } from "@earendil-works/pi-coding-agent";
-import type { Model } from "@earendil-works/pi-ai";
+import type { Model, OpenAICodexResponsesOptions, ProviderHeaders } from "@earendil-works/pi-ai";
 import { CHECKPOINT_ENTRY_TYPE } from "../extensions/openai-codex-compat/compaction-checkpoint.ts";
 import { CodexProviderRuntime } from "../extensions/openai-codex-compat/codex-provider.ts";
 import { DEFAULT_CONFIG } from "../extensions/openai-codex-compat/config.ts";
@@ -74,8 +74,10 @@ function createHarness(branch: SessionEntry[]) {
   } as unknown as ExtensionAPI;
   const runtime = new CodexProviderRuntime(pi, () => DEFAULT_CONFIG);
   const requests: JsonRecord[] = [];
-  runtime.transport.request = async function* (_model, body) {
+  const requestHeaders: Array<ProviderHeaders | undefined> = [];
+  runtime.transport.request = async function* (_model, body, options) {
     requests.push(structuredClone(body));
+    requestHeaders.push((options as OpenAICodexResponsesOptions).headers);
     yield* compactionEvents();
   };
 
@@ -96,7 +98,7 @@ function createHarness(branch: SessionEntry[]) {
       getApiKeyAndHeaders: async () => ({
         ok: true,
         apiKey: accessToken(),
-        headers: {},
+        headers: { "x-remove": null },
       }),
     },
     ui: {
@@ -111,7 +113,7 @@ function createHarness(branch: SessionEntry[]) {
   } as unknown as ExtensionContext;
 
   registerRemoteCompaction(pi, runtime, () => DEFAULT_CONFIG);
-  return { handlers, runtime, context, requests, notices };
+  return { handlers, runtime, context, requests, requestHeaders, notices };
 }
 
 void test("routes manual compaction through the custom provider runtime", async () => {
@@ -136,6 +138,10 @@ void test("routes manual compaction through the custom provider runtime", async 
   assert.match(JSON.stringify(request.input), /Remember BLUE-42/);
   assert.deepEqual((request.input as JsonRecord[]).at(-1), {
     type: "compaction_trigger",
+  });
+  assert.deepEqual(harness.requestHeaders[0], {
+    "x-codex-beta-features": "remote_compaction_v2",
+    "x-remove": null,
   });
   const metadata = request.client_metadata as JsonRecord;
   const turnMetadata = JSON.parse(String(metadata[CODEX_TURN_METADATA_HEADER])) as JsonRecord;

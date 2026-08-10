@@ -14,7 +14,7 @@ import { isObject, type JsonRecord } from "./codex-protocol.ts";
 import { CODEX_NAMESPACED_TOOL_NAMES, namespacedToolCallName } from "./namespaced-tools.ts";
 
 /**
- * Focused adaptation of @earendil-works/pi-ai@0.83.0
+ * Focused adaptation of @earendil-works/pi-ai@0.84.1
  * src/api/openai-responses-shared.ts stream processing.
  */
 

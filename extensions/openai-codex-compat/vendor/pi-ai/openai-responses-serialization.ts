@@ -13,7 +13,7 @@ import type {
 
 /**
  * Focused copies of the methods used to serialize Pi messages for OpenAI's
- * Responses API. Adapted from @earendil-works/pi-ai@0.83.0:
+ * Responses API. Adapted from @earendil-works/pi-ai@0.84.1:
  *
  * - src/api/openai-responses-shared.ts
  * - src/api/transform-messages.ts

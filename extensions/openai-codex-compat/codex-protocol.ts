@@ -1,4 +1,4 @@
-import { calculateCost, type Model, type Usage } from "@earendil-works/pi-ai";
+import { calculateCost, type Model, type ProviderHeaders, type Usage } from "@earendil-works/pi-ai";
 
 export const REMOTE_COMPACTION_BETA = "remote_compaction_v2";
 export const RETAINED_CONTEXT_BUDGET = 64_000;
@@ -327,10 +327,14 @@ function accountIdFromToken(token: string): string {
 
 export function remoteCompactionHeaders(options: {
   token: string;
-  providerHeaders?: Record<string, string> | undefined;
+  providerHeaders?: ProviderHeaders | undefined;
   sessionId: string;
 }): Headers {
-  const headers = new Headers(options.providerHeaders);
+  const headers = new Headers();
+  for (const [name, value] of Object.entries(options.providerHeaders ?? {})) {
+    if (value === null) headers.delete(name);
+    else headers.set(name, value);
+  }
   headers.set("authorization", `Bearer ${options.token}`);
   headers.set("chatgpt-account-id", accountIdFromToken(options.token));
   headers.set("originator", "pi");

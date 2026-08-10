@@ -190,7 +190,7 @@ void test("registers the complete reserved web.run schema and executes alpha/sea
       getApiKeyAndHeaders: async () => ({
         ok: true,
         apiKey: "token",
-        headers: { "x-test": "value" },
+        headers: { "x-remove": null, "x-test": "value" },
       }),
     },
   } as unknown as ExtensionContext;
@@ -213,6 +213,10 @@ void test("registers the complete reserved web.run schema and executes alpha/sea
   });
   assert.equal(requests[0]?.body["max_output_tokens"], 2_500);
   assert.match(JSON.stringify(requests[0]?.body["input"]), /Find current Pi documentation/);
+  assert.deepEqual(requests[0]?.options["headers"], {
+    "x-remove": null,
+    "x-test": "value",
+  });
   assert.deepEqual(result.content, [
     { type: "text", text: "Raw search output that should remain collapsed." },
   ]);

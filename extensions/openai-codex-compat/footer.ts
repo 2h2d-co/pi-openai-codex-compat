@@ -59,6 +59,15 @@ function footerSession(ctx: ExtensionContext, resolveConfig: ConfigResolver): Fo
           model && model.provider === provider && ctx.modelRegistry.isUsingOAuth(model),
         );
       },
+      isUsingSubscription(provider: string) {
+        const model = ctx.model;
+        return Boolean(
+          model &&
+          model.provider === provider &&
+          ctx.modelRegistry.isUsingOAuth(model) &&
+          ctx.modelRegistry.getProvider(provider)?.auth.oauth?.isSubscription === true,
+        );
+      },
     },
   } as unknown as FooterSession;
 }
