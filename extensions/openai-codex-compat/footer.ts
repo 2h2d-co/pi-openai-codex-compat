@@ -4,7 +4,7 @@ import {
   type ExtensionContext,
   type ReadonlyFooterDataProvider,
 } from "@earendil-works/pi-coding-agent";
-import type { Component, TUI } from "@earendil-works/pi-tui";
+import type { Component } from "@earendil-works/pi-tui";
 import type { CodexCompatConfig } from "./config.ts";
 import { isCodexModel } from "./request-options.ts";
 
@@ -74,16 +74,15 @@ function footerSession(ctx: ExtensionContext, resolveConfig: ConfigResolver): Fo
 
 class CodexFooter implements Component {
   private readonly footer: FooterComponent;
-  private readonly unsubscribe: () => void;
 
   constructor(
-    tui: TUI,
     footerData: ReadonlyFooterDataProvider,
     ctx: ExtensionContext,
     resolveConfig: ConfigResolver,
   ) {
     this.footer = new FooterComponent(footerSession(ctx, resolveConfig), footerData);
-    this.unsubscribe = footerData.onBranchChange(() => tui.requestRender());
+    // Pi does not expose its live auto-compaction state to extension footers.
+    this.footer.setAutoCompactEnabled(false);
   }
 
   render(width: number): string[] {
@@ -95,14 +94,11 @@ class CodexFooter implements Component {
   }
 
   dispose(): void {
-    this.unsubscribe();
     this.footer.dispose();
   }
 }
 
 export function installCodexFooter(ctx: ExtensionContext, resolveConfig: ConfigResolver): void {
   if (ctx.mode !== "tui") return;
-  ctx.ui.setFooter(
-    (tui, _theme, footerData) => new CodexFooter(tui, footerData, ctx, resolveConfig),
-  );
+  ctx.ui.setFooter((_tui, _theme, footerData) => new CodexFooter(footerData, ctx, resolveConfig));
 }

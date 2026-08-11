@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Changed
+
+- Omit Pi's auto-compaction state from the compatibility footer until extensions can observe its live value.
+
 ### Security
 
 - Require npm releases to match a locally built SHA-256 recorded in an SSH-signed release commit before trusted publishing can stage the package.

@@ -66,17 +66,23 @@ void test("appends non-default Codex settings to the default second footer line"
   }));
   assert.ok(footerFactory);
 
+  let branchSubscriptions = 0;
   const footerData = {
     getGitBranch: () => null,
     getExtensionStatuses: () => new Map<string, string>(),
     getAvailableProviderCount: () => 1,
-    onBranchChange: () => () => {},
+    onBranchChange: () => {
+      branchSubscriptions++;
+      return () => {};
+    },
   } satisfies ReadonlyFooterDataProvider;
   const footer = footerFactory({ requestRender() {} } as unknown as TUI, {}, footerData);
   const lines = footer.render(160);
 
+  assert.equal(branchSubscriptions, 0);
   assert.equal(lines.length, 2);
   assert.match(lines[1]!, /gpt-5\.6-sol • xhigh • fast • pro • verbosity high • summary detailed/);
   assert.match(lines[1]!, /\$0\.000 \(sub\)/);
+  assert.doesNotMatch(lines[1]!, /\(auto\)/);
   footer.dispose?.();
 });
