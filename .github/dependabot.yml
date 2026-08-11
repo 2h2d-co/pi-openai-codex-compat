@@ -3,9 +3,9 @@ updates:
   - package-ecosystem: npm
     directory: /
     schedule:
-      interval: weekly
+      interval: daily
     cooldown:
-      default-days: 3
+      default-days: 7
     ignore:
       - dependency-name: "@types/node"
         update-types:
@@ -13,6 +13,6 @@ updates:
   - package-ecosystem: github-actions
     directory: /
     schedule:
-      interval: weekly
+      interval: daily
     cooldown:
-      default-days: 3
+      default-days: 7
