@@ -130,6 +130,29 @@ export type AppliedPatchChange =
       deletions: 0;
     };
 
+export type ApplyPatchInstructionStatus =
+  | "applied"
+  | "planned"
+  | "no-op"
+  | "dead"
+  | "failed"
+  | "not-run";
+
+export type ApplyPatchInstructionDetails = {
+  index: number;
+  kind: "add" | "delete" | "update" | "move";
+  path: string;
+  moveTo?: string;
+  status: ApplyPatchInstructionStatus;
+  error?: string;
+};
+
+export type ApplyPatchFailureDetails = {
+  phase: "input" | "parse" | "preflight" | "execution";
+  message: string;
+  failedInstruction?: number;
+};
+
 export type ApplyPatchDetails = {
   status: "completed" | "failed";
   exact: boolean;
@@ -137,6 +160,8 @@ export type ApplyPatchDetails = {
   added: string[];
   modified: string[];
   deleted: string[];
+  instructions?: ApplyPatchInstructionDetails[];
+  failure?: ApplyPatchFailureDetails;
   error?: string;
 };
 
@@ -167,9 +192,23 @@ export class ApplyPatchParseError extends Error {
   }
 }
 
-export class ApplyPatchInputError extends Error {}
+export class ApplyPatchInputError extends Error {
+  readonly details: ApplyPatchDetails | undefined;
 
-export class ApplyPatchVerificationError extends Error {}
+  constructor(message: string, details?: ApplyPatchDetails) {
+    super(message);
+    this.details = details;
+  }
+}
+
+export class ApplyPatchVerificationError extends Error {
+  readonly details: ApplyPatchDetails;
+
+  constructor(message: string, details: ApplyPatchDetails) {
+    super(message);
+    this.details = details;
+  }
+}
 
 export class ApplyPatchExecutionError extends Error {
   readonly details: ApplyPatchDetails;
@@ -730,6 +769,10 @@ export function cloneApplyPatchDetails(details: ApplyPatchDetails): ApplyPatchDe
     added: [...details.added],
     modified: [...details.modified],
     deleted: [...details.deleted],
+    ...(details.instructions
+      ? { instructions: details.instructions.map((instruction) => ({ ...instruction })) }
+      : {}),
+    ...(details.failure ? { failure: { ...details.failure } } : {}),
   };
 }
 
@@ -810,7 +853,7 @@ type ParentPlan = {
   expectations: Array<{ path: string; kind: "absent" | "directory" | "directory-symlink" }>;
 };
 
-type PlannedMutation =
+type PlannedMutation = (
   | {
       kind: "add";
       operation: Extract<ResolvedOperation, { kind: "add" }>;
@@ -842,12 +885,29 @@ type PlannedMutation =
       expectedDestination: VirtualEntry;
       parents: ParentPlan;
       change: Extract<AppliedPatchChange, { kind: "move" }>;
-    };
+    }
+) & { instructionIndex: number };
 
 type SemanticPlan = {
   mutations: PlannedMutation[];
   exact: boolean;
+  instructions: ApplyPatchInstructionDetails[];
 };
+
+class SemanticPlanningError extends Error {
+  readonly instructions: ApplyPatchInstructionDetails[];
+  readonly failedInstruction: number;
+
+  constructor(
+    message: string,
+    instructions: ApplyPatchInstructionDetails[],
+    failedInstruction: number,
+  ) {
+    super(message);
+    this.instructions = instructions;
+    this.failedInstruction = failedInstruction;
+  }
+}
 
 const ABSENT_ENTRY: VirtualEntry = { kind: "absent" };
 
@@ -909,6 +969,27 @@ function updateHasSemanticMove(operation: Extract<ResolvedOperation, { kind: "up
   );
 }
 
+function instructionForOperation(
+  operation: ResolvedOperation,
+  index: number,
+): ApplyPatchInstructionDetails {
+  if (operation.kind === "update") {
+    return {
+      index: index + 1,
+      kind: operation.moveTo && chunksAreIdentity(operation.chunks) ? "move" : "update",
+      path: operation.path,
+      ...(operation.moveTo ? { moveTo: operation.moveTo } : {}),
+      status: "not-run",
+    };
+  }
+  return {
+    index: index + 1,
+    kind: operation.kind,
+    path: operation.path,
+    status: "not-run",
+  };
+}
+
 class SemanticPlanner {
   private readonly states = new Map<string, VirtualEntry>();
   private readonly physicalContent = new Map<string, ContentCell>();
@@ -920,35 +1001,56 @@ class SemanticPlanner {
   private nextEntryId = 0;
   private exact = true;
   private readonly operations: readonly ResolvedOperation[];
+  private readonly instructions: ApplyPatchInstructionDetails[];
   private readonly signal: AbortSignal | undefined;
 
   constructor(operations: readonly ResolvedOperation[], signal?: AbortSignal) {
     this.operations = operations;
+    this.instructions = operations.map(instructionForOperation);
     this.signal = signal;
   }
 
   async plan(): Promise<SemanticPlan> {
     for (const [index, operation] of this.operations.entries()) {
-      throwIfAborted(this.signal);
-      if (operation.kind === "add") {
-        await this.planAdd(operation);
-      } else if (operation.kind === "delete") {
-        await this.planDelete(operation, index);
-      } else {
-        try {
-          await this.planUpdate(operation);
-        } catch (error) {
+      const instruction = this.instructions[index]!;
+      const mutationCount = this.mutations.length;
+      try {
+        throwIfAborted(this.signal);
+        if (operation.kind === "add") {
+          await this.planAdd(operation, index);
+        } else if (operation.kind === "delete") {
+          await this.planDelete(operation, index);
+        } else {
+          await this.planUpdate(operation, index);
+        }
+        instruction.status = this.mutations.length > mutationCount ? "planned" : "no-op";
+      } catch (error) {
+        if (operation.kind === "update") {
           if (
             !updateHasSemanticMove(operation) &&
             this.isDeadUpdate(index, operation.absolutePath)
           ) {
+            instruction.status = "dead";
             continue;
           }
-          throw error;
         }
+        for (const planned of this.instructions) {
+          if (planned.status === "planned") planned.status = "not-run";
+        }
+        instruction.status = "failed";
+        instruction.error = errorMessage(error);
+        throw new SemanticPlanningError(
+          instruction.error,
+          this.instructions.map((item) => ({ ...item })),
+          instruction.index,
+        );
       }
     }
-    return { mutations: this.mutations, exact: this.exact };
+    return {
+      mutations: this.mutations,
+      exact: this.exact,
+      instructions: this.instructions.map((instruction) => ({ ...instruction })),
+    };
   }
 
   private newEntryId(): string {
@@ -1142,7 +1244,10 @@ class SemanticPlanner {
     return false;
   }
 
-  private async planAdd(operation: Extract<ResolvedOperation, { kind: "add" }>): Promise<void> {
+  private async planAdd(
+    operation: Extract<ResolvedOperation, { kind: "add" }>,
+    instructionIndex: number,
+  ): Promise<void> {
     const target = await this.stateAt(operation.absolutePath);
     if (target.kind === "directory" || target.kind === "unsupported") {
       throw new Error(
@@ -1177,6 +1282,7 @@ class SemanticPlanner {
       ...diffDetails("", operation.content),
     };
     this.mutations.push({
+      instructionIndex,
       kind: "add",
       operation,
       expectedTarget,
@@ -1229,7 +1335,13 @@ class SemanticPlanner {
         ? { displayDiff: "", additions: 0, deletions: 0 }
         : diffDetails(content, "")),
     };
-    this.mutations.push({ kind: "delete", operation, expectedTarget, change });
+    this.mutations.push({
+      instructionIndex: index,
+      kind: "delete",
+      operation,
+      expectedTarget,
+      change,
+    });
     this.setState(operation.absolutePath, ABSENT_ENTRY);
   }
 
@@ -1250,10 +1362,13 @@ class SemanticPlanner {
 
   private async planUpdate(
     operation: Extract<ResolvedOperation, { kind: "update" }>,
+    instructionIndex: number,
   ): Promise<void> {
     const identity = chunksAreIdentity(operation.chunks);
     if (identity) {
-      if (updateHasSemanticMove(operation)) await this.planPureMove(operation);
+      if (updateHasSemanticMove(operation)) {
+        await this.planPureMove(operation, instructionIndex);
+      }
       return;
     }
 
@@ -1284,6 +1399,7 @@ class SemanticPlanner {
         ...diffDetails(oldContent, newContent),
       };
       this.mutations.push({
+        instructionIndex,
         kind: "text-update",
         operation,
         expectedSource,
@@ -1345,6 +1461,7 @@ class SemanticPlanner {
       ...diffDetails("", newContent),
     };
     this.mutations.push({
+      instructionIndex,
       kind: "text-update",
       operation,
       expectedSource,
@@ -1386,6 +1503,7 @@ class SemanticPlanner {
 
   private async planPureMove(
     operation: Extract<ResolvedOperation, { kind: "update" }>,
+    instructionIndex: number,
   ): Promise<void> {
     const destinationPath = operation.moveAbsolutePath!;
     if (operation.absolutePath === destinationPath) return;
@@ -1441,6 +1559,7 @@ class SemanticPlanner {
       deletions: 0,
     };
     this.mutations.push({
+      instructionIndex,
       kind: "move",
       operation,
       expectedSource,
@@ -1476,6 +1595,7 @@ function appendChange(details: ApplyPatchDetails, change: AppliedPatchChange): v
 function detailsForPlan(plan: SemanticPlan): ApplyPatchDetails {
   const details = emptyDetails();
   details.exact = plan.exact;
+  details.instructions = plan.instructions.map((instruction) => ({ ...instruction }));
   for (const mutation of plan.mutations) appendChange(details, mutation.change);
   return details;
 }
@@ -1739,8 +1859,11 @@ async function executePlan(
 ): Promise<ApplyPatchDetails> {
   const details = emptyDetails();
   details.exact = plan.exact;
+  details.instructions = plan.instructions.map((instruction) => ({ ...instruction }));
+  let activeInstruction: ApplyPatchInstructionDetails | undefined;
   try {
     for (const mutation of plan.mutations) {
+      activeInstruction = details.instructions[mutation.instructionIndex];
       throwIfAborted(signal);
       if (mutation.kind === "add") {
         await assertEntryMatches(mutation.operation.absolutePath, mutation.expectedTarget);
@@ -1827,15 +1950,102 @@ async function executePlan(
         }
         appendChange(details, mutation.change);
       }
+      if (activeInstruction) {
+        activeInstruction.status = "applied";
+        delete activeInstruction.error;
+      }
+      activeInstruction = undefined;
       throwIfAborted(signal);
       onProgress?.(cloneApplyPatchDetails(details));
     }
     return details;
   } catch (error) {
+    const message = errorMessage(error);
+    if (activeInstruction) {
+      activeInstruction.status = "failed";
+      activeInstruction.error = message;
+    }
+    for (const instruction of details.instructions) {
+      if (instruction.status === "planned") instruction.status = "not-run";
+    }
     details.status = "failed";
-    details.error = errorMessage(error);
+    details.error = message;
+    details.failure = {
+      phase: "execution",
+      message,
+      ...(activeInstruction ? { failedInstruction: activeInstruction.index } : {}),
+    };
     throw new ApplyPatchExecutionError(details.error, cloneApplyPatchDetails(details));
   }
+}
+
+type ScannedPatchInstruction = ApplyPatchInstructionDetails & { sourceLine: number };
+
+function scanPatchInstructions(patch: string): ScannedPatchInstruction[] {
+  const instructions: ScannedPatchInstruction[] = [];
+  let current: ScannedPatchInstruction | undefined;
+  for (const [lineIndex, rawLine] of patch.split("\n").entries()) {
+    const line = rustTrim(rawLine.endsWith("\r") ? rawLine.slice(0, -1) : rawLine);
+    const headers = [
+      { prefix: ADD_FILE, kind: "add" as const },
+      { prefix: DELETE_FILE, kind: "delete" as const },
+      { prefix: UPDATE_FILE, kind: "update" as const },
+    ];
+    const header = headers.find(({ prefix }) => line.startsWith(prefix));
+    if (header) {
+      current = {
+        index: instructions.length + 1,
+        kind: header.kind,
+        path: line.slice(header.prefix.length),
+        status: "not-run",
+        sourceLine: lineIndex + 1,
+      };
+      instructions.push(current);
+      continue;
+    }
+    if (current?.kind === "update" && line.startsWith(MOVE_TO)) {
+      current.kind = "move";
+      current.moveTo = line.slice(MOVE_TO.length);
+    }
+  }
+  return instructions;
+}
+
+function failedApplyPatchDetails(
+  phase: ApplyPatchFailureDetails["phase"],
+  message: string,
+  instructions: readonly ApplyPatchInstructionDetails[],
+  failedInstruction?: number,
+): ApplyPatchDetails {
+  const details = emptyDetails();
+  details.status = "failed";
+  details.error = message;
+  details.instructions = instructions.map((instruction) => ({ ...instruction }));
+  if (failedInstruction !== undefined) {
+    const failed = details.instructions.find(
+      (instruction) => instruction.index === failedInstruction,
+    );
+    if (failed) {
+      failed.status = "failed";
+      failed.error = message;
+    }
+  }
+  details.failure = {
+    phase,
+    message,
+    ...(failedInstruction !== undefined ? { failedInstruction } : {}),
+  };
+  return details;
+}
+
+function parseFailureDetails(patch: string, error: unknown): ApplyPatchDetails {
+  const scanned = scanPatchInstructions(patch);
+  const lineNumber = error instanceof ApplyPatchParseError ? error.lineNumber : undefined;
+  const failedInstruction =
+    lineNumber === undefined
+      ? undefined
+      : scanned.findLast((instruction) => instruction.sourceLine <= lineNumber)?.index;
+  return failedApplyPatchDetails("parse", errorMessage(error), scanned, failedInstruction);
 }
 
 function parseAndResolvePatch(cwd: string, patch: string): ResolvedOperation[] {
@@ -1859,9 +2069,18 @@ async function buildPlan(
     return await new SemanticPlanner(operations, signal).plan();
   } catch (error) {
     if (error instanceof ApplyPatchInputError) throw error;
-    throw new ApplyPatchVerificationError(
-      `apply_patch verification failed: ${errorMessage(error)}`,
+    const message = errorMessage(error);
+    const instructions =
+      error instanceof SemanticPlanningError
+        ? error.instructions
+        : operations.map(instructionForOperation);
+    const details = failedApplyPatchDetails(
+      "preflight",
+      message,
+      instructions,
+      error instanceof SemanticPlanningError ? error.failedInstruction : undefined,
     );
+    throw new ApplyPatchVerificationError(`apply_patch verification failed: ${message}`, details);
   }
 }
 
@@ -1876,33 +2095,66 @@ export async function applyPatch(
   signal?: AbortSignal,
   hooks: ApplyPatchExecutionHooks = {},
 ): Promise<ApplyPatchDetails> {
-  throwIfAborted(signal);
+  try {
+    throwIfAborted(signal);
+  } catch (error) {
+    const message = errorMessage(error);
+    throw new ApplyPatchInputError(
+      message,
+      failedApplyPatchDetails("input", message, scanPatchInstructions(patch)),
+    );
+  }
   let operations: ResolvedOperation[];
   try {
     operations = parseAndResolvePatch(cwd, patch);
   } catch (error) {
-    if (error instanceof ApplyPatchInputError) throw error;
+    if (error instanceof ApplyPatchInputError) {
+      throw new ApplyPatchInputError(
+        error.message,
+        error.details ??
+          failedApplyPatchDetails("input", error.message, scanPatchInstructions(patch)),
+      );
+    }
+    const message = errorMessage(error);
     throw new ApplyPatchVerificationError(
-      `apply_patch verification failed: ${errorMessage(error)}`,
+      `apply_patch verification failed: ${message}`,
+      parseFailureDetails(patch, error),
     );
   }
 
-  const queuePaths = await canonicalMutationQueuePaths(
-    operations.flatMap((operation) => [
-      operation.absolutePath,
-      ...(operation.kind === "update" && operation.moveAbsolutePath
-        ? [operation.moveAbsolutePath]
-        : []),
-    ]),
-  );
+  try {
+    const queuePaths = await canonicalMutationQueuePaths(
+      operations.flatMap((operation) => [
+        operation.absolutePath,
+        ...(operation.kind === "update" && operation.moveAbsolutePath
+          ? [operation.moveAbsolutePath]
+          : []),
+      ]),
+    );
 
-  return withMutationQueues(queuePaths, async () => {
-    throwIfAborted(signal);
-    const plan = await buildPlan(operations, signal);
-    throwIfAborted(signal);
-    hooks.onExecutionStart?.();
-    return executePlan(plan, signal, hooks.onProgress);
-  });
+    return await withMutationQueues(queuePaths, async () => {
+      throwIfAborted(signal);
+      const plan = await buildPlan(operations, signal);
+      throwIfAborted(signal);
+      hooks.onExecutionStart?.();
+      return executePlan(plan, signal, hooks.onProgress);
+    });
+  } catch (error) {
+    if (
+      error instanceof ApplyPatchInputError ||
+      error instanceof ApplyPatchVerificationError ||
+      error instanceof ApplyPatchExecutionError
+    ) {
+      throw error;
+    }
+    const message = errorMessage(error);
+    const details = failedApplyPatchDetails(
+      "preflight",
+      message,
+      operations.map(instructionForOperation),
+    );
+    throw new ApplyPatchVerificationError(`apply_patch verification failed: ${message}`, details);
+  }
 }
 
 export function formatApplyPatchSummary(details: ApplyPatchDetails): string {

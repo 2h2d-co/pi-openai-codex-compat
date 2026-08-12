@@ -10,6 +10,9 @@ import {
 import {
   type AppliedPatchChange,
   type ApplyPatchDetails,
+  type ApplyPatchFailureDetails,
+  type ApplyPatchInstructionDetails,
+  type ApplyPatchInstructionStatus,
   coalesceAppliedPatchChangesForRendering,
 } from "./apply-patch-engine.ts";
 import { usesLightToolPalette } from "./codex-tool-surface.ts";
@@ -157,6 +160,56 @@ function isAppliedPatchChange(value: unknown): value is AppliedPatchChange {
   );
 }
 
+const INSTRUCTION_STATUSES = new Set<ApplyPatchInstructionStatus>([
+  "applied",
+  "planned",
+  "no-op",
+  "dead",
+  "failed",
+  "not-run",
+]);
+
+function isApplyPatchInstruction(value: unknown): value is ApplyPatchInstructionDetails {
+  if (typeof value !== "object" || value === null) return false;
+  const instruction = value as {
+    index?: unknown;
+    kind?: unknown;
+    path?: unknown;
+    moveTo?: unknown;
+    status?: unknown;
+    error?: unknown;
+  };
+  return (
+    typeof instruction.index === "number" &&
+    (instruction.kind === "add" ||
+      instruction.kind === "delete" ||
+      instruction.kind === "update" ||
+      instruction.kind === "move") &&
+    typeof instruction.path === "string" &&
+    (instruction.moveTo === undefined || typeof instruction.moveTo === "string") &&
+    typeof instruction.status === "string" &&
+    INSTRUCTION_STATUSES.has(instruction.status as ApplyPatchInstructionStatus) &&
+    (instruction.error === undefined || typeof instruction.error === "string")
+  );
+}
+
+function isApplyPatchFailure(value: unknown): value is ApplyPatchFailureDetails {
+  if (typeof value !== "object" || value === null) return false;
+  const failure = value as {
+    phase?: unknown;
+    message?: unknown;
+    failedInstruction?: unknown;
+  };
+  return (
+    (failure.phase === "input" ||
+      failure.phase === "parse" ||
+      failure.phase === "preflight" ||
+      failure.phase === "execution") &&
+    typeof failure.message === "string" &&
+    (failure.failedInstruction === undefined || typeof failure.failedInstruction === "number")
+  );
+}
+
 export function isApplyPatchDetails(value: unknown): value is ApplyPatchDetails {
   if (typeof value !== "object" || value === null) return false;
   const details = value as {
@@ -166,6 +219,9 @@ export function isApplyPatchDetails(value: unknown): value is ApplyPatchDetails 
     added?: unknown;
     modified?: unknown;
     deleted?: unknown;
+    instructions?: unknown;
+    failure?: unknown;
+    error?: unknown;
   };
   return (
     (details.status === "completed" || details.status === "failed") &&
@@ -174,7 +230,12 @@ export function isApplyPatchDetails(value: unknown): value is ApplyPatchDetails 
     details.changes.every(isAppliedPatchChange) &&
     isStringArray(details.added) &&
     isStringArray(details.modified) &&
-    isStringArray(details.deleted)
+    isStringArray(details.deleted) &&
+    (details.instructions === undefined ||
+      (Array.isArray(details.instructions) &&
+        details.instructions.every(isApplyPatchInstruction))) &&
+    (details.failure === undefined || isApplyPatchFailure(details.failure)) &&
+    (details.error === undefined || typeof details.error === "string")
   );
 }
 
@@ -378,6 +439,124 @@ function renderChange(
   return lines.flatMap((line) => renderDiffLine(line, width, lineNumberWidth, theme, palette));
 }
 
+function failurePhaseLabel(phase: ApplyPatchFailureDetails["phase"]): string {
+  switch (phase) {
+    case "input":
+      return "Input";
+    case "parse":
+      return "Parse";
+    case "preflight":
+      return "Preflight";
+    case "execution":
+      return "Execution";
+  }
+}
+
+function statusDescription(status: ApplyPatchInstructionStatus): string {
+  switch (status) {
+    case "applied":
+      return "applied";
+    case "planned":
+      return "planned";
+    case "no-op":
+      return "no-op";
+    case "dead":
+      return "dead";
+    case "failed":
+      return "failed";
+    case "not-run":
+      return "not run";
+  }
+}
+
+function statusSymbol(status: ApplyPatchInstructionStatus, theme: Theme): string {
+  switch (status) {
+    case "applied":
+      return theme.fg("success", "✓");
+    case "failed":
+      return theme.fg("error", "✘");
+    case "dead":
+      return theme.fg("dim", "↷");
+    case "no-op":
+      return theme.fg("dim", "○");
+    case "not-run":
+      return theme.fg("dim", "–");
+    case "planned":
+      return theme.fg("dim", "•");
+  }
+}
+
+function instructionLabel(instruction: ApplyPatchInstructionDetails, cwd: string): string {
+  const verb =
+    instruction.kind === "add"
+      ? "Add"
+      : instruction.kind === "delete"
+        ? "Delete"
+        : instruction.kind === "move"
+          ? "Move"
+          : "Update";
+  const path = displayPath(instruction.path, cwd);
+  return instruction.moveTo
+    ? `${verb} ${path} → ${displayPath(instruction.moveTo, cwd)}`
+    : `${verb} ${path}`;
+}
+
+function failureSummary(details: ApplyPatchDetails, theme: Theme): string {
+  const instructions = details.instructions ?? [];
+  const noun = instructions.length === 1 ? "instruction" : "instructions";
+  const parts = [
+    details.failure ? failurePhaseLabel(details.failure.phase) : "Failure",
+    `${instructions.length} ${noun}`,
+  ];
+  for (const status of ["applied", "failed", "no-op", "dead", "not-run", "planned"] as const) {
+    const count = instructions.filter((instruction) => instruction.status === status).length;
+    if (count > 0) parts.push(`${count} ${statusDescription(status)}`);
+  }
+  return theme.fg("dim", parts.join(" · "));
+}
+
+function normalizedFailureMessage(details: ApplyPatchDetails, cwd: string): string {
+  const message = details.failure?.message ?? details.error ?? "Unknown apply_patch failure.";
+  const cwdPrefix = `${resolve(cwd)}${sep}`;
+  const homePrefix = `${homedir()}${sep}`;
+  return message
+    .replace(/^apply_patch verification failed:\s*/i, "")
+    .replaceAll(cwdPrefix, "")
+    .replaceAll(homePrefix, `~${sep}`);
+}
+
+function renderFailure(
+  details: ApplyPatchDetails,
+  theme: Theme,
+  cwd: string,
+  expanded: boolean,
+): string[] {
+  const lines = [theme.bold(theme.fg("error", "✘ Failed to apply patch"))];
+  lines.push(`  ${failureSummary(details, theme)}`);
+
+  const instructions = details.instructions ?? [];
+  const visibleInstructions = expanded
+    ? instructions
+    : instructions.filter((instruction) => instruction.status === "failed");
+  for (const instruction of visibleInstructions) {
+    lines.push(
+      `  ${statusSymbol(instruction.status, theme)} ${instruction.index}. ${instructionLabel(instruction, cwd)} ${theme.fg("dim", `— ${statusDescription(instruction.status)}`)}`,
+    );
+  }
+
+  const messageLines = normalizedFailureMessage(details, cwd).split("\n");
+  const maximumLines = expanded ? 12 : 1;
+  for (const [index, messageLine] of messageLines.slice(0, maximumLines).entries()) {
+    lines.push(
+      index === 0 ? `  ${theme.fg("error", "Reason:")} ${messageLine}` : `          ${messageLine}`,
+    );
+  }
+  if (messageLines.length > maximumLines) {
+    lines.push(theme.fg("dim", `          … ${messageLines.length - maximumLines} more lines`));
+  }
+  return lines;
+}
+
 export function formatApplyPatchRenderText(
   details: ApplyPatchDetails,
   theme: Theme,
@@ -405,7 +584,7 @@ export function formatApplyPatchRenderText(
   }
   if (details?.status === "failed") {
     if (lines.length > 0) lines.push("");
-    lines.push(theme.bold(theme.fg("error", "✘ Failed to apply patch")));
+    lines.push(...renderFailure(details, theme, cwd, true));
   }
   return lines.join("\n");
 }
@@ -451,13 +630,9 @@ export class ApplyPatchDiffComponent implements Component {
 
     if (this.details?.status === "failed") {
       if (lines.length > 0) lines.push("");
-      lines.push(
-        truncateToWidth(
-          this.theme.bold(this.theme.fg("error", "✘ Failed to apply patch")),
-          effectiveWidth,
-          "",
-        ),
-      );
+      for (const line of renderFailure(this.details, this.theme, this.cwd, this.expanded)) {
+        lines.push(...wrapTextWithAnsi(line, effectiveWidth));
+      }
     }
 
     return lines;

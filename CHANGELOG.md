@@ -7,6 +7,7 @@
 - Omit Pi's auto-compaction state from the compatibility footer until extensions can observe its live value.
 - Evaluate grammar-valid `apply_patch` operations against a sequential virtual filesystem, accepting harmless no-ops and provably dead updates while rejecting conflicts before writes.
 - Move regular files and symbolic-link entries opaquely for move-only `apply_patch` hunks, preserving arbitrary binary bytes and rendering path-only move history.
+- Render failed `apply_patch` calls with their failure phase and reason, instruction counts, per-instruction statuses, and expanded instruction details.
 
 ### Security
 

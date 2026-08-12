@@ -7,6 +7,8 @@ import {
   applyPatch,
   type ApplyPatchDetails,
   ApplyPatchExecutionError,
+  ApplyPatchInputError,
+  ApplyPatchVerificationError,
   formatApplyPatchModelOutput,
   formatApplyPatchSummary,
 } from "./apply-patch-engine.ts";
@@ -15,6 +17,9 @@ import { renderApplyPatchCall, renderApplyPatchResult } from "./apply-patch-rend
 export {
   applyPatch,
   type ApplyPatchDetails,
+  type ApplyPatchFailureDetails,
+  type ApplyPatchInstructionDetails,
+  type ApplyPatchInstructionStatus,
   type AppliedPatchChange,
   ApplyPatchExecutionError,
   ApplyPatchInputError,
@@ -127,6 +132,11 @@ export default function registerApplyPatch(
           throw new Error(
             formatApplyPatchModelOutput(1, executionDurationMs(), `${error.message}\n`),
           );
+        }
+        if (error instanceof ApplyPatchVerificationError) {
+          failedDetails.set(toolCallId, error.details);
+        } else if (error instanceof ApplyPatchInputError && error.details) {
+          failedDetails.set(toolCallId, error.details);
         }
         throw error;
       }

@@ -100,19 +100,10 @@ export function renderApplyPatchResult(
   if (options.isPartial) return new Container();
 
   const details = isApplyPatchDetails(result.details) ? result.details : undefined;
-  const preview = isApplyPatchDetails(context.state.preview) ? context.state.preview : undefined;
-  const renderDetails =
-    details?.status === "failed" && preview
-      ? {
-          ...preview,
-          status: "failed" as const,
-          ...(details.error !== undefined ? { error: details.error } : {}),
-        }
-      : details;
 
-  if (renderDetails) {
+  if (details) {
     return new CodexToolSurfaceComponent(
-      new ApplyPatchDiffComponent(renderDetails, theme, context.cwd, context.expanded),
+      new ApplyPatchDiffComponent(details, theme, context.cwd, context.expanded),
       theme,
       {
         background: resolveBackground,

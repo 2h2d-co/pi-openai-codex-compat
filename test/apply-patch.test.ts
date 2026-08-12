@@ -17,6 +17,7 @@ import registerApplyPatch, {
   applyPatch,
   type ApplyPatchDetails,
   ApplyPatchExecutionError,
+  ApplyPatchVerificationError,
   parsePatch,
   parsePatchDocument,
   previewPatch,
@@ -407,12 +408,91 @@ void test("prevalidates all hunks but preserves committed-prefix history after r
       assert.equal(error.details.status, "failed");
       assert.equal(error.details.changes.length, 1);
       assert.equal(error.details.changes[0]?.kind, "update");
+      assert.equal(error.details.failure?.phase, "execution");
+      assert.equal(error.details.failure?.failedInstruction, 2);
+      assert.deepEqual(
+        error.details.instructions?.map(({ status }) => status),
+        ["applied", "failed"],
+      );
       return true;
     },
   );
   assert.deepEqual(lifecycle, ["execution-start", "progress"]);
   assert.equal(await readFile(join(cwd, "first.txt"), "utf8"), "first after\n");
   assert.equal(await readFile(join(cwd, "second.txt"), "utf8"), "external change\n");
+});
+
+void test("reports parse and preflight failures by instruction", async (t) => {
+  const cwd = await workspace(t);
+  await writeFile(join(cwd, "existing.txt"), "keep\n");
+
+  await assert.rejects(
+    applyPatch(
+      cwd,
+      `*** Begin Patch
+*** Add File: created.txt
++created
+*** Update File: broken.txt
+this line is invalid
+*** End Patch`,
+    ),
+    (error: unknown) => {
+      assert.ok(error instanceof ApplyPatchVerificationError);
+      assert.equal(error.details.failure?.phase, "parse");
+      assert.equal(error.details.failure?.failedInstruction, 2);
+      assert.deepEqual(
+        error.details.instructions?.map(({ kind, path, status }) => ({ kind, path, status })),
+        [
+          { kind: "add", path: "created.txt", status: "not-run" },
+          { kind: "update", path: "broken.txt", status: "failed" },
+        ],
+      );
+      return true;
+    },
+  );
+  await assert.rejects(readFile(join(cwd, "created.txt")), { code: "ENOENT" });
+
+  let preflightDetails: ApplyPatchDetails | undefined;
+  await assert.rejects(
+    applyPatch(
+      cwd,
+      `*** Begin Patch
+*** Add File: created.txt
++created
+*** Update File: missing.txt
+@@
+-missing
++replacement
+*** Delete File: existing.txt
+*** End Patch`,
+    ),
+    (error: unknown) => {
+      assert.ok(error instanceof ApplyPatchVerificationError);
+      preflightDetails = error.details;
+      assert.equal(error.details.failure?.phase, "preflight");
+      assert.equal(error.details.failure?.failedInstruction, 2);
+      assert.deepEqual(
+        error.details.instructions?.map(({ kind, path, status }) => ({ kind, path, status })),
+        [
+          { kind: "add", path: "created.txt", status: "not-run" },
+          { kind: "update", path: "missing.txt", status: "failed" },
+          { kind: "delete", path: "existing.txt", status: "not-run" },
+        ],
+      );
+      return true;
+    },
+  );
+  assert.ok(preflightDetails);
+  const theme = {
+    fg: (_color: string, text: string) => text,
+    bold: (text: string) => text,
+  } as unknown as Theme;
+  const rendered = formatApplyPatchRenderText(preflightDetails, theme, cwd);
+  assert.match(rendered, /Preflight · 3 instructions · 1 failed · 2 not run/);
+  assert.match(rendered, /✘ 2\. Update missing\.txt — failed/);
+  assert.match(rendered, /Reason: Failed to read file to update missing\.txt/);
+  await assert.rejects(readFile(join(cwd, "created.txt")), { code: "ENOENT" });
+  assert.equal(await readFile(join(cwd, "existing.txt"), "utf8"), "keep\n");
 });
 
 void test("rejects invalid UTF-8 like Codex", async (t) => {
@@ -747,7 +827,6 @@ void test("registers the Codex freeform tool with model, UI, and failed-history 
 -before
 +again
 *** End Patch`;
-  const failedPreview = await previewPatch(cwd, failedPatch);
   const failedResult = await registered!.execute(
     "failed-call",
     {
@@ -782,9 +861,14 @@ void test("registers the Codex freeform tool with model, UI, and failed-history 
   });
   assert.equal(patchedResult?.details.status, "failed");
   assert.equal(patchedResult?.details.changes.length, 1);
+  assert.equal(patchedResult?.details.failure?.phase, "execution");
+  assert.deepEqual(
+    patchedResult?.details.instructions?.map(({ status }) => status),
+    ["applied", "failed"],
+  );
   assert.match(
     formatApplyPatchRenderText(patchedResult!.details, theme, cwd),
-    /✘ Failed to apply patch/,
+    /Execution · 2 instructions · 1 applied · 1 failed/,
   );
   const failedComponent = registered!.renderResult!(
     { content: [], details: patchedResult!.details },
@@ -795,7 +879,7 @@ void test("registers the Codex freeform tool with model, UI, and failed-history 
       toolCallId: "failed-call",
       invalidate() {},
       lastComponent: undefined,
-      state: { preview: failedPreview },
+      state: {},
       cwd,
       executionStarted: true,
       argsComplete: true,
@@ -808,6 +892,84 @@ void test("registers the Codex freeform tool with model, UI, and failed-history 
   const failedText = failedComponent.render(120).join("\n");
   assert.doesNotMatch(failedText, /again/);
   assert.match(failedText, /✘ Failed to apply patch/);
+  assert.match(failedText, /Execution · 2 instructions · 1 applied · 1 failed/);
+  assert.match(failedText, /✘ 2\. Update partial-second\.txt — failed/);
+  assert.match(failedText, /Reason: Filesystem changed after apply_patch preflight/);
+
+  await writeFile(join(cwd, "verification-existing.txt"), "keep\n");
+  const verificationPatch = `*** Begin Patch
+*** Add File: verification-created.txt
++created
+*** Update File: verification-missing.txt
+@@
+-missing
++replacement
+*** Delete File: verification-existing.txt
+*** End Patch`;
+  await assert.rejects(
+    registered!.execute("verification-call", { patch: verificationPatch }, undefined, undefined, {
+      cwd,
+    } as never),
+    /apply_patch verification failed/,
+  );
+  const verificationResult = toolResultHandler?.({
+    toolName: "apply_patch",
+    toolCallId: "verification-call",
+  });
+  assert.equal(verificationResult?.details.failure?.phase, "preflight");
+  assert.deepEqual(
+    verificationResult?.details.instructions?.map(({ status }) => status),
+    ["not-run", "failed", "not-run"],
+  );
+  const verificationComponent = registered!.renderResult!(
+    { content: [], details: verificationResult!.details },
+    { expanded: false, isPartial: false },
+    theme,
+    {
+      args: { patch: verificationPatch },
+      toolCallId: "verification-call",
+      invalidate() {},
+      lastComponent: undefined,
+      state: {},
+      cwd,
+      executionStarted: true,
+      argsComplete: true,
+      isPartial: false,
+      expanded: false,
+      showImages: false,
+      isError: true,
+    },
+  );
+  const verificationText = stripAnsi(verificationComponent.render(120).join("\n"));
+  assert.match(verificationText, /Preflight · 3 instructions · 1 failed · 2 not run/);
+  assert.match(verificationText, /✘ 2\. Update verification-missing\.txt — failed/);
+  assert.doesNotMatch(verificationText, /1\. Add verification-created/);
+  assert.match(verificationText, /Reason: Failed to read file to update/);
+
+  const expandedVerificationComponent = registered!.renderResult!(
+    { content: [], details: verificationResult!.details },
+    { expanded: false, isPartial: false },
+    theme,
+    {
+      args: { patch: verificationPatch },
+      toolCallId: "verification-call",
+      invalidate() {},
+      lastComponent: undefined,
+      state: {},
+      cwd,
+      executionStarted: true,
+      argsComplete: true,
+      isPartial: false,
+      expanded: true,
+      showImages: false,
+      isError: true,
+    },
+  );
+  const expandedVerificationText = stripAnsi(expandedVerificationComponent.render(120).join("\n"));
+  assert.match(expandedVerificationText, /– 1\. Add verification-created\.txt — not run/);
+  assert.match(expandedVerificationText, /– 3\. Delete verification-existing\.txt — not run/);
+  await assert.rejects(readFile(join(cwd, "verification-created.txt")), { code: "ENOENT" });
+  assert.equal(await readFile(join(cwd, "verification-existing.txt"), "utf8"), "keep\n");
 
   const genericFailureComponent = registered!.renderResult!(
     { content: [], details: {} },
