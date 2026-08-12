@@ -1,4 +1,4 @@
-# Semantic `apply_patch` Moves
+# Semantic `apply_patch` Operations
 
 ## Status
 
