@@ -1027,6 +1027,19 @@ class SemanticPlanner {
   ): Promise<Buffer> {
     if (entry.content.value) return entry.content.value.bytes;
     try {
+      if (entry.kind === "symlink") {
+        const targetMetadata = await stat(entry.sourcePath ?? path);
+        if (targetMetadata.isFile()) {
+          const physicalKey = `${targetMetadata.dev}:${targetMetadata.ino}`;
+          const sharedContent = this.physicalContent.get(physicalKey);
+          if (sharedContent) {
+            entry.content = sharedContent;
+            if (entry.content.value) return entry.content.value.bytes;
+          } else {
+            this.physicalContent.set(physicalKey, entry.content);
+          }
+        }
+      }
       const bytes = await readFile(entry.sourcePath ?? path);
       entry.content.value = { bytes };
       return bytes;
@@ -1136,12 +1149,8 @@ class SemanticPlanner {
         `Cannot add ${operation.absolutePath}: path is ${target.kind === "directory" ? "a directory" : `a ${target.entryType}`}`,
       );
     }
-    if (target.kind === "symlink") {
-      throw new Error(`Cannot add ${operation.absolutePath}: path is a symbolic link`);
-    }
-
     const content = Buffer.from(operation.content, "utf8");
-    if (target.kind === "regular") {
+    if (target.kind === "regular" || target.kind === "symlink") {
       try {
         if (buffersEqual(await this.readBytes(target, operation.absolutePath), content)) {
           return;
@@ -1156,7 +1165,7 @@ class SemanticPlanner {
         ? await this.ensureParents(operation.absolutePath)
         : { createdPaths: [], expectations: [] };
     const overwrittenContent =
-      target.kind === "regular"
+      target.kind === "regular" || target.kind === "symlink"
         ? await this.optionalText(target, operation.absolutePath)
         : undefined;
     const expectedTarget = this.snapshot(target);
@@ -1175,9 +1184,15 @@ class SemanticPlanner {
       content,
       change,
     });
-    const resultingContent = target.kind === "regular" ? target.content : { planned: true };
+    const resultingContent =
+      target.kind === "regular" || target.kind === "symlink" ? target.content : { planned: true };
     resultingContent.value = { bytes: content, text: operation.content };
     resultingContent.planned = true;
+    if (target.kind === "symlink") {
+      this.exact = false;
+      this.setState(operation.absolutePath, { ...target, content: resultingContent });
+      return;
+    }
     this.setState(operation.absolutePath, {
       kind: "regular",
       id: this.newEntryId(),

@@ -279,6 +279,25 @@ void test("preserves hard-link observations across sequential content writes", a
   assert.equal(await readFile(join(cwd, "alias-b.txt"), "utf8"), "final\n");
 });
 
+void test("preserves symlink target observations across sequential writes", async (t) => {
+  const cwd = await workspace(t);
+  await writeFile(join(cwd, "target.txt"), "before\n");
+  await symlink("target.txt", join(cwd, "alias.txt"));
+
+  await applyPatch(
+    cwd,
+    patch(
+      "*** Update File: alias.txt\n@@\n-before\n+after\n",
+      "*** Update File: target.txt\n@@\n-after\n+final\n",
+      "*** Add File: alias.txt\n+added through link\n",
+      "*** Update File: target.txt\n@@\n-added through link\n+done\n",
+    ),
+  );
+
+  assert.equal(await readFile(join(cwd, "target.txt"), "utf8"), "done\n");
+  assert.equal(await readlink(join(cwd, "alias.txt")), "target.txt");
+});
+
 void test("rejects directories and unproven missing-source moves", async (t) => {
   const cwd = await workspace(t);
   await mkdir(join(cwd, "directory"));
