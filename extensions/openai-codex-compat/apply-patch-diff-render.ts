@@ -73,6 +73,10 @@ function displayPath(path: string, cwd: string): string {
 }
 
 function changePath(change: AppliedPatchChange, cwd: string): string {
+  if (change.kind === "move") {
+    const path = `${displayPath(change.sourcePath, cwd)} → ${displayPath(change.destinationPath, cwd)}`;
+    return change.replacedDestination ? `${path} (replaced destination)` : path;
+  }
   const path = displayPath(change.path, cwd);
   return change.kind === "update" && change.moveTo
     ? `${path} → ${displayPath(change.moveTo, cwd)}`
@@ -85,6 +89,8 @@ function changeVerb(change: AppliedPatchChange): string {
       return "Added";
     case "delete":
       return "Deleted";
+    case "move":
+      return "Moved";
     case "update":
       return "Edited";
   }
@@ -109,6 +115,11 @@ function isAppliedPatchChange(value: unknown): value is AppliedPatchChange {
     kind?: unknown;
     path?: unknown;
     moveTo?: unknown;
+    sourcePath?: unknown;
+    destinationPath?: unknown;
+    replacedDestination?: unknown;
+    entryType?: unknown;
+    exact?: unknown;
     content?: unknown;
     oldContent?: unknown;
     newContent?: unknown;
@@ -117,15 +128,26 @@ function isAppliedPatchChange(value: unknown): value is AppliedPatchChange {
     deletions?: unknown;
   };
   if (
-    typeof change.path !== "string" ||
     typeof change.displayDiff !== "string" ||
     typeof change.additions !== "number" ||
     typeof change.deletions !== "number"
   ) {
     return false;
   }
+  if (change.kind === "move") {
+    return (
+      typeof change.sourcePath === "string" &&
+      typeof change.destinationPath === "string" &&
+      typeof change.replacedDestination === "boolean" &&
+      (change.entryType === "regular-file" || change.entryType === "symbolic-link") &&
+      typeof change.exact === "boolean"
+    );
+  }
+  if (typeof change.path !== "string") return false;
   if (change.kind === "add" || change.kind === "delete") {
-    return typeof change.content === "string";
+    return change.kind === "delete"
+      ? change.content === undefined || typeof change.content === "string"
+      : typeof change.content === "string";
   }
   return (
     change.kind === "update" &&
@@ -159,7 +181,10 @@ export function isApplyPatchDetails(value: unknown): value is ApplyPatchDetails 
 function sortedChanges(details: ApplyPatchDetails, cwd: string): AppliedPatchChange[] {
   if (!isApplyPatchDetails(details)) return [];
   return coalesceAppliedPatchChangesForRendering(details.changes, cwd).toSorted((left, right) =>
-    comparePaths(resolve(cwd, left.path), resolve(cwd, right.path)),
+    comparePaths(
+      resolve(cwd, left.kind === "move" ? left.sourcePath : left.path),
+      resolve(cwd, right.kind === "move" ? right.sourcePath : right.path),
+    ),
   );
 }
 
@@ -231,6 +256,7 @@ function changeDiffLines(change: AppliedPatchChange): DiffLine[] {
       .map((content, index) => ({ kind: "add", lineNumber: index + 1, content }));
   }
   if (change.kind === "delete") {
+    if (change.content === undefined) return [];
     return change.content
       .replace(/\n$/, "")
       .split("\n")
@@ -341,6 +367,7 @@ function renderChange(
   palette: DiffPalette,
 ): string[] {
   const lines = changeDiffLines(change);
+  if (change.kind === "move") return [];
   const languagePath = change.kind === "update" && change.moveTo ? change.moveTo : change.path;
   highlightDiffLines(lines, languagePath);
   const lineNumberWidth = lines.reduce(

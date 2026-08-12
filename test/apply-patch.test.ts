@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { writeFileSync } from "node:fs";
 import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
 import { join, parse } from "node:path";
@@ -365,20 +366,40 @@ void test("prevalidates all hunks but preserves committed-prefix history after r
 -original
 +second
 *** End Patch`;
-  const preview = await previewPatch(cwd, duplicatePatch);
-  assert.equal(preview.changes.length, 1);
-  assert.equal(
-    preview.changes[0]?.kind === "update" ? preview.changes[0].newContent : undefined,
-    "second\n",
-  );
-  const lifecycle: string[] = [];
+  await assert.rejects(previewPatch(cwd, duplicatePatch), /Failed to find expected lines/);
+  const verificationLifecycle: string[] = [];
   await assert.rejects(
     applyPatch(cwd, duplicatePatch, undefined, {
+      onExecutionStart() {
+        verificationLifecycle.push("execution-start");
+      },
+    }),
+    /Failed to find expected lines/,
+  );
+  assert.equal(verificationLifecycle.length, 0);
+  assert.equal(await readFile(join(cwd, "current.txt"), "utf8"), "original\n");
+
+  await writeFile(join(cwd, "first.txt"), "first before\n");
+  await writeFile(join(cwd, "second.txt"), "second before\n");
+  const runtimeFailurePatch = `*** Begin Patch
+*** Update File: first.txt
+@@
+-first before
++first after
+*** Update File: second.txt
+@@
+-second before
++second after
+*** End Patch`;
+  const lifecycle: string[] = [];
+  await assert.rejects(
+    applyPatch(cwd, runtimeFailurePatch, undefined, {
       onExecutionStart() {
         lifecycle.push("execution-start");
       },
       onProgress() {
         lifecycle.push("progress");
+        writeFileSync(join(cwd, "second.txt"), "external change\n");
       },
     }),
     (error: unknown) => {
@@ -390,7 +411,8 @@ void test("prevalidates all hunks but preserves committed-prefix history after r
     },
   );
   assert.deepEqual(lifecycle, ["execution-start", "progress"]);
-  assert.equal(await readFile(join(cwd, "current.txt"), "utf8"), "first\n");
+  assert.equal(await readFile(join(cwd, "first.txt"), "utf8"), "first after\n");
+  assert.equal(await readFile(join(cwd, "second.txt"), "utf8"), "external change\n");
 });
 
 void test("rejects invalid UTF-8 like Codex", async (t) => {
@@ -713,18 +735,31 @@ void test("registers the Codex freeform tool with model, UI, and failed-history 
     ["73 -oldCall();", "99 -return oldResult;"],
   );
 
-  await writeFile(join(cwd, "partial.txt"), "before\n");
+  await writeFile(join(cwd, "partial-first.txt"), "before\n");
+  await writeFile(join(cwd, "partial-second.txt"), "before\n");
   const failedPatch = `*** Begin Patch
-*** Update File: partial.txt
+*** Update File: partial-first.txt
 @@
 -before
 +after
-*** Update File: partial.txt
+*** Update File: partial-second.txt
 @@
 -before
 +again
 *** End Patch`;
   const failedPreview = await previewPatch(cwd, failedPatch);
+  const failedResult = await registered!.execute(
+    "failed-call",
+    {
+      patch: failedPatch,
+    },
+    undefined,
+    undefined,
+    { cwd } as never,
+  );
+  assert.equal((failedResult.details as ApplyPatchDetails).status, "completed");
+  await writeFile(join(cwd, "partial-first.txt"), "before\n");
+  await writeFile(join(cwd, "partial-second.txt"), "before\n");
   await assert.rejects(
     registered!.execute(
       "failed-call",
@@ -732,7 +767,11 @@ void test("registers the Codex freeform tool with model, UI, and failed-history 
         patch: failedPatch,
       },
       undefined,
-      undefined,
+      (partial) => {
+        if ((partial.details as ApplyPatchDetails).changes.length === 1) {
+          writeFileSync(join(cwd, "partial-second.txt"), "external\n");
+        }
+      },
       { cwd } as never,
     ),
     /^Error: Exit code: 1/,
