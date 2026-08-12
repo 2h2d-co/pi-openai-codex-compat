@@ -146,7 +146,7 @@ export const PRODUCTION_APPLY_PATCH_FIXTURES: ProductionApplyPatchFixture[] = [
   },
   {
     id: "move-only report followed by unicode add",
-    sourceFingerprints: ["abb44bee9eb57d9e"],
+    sourceFingerprints: ["abb44bee9eb57d9e", "d3af31f72c5a83d4"],
     productionObservation:
       "A move-only report rename followed by a large Markdown add was rejected before either operation.",
     characteristics: [
@@ -545,6 +545,50 @@ export const PRODUCTION_APPLY_PATCH_FIXTURES: ProductionApplyPatchFixture[] = [
 +# Changelog
 +
 +## Unreleased
+*** End Patch`,
+    expected: {
+      outcome: "verification-error",
+      messagePattern: /Failed to find expected lines/,
+    },
+  },
+  {
+    id: "current-session stale replacement rejects without writes",
+    sourceFingerprints: ["684cab162b03aa44", "a197ec50edaaa85b"],
+    productionObservation:
+      "Two implementation patches in the fixture-creation session missed context after the target code had evolved.",
+    characteristics: [
+      "current-session failure",
+      "single large replacement",
+      "stale structural context",
+      "no-write verification failure",
+    ],
+    initialFiles: [
+      {
+        path: "<CWD>/planner.ts",
+        content: [
+          "class Planner {",
+          "  private readonly values = new Map<string, string>();",
+          "  private readonly operations: readonly string[];",
+          "",
+          "  constructor(operations: readonly string[]) {",
+          "    this.operations = operations;",
+          "  }",
+          "}",
+          "",
+        ].join("\n"),
+      },
+    ],
+    patch: `*** Begin Patch
+*** Update File: <CWD>/planner.ts
+@@
+ class Planner {
+-  constructor(operations: readonly string[]) {
+-    this.operations = operations;
+-  }
++  constructor(
++    private readonly operations: readonly string[],
++  ) {}
+ }
 *** End Patch`,
     expected: {
       outcome: "verification-error",
