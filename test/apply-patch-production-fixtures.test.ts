@@ -194,6 +194,6 @@ void test("production fixtures retain traceable, non-duplicated source fingerpri
   const fingerprints = PRODUCTION_APPLY_PATCH_FIXTURES.flatMap(
     (fixture) => fixture.sourceFingerprints,
   );
-  assert.equal(PRODUCTION_APPLY_PATCH_FIXTURES.length, 20);
+  assert.equal(PRODUCTION_APPLY_PATCH_FIXTURES.length, 23);
   assert.equal(new Set(fingerprints).size, fingerprints.length);
 });

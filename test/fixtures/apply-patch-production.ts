@@ -1111,6 +1111,170 @@ export const PRODUCTION_APPLY_PATCH_FIXTURES: ProductionApplyPatchFixture[] = [
     },
   },
   {
+    id: "current-session stale Markdown section context recovers",
+    sourceFingerprints: ["90cc8f2c4c1d38f4"],
+    productionObservation:
+      "A large semantic-reference update failed after a Markdown section heading gained its marker prefix; the current matcher recovers the uniquely located edits beneath it.",
+    characteristics: [
+      "current-session failure",
+      "stale Markdown heading context",
+      "multiple ordered edit groups",
+      "current heading preserved",
+    ],
+    initialFiles: [
+      {
+        path: "<CWD>/semantics.md",
+        content: [
+          "### Add file",
+          "",
+          "`Add File: P` unconditionally writes its grammar-provided content to `P`.",
+          "Existing destination overwrite behavior is retained.",
+          "",
+          "- If `P` already contains exactly the requested bytes, the operation is a",
+          "  no-op.",
+          "- If `P` is absent, it is created along with missing parent directories.",
+          "",
+        ].join("\n"),
+      },
+    ],
+    patch: `*** Begin Patch
+*** Update File: <CWD>/semantics.md
+@@
+ Add file
+
+ \`Add File: P\` unconditionally writes its grammar-provided content to \`P\`.
+-Existing destination overwrite behavior is retained.
++It establishes a regular-file entry at the exact requested path spelling.
+
+ - If \`P\` already contains exactly the requested bytes, the operation is a
+-  no-op.
++  no-op only when \`P\` is already a regular file at the requested exact
++  spelling.
+ - If \`P\` is absent, it is created along with missing parent directories.
+*** End Patch`,
+    expected: {
+      outcome: "success",
+      files: [
+        {
+          path: "<CWD>/semantics.md",
+          content: [
+            "### Add file",
+            "",
+            "`Add File: P` unconditionally writes its grammar-provided content to `P`.",
+            "It establishes a regular-file entry at the exact requested path spelling.",
+            "",
+            "- If `P` already contains exactly the requested bytes, the operation is a",
+            "  no-op only when `P` is already a regular file at the requested exact",
+            "  spelling.",
+            "- If `P` is absent, it is created along with missing parent directories.",
+            "",
+          ].join("\n"),
+        },
+      ],
+      absent: [],
+      changeKinds: ["update"],
+    },
+  },
+  {
+    id: "current-session reverse-ordered Markdown hunks reject",
+    sourceFingerprints: ["fb56a75092a777bc"],
+    productionObservation:
+      "Two independently meaningful documentation insertions were supplied in reverse source order within one file update.",
+    characteristics: [
+      "current-session failure",
+      "reverse source order",
+      "pure insertions",
+      "ordered mapping requirement",
+    ],
+    initialFiles: [
+      {
+        path: "<CWD>/semantics.md",
+        content: [
+          "## Dead operations",
+          "",
+          "An inapplicable operation may be marked dead only when:",
+          "",
+          "Unsupported proofs must become conflicts, not unsafe acceptance.",
+          "",
+          "## Hard links",
+          "",
+          "For a pure move, the required postcondition remains unchanged.",
+          "",
+          "The executor must account for that case without deleting the destination.",
+          "",
+        ].join("\n"),
+      },
+    ],
+    patch: `*** Begin Patch
+*** Update File: <CWD>/semantics.md
+@@
+ For a pure move, the required postcondition remains unchanged.
+
+ The executor must account for that case without deleting the destination.
++
++Replacing a hard-linked destination replaces only the named entry.
+@@
+ An inapplicable operation may be marked dead only when:
+
+ Unsupported proofs must become conflicts, not unsafe acceptance.
++
++A failed move is dead only when all of its effects are dominated.
+*** End Patch`,
+    expected: {
+      outcome: "verification-error",
+      messagePattern: /Failed to find expected lines/,
+    },
+  },
+  {
+    id: "current-session repeated and out-of-order matcher edits reject",
+    sourceFingerprints: ["0e900184894b9986"],
+    productionObservation:
+      "A follow-up implementation patch repeated changes already made by earlier patches, then revisited an earlier source region after a later hunk.",
+    characteristics: [
+      "current-session failure",
+      "already-applied edits",
+      "reverse source traversal",
+      "stale old call",
+    ],
+    initialFiles: [
+      {
+        path: "<CWD>/matcher.ts",
+        content: [
+          "async function parseDocument(source: string, signal?: AbortSignal) {",
+          "  return source;",
+          "}",
+          "",
+          "function lineBounds(source: string): number {",
+          "  return source.length;",
+          "}",
+          "",
+          'const document = await parseDocument("source", signal);',
+          "",
+        ].join("\n"),
+      },
+    ],
+    patch: `*** Begin Patch
+*** Update File: <CWD>/matcher.ts
+@@
+ function lineBounds(source: string): number {
+-  return source.length;
++  return Buffer.byteLength(source);
+ }
+@@
+-async function parseDocument(source: string) {
++async function parseDocument(source: string, signal?: AbortSignal) {
+   return source;
+ }
+@@
+-const document = await parseDocument("source");
++const document = await parseDocument("source", signal);
+*** End Patch`,
+    expected: {
+      outcome: "verification-error",
+      messagePattern: /Failed to find expected lines/,
+    },
+  },
+  {
     id: "multi-chunk unicode insertion and deletion",
     sourceFingerprints: ["2ed7736dbe45facc", "46fbd0dc973e9eec"],
     productionObservation:
