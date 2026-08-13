@@ -452,6 +452,29 @@ this line is invalid
   );
   await assert.rejects(readFile(join(cwd, "created.txt")), { code: "ENOENT" });
 
+  await assert.rejects(
+    applyPatch(
+      cwd,
+      `*** Begin Patch
+*** Update File: actual.txt
+@@
+ context
+ *** Delete File: header-looking-context.txt
+invalid update line
+*** End Patch`,
+    ),
+    (error: unknown) => {
+      assert.ok(error instanceof ApplyPatchVerificationError);
+      assert.equal(error.details.failure?.phase, "parse");
+      assert.equal(error.details.failure?.failedInstruction, 1);
+      assert.deepEqual(
+        error.details.instructions?.map(({ kind, path, status }) => ({ kind, path, status })),
+        [{ kind: "update", path: "actual.txt", status: "failed" }],
+      );
+      return true;
+    },
+  );
+
   let preflightDetails: ApplyPatchDetails | undefined;
   await assert.rejects(
     applyPatch(
@@ -543,7 +566,7 @@ void test("matches Codex unrestricted path and symlink semantics", async (t) => 
   assert.equal(await readFile(absolutePath, "utf8"), "absolute\n");
   assert.equal(await readFile(join(cwd, ".git/config"), "utf8"), "new config\n");
   assert.equal(await readFile(join(outside, "secret.txt"), "utf8"), "exposed\n");
-  assert.equal(details.exact, false);
+  assert.equal(details.exact, true);
 });
 
 void test("registers the Codex freeform tool with model, UI, and failed-history parity", async (t) => {

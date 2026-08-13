@@ -7,6 +7,7 @@ import {
   mkdir,
   mkdtemp,
   readFile,
+  readdir,
   readlink,
   rm,
   stat,
@@ -184,6 +185,47 @@ void test("evaluates repeated paths against sequential virtual state", async (t)
   assert.equal(await readFile(join(cwd, "back-a.txt"), "utf8"), "back\n");
 });
 
+void test("skips a failed move only when every entry effect is safely dominated", async (t) => {
+  const cwd = await workspace(t);
+  await writeFile(join(cwd, "source.txt"), "source\n");
+  await writeFile(join(cwd, "destination.txt"), "destination\n");
+
+  const details = await applyPatch(
+    cwd,
+    patch(
+      "*** Update File: source.txt\n",
+      "*** Move to: destination.txt\n",
+      "@@\n",
+      "-missing\n",
+      "+unknown\n",
+      "*** Add File: source.txt\n+new source\n",
+      "*** Add File: destination.txt\n+new destination\n",
+    ),
+  );
+
+  assert.equal(details.instructions?.[0]?.status, "dead");
+  assert.equal(await readFile(join(cwd, "source.txt"), "utf8"), "new source\n");
+  assert.equal(await readFile(join(cwd, "destination.txt"), "utf8"), "new destination\n");
+
+  await assert.rejects(
+    applyPatch(
+      cwd,
+      patch(
+        "*** Update File: source.txt\n",
+        "*** Move to: nested/destination.txt\n",
+        "@@\n",
+        "-missing\n",
+        "+unknown\n",
+        "*** Delete File: source.txt\n",
+        "*** Delete File: nested/destination.txt\n",
+      ),
+    ),
+    ApplyPatchVerificationError,
+  );
+  assert.equal(await readFile(join(cwd, "source.txt"), "utf8"), "new source\n");
+  await assertMissing(join(cwd, "nested"));
+});
+
 void test("rejects observed unknown updates and binary text edits before any writes", async (t) => {
   const cwd = await workspace(t);
   await writeFile(join(cwd, "a.txt"), "source\n");
@@ -279,7 +321,7 @@ void test("preserves hard-link observations across sequential content writes", a
   assert.equal(await readFile(join(cwd, "alias-b.txt"), "utf8"), "final\n");
 });
 
-void test("preserves symlink target observations across sequential writes", async (t) => {
+void test("follows symlinks for updates but replaces them for adds", async (t) => {
   const cwd = await workspace(t);
   await writeFile(join(cwd, "target.txt"), "before\n");
   await symlink("target.txt", join(cwd, "alias.txt"));
@@ -289,14 +331,304 @@ void test("preserves symlink target observations across sequential writes", asyn
     patch(
       "*** Update File: alias.txt\n@@\n-before\n+after\n",
       "*** Update File: target.txt\n@@\n-after\n+final\n",
-      "*** Add File: alias.txt\n+added through link\n",
-      "*** Update File: target.txt\n@@\n-added through link\n+done\n",
+      "*** Add File: alias.txt\n+independent\n",
+      "*** Update File: alias.txt\n@@\n-independent\n+done\n",
     ),
   );
 
-  assert.equal(await readFile(join(cwd, "target.txt"), "utf8"), "done\n");
-  assert.equal(await readlink(join(cwd, "alias.txt")), "target.txt");
+  assert.equal(await readFile(join(cwd, "target.txt"), "utf8"), "final\n");
+  assert.equal(await readFile(join(cwd, "alias.txt"), "utf8"), "done\n");
+  await assert.rejects(readlink(join(cwd, "alias.txt")), { code: "EINVAL" });
 });
+
+void test("replaces live and dangling symlinks on add without touching their targets", async (t) => {
+  const cwd = await workspace(t);
+  await writeFile(join(cwd, "target.txt"), "same\n");
+  await symlink("target.txt", join(cwd, "live.txt"));
+  await symlink("missing.txt", join(cwd, "dangling.txt"));
+
+  const details = await applyPatch(
+    cwd,
+    patch("*** Add File: live.txt\n+same\n", "*** Add File: dangling.txt\n+created here\n"),
+  );
+
+  assert.equal(details.exact, true);
+  assert.equal(await readFile(join(cwd, "live.txt"), "utf8"), "same\n");
+  assert.equal(await readFile(join(cwd, "dangling.txt"), "utf8"), "created here\n");
+  assert.equal(await readFile(join(cwd, "target.txt"), "utf8"), "same\n");
+  await assertMissing(join(cwd, "missing.txt"));
+  await assert.rejects(readlink(join(cwd, "live.txt")), { code: "EINVAL" });
+  await assert.rejects(readlink(join(cwd, "dangling.txt")), { code: "EINVAL" });
+});
+
+void test("tracks symlink chains and rejects links made dangling earlier in the patch", async (t) => {
+  const cwd = await workspace(t);
+  await writeFile(join(cwd, "target.txt"), "before\n");
+  await symlink("target.txt", join(cwd, "middle.txt"));
+  await symlink("middle.txt", join(cwd, "outer.txt"));
+
+  await applyPatch(
+    cwd,
+    patch(
+      "*** Update File: outer.txt\n@@\n-before\n+after\n",
+      "*** Update File: middle.txt\n@@\n-after\n+final\n",
+    ),
+  );
+  assert.equal(await readFile(join(cwd, "target.txt"), "utf8"), "final\n");
+
+  await assert.rejects(
+    applyPatch(
+      cwd,
+      patch(
+        "*** Delete File: target.txt\n",
+        "*** Update File: outer.txt\n@@\n-final\n+should not happen\n",
+      ),
+    ),
+    /symbolic link target does not exist/,
+  );
+  assert.equal(await readFile(join(cwd, "target.txt"), "utf8"), "final\n");
+});
+
+void test("materializes state-changing symlink moves without modifying either target", async (t) => {
+  const cwd = await workspace(t);
+  await writeFile(join(cwd, "source-target.txt"), "source old\n");
+  await writeFile(join(cwd, "destination-target.txt"), "destination old\n");
+  await symlink("source-target.txt", join(cwd, "source-link.txt"));
+  await symlink("destination-target.txt", join(cwd, "destination-link.txt"));
+
+  await applyPatch(
+    cwd,
+    patch(
+      "*** Update File: source-link.txt\n",
+      "*** Move to: destination-link.txt\n",
+      "@@\n",
+      "-source old\n",
+      "+moved new\n",
+    ),
+  );
+
+  await assertMissing(join(cwd, "source-link.txt"));
+  assert.equal(await readFile(join(cwd, "destination-link.txt"), "utf8"), "moved new\n");
+  await assert.rejects(readlink(join(cwd, "destination-link.txt")), { code: "EINVAL" });
+  assert.equal(await readFile(join(cwd, "source-target.txt"), "utf8"), "source old\n");
+  assert.equal(await readFile(join(cwd, "destination-target.txt"), "utf8"), "destination old\n");
+});
+
+void test("moves dangling symlink entries opaquely", async (t) => {
+  const cwd = await workspace(t);
+  await symlink("missing-source-target", join(cwd, "source-link"));
+  await symlink("missing-destination-target", join(cwd, "destination-link"));
+
+  await applyPatch(cwd, patch("*** Update File: source-link\n*** Move to: destination-link\n"));
+
+  await assertMissing(join(cwd, "source-link"));
+  assert.equal(await readlink(join(cwd, "destination-link")), "missing-source-target");
+  await assertMissing(join(cwd, "missing-source-target"));
+  await assertMissing(join(cwd, "missing-destination-target"));
+});
+
+void test("preserves hard-link semantics across replacements, moves, and planned unlinks", async (t) => {
+  const cwd = await workspace(t);
+  await writeFile(join(cwd, "add-a.txt"), "old add\n");
+  await chmod(join(cwd, "add-a.txt"), 0o754);
+  await link(join(cwd, "add-a.txt"), join(cwd, "add-b.txt"));
+
+  await writeFile(join(cwd, "move-a.txt"), "old move\n");
+  await chmod(join(cwd, "move-a.txt"), 0o751);
+  await link(join(cwd, "move-a.txt"), join(cwd, "move-b.txt"));
+  await writeFile(join(cwd, "destination.txt"), "old destination\n");
+  await link(join(cwd, "destination.txt"), join(cwd, "destination-b.txt"));
+
+  await writeFile(join(cwd, "delete-a.txt"), "delete then update\n");
+  await link(join(cwd, "delete-a.txt"), join(cwd, "delete-b.txt"));
+
+  await applyPatch(
+    cwd,
+    patch(
+      "*** Add File: add-a.txt\n+new add\n",
+      "*** Update File: move-a.txt\n",
+      "*** Move to: destination.txt\n",
+      "@@\n",
+      "-old move\n",
+      "+new move\n",
+      "*** Delete File: delete-a.txt\n",
+      "*** Update File: delete-b.txt\n@@\n-delete then update\n+updated survivor\n",
+    ),
+  );
+
+  assert.equal(await readFile(join(cwd, "add-a.txt"), "utf8"), "new add\n");
+  assert.equal(await readFile(join(cwd, "add-b.txt"), "utf8"), "old add\n");
+  assert.notEqual(
+    (await stat(join(cwd, "add-a.txt"))).ino,
+    (await stat(join(cwd, "add-b.txt"))).ino,
+  );
+  assert.equal((await stat(join(cwd, "add-a.txt"))).mode & 0o777, 0o754);
+
+  await assertMissing(join(cwd, "move-a.txt"));
+  assert.equal(await readFile(join(cwd, "move-b.txt"), "utf8"), "old move\n");
+  assert.equal(await readFile(join(cwd, "destination.txt"), "utf8"), "new move\n");
+  assert.equal(await readFile(join(cwd, "destination-b.txt"), "utf8"), "old destination\n");
+  assert.equal((await stat(join(cwd, "destination.txt"))).mode & 0o777, 0o751);
+  assert.notEqual(
+    (await stat(join(cwd, "destination.txt"))).ino,
+    (await stat(join(cwd, "destination-b.txt"))).ino,
+  );
+
+  await assertMissing(join(cwd, "delete-a.txt"));
+  assert.equal(await readFile(join(cwd, "delete-b.txt"), "utf8"), "updated survivor\n");
+});
+
+void test("keeps hard-link topology for no-op adds and pure native moves", async (t) => {
+  const cwd = await workspace(t);
+  await writeFile(join(cwd, "same-a.txt"), "same\n");
+  await link(join(cwd, "same-a.txt"), join(cwd, "same-b.txt"));
+
+  await writeFile(join(cwd, "source-a.txt"), "source\n");
+  await link(join(cwd, "source-a.txt"), join(cwd, "source-b.txt"));
+  await writeFile(join(cwd, "destination-a.txt"), "destination\n");
+  await link(join(cwd, "destination-a.txt"), join(cwd, "destination-b.txt"));
+
+  await applyPatch(
+    cwd,
+    patch(
+      "*** Add File: same-a.txt\n+same\n",
+      "*** Update File: source-a.txt\n*** Move to: destination-a.txt\n",
+    ),
+  );
+
+  assert.equal(
+    (await stat(join(cwd, "same-a.txt"))).ino,
+    (await stat(join(cwd, "same-b.txt"))).ino,
+  );
+  await assertMissing(join(cwd, "source-a.txt"));
+  assert.equal(await readFile(join(cwd, "destination-a.txt"), "utf8"), "source\n");
+  assert.equal(await readFile(join(cwd, "source-b.txt"), "utf8"), "source\n");
+  assert.equal(
+    (await stat(join(cwd, "destination-a.txt"))).ino,
+    (await stat(join(cwd, "source-b.txt"))).ino,
+  );
+  assert.equal(await readFile(join(cwd, "destination-b.txt"), "utf8"), "destination\n");
+  assert.notEqual(
+    (await stat(join(cwd, "destination-a.txt"))).ino,
+    (await stat(join(cwd, "destination-b.txt"))).ino,
+  );
+});
+
+void test("deletes symbolic-link entries without deleting their targets", async (t) => {
+  const cwd = await workspace(t);
+  await writeFile(join(cwd, "target.txt"), "preserved\n");
+  await symlink("target.txt", join(cwd, "alias.txt"));
+
+  await applyPatch(cwd, patch("*** Delete File: alias.txt\n"));
+
+  await assertMissing(join(cwd, "alias.txt"));
+  assert.equal(await readFile(join(cwd, "target.txt"), "utf8"), "preserved\n");
+});
+
+void test("shares virtual state through a symlinked parent without moving the entry twice", async (t) => {
+  const cwd = await workspace(t);
+  await mkdir(join(cwd, "real"));
+  await symlink("real", join(cwd, "alias"));
+  await writeFile(join(cwd, "real", "file.txt"), "before\n");
+
+  await applyPatch(
+    cwd,
+    patch(
+      "*** Update File: real/file.txt\n@@\n-before\n+after\n",
+      "*** Update File: alias/file.txt\n@@\n-after\n+final\n",
+      "*** Update File: real/file.txt\n*** Move to: alias/file.txt\n",
+    ),
+  );
+
+  assert.equal(await readFile(join(cwd, "real", "file.txt"), "utf8"), "final\n");
+  assert.equal(await readFile(join(cwd, "alias", "file.txt"), "utf8"), "final\n");
+  assert.deepEqual(await readdir(join(cwd, "real")), ["file.txt"]);
+});
+
+void test("updates same-entry moves safely through a symlinked parent", async (t) => {
+  const cwd = await workspace(t);
+  await mkdir(join(cwd, "real"));
+  await symlink("real", join(cwd, "alias"));
+  await writeFile(join(cwd, "real", "file.txt"), "before\n");
+  await link(join(cwd, "real", "file.txt"), join(cwd, "other-link.txt"));
+
+  await applyPatch(
+    cwd,
+    patch(
+      "*** Update File: real/file.txt\n",
+      "*** Move to: alias/file.txt\n",
+      "@@\n",
+      "-before\n",
+      "+after\n",
+    ),
+  );
+
+  assert.equal(await readFile(join(cwd, "real", "file.txt"), "utf8"), "after\n");
+  assert.equal(await readFile(join(cwd, "other-link.txt"), "utf8"), "before\n");
+  assert.notEqual(
+    (await stat(join(cwd, "real", "file.txt"))).ino,
+    (await stat(join(cwd, "other-link.txt"))).ino,
+  );
+});
+
+void test("replaces a destination symlink that points back to the move source", async (t) => {
+  const cwd = await workspace(t);
+  await writeFile(join(cwd, "source.txt"), "old\n");
+  await symlink("source.txt", join(cwd, "destination.txt"));
+
+  await applyPatch(
+    cwd,
+    patch(
+      "*** Update File: source.txt\n",
+      "*** Move to: destination.txt\n",
+      "@@\n",
+      "-old\n",
+      "+new\n",
+    ),
+  );
+
+  await assertMissing(join(cwd, "source.txt"));
+  assert.equal(await readFile(join(cwd, "destination.txt"), "utf8"), "new\n");
+  await assert.rejects(readlink(join(cwd, "destination.txt")), { code: "EINVAL" });
+});
+
+void test(
+  "establishes exact case-only spellings without mutating collateral hard links",
+  { skip: process.platform !== "darwin" && process.platform !== "win32" },
+  async (t) => {
+    const cwd = await workspace(t);
+    await writeFile(join(cwd, "Pure.txt"), "pure\n");
+    await writeFile(join(cwd, "State.txt"), "before\n");
+    await link(join(cwd, "State.txt"), join(cwd, "state-hardlink.txt"));
+    await writeFile(join(cwd, "Add.txt"), "before add\n");
+
+    await applyPatch(
+      cwd,
+      patch(
+        "*** Update File: Pure.txt\n*** Move to: pure.txt\n",
+        "*** Update File: Pure.txt\n*** Move to: pure.txt\n",
+        "*** Update File: State.txt\n",
+        "*** Move to: state.txt\n",
+        "@@\n",
+        "-before\n",
+        "+after\n",
+        "*** Add File: add.txt\n+after add\n",
+      ),
+    );
+
+    const names = await readdir(cwd);
+    assert.ok(names.includes("pure.txt"));
+    assert.ok(names.includes("state.txt"));
+    assert.ok(names.includes("add.txt"));
+    assert.ok(!names.includes("Pure.txt"));
+    assert.ok(!names.includes("State.txt"));
+    assert.ok(!names.includes("Add.txt"));
+    assert.equal(await readFile(join(cwd, "pure.txt"), "utf8"), "pure\n");
+    assert.equal(await readFile(join(cwd, "state.txt"), "utf8"), "after\n");
+    assert.equal(await readFile(join(cwd, "state-hardlink.txt"), "utf8"), "before\n");
+    assert.equal(await readFile(join(cwd, "add.txt"), "utf8"), "after add\n");
+  },
+);
 
 void test("rejects directories and unproven missing-source moves", async (t) => {
   const cwd = await workspace(t);
@@ -310,6 +642,27 @@ void test("rejects directories and unproven missing-source moves", async (t) => 
   await assert.rejects(
     applyPatch(cwd, patch("*** Update File: missing.txt\n*** Move to: destination.txt\n")),
     /destination provenance is unproven/,
+  );
+  await assert.rejects(
+    applyPatch(cwd, patch("*** Add File: directory\n+blocked\n")),
+    /path is a directory/,
+  );
+  await assert.rejects(
+    applyPatch(cwd, patch("*** Delete File: directory\n")),
+    /path is a directory/,
+  );
+  await assert.rejects(
+    applyPatch(
+      cwd,
+      patch(
+        "*** Update File: destination.txt\n",
+        "*** Move to: directory\n",
+        "@@\n",
+        "-unrelated\n",
+        "+blocked\n",
+      ),
+    ),
+    /destination is a directory/,
   );
   assert.equal(await readFile(join(cwd, "destination.txt"), "utf8"), "unrelated\n");
 });

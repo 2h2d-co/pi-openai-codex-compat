@@ -1,5 +1,15 @@
 import assert from "node:assert/strict";
-import { chmod, lstat, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
+import {
+  chmod,
+  lstat,
+  mkdir,
+  mkdtemp,
+  readFile,
+  readdir,
+  readlink,
+  rm,
+  writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join, relative } from "node:path";
 import test, { type TestContext } from "node:test";
@@ -57,18 +67,39 @@ async function materializeFixture(
 
 async function snapshotTree(
   root: string,
-): Promise<Record<string, { bytes: string; mode: number }>> {
-  const snapshot: Record<string, { bytes: string; mode: number }> = {};
+): Promise<
+  Record<
+    string,
+    | { type: "directory"; mode: number }
+    | { type: "regular"; bytes: string; mode: number }
+    | { type: "symlink"; target: string; mode: number }
+  >
+> {
+  const snapshot: Awaited<ReturnType<typeof snapshotTree>> = {};
 
   async function visit(directory: string): Promise<void> {
     for (const entry of await readdir(directory, { withFileTypes: true })) {
       const path = join(directory, entry.name);
+      const relativePath = relative(root, path);
+      const metadata = await lstat(path);
       if (entry.isDirectory()) {
+        snapshot[relativePath] = {
+          type: "directory",
+          mode: metadata.mode & 0o777,
+        };
         await visit(path);
         continue;
       }
-      const metadata = await lstat(path);
-      snapshot[relative(root, path)] = {
+      if (entry.isSymbolicLink()) {
+        snapshot[relativePath] = {
+          type: "symlink",
+          target: await readlink(path),
+          mode: metadata.mode & 0o777,
+        };
+        continue;
+      }
+      snapshot[relativePath] = {
+        type: "regular",
         bytes: (await readFile(path)).toString("base64"),
         mode: metadata.mode & 0o777,
       };
@@ -77,6 +108,45 @@ async function snapshotTree(
 
   await visit(root);
   return snapshot;
+}
+
+function expectedSuccessTree(
+  before: Awaited<ReturnType<typeof snapshotTree>>,
+  fixture: ProductionApplyPatchFixture,
+  materialized: MaterializedFixture,
+): Awaited<ReturnType<typeof snapshotTree>> {
+  if (fixture.expected.outcome !== "success") throw new Error("success fixture required");
+  const expected = structuredClone(before);
+
+  for (const absentPath of fixture.expected.absent) {
+    const relativePath = relative(
+      materialized.root,
+      materialize(absentPath, materialized.root, materialized.cwd),
+    );
+    for (const path of Object.keys(expected)) {
+      if (path === relativePath || path.startsWith(`${relativePath}/`)) delete expected[path];
+    }
+  }
+
+  for (const file of fixture.expected.files) {
+    const absolutePath = materialize(file.path, materialized.root, materialized.cwd);
+    const relativePath = relative(materialized.root, absolutePath);
+    let parent = dirname(relativePath);
+    while (parent !== "." && parent !== "") {
+      expected[parent] ??= {
+        type: "directory",
+        mode: 0o777 & ~process.umask(),
+      };
+      parent = dirname(parent);
+    }
+    const prior = expected[relativePath];
+    expected[relativePath] = {
+      type: "regular",
+      bytes: Buffer.from(file.content).toString("base64"),
+      mode: file.mode ?? (prior?.type === "regular" ? prior.mode : 0o666 & ~process.umask()),
+    };
+  }
+  return expected;
 }
 
 for (const fixture of PRODUCTION_APPLY_PATCH_FIXTURES) {
@@ -113,6 +183,10 @@ for (const fixture of PRODUCTION_APPLY_PATCH_FIXTURES) {
         code: "ENOENT",
       });
     }
+    assert.deepEqual(
+      await snapshotTree(materialized.root),
+      expectedSuccessTree(before, fixture, materialized),
+    );
   });
 }
 
