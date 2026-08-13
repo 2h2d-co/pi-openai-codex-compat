@@ -979,7 +979,7 @@ void test("fails closed when equally ranked locations exceed the candidate limit
 -target
 +changed
 *** End Patch`,
-    /more than 64 equally ranked locations/u,
+    /65 equally ranked locations exceed the 64-candidate limit/u,
   );
 });
 

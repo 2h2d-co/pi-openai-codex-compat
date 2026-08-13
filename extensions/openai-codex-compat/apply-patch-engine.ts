@@ -19,7 +19,13 @@ import type { Stats } from "node:fs";
 import { randomUUID } from "node:crypto";
 import { basename, dirname, isAbsolute, join, parse, relative, resolve, sep } from "node:path";
 import { generateDiffString, withFileMutationQueue } from "@earendil-works/pi-coding-agent";
-import { deriveNewContent, type UpdateChunk, type UpdateHunkLine } from "./apply-patch-matcher.ts";
+import {
+  deriveNewContent,
+  FormatterMatchError,
+  type FormatterMatchFailureDetails,
+  type UpdateChunk,
+  type UpdateHunkLine,
+} from "./apply-patch-matcher.ts";
 
 export type { UpdateChunk, UpdateHunkLine } from "./apply-patch-matcher.ts";
 
@@ -147,6 +153,7 @@ export type ApplyPatchFailureDetails = {
   phase: "input" | "parse" | "preflight" | "execution";
   message: string;
   failedInstruction?: number;
+  matcher?: FormatterMatchFailureDetails;
 };
 
 export type ApplyPatchDetails = {
@@ -646,7 +653,37 @@ export function cloneApplyPatchDetails(details: ApplyPatchDetails): ApplyPatchDe
     ...(details.instructions
       ? { instructions: details.instructions.map((instruction) => ({ ...instruction })) }
       : {}),
-    ...(details.failure ? { failure: { ...details.failure } } : {}),
+    ...(details.failure
+      ? {
+          failure: {
+            ...details.failure,
+            ...(details.failure.matcher
+              ? {
+                  matcher: {
+                    ...details.failure.matcher,
+                    candidates: details.failure.matcher.candidates.map((range) => ({ ...range })),
+                    ...(details.failure.matcher.previousCandidates
+                      ? {
+                          previousCandidates: details.failure.matcher.previousCandidates.map(
+                            (range) => ({ ...range }),
+                          ),
+                        }
+                      : {}),
+                    ...(details.failure.matcher.replacementCandidates
+                      ? {
+                          replacementCandidates: details.failure.matcher.replacementCandidates.map(
+                            (range) => ({
+                              ...range,
+                            }),
+                          ),
+                        }
+                      : {}),
+                  },
+                }
+              : {}),
+          },
+        }
+      : {}),
   };
 }
 
@@ -816,15 +853,18 @@ type SemanticPlan = {
 class SemanticPlanningError extends Error {
   readonly instructions: ApplyPatchInstructionDetails[];
   readonly failedInstruction: number;
+  readonly matcher: FormatterMatchFailureDetails | undefined;
 
   constructor(
     message: string,
     instructions: ApplyPatchInstructionDetails[],
     failedInstruction: number,
+    matcher?: FormatterMatchFailureDetails,
   ) {
     super(message);
     this.instructions = instructions;
     this.failedInstruction = failedInstruction;
+    this.matcher = matcher;
   }
 }
 
@@ -981,6 +1021,7 @@ class SemanticPlanner {
           instruction.error,
           this.instructions.map((item) => ({ ...item })),
           instruction.index,
+          error instanceof FormatterMatchError ? error.details : undefined,
         );
       }
     }
@@ -2642,6 +2683,7 @@ function failedApplyPatchDetails(
   message: string,
   instructions: readonly ApplyPatchInstructionDetails[],
   failedInstruction?: number,
+  matcher?: FormatterMatchFailureDetails,
 ): ApplyPatchDetails {
   const details = emptyDetails();
   details.status = "failed";
@@ -2660,6 +2702,7 @@ function failedApplyPatchDetails(
     phase,
     message,
     ...(failedInstruction !== undefined ? { failedInstruction } : {}),
+    ...(matcher ? { matcher } : {}),
   };
   return details;
 }
@@ -2705,6 +2748,7 @@ async function buildPlan(
       message,
       instructions,
       error instanceof SemanticPlanningError ? error.failedInstruction : undefined,
+      error instanceof SemanticPlanningError ? error.matcher : undefined,
     );
     throw new ApplyPatchVerificationError(`apply_patch verification failed: ${message}`, details);
   }

@@ -994,6 +994,64 @@ void test("registers the Codex freeform tool with model, UI, and failed-history 
   await assert.rejects(readFile(join(cwd, "verification-created.txt")), { code: "ENOENT" });
   assert.equal(await readFile(join(cwd, "verification-existing.txt"), "utf8"), "keep\n");
 
+  await writeFile(
+    join(cwd, "ordered.md"),
+    ["## Earlier", "", "Earlier anchor.", "", "## Later", "", "Later anchor.", ""].join("\n"),
+  );
+  const reverseOrderedPatch = `*** Begin Patch
+*** Update File: ordered.md
+@@
+ Later anchor.
++
++Later addition.
+@@
+ Earlier anchor.
++
++Earlier addition.
+*** End Patch`;
+  await assert.rejects(
+    registered!.execute("matcher-call", { patch: reverseOrderedPatch }, undefined, undefined, {
+      cwd,
+    } as never),
+    (error: unknown) => {
+      assert.ok(error instanceof Error);
+      assert.match(error.message, /No ordered formatter-tolerant mapping/u);
+      assert.match(error.message, /line 4 precedes edit group 1, matched at line 8/u);
+      assert.match(error.message, /Preflight failed; instruction 1 of 1: Update ordered\.md\./u);
+      assert.match(error.message, /No files were changed\./u);
+      return true;
+    },
+  );
+  const matcherResult = toolResultHandler?.({
+    toolName: "apply_patch",
+    toolCallId: "matcher-call",
+  });
+  assert.equal(matcherResult?.details.failure?.matcher?.reason, "no-ordered-mapping");
+  const matcherComponent = registered!.renderResult!(
+    { content: [], details: matcherResult!.details },
+    { expanded: false, isPartial: false },
+    theme,
+    {
+      args: { patch: reverseOrderedPatch },
+      toolCallId: "matcher-call",
+      invalidate() {},
+      lastComponent: undefined,
+      state: {},
+      cwd,
+      executionStarted: true,
+      argsComplete: true,
+      isPartial: false,
+      expanded: false,
+      showImages: false,
+      isError: true,
+    },
+  );
+  const matcherText = stripAnsi(matcherComponent.render(120).join("\n"));
+  assert.match(matcherText, /Matcher: edit group 2 of 2 · chunk 2 of 2/u);
+  assert.match(matcherText, /Candidates: line 4/u);
+  assert.match(matcherText, /Previous group 1: line 8/u);
+  assert.match(matcherText, /Relationship: candidate precedes the previous group/u);
+
   const genericFailureComponent = registered!.renderResult!(
     { content: [], details: {} },
     { expanded: true, isPartial: false },

@@ -15,6 +15,10 @@ import {
   type ApplyPatchInstructionStatus,
   coalesceAppliedPatchChangesForRendering,
 } from "./apply-patch-engine.ts";
+import type {
+  FormatterMatchCandidateRange,
+  FormatterMatchFailureDetails,
+} from "./apply-patch-matcher.ts";
 import { usesLightToolPalette } from "./codex-tool-surface.ts";
 
 type DiffLineKind = "add" | "delete" | "context";
@@ -193,12 +197,73 @@ function isApplyPatchInstruction(value: unknown): value is ApplyPatchInstruction
   );
 }
 
+function isMatcherRange(value: unknown): value is FormatterMatchCandidateRange {
+  if (typeof value !== "object" || value === null) return false;
+  const range = value as { startLine?: unknown; endLine?: unknown };
+  return typeof range.startLine === "number" && typeof range.endLine === "number";
+}
+
+const MATCHER_REASONS = new Set<FormatterMatchFailureDetails["reason"]>([
+  "no-candidate",
+  "no-ordered-mapping",
+  "too-many-candidates",
+  "ambiguous-output",
+  "mapping-limit",
+  "overlapping-edits",
+]);
+
+function isFormatterMatchFailure(value: unknown): value is FormatterMatchFailureDetails {
+  if (typeof value !== "object" || value === null) return false;
+  const failure = value as {
+    reason?: unknown;
+    path?: unknown;
+    groupCount?: unknown;
+    groupIndex?: unknown;
+    chunkCount?: unknown;
+    chunkIndex?: unknown;
+    candidateCount?: unknown;
+    candidates?: unknown;
+    previousGroupIndex?: unknown;
+    previousCandidates?: unknown;
+    reverseOrdered?: unknown;
+    overlapping?: unknown;
+    replacementCandidateCount?: unknown;
+    replacementCandidates?: unknown;
+    oldExcerpt?: unknown;
+  };
+  return (
+    typeof failure.reason === "string" &&
+    MATCHER_REASONS.has(failure.reason as FormatterMatchFailureDetails["reason"]) &&
+    typeof failure.path === "string" &&
+    typeof failure.groupCount === "number" &&
+    (failure.groupIndex === undefined || typeof failure.groupIndex === "number") &&
+    (failure.chunkCount === undefined || typeof failure.chunkCount === "number") &&
+    (failure.chunkIndex === undefined || typeof failure.chunkIndex === "number") &&
+    typeof failure.candidateCount === "number" &&
+    Array.isArray(failure.candidates) &&
+    failure.candidates.every(isMatcherRange) &&
+    (failure.previousGroupIndex === undefined || typeof failure.previousGroupIndex === "number") &&
+    (failure.previousCandidates === undefined ||
+      (Array.isArray(failure.previousCandidates) &&
+        failure.previousCandidates.every(isMatcherRange))) &&
+    (failure.reverseOrdered === undefined || typeof failure.reverseOrdered === "boolean") &&
+    (failure.overlapping === undefined || typeof failure.overlapping === "boolean") &&
+    (failure.replacementCandidateCount === undefined ||
+      typeof failure.replacementCandidateCount === "number") &&
+    (failure.replacementCandidates === undefined ||
+      (Array.isArray(failure.replacementCandidates) &&
+        failure.replacementCandidates.every(isMatcherRange))) &&
+    (failure.oldExcerpt === undefined || typeof failure.oldExcerpt === "string")
+  );
+}
+
 function isApplyPatchFailure(value: unknown): value is ApplyPatchFailureDetails {
   if (typeof value !== "object" || value === null) return false;
   const failure = value as {
     phase?: unknown;
     message?: unknown;
     failedInstruction?: unknown;
+    matcher?: unknown;
   };
   return (
     (failure.phase === "input" ||
@@ -206,7 +271,8 @@ function isApplyPatchFailure(value: unknown): value is ApplyPatchFailureDetails 
       failure.phase === "preflight" ||
       failure.phase === "execution") &&
     typeof failure.message === "string" &&
-    (failure.failedInstruction === undefined || typeof failure.failedInstruction === "number")
+    (failure.failedInstruction === undefined || typeof failure.failedInstruction === "number") &&
+    (failure.matcher === undefined || isFormatterMatchFailure(failure.matcher))
   );
 }
 
@@ -525,6 +591,52 @@ function normalizedFailureMessage(details: ApplyPatchDetails, cwd: string): stri
     .replaceAll(homePrefix, `~${sep}`);
 }
 
+function matcherRange(range: FormatterMatchCandidateRange): string {
+  return range.startLine === range.endLine
+    ? `line ${range.startLine}`
+    : `lines ${range.startLine}-${range.endLine}`;
+}
+
+function matcherEvidence(
+  matcher: FormatterMatchFailureDetails,
+  cwd: string,
+  expanded: boolean,
+): string[] {
+  const lines: string[] = [];
+  if (matcher.groupIndex !== undefined) {
+    const chunk =
+      matcher.chunkIndex === undefined
+        ? ""
+        : ` · chunk ${matcher.chunkIndex} of ${matcher.chunkCount}`;
+    lines.push(`Matcher: edit group ${matcher.groupIndex} of ${matcher.groupCount}${chunk}`);
+  }
+  if (matcher.candidates.length > 0) {
+    lines.push(`Candidates: ${matcher.candidates.map(matcherRange).join(", ")}`);
+  }
+  if (matcher.previousGroupIndex !== undefined && matcher.previousCandidates?.length) {
+    lines.push(
+      `Previous group ${matcher.previousGroupIndex}: ${matcher.previousCandidates.map(matcherRange).join(", ")}`,
+    );
+  }
+  if (matcher.reverseOrdered) lines.push("Relationship: candidate precedes the previous group");
+  else if (matcher.overlapping) lines.push("Relationship: candidate overlaps the previous group");
+  if (matcher.replacementCandidateCount && matcher.replacementCandidates?.length) {
+    lines.push(
+      `Replacement already present: ${matcher.replacementCandidates.map(matcherRange).join(", ")}`,
+    );
+  }
+  if (expanded && matcher.oldExcerpt) {
+    lines.push(
+      ...matcher.oldExcerpt
+        .split("\n")
+        .map((line, index) =>
+          index === 0 ? `Expected old text: ${line}` : `                   ${line}`,
+        ),
+    );
+  }
+  return lines.map((line) => line.replace(resolve(cwd), ".").replace(homedir(), "~"));
+}
+
 function renderFailure(
   details: ApplyPatchDetails,
   theme: Theme,
@@ -553,6 +665,11 @@ function renderFailure(
   }
   if (messageLines.length > maximumLines) {
     lines.push(theme.fg("dim", `          … ${messageLines.length - maximumLines} more lines`));
+  }
+  if (details.failure?.matcher) {
+    for (const line of matcherEvidence(details.failure.matcher, cwd, expanded)) {
+      lines.push(`  ${theme.fg("dim", line)}`);
+    }
   }
   return lines;
 }

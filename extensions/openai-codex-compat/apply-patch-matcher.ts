@@ -35,11 +35,44 @@ type EditCandidate = {
 
 type EditGroup = {
   chunk: UpdateChunk;
+  chunkIndex: number;
+  chunkCount: number;
   oldLines: string[];
   newLines: string[];
   beforeContext: string[];
   afterContext: string[];
   endsChunk: boolean;
+};
+
+export type FormatterMatchCandidateRange = {
+  startLine: number;
+  endLine: number;
+};
+
+export type FormatterMatchFailureReason =
+  | "no-candidate"
+  | "no-ordered-mapping"
+  | "too-many-candidates"
+  | "ambiguous-output"
+  | "mapping-limit"
+  | "overlapping-edits";
+
+export type FormatterMatchFailureDetails = {
+  reason: FormatterMatchFailureReason;
+  path: string;
+  groupCount: number;
+  groupIndex?: number;
+  chunkCount?: number;
+  chunkIndex?: number;
+  candidateCount: number;
+  candidates: FormatterMatchCandidateRange[];
+  previousGroupIndex?: number;
+  previousCandidates?: FormatterMatchCandidateRange[];
+  reverseOrdered?: boolean;
+  overlapping?: boolean;
+  replacementCandidateCount?: number;
+  replacementCandidates?: FormatterMatchCandidateRange[];
+  oldExcerpt?: string;
 };
 
 type SyntaxPathEntry = {
@@ -124,7 +157,18 @@ const OPTIONAL_TRAILING_COMMA_PARENTS: Partial<Record<GrammarName, ReadonlySet<s
 const languagePromises = new Map<GrammarName, Promise<Language>>();
 let parserInitialization: Promise<void> | undefined;
 
-export class FormatterMatchAmbiguityError extends Error {}
+export class FormatterMatchError extends Error {
+  readonly details: FormatterMatchFailureDetails;
+
+  constructor(message: string, details: FormatterMatchFailureDetails) {
+    super(message);
+    this.details = details;
+  }
+}
+
+export class FormatterMatchAmbiguityError extends FormatterMatchError {}
+
+class OverlappingFormatterEditsError extends Error {}
 
 function throwIfAborted(signal: AbortSignal | undefined): void {
   if (signal?.aborted) throw new Error("apply_patch was cancelled.");
@@ -429,7 +473,7 @@ function deriveStrictContent(
 
 function editGroups(chunks: readonly UpdateChunk[]): EditGroup[] {
   const groups: EditGroup[] = [];
-  for (const chunk of chunks) {
+  for (const [chunkIndex, chunk] of chunks.entries()) {
     const chunkGroups: EditGroup[] = [];
     for (let index = 0; index < chunk.lines.length;) {
       if (chunk.lines[index]!.kind === "context") {
@@ -449,6 +493,8 @@ function editGroups(chunks: readonly UpdateChunk[]): EditGroup[] {
       }
       chunkGroups.push({
         chunk,
+        chunkIndex: chunkIndex + 1,
+        chunkCount: chunks.length,
         oldLines: segment.filter((line) => line.kind === "delete").map((line) => line.text),
         newLines: segment.filter((line) => line.kind === "add").map((line) => line.text),
         beforeContext: chunk.lines.slice(beforeStart, start).map((line) => line.text),
@@ -564,14 +610,95 @@ function candidateSatisfiesEndOfFile(
   );
 }
 
-function keepBestCandidates(candidates: EditCandidate[], path: string): EditCandidate[] {
+function candidateRange(candidate: EditCandidate): FormatterMatchCandidateRange {
+  return {
+    startLine: candidate.startLine + 1,
+    endLine: Math.max(candidate.startLine + 1, candidate.endLine),
+  };
+}
+
+function candidateRanges(candidates: readonly EditCandidate[]): FormatterMatchCandidateRange[] {
+  return candidates.slice(0, 3).map(candidateRange);
+}
+
+function lineRangeLabel(range: FormatterMatchCandidateRange): string {
+  return range.startLine === range.endLine
+    ? `line ${range.startLine}`
+    : `lines ${range.startLine}-${range.endLine}`;
+}
+
+function rangeList(ranges: readonly FormatterMatchCandidateRange[]): string {
+  return ranges.map(lineRangeLabel).join(", ");
+}
+
+export function formatFormatterMatchFailure(details: FormatterMatchFailureDetails): string {
+  const group =
+    details.groupIndex === undefined
+      ? ""
+      : `edit group ${details.groupIndex} of ${details.groupCount}`;
+  const chunk =
+    details.chunkIndex === undefined
+      ? ""
+      : ` (chunk ${details.chunkIndex} of ${details.chunkCount})`;
+  switch (details.reason) {
+    case "no-candidate": {
+      const replacement =
+        details.replacementCandidateCount && details.replacementCandidates?.length
+          ? ` The requested replacement already appears at ${rangeList(details.replacementCandidates)}.`
+          : "";
+      return `No formatter-tolerant candidate for ${group}${chunk} in ${details.path}.${replacement}`;
+    }
+    case "no-ordered-mapping": {
+      const current = rangeList(details.candidates);
+      const previous = rangeList(details.previousCandidates ?? []);
+      const relation = details.reverseOrdered
+        ? `${current} precedes edit group ${details.previousGroupIndex}, matched at ${previous}`
+        : details.overlapping
+          ? `${current} overlaps edit group ${details.previousGroupIndex}, matched at ${previous}`
+          : `no candidate at ${current} can follow edit group ${details.previousGroupIndex}, matched at ${previous}`;
+      return `No ordered formatter-tolerant mapping for ${group}${chunk} in ${details.path}: ${relation}. The hunks may be in reverse source order or overlap.`;
+    }
+    case "too-many-candidates":
+      return `Formatter-tolerant match is ambiguous for ${group}${chunk} in ${details.path}: ${details.candidateCount} equally ranked locations exceed the ${MAX_CANDIDATES_PER_GROUP}-candidate limit.`;
+    case "ambiguous-output":
+      return `Formatter-tolerant match is ambiguous in ${details.path}: candidate mappings produce different files.`;
+    case "mapping-limit":
+      return `Formatter-tolerant match is ambiguous in ${details.path}: more than ${MAX_COMPLETE_MAPPINGS} candidate mappings require evaluation.`;
+    case "overlapping-edits":
+      return `Formatter-tolerant candidate edits overlap in ${details.path}.`;
+  }
+}
+
+function oldExcerpt(group: EditGroup): string | undefined {
+  if (group.oldLines.length === 0) return undefined;
+  const lines = group.oldLines.slice(0, 3);
+  let excerpt = lines.join("\n");
+  if (group.oldLines.length > lines.length) excerpt = `${excerpt}\n…`;
+  return excerpt.length > 240 ? `${excerpt.slice(0, 239)}…` : excerpt;
+}
+
+function keepBestCandidates(
+  candidates: EditCandidate[],
+  path: string,
+  group: EditGroup,
+  groupIndex: number,
+  groupCount: number,
+): EditCandidate[] {
   if (candidates.length === 0) return [];
   const bestScore = Math.max(...candidates.map((candidate) => candidate.score));
   const best = candidates.filter((candidate) => candidate.score === bestScore);
   if (best.length > MAX_CANDIDATES_PER_GROUP) {
-    throw new FormatterMatchAmbiguityError(
-      `Formatter-tolerant match is ambiguous in ${path}: more than ${MAX_CANDIDATES_PER_GROUP} equally ranked locations`,
-    );
+    const details: FormatterMatchFailureDetails = {
+      reason: "too-many-candidates",
+      path,
+      groupCount,
+      groupIndex: groupIndex + 1,
+      chunkCount: group.chunkCount,
+      chunkIndex: group.chunkIndex,
+      candidateCount: best.length,
+      candidates: candidateRanges(best),
+    };
+    throw new FormatterMatchAmbiguityError(formatFormatterMatchFailure(details), details);
   }
   return best;
 }
@@ -1265,7 +1392,7 @@ function applyEdits(source: Buffer, edits: readonly ByteEdit[]): Buffer {
     .sort((left, right) => left.start - right.start || left.index - right.index);
   for (let index = 1; index < ordered.length; index++) {
     if (ordered[index]!.start < ordered[index - 1]!.end) {
-      throw new FormatterMatchAmbiguityError("formatter-tolerant edits overlap");
+      throw new OverlappingFormatterEditsError("formatter-tolerant edits overlap");
     }
   }
   let result = source;
@@ -1312,6 +1439,132 @@ function distinctMappedOutputs(
   return { outputs, exhaustive };
 }
 
+function candidateFollows(
+  candidate: EditCandidate,
+  previousCandidates: readonly EditCandidate[],
+): boolean {
+  return previousCandidates.some((previous) => candidate.start >= previous.end);
+}
+
+function noOrderedMappingDetails(
+  path: string,
+  groups: readonly EditGroup[],
+  candidateSets: readonly EditCandidate[][],
+): FormatterMatchError {
+  let reachable = [...candidateSets[0]!];
+  for (let groupIndex = 1; groupIndex < candidateSets.length; groupIndex++) {
+    const groupCandidates = candidateSets[groupIndex]!;
+    const nextReachable = groupCandidates.filter((candidate) =>
+      candidateFollows(candidate, reachable),
+    );
+    if (nextReachable.length > 0) {
+      reachable = nextReachable;
+      continue;
+    }
+    const reverseOrdered = groupCandidates.some((candidate) =>
+      reachable.some((previous) => candidate.end <= previous.start),
+    );
+    const overlapping = groupCandidates.some((candidate) =>
+      reachable.some(
+        (previous) => candidate.start < previous.end && candidate.end > previous.start,
+      ),
+    );
+    const excerpt = oldExcerpt(groups[groupIndex]!);
+    const details: FormatterMatchFailureDetails = {
+      reason: "no-ordered-mapping",
+      path,
+      groupCount: groups.length,
+      groupIndex: groupIndex + 1,
+      chunkCount: groups[groupIndex]!.chunkCount,
+      chunkIndex: groups[groupIndex]!.chunkIndex,
+      candidateCount: groupCandidates.length,
+      candidates: candidateRanges(groupCandidates),
+      previousGroupIndex: groupIndex,
+      previousCandidates: candidateRanges(reachable),
+      ...(reverseOrdered ? { reverseOrdered: true } : {}),
+      ...(overlapping ? { overlapping: true } : {}),
+      ...(excerpt ? { oldExcerpt: excerpt } : {}),
+    };
+    return new FormatterMatchError(formatFormatterMatchFailure(details), details);
+  }
+  const details: FormatterMatchFailureDetails = {
+    reason: "no-ordered-mapping",
+    path,
+    groupCount: groups.length,
+    candidateCount: 0,
+    candidates: [],
+  };
+  return new FormatterMatchError(formatFormatterMatchFailure(details), details);
+}
+
+async function formatterCandidates(
+  group: EditGroup,
+  normalized: ReturnType<typeof normalizedSource>,
+  path: string,
+  documentCache: Map<string, Promise<StructuralDocument[]>>,
+  signal?: AbortSignal,
+): Promise<EditCandidate[]> {
+  const lineLevelCandidates =
+    group.oldLines.length === 0
+      ? insertionCandidates(group, normalized.lines, normalized.lineStarts, path)
+      : lineCandidates(group, normalized.lines, normalized.lineStarts, path);
+  if (group.oldLines.length === 0) return lineLevelCandidates;
+
+  const grammar = grammarForPath(path) ?? (isMarkdownPath(path) ? fenceGrammar(group) : undefined);
+  if (!grammar) return lineLevelCandidates;
+  const cacheKey = `${isMarkdownPath(path) ? "embedded:" : "file:"}${grammar}`;
+  let documentsPromise = documentCache.get(cacheKey);
+  if (!documentsPromise) {
+    documentsPromise = structuralDocuments(
+      path,
+      group,
+      normalized.source,
+      normalized.lines,
+      normalized.lineStarts,
+      signal,
+    );
+    documentCache.set(cacheKey, documentsPromise);
+  }
+  const documents = await documentsPromise;
+  const structuralCandidates = (
+    await Promise.all(
+      documents.map((document) =>
+        tokenCandidates(
+          group,
+          document,
+          normalized.source,
+          normalized.lines,
+          normalized.lineStarts,
+          path,
+          signal,
+        ),
+      ),
+    )
+  ).flat();
+  return [...lineLevelCandidates, ...structuralCandidates];
+}
+
+async function requestedReplacementCandidates(
+  group: EditGroup,
+  normalized: ReturnType<typeof normalizedSource>,
+  path: string,
+  documentCache: Map<string, Promise<StructuralDocument[]>>,
+  signal?: AbortSignal,
+): Promise<EditCandidate[]> {
+  if (group.oldLines.length === 0 || group.newLines.length === 0) return [];
+  return formatterCandidates(
+    {
+      ...group,
+      oldLines: group.newLines,
+      newLines: group.newLines,
+    },
+    normalized,
+    path,
+    documentCache,
+    signal,
+  );
+}
+
 async function deriveFormatterTolerantContent(
   content: string,
   chunks: readonly UpdateChunk[],
@@ -1324,65 +1577,83 @@ async function deriveFormatterTolerantContent(
   const documentCache = new Map<string, Promise<StructuralDocument[]>>();
   const candidates: EditCandidate[][] = [];
 
-  for (const group of groups) {
+  for (const [groupIndex, group] of groups.entries()) {
     throwIfAborted(signal);
-    const lineLevelCandidates =
-      group.oldLines.length === 0
-        ? insertionCandidates(group, normalized.lines, normalized.lineStarts, path)
-        : lineCandidates(group, normalized.lines, normalized.lineStarts, path);
-    let structuralCandidates: EditCandidate[] = [];
-    if (group.oldLines.length > 0) {
-      const grammar =
-        grammarForPath(path) ?? (isMarkdownPath(path) ? fenceGrammar(group) : undefined);
-      if (grammar) {
-        const cacheKey = `${isMarkdownPath(path) ? "embedded:" : "file:"}${grammar}`;
-        let documentsPromise = documentCache.get(cacheKey);
-        if (!documentsPromise) {
-          documentsPromise = structuralDocuments(
-            path,
-            group,
-            normalized.source,
-            normalized.lines,
-            normalized.lineStarts,
-            signal,
-          );
-          documentCache.set(cacheKey, documentsPromise);
-        }
-        const documents = await documentsPromise;
-        structuralCandidates = (
-          await Promise.all(
-            documents.map((document) =>
-              tokenCandidates(
-                group,
-                document,
-                normalized.source,
-                normalized.lines,
-                normalized.lineStarts,
-                path,
-                signal,
-              ),
-            ),
-          )
-        ).flat();
-      }
+    const groupCandidates = await formatterCandidates(
+      group,
+      normalized,
+      path,
+      documentCache,
+      signal,
+    );
+    const best = keepBestCandidates(groupCandidates, path, group, groupIndex, groups.length);
+    if (best.length === 0) {
+      const replacements = await requestedReplacementCandidates(
+        group,
+        normalized,
+        path,
+        documentCache,
+        signal,
+      );
+      const excerpt = oldExcerpt(group);
+      const details: FormatterMatchFailureDetails = {
+        reason: "no-candidate",
+        path,
+        groupCount: groups.length,
+        groupIndex: groupIndex + 1,
+        chunkCount: group.chunkCount,
+        chunkIndex: group.chunkIndex,
+        candidateCount: 0,
+        candidates: [],
+        ...(replacements.length > 0
+          ? {
+              replacementCandidateCount: replacements.length,
+              replacementCandidates: candidateRanges(replacements),
+            }
+          : {}),
+        ...(excerpt ? { oldExcerpt: excerpt } : {}),
+      };
+      throw new FormatterMatchError(formatFormatterMatchFailure(details), details);
     }
-    const groupCandidates = [...lineLevelCandidates, ...structuralCandidates];
-    const best = keepBestCandidates(groupCandidates, path);
-    if (best.length === 0) return undefined;
     candidates.push(best);
   }
 
-  const { outputs, exhaustive } = distinctMappedOutputs(normalized.source, candidates, signal);
-  if (outputs.size === 0) return undefined;
+  let outputs: Map<string, Buffer>;
+  let exhaustive: boolean;
+  try {
+    ({ outputs, exhaustive } = distinctMappedOutputs(normalized.source, candidates, signal));
+  } catch (error) {
+    if (!(error instanceof OverlappingFormatterEditsError)) throw error;
+    const details: FormatterMatchFailureDetails = {
+      reason: "overlapping-edits",
+      path,
+      groupCount: groups.length,
+      candidateCount: candidates.reduce((count, group) => count + group.length, 0),
+      candidates: candidateRanges(candidates.flat()),
+      overlapping: true,
+    };
+    throw new FormatterMatchAmbiguityError(formatFormatterMatchFailure(details), details);
+  }
+  if (outputs.size === 0) throw noOrderedMappingDetails(path, groups, candidates);
   if (outputs.size > 1) {
-    throw new FormatterMatchAmbiguityError(
-      `Formatter-tolerant match is ambiguous in ${path}: candidate mappings produce different files`,
-    );
+    const details: FormatterMatchFailureDetails = {
+      reason: "ambiguous-output",
+      path,
+      groupCount: groups.length,
+      candidateCount: candidates.reduce((count, group) => count + group.length, 0),
+      candidates: candidateRanges(candidates.flat()),
+    };
+    throw new FormatterMatchAmbiguityError(formatFormatterMatchFailure(details), details);
   }
   if (!exhaustive) {
-    throw new FormatterMatchAmbiguityError(
-      `Formatter-tolerant match is ambiguous in ${path}: more than ${MAX_COMPLETE_MAPPINGS} candidate mappings require evaluation`,
-    );
+    const details: FormatterMatchFailureDetails = {
+      reason: "mapping-limit",
+      path,
+      groupCount: groups.length,
+      candidateCount: candidates.reduce((count, group) => count + group.length, 0),
+      candidates: candidateRanges(candidates.flat()),
+    };
+    throw new FormatterMatchAmbiguityError(formatFormatterMatchFailure(details), details);
   }
   return outputs.values().next().value!.toString("utf8");
 }
@@ -1406,8 +1677,16 @@ export async function deriveNewContent(
     return deriveStrictContent(content, chunks, path);
   } catch (error) {
     if (!isContextMismatch(error)) throw error;
-    const tolerant = await deriveFormatterTolerantContent(content, chunks, path, signal);
-    if (tolerant !== undefined) return tolerant;
+    try {
+      const tolerant = await deriveFormatterTolerantContent(content, chunks, path, signal);
+      if (tolerant !== undefined) return tolerant;
+    } catch (matcherError) {
+      if (!(matcherError instanceof FormatterMatchError)) throw matcherError;
+      throw new FormatterMatchError(
+        `${error instanceof Error ? error.message : String(error)}\nMatcher diagnostics: ${matcherError.message}`,
+        matcherError.details,
+      );
+    }
     throw error;
   }
 }

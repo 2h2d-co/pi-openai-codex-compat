@@ -32,9 +32,47 @@ export {
   parsePatchDocument,
   previewPatch,
 } from "./apply-patch-engine.ts";
+export type { FormatterMatchFailureDetails } from "./apply-patch-matcher.ts";
 
 export const APPLY_PATCH_TOOL_NAME = "apply_patch";
 export const APPLY_PATCH_INPUT_PROPERTY = "patch";
+
+function modelInstructionLabel(
+  instruction: NonNullable<ApplyPatchDetails["instructions"]>[number],
+): string {
+  const verb =
+    instruction.kind === "add"
+      ? "Add"
+      : instruction.kind === "delete"
+        ? "Delete"
+        : instruction.kind === "move"
+          ? "Move"
+          : "Update";
+  return instruction.moveTo
+    ? `${verb} ${instruction.path} → ${instruction.moveTo}`
+    : `${verb} ${instruction.path}`;
+}
+
+function modelFailureContext(details: ApplyPatchDetails): string {
+  const phase = details.failure?.phase ?? "preflight";
+  const phaseLabel = phase[0]!.toUpperCase() + phase.slice(1);
+  const instructions = details.instructions ?? [];
+  const failed =
+    instructions.find((instruction) => instruction.status === "failed") ??
+    (details.failure?.failedInstruction === undefined
+      ? undefined
+      : instructions.find(
+          (instruction) => instruction.index === details.failure?.failedInstruction,
+        ));
+  const summary = failed
+    ? `${phaseLabel} failed; instruction ${failed.index} of ${instructions.length}: ${modelInstructionLabel(failed)}.`
+    : `${phaseLabel} failed; ${instructions.length} ${instructions.length === 1 ? "instruction" : "instructions"} identified.`;
+  const filesystem =
+    details.changes.length === 0
+      ? "No files were changed."
+      : `${details.changes.length} earlier ${details.changes.length === 1 ? "change was" : "changes were"} applied before the failure.`;
+  return `${summary}\n${filesystem}`;
+}
 
 // Adapted from OpenAI Codex's Apache-2.0 apply_patch grammar; see
 // THIRD_PARTY_NOTICES.md. Pi serializes it as a native custom grammar tool for
@@ -135,8 +173,10 @@ export default function registerApplyPatch(
         }
         if (error instanceof ApplyPatchVerificationError) {
           failedDetails.set(toolCallId, error.details);
+          throw new Error(`${error.message}\n${modelFailureContext(error.details)}`);
         } else if (error instanceof ApplyPatchInputError && error.details) {
           failedDetails.set(toolCallId, error.details);
+          throw new Error(`${error.message}\n${modelFailureContext(error.details)}`);
         }
         throw error;
       }
