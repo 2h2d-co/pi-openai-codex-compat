@@ -89,6 +89,20 @@ const GRAMMAR_BY_EXTENSION = new Map<string, GrammarName>([
   [".sbt", "scala"],
 ]);
 
+const GRAMMAR_BY_FENCE_INFO = new Map<string, GrammarName>([
+  ["js", "javascript"],
+  ["javascript", "javascript"],
+  ["jsx", "jsx"],
+  ["ts", "typescript"],
+  ["typescript", "typescript"],
+  ["tsx", "tsx"],
+  ["py", "python"],
+  ["python", "python"],
+  ["go", "go"],
+  ["java", "java"],
+  ["scala", "scala"],
+]);
+
 const OPTIONAL_TRAILING_COMMA_PARENTS: Partial<Record<GrammarName, ReadonlySet<string>>> = {
   javascript: new Set(["arguments", "array", "formal_parameters", "object"]),
   jsx: new Set(["arguments", "array", "formal_parameters", "object"]),
@@ -231,6 +245,117 @@ function findSequence(
   return findSequences(lines, pattern, start, endOfFile)[0];
 }
 
+function isMarkdownPath(path: string): boolean {
+  return [".md", ".markdown"].includes(extname(path).toLowerCase());
+}
+
+function markdownTableCells(line: string): string[] | undefined {
+  const trimmed = rustTrim(line);
+  if (
+    !trimmed.startsWith("|") ||
+    !trimmed.endsWith("|") ||
+    trimmed.includes("\\|") ||
+    trimmed.includes("`")
+  ) {
+    return undefined;
+  }
+  const cells = trimmed
+    .slice(1, -1)
+    .split("|")
+    .map((cell) => rustTrim(cell));
+  return cells.length >= 2 ? cells : undefined;
+}
+
+function markdownTableLinesMatch(actual: string, expected: string): boolean {
+  const actualCells = markdownTableCells(actual);
+  const expectedCells = markdownTableCells(expected);
+  return (
+    actualCells !== undefined &&
+    expectedCells !== undefined &&
+    actualCells.length === expectedCells.length &&
+    actualCells.every((cell, index) => cell === expectedCells[index])
+  );
+}
+
+function markdownTolerantLineIsSafe(actual: string, expected: string): boolean {
+  if (actual === expected) return true;
+  return !/[\t ]{2}$|\\$/u.test(actual) && !/[\t ]{2}$|\\$/u.test(expected);
+}
+
+function findTolerantSequences(
+  lines: readonly string[],
+  pattern: readonly string[],
+  start: number,
+  endOfFile: boolean,
+  path: string,
+): number[] {
+  const ordinary = findSequences(lines, pattern, start, endOfFile).filter(
+    (index) =>
+      !isMarkdownPath(path) ||
+      pattern.every((expected, offset) =>
+        markdownTolerantLineIsSafe(lines[index + offset]!, expected),
+      ),
+  );
+  if (ordinary.length > 0 || !isMarkdownPath(path) || pattern.length === 0) return ordinary;
+  if (!pattern.every((line) => markdownTableCells(line) !== undefined)) return [];
+
+  const last = lines.length - pattern.length;
+  const searchStart = endOfFile ? last : start;
+  const matches: number[] = [];
+  for (let index = searchStart; index <= last; index++) {
+    if (
+      pattern.every((expected, offset) => markdownTableLinesMatch(lines[index + offset]!, expected))
+    ) {
+      matches.push(index);
+    }
+  }
+  return matches;
+}
+
+function isSafeMarkdownProseLine(line: string): boolean {
+  const trimmed = rustTrim(line);
+  return (
+    trimmed.length > 0 &&
+    line === rustTrimStart(line) &&
+    !/^(?:#{1,6}\s|[-+*]\s|\d+[.)]\s|>\s?|```|~~~|\|)/u.test(trimmed) &&
+    !/^(?:={2,}|-{3,}|\*{3,}|_{3,})$/u.test(trimmed) &&
+    !Array.from(trimmed).some((character) => ["`", "<", ">", "[", "]", "\\"].includes(character)) &&
+    !/[\t ]{2,}/u.test(trimmed) &&
+    !/[\t ]{2}$/u.test(line)
+  );
+}
+
+function markdownProseKey(lines: readonly string[]): string | undefined {
+  if (lines.length === 0 || !lines.every(isSafeMarkdownProseLine)) return undefined;
+  return lines.map((line) => rustTrim(line)).join(" ");
+}
+
+function markdownProseRanges(lines: readonly string[]): Array<{ start: number; end: number }> {
+  const ranges: Array<{ start: number; end: number }> = [];
+  for (let index = 0; index < lines.length;) {
+    if (!isSafeMarkdownProseLine(lines[index]!)) {
+      index += 1;
+      continue;
+    }
+    const start = index;
+    while (index < lines.length && isSafeMarkdownProseLine(lines[index]!)) index += 1;
+    ranges.push({ start, end: index });
+  }
+  return ranges;
+}
+
+function trailingMarkdownProse(lines: readonly string[]): string[] {
+  let start = lines.length;
+  while (start > 0 && isSafeMarkdownProseLine(lines[start - 1]!)) start -= 1;
+  return lines.slice(start);
+}
+
+function leadingMarkdownProse(lines: readonly string[]): string[] {
+  let end = 0;
+  while (end < lines.length && isSafeMarkdownProseLine(lines[end]!)) end += 1;
+  return lines.slice(0, end);
+}
+
 function deriveStrictContent(
   content: string,
   chunks: readonly UpdateChunk[],
@@ -325,7 +450,7 @@ function normalizedSource(content: string): {
 } {
   const lines = content.split("\n");
   if (lines.at(-1) === "") lines.pop();
-  const source = `${lines.join("\n")}\n`;
+  const source = lines.length === 0 ? "" : `${lines.join("\n")}\n`;
   const lineStarts = [0];
   let offset = 0;
   for (const line of lines) {
@@ -346,10 +471,11 @@ function lineForByte(lineStarts: readonly number[], byte: number): number {
   return low;
 }
 
-function contextMatchScore(actual: string, expected: string): number {
+function contextMatchScore(actual: string, expected: string, path: string): number {
   for (const [index, mode] of MATCH_MODES.entries()) {
     if (linesMatch(actual, expected, mode)) return MATCH_MODES.length - index;
   }
+  if (isMarkdownPath(path) && markdownTableLinesMatch(actual, expected)) return 1;
   return 0;
 }
 
@@ -358,12 +484,13 @@ function candidateScore(
   sourceLines: readonly string[],
   startLine: number,
   endLine: number,
+  path: string,
 ): number {
   let score = 0;
   let sourceIndex = startLine - 1;
   for (const expected of group.beforeContext.toReversed()) {
     if (sourceIndex < 0) break;
-    const lineScore = contextMatchScore(sourceLines[sourceIndex]!, expected);
+    const lineScore = contextMatchScore(sourceLines[sourceIndex]!, expected, path);
     if (lineScore === 0) break;
     score += lineScore;
     sourceIndex -= 1;
@@ -371,7 +498,7 @@ function candidateScore(
   sourceIndex = endLine;
   for (const expected of group.afterContext) {
     if (sourceIndex >= sourceLines.length) break;
-    const lineScore = contextMatchScore(sourceLines[sourceIndex]!, expected);
+    const lineScore = contextMatchScore(sourceLines[sourceIndex]!, expected, path);
     if (lineScore === 0) break;
     score += lineScore;
     sourceIndex += 1;
@@ -379,7 +506,7 @@ function candidateScore(
   if (group.chunk.context) {
     const anchor = group.chunk.context;
     for (let index = 0; index < startLine; index++) {
-      if (contextMatchScore(sourceLines[index]!, anchor) > 0) {
+      if (contextMatchScore(sourceLines[index]!, anchor, path) > 0) {
         score += 2;
         break;
       }
@@ -404,9 +531,10 @@ function lineCandidates(
   group: EditGroup,
   sourceLines: readonly string[],
   lineStarts: readonly number[],
+  path: string,
 ): EditCandidate[] {
-  const starts = findSequences(sourceLines, group.oldLines, 0, group.chunk.endOfFile);
-  return starts.map((startLine) => {
+  const starts = findTolerantSequences(sourceLines, group.oldLines, 0, group.chunk.endOfFile, path);
+  const ordinary = starts.map((startLine) => {
     const endLine = startLine + group.oldLines.length;
     const start = lineStarts[startLine]!;
     const end = lineStarts[endLine]!;
@@ -419,9 +547,37 @@ function lineCandidates(
       end,
       startLine,
       endLine,
-      score: candidateScore(group, sourceLines, startLine, endLine),
+      score: candidateScore(group, sourceLines, startLine, endLine, path),
       edits: [{ start, end, replacement }],
     };
+  });
+  if (ordinary.length > 0 || !isMarkdownPath(path)) return ordinary;
+
+  const expectedKey = markdownProseKey(group.oldLines);
+  if (!expectedKey) return [];
+  return markdownProseRanges(sourceLines).flatMap((range) => {
+    if (
+      markdownProseKey(sourceLines.slice(range.start, range.end)) !== expectedKey ||
+      (group.chunk.endOfFile && range.end !== sourceLines.length)
+    ) {
+      return [];
+    }
+    const start = lineStarts[range.start]!;
+    const end = lineStarts[range.end]!;
+    const replacement =
+      group.newLines.length === 0
+        ? Buffer.alloc(0)
+        : Buffer.from(`${group.newLines.join("\n")}\n`, "utf8");
+    return [
+      {
+        start,
+        end,
+        startLine: range.start,
+        endLine: range.end,
+        score: candidateScore(group, sourceLines, range.start, range.end, path),
+        edits: [{ start, end, replacement }],
+      },
+    ];
   });
 }
 
@@ -429,23 +585,33 @@ function insertionCandidates(
   group: EditGroup,
   sourceLines: readonly string[],
   lineStarts: readonly number[],
+  path: string,
 ): EditCandidate[] {
   const boundaries = new Set<number>();
-  for (const expected of group.beforeContext.toReversed()) {
-    const matches = findSequences(sourceLines, [expected], 0, false);
-    if (matches.length === 0) continue;
+  const nearestBefore = group.beforeContext.at(-1);
+  if (nearestBefore !== undefined) {
+    const expected = nearestBefore;
+    const matches = findTolerantSequences(sourceLines, [expected], 0, false, path);
     for (const match of matches) boundaries.add(match + 1);
-    break;
   }
-  for (const expected of group.afterContext) {
-    const matches = findSequences(sourceLines, [expected], 0, false);
-    if (matches.length === 0) continue;
+  const nearestAfter = group.afterContext[0];
+  if (nearestAfter !== undefined) {
+    const expected = nearestAfter;
+    const matches = findTolerantSequences(sourceLines, [expected], 0, false, path);
     for (const match of matches) boundaries.add(match);
-    break;
   }
   if (group.chunk.context) {
-    for (const match of findSequences(sourceLines, [group.chunk.context], 0, false)) {
+    for (const match of findTolerantSequences(sourceLines, [group.chunk.context], 0, false, path)) {
       boundaries.add(match + 1);
+    }
+  }
+  if (isMarkdownPath(path)) {
+    const beforeKey = markdownProseKey(trailingMarkdownProse(group.beforeContext));
+    const afterKey = markdownProseKey(leadingMarkdownProse(group.afterContext));
+    for (const range of markdownProseRanges(sourceLines)) {
+      const key = markdownProseKey(sourceLines.slice(range.start, range.end));
+      if (beforeKey && key === beforeKey) boundaries.add(range.end);
+      if (afterKey && key === afterKey) boundaries.add(range.start);
     }
   }
   if (group.chunk.endOfFile) boundaries.add(sourceLines.length);
@@ -458,7 +624,7 @@ function insertionCandidates(
       end: byte,
       startLine: line,
       endLine: line,
-      score: candidateScore(group, sourceLines, line, line),
+      score: candidateScore(group, sourceLines, line, line, path),
       edits: [{ start: byte, end: byte, replacement }],
     };
   });
@@ -484,8 +650,33 @@ function grammarForPath(path: string): GrammarName | undefined {
   return GRAMMAR_BY_EXTENSION.get(extname(path).toLowerCase());
 }
 
-function syntaxTokens(root: SyntaxNode): SyntaxToken[] {
+function fenceGrammar(group: EditGroup): GrammarName | undefined {
+  const context = [...(group.chunk.context ? [group.chunk.context] : []), ...group.beforeContext];
+  for (const line of context.toReversed()) {
+    const match = rustTrim(line).match(/^(?:`{3,}|~{3,})[\t ]*([A-Za-z0-9_+-]+)/u);
+    if (match) return GRAMMAR_BY_FENCE_INFO.get(match[1]!.toLowerCase());
+  }
+  return undefined;
+}
+
+function utf16ByteOffsets(source: string): Uint32Array {
+  const offsets = new Uint32Array(source.length + 1);
+  let byteOffset = 0;
+  for (let index = 0; index < source.length;) {
+    offsets[index] = byteOffset;
+    const codePoint = source.codePointAt(index)!;
+    const width = codePoint > 0xffff ? 2 : 1;
+    if (width === 2) offsets[index + 1] = byteOffset;
+    byteOffset += Buffer.byteLength(String.fromCodePoint(codePoint), "utf8");
+    index += width;
+    offsets[index] = byteOffset;
+  }
+  return offsets;
+}
+
+function syntaxTokens(root: SyntaxNode, source: string): SyntaxToken[] {
   const tokens: SyntaxToken[] = [];
+  const byteOffsets = utf16ByteOffsets(source);
   const visit = (node: SyntaxNode, path: SyntaxPathEntry[], unsafe: boolean): void => {
     const nextPath = [...path, { id: node.id, type: node.type }];
     const nextUnsafe = unsafe || node.isError || node.isMissing || node.type === "ERROR";
@@ -494,8 +685,8 @@ function syntaxTokens(root: SyntaxNode): SyntaxToken[] {
         tokens.push({
           type: node.type,
           text: node.text,
-          start: node.startIndex,
-          end: node.endIndex,
+          start: byteOffsets[node.startIndex]!,
+          end: byteOffsets[node.endIndex]!,
           ...(path.at(-1)?.type ? { parentType: path.at(-1)!.type } : {}),
           path: nextPath,
           unsafe: nextUnsafe,
@@ -527,12 +718,11 @@ function normalizeTokens(tokens: readonly SyntaxToken[], grammar: GrammarName): 
   );
 }
 
-async function structuralDocument(
-  path: string,
+async function parseStructuralDocument(
+  grammar: GrammarName,
   source: string,
+  byteOffset = 0,
 ): Promise<StructuralDocument | null> {
-  const grammar = grammarForPath(path);
-  if (!grammar) return null;
   try {
     const language = await loadLanguage(grammar);
     const parser = new Parser();
@@ -542,7 +732,13 @@ async function structuralDocument(
       if (!tree) return null;
       try {
         if (tree.rootNode.hasError) return null;
-        const tokens = normalizeTokens(syntaxTokens(tree.rootNode), grammar);
+        const tokens = normalizeTokens(syntaxTokens(tree.rootNode, source), grammar).map(
+          (token) => ({
+            ...token,
+            start: token.start + byteOffset,
+            end: token.end + byteOffset,
+          }),
+        );
         if (tokens.some((token) => token.unsafe)) return null;
         return { grammar, tokens };
       } finally {
@@ -554,6 +750,77 @@ async function structuralDocument(
   } catch {
     return null;
   }
+}
+
+function fenceOpening(
+  line: string,
+): { marker: "`" | "~"; length: number; grammar?: GrammarName } | undefined {
+  const match = line.match(/^ {0,3}(`{3,}|~{3,})[\t ]*([A-Za-z0-9_+-]+)?[^\r\n]*$/u);
+  if (!match) return undefined;
+  const delimiter = match[1]!;
+  const grammar = match[2] ? GRAMMAR_BY_FENCE_INFO.get(match[2].toLowerCase()) : undefined;
+  return {
+    marker: delimiter[0] as "`" | "~",
+    length: delimiter.length,
+    ...(grammar ? { grammar } : {}),
+  };
+}
+
+function fenceClosing(line: string, opening: { marker: "`" | "~"; length: number }): boolean {
+  const marker = opening.marker === "`" ? "`" : "~";
+  const match = line.match(new RegExp(`^ {0,3}(${marker}{${opening.length},})[\\\\t ]*$`, "u"));
+  return match !== null;
+}
+
+async function embeddedStructuralDocuments(
+  grammar: GrammarName,
+  source: string,
+  sourceLines: readonly string[],
+  lineStarts: readonly number[],
+): Promise<StructuralDocument[]> {
+  const documents: StructuralDocument[] = [];
+  const sourceBytes = Buffer.from(source, "utf8");
+  for (let index = 0; index < sourceLines.length; index++) {
+    const opening = fenceOpening(sourceLines[index]!);
+    if (!opening) continue;
+    const contentStart = index + 1;
+    let closing = contentStart;
+    while (closing < sourceLines.length && !fenceClosing(sourceLines[closing]!, opening)) {
+      closing += 1;
+    }
+    if (closing >= sourceLines.length) break;
+    if (opening.grammar === grammar) {
+      const start = lineStarts[contentStart]!;
+      const end = lineStarts[closing]!;
+      const document = await parseStructuralDocument(
+        grammar,
+        sourceBytes.subarray(start, end).toString("utf8"),
+        start,
+      );
+      if (document) documents.push(document);
+    }
+    index = closing;
+  }
+  return documents;
+}
+
+async function structuralDocuments(
+  path: string,
+  group: EditGroup,
+  source: string,
+  sourceLines: readonly string[],
+  lineStarts: readonly number[],
+): Promise<StructuralDocument[]> {
+  const grammar = grammarForPath(path);
+  if (grammar) {
+    const document = await parseStructuralDocument(grammar, source);
+    return document ? [document] : [];
+  }
+  if (!isMarkdownPath(path)) return [];
+  const embeddedGrammar = fenceGrammar(group);
+  return embeddedGrammar
+    ? embeddedStructuralDocuments(embeddedGrammar, source, sourceLines, lineStarts)
+    : [];
 }
 
 function commonIndent(lines: readonly string[]): string {
@@ -657,7 +924,7 @@ async function parseFragment(grammar: GrammarName, value: string): Promise<Synta
       const tree = parser.parse(fragment.source);
       if (!tree) continue;
       try {
-        const allTokens = syntaxTokens(tree.rootNode);
+        const allTokens = syntaxTokens(tree.rootNode, fragment.source);
         const tokens = allTokens.filter(
           (token) => token.start >= fragment.start && token.end <= fragment.end,
         );
@@ -757,6 +1024,7 @@ async function tokenCandidates(
   source: string,
   sourceLines: readonly string[],
   lineStarts: readonly number[],
+  path: string,
 ): Promise<EditCandidate[]> {
   const oldTokens = await parseFragment(document.grammar, group.oldLines.join("\n"));
   if (!oldTokens || oldTokens.length === 0 || oldTokens.length > document.tokens.length) return [];
@@ -827,7 +1095,7 @@ async function tokenCandidates(
       end,
       startLine,
       endLine,
-      score: candidateScore(group, sourceLines, startLine, endLine),
+      score: candidateScore(group, sourceLines, startLine, endLine, path),
       edits,
     });
   }
@@ -893,24 +1161,45 @@ async function deriveFormatterTolerantContent(
   const groups = editGroups(chunks);
   if (groups.length === 0) return undefined;
   const normalized = normalizedSource(content);
-  let document: StructuralDocument | null | undefined;
+  const documentCache = new Map<string, Promise<StructuralDocument[]>>();
   const candidates: EditCandidate[][] = [];
 
   for (const group of groups) {
     let groupCandidates =
       group.oldLines.length === 0
-        ? insertionCandidates(group, normalized.lines, normalized.lineStarts)
-        : lineCandidates(group, normalized.lines, normalized.lineStarts);
+        ? insertionCandidates(group, normalized.lines, normalized.lineStarts, path)
+        : lineCandidates(group, normalized.lines, normalized.lineStarts, path);
     if (groupCandidates.length === 0 && group.oldLines.length > 0) {
-      document ??= await structuralDocument(path, normalized.source);
-      if (document) {
-        groupCandidates = await tokenCandidates(
-          group,
-          document,
-          normalized.source,
-          normalized.lines,
-          normalized.lineStarts,
-        );
+      const grammar =
+        grammarForPath(path) ?? (isMarkdownPath(path) ? fenceGrammar(group) : undefined);
+      if (grammar) {
+        const cacheKey = `${isMarkdownPath(path) ? "embedded:" : "file:"}${grammar}`;
+        let documentsPromise = documentCache.get(cacheKey);
+        if (!documentsPromise) {
+          documentsPromise = structuralDocuments(
+            path,
+            group,
+            normalized.source,
+            normalized.lines,
+            normalized.lineStarts,
+          );
+          documentCache.set(cacheKey, documentsPromise);
+        }
+        const documents = await documentsPromise;
+        groupCandidates = (
+          await Promise.all(
+            documents.map((document) =>
+              tokenCandidates(
+                group,
+                document,
+                normalized.source,
+                normalized.lines,
+                normalized.lineStarts,
+                path,
+              ),
+            ),
+          )
+        ).flat();
       }
     }
     const best = keepBestCandidates(groupCandidates, path);

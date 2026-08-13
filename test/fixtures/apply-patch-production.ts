@@ -682,6 +682,400 @@ export const PRODUCTION_APPLY_PATCH_FIXTURES: ProductionApplyPatchFixture[] = [
     },
   },
   {
+    id: "current-session insertion after formatter-collapsed assertion",
+    sourceFingerprints: ["78202d6763884f63"],
+    productionObservation:
+      "A test insertion failed in this session because the formatter collapsed the preceding assertion while the insertion boundary and following test remained unchanged.",
+    characteristics: [
+      "current-session failure",
+      "pure insertion",
+      "formatter-collapsed preceding context",
+      "repeated blank-line boundary",
+    ],
+    initialFiles: [
+      {
+        path: "<CWD>/matcher.test.ts",
+        content: [
+          'void test("tail", () => {',
+          '  assert.equal(result, "appended");',
+          "});",
+          "",
+          'void test("ambiguity", () => {});',
+          "",
+        ].join("\n"),
+      },
+    ],
+    patch: `*** Begin Patch
+*** Update File: <CWD>/matcher.test.ts
+@@
+ void test("tail", () => {
+   assert.equal(
+     result,
+     "appended",
+   );
+ });
+
++void test("empty", () => {
++  assert.equal(result, "");
++});
++
+ void test("ambiguity", () => {});
+*** End Patch`,
+    expected: {
+      outcome: "success",
+      files: [
+        {
+          path: "<CWD>/matcher.test.ts",
+          content: [
+            'void test("tail", () => {',
+            '  assert.equal(result, "appended");',
+            "});",
+            "",
+            'void test("empty", () => {',
+            '  assert.equal(result, "");',
+            "});",
+            "",
+            'void test("ambiguity", () => {});',
+            "",
+          ].join("\n"),
+        },
+      ],
+      absent: [],
+      changeKinds: ["update"],
+    },
+  },
+  {
+    id: "recent Markdown fence formatter reflow",
+    sourceFingerprints: ["dfcff1278f741d85"],
+    productionObservation:
+      "A large package-maintenance patch failed when formatter-collapsed TypeScript inside a Markdown fence no longer matched multiline old lines.",
+    characteristics: [
+      "last-two-days failure",
+      "typed Markdown fence",
+      "formatter-reflowed TypeScript",
+      "preflight batch recovery",
+    ],
+    initialFiles: [
+      {
+        path: "<CWD>/README.md",
+        content: [
+          "# Package API",
+          "",
+          "```ts",
+          'const grammar = new URL("@scope/package/grammar.wasm", import.meta.url);',
+          "```",
+          "",
+        ].join("\n"),
+      },
+    ],
+    patch: `*** Begin Patch
+*** Update File: <CWD>/README.md
+@@
+ \`\`\`ts
+-const grammar = new URL(
+-  "@scope/package/grammar.wasm",
+-  import.meta.url,
+-);
++const grammar = new URL(
++  import.meta.resolve("@scope/package/grammar.wasm"),
++);
+ \`\`\`
+*** End Patch`,
+    expected: {
+      outcome: "success",
+      files: [
+        {
+          path: "<CWD>/README.md",
+          content: [
+            "# Package API",
+            "",
+            "```ts",
+            "const grammar = new URL(",
+            '  import.meta.resolve("@scope/package/grammar.wasm"),',
+            ");",
+            "```",
+            "",
+          ].join("\n"),
+        },
+      ],
+      absent: [],
+      changeKinds: ["update"],
+    },
+  },
+  {
+    id: "recent formatter-aligned Markdown table insertion",
+    sourceFingerprints: ["5ea8602a0c78dbca"],
+    productionObservation:
+      "A documentation update failed because the Markdown formatter padded table cells after the patch context was composed.",
+    characteristics: [
+      "last-two-days failure",
+      "Markdown table alignment",
+      "pure insertion",
+      "cell-equivalent context",
+    ],
+    initialFiles: [
+      {
+        path: "<CWD>/SECURITY.md",
+        content: [
+          "| Job                         | Read | Write | OIDC |",
+          "| --------------------------- | ---- | ----- | ---- |",
+          "| Pull-request validation     | Yes  | No    | No   |",
+          "| Release construction        | Yes  | No    | No   |",
+          "| Package publication         | No   | No    | Yes  |",
+          "| Release finalization        | No   | Yes   | No   |",
+          "",
+        ].join("\n"),
+      },
+    ],
+    patch: `*** Begin Patch
+*** Update File: <CWD>/SECURITY.md
+@@
+ | Pull-request validation | Yes | No | No |
+ | Release construction | Yes | No | No |
+ | Package publication | No | No | Yes |
++| Public-package integration | Yes | No | No |
+ | Release finalization | No | Yes | No |
+*** End Patch`,
+    expected: {
+      outcome: "success",
+      files: [
+        {
+          path: "<CWD>/SECURITY.md",
+          content: [
+            "| Job                         | Read | Write | OIDC |",
+            "| --------------------------- | ---- | ----- | ---- |",
+            "| Pull-request validation     | Yes  | No    | No   |",
+            "| Release construction        | Yes  | No    | No   |",
+            "| Package publication         | No   | No    | Yes  |",
+            "| Public-package integration | Yes | No | No |",
+            "| Release finalization        | No   | Yes   | No   |",
+            "",
+          ].join("\n"),
+        },
+      ],
+      absent: [],
+      changeKinds: ["update"],
+    },
+  },
+  {
+    id: "recent insertion after stale preceding Markdown context",
+    sourceFingerprints: ["7181933d46feab70"],
+    productionObservation:
+      "A multi-document policy patch failed because an extra bullet made the full insertion context stale even though the insertion boundary remained unique.",
+    characteristics: [
+      "last-two-days failure",
+      "stale preceding context",
+      "unique pure insertion",
+      "extra unrelated bullet",
+    ],
+    initialFiles: [
+      {
+        path: "<CWD>/policy.md",
+        content: [
+          "- publisher identity is bound to the workflow;",
+          "- registry provenance is recorded;",
+          "- artifact attestations are retained.",
+          "",
+          "These controls preserve exact-artifact authorization.",
+          "",
+        ].join("\n"),
+      },
+    ],
+    patch: `*** Begin Patch
+*** Update File: <CWD>/policy.md
+@@
+ - publisher identity is bound to the workflow;
+ - registry provenance is recorded;
+
+ These controls preserve exact-artifact authorization.
++
++The initial publication follows a separately reviewed bootstrap process.
+*** End Patch`,
+    expected: {
+      outcome: "success",
+      files: [
+        {
+          path: "<CWD>/policy.md",
+          content: [
+            "- publisher identity is bound to the workflow;",
+            "- registry provenance is recorded;",
+            "- artifact attestations are retained.",
+            "",
+            "These controls preserve exact-artifact authorization.",
+            "",
+            "The initial publication follows a separately reviewed bootstrap process.",
+            "",
+          ].join("\n"),
+        },
+      ],
+      absent: [],
+      changeKinds: ["update"],
+    },
+  },
+  {
+    id: "recent reflowed Markdown paragraph insertion",
+    sourceFingerprints: ["de34398026b29d09"],
+    productionObservation:
+      "A research-note insertion failed after its plain-text anchor paragraph was reflowed from two lines to one.",
+    characteristics: [
+      "last-two-days failure",
+      "plain Markdown prose",
+      "paragraph reflow",
+      "unique insertion",
+    ],
+    initialFiles: [
+      {
+        path: "<CWD>/research.md",
+        content:
+          "Existing automation separately exercises alpha-only, beta-only, and mixed outputs.\n",
+      },
+    ],
+    patch: `*** Begin Patch
+*** Update File: <CWD>/research.md
+@@
+ Existing automation separately exercises alpha-only, beta-only, and mixed
+ outputs.
++
++A final audit confirmed the expected processing semantics.
+*** End Patch`,
+    expected: {
+      outcome: "success",
+      files: [
+        {
+          path: "<CWD>/research.md",
+          content:
+            "Existing automation separately exercises alpha-only, beta-only, and mixed outputs.\n\nA final audit confirmed the expected processing semantics.\n",
+        },
+      ],
+      absent: [],
+      changeKinds: ["update"],
+    },
+  },
+  {
+    id: "recent semantically stale Java constructor rejects",
+    sourceFingerprints: ["beb765abe18a5b84"],
+    productionObservation:
+      "A multi-file Java patch failed because the target constructor had gained a real dependency, not merely formatter changes.",
+    characteristics: [
+      "last-two-days failure",
+      "semantic Java drift",
+      "extra constructor dependency",
+      "preflight prevents earlier write",
+    ],
+    initialFiles: [
+      {
+        path: "<CWD>/Service.java",
+        content: [
+          "class Service {",
+          "  Service(String queue, Repository repository, Logger logger) {",
+          "    this.queue = queue;",
+          "    this.repository = repository;",
+          "    this.logger = logger;",
+          "  }",
+          "}",
+          "",
+        ].join("\n"),
+      },
+    ],
+    patch: `*** Begin Patch
+*** Add File: <CWD>/Policy.java
++class Policy {}
+*** Update File: <CWD>/Service.java
+@@
+-  Service(
+-      String queue,
+-      Repository repository) {
+-    this.queue = queue;
+-    this.repository = repository;
++  Service(
++      String queue,
++      Repository repository,
++      Policy policy) {
++    this.queue = queue;
++    this.repository = repository;
++    this.policy = policy;
+*** End Patch`,
+    expected: {
+      outcome: "verification-error",
+      messagePattern: /Failed to find expected lines/,
+    },
+  },
+  {
+    id: "recent semantically stale Markdown paragraph rejects",
+    sourceFingerprints: ["f0f72fe844683e35"],
+    productionObservation:
+      "A note insertion failed because one expected total contained an extra backtick and no longer described the current paragraph.",
+    characteristics: [
+      "last-two-days failure",
+      "semantic prose mismatch",
+      "inline-code punctuation",
+      "must not anchor to older context",
+    ],
+    initialFiles: [
+      {
+        path: "<CWD>/totals.md",
+        content: [
+          "The first sentence remains unchanged.",
+          "The fixture changes from 9 total / 5 completed /",
+          "2 failed to 8 total / 4 completed / 2 failed.",
+          "",
+        ].join("\n"),
+      },
+    ],
+    patch: `*** Begin Patch
+*** Update File: <CWD>/totals.md
+@@
+ The first sentence remains unchanged.
+ The fixture changes from 9 total / 5 completed /
+ \`2 failed to 8 total / 4 completed / 2 failed.
++
++Add a conclusion based on those totals.
+*** End Patch`,
+    expected: {
+      outcome: "verification-error",
+      messagePattern: /Failed to find expected lines/,
+    },
+  },
+  {
+    id: "recent obsolete context-only chunk before insertion",
+    sourceFingerprints: ["7383283abf4aba57"],
+    productionObservation:
+      "A documentation insertion failed on an obsolete context-only chunk that had no content effect and preceded the uniquely anchored insertion.",
+    characteristics: [
+      "last-two-days failure",
+      "context-only chunk",
+      "stale no-effect anchor",
+      "later unique insertion",
+    ],
+    initialFiles: [
+      {
+        path: "<CWD>/follow-up.md",
+        content:
+          "Current introduction.\n\nThe practical risk is transient load rather than data loss.\n",
+      },
+    ],
+    patch: `*** Begin Patch
+*** Update File: <CWD>/follow-up.md
+@@ obsolete introduction
+@@
+ The practical risk is transient load rather than data loss.
++
++The follow-up runbook records how to validate that risk.
+*** End Patch`,
+    expected: {
+      outcome: "success",
+      files: [
+        {
+          path: "<CWD>/follow-up.md",
+          content:
+            "Current introduction.\n\nThe practical risk is transient load rather than data loss.\n\nThe follow-up runbook records how to validate that risk.\n",
+        },
+      ],
+      absent: [],
+      changeKinds: ["update"],
+    },
+  },
+  {
     id: "multi-chunk unicode insertion and deletion",
     sourceFingerprints: ["2ed7736dbe45facc", "46fbd0dc973e9eec"],
     productionObservation:

@@ -308,6 +308,11 @@ insertion MUST NOT be guessed. Context on both sides may have formatter-added
 lines between it; the insertion is accepted only if contextual scoring and
 final-output equivalence make the result unique.
 
+Only the nearest unchanged line on each side may directly establish an
+insertion boundary. If that line changed semantically, an older surviving line
+MUST NOT be treated as if it were adjacent; a language-aware block matcher may
+still recover the boundary when it proves the complete block equivalent.
+
 This permits harmless stale context, such as an unrelated formatter-added
 line, when the requested edit itself remains uniquely identifiable. It does
 not permit an old deletion to match text that is absent.
@@ -350,6 +355,32 @@ the hunk's requested structure and the current location's indentation.
 Unsupported extensions retain line-level recovery but do not receive
 structural token recovery. The implementation does not run a formatter,
 consult source-control history, or search a previous file snapshot.
+
+Tree-sitter string input reports UTF-16 code-unit indices. Every syntax-node
+range MUST be converted to UTF-8 byte offsets before byte edits are planned.
+This conversion is required even when the changed token is ASCII because a
+multibyte character earlier in the file otherwise shifts the edit.
+
+#### Markdown recovery
+
+Markdown files (`.md` and `.markdown`) have three narrowly scoped recovery
+modes:
+
+1. Table rows may match after trimming cell-edge padding. Cell contents and
+   column count remain exact. Rows containing escaped pipes or inline code do
+   not use this recovery.
+2. Plain prose paragraphs may match after line wrapping changes. Joining lines
+   with ordinary single spaces must reproduce the exact paragraph text.
+   Lists, headings, block quotes, tables, inline code, links, inline HTML,
+   backslash escapes, repeated spaces, and hard line breaks are excluded.
+3. Code inside a typed fenced block may use the structural grammar named by
+   the fence. Supported fence names are `js`, `javascript`, `jsx`, `ts`,
+   `typescript`, `tsx`, `py`, `python`, `go`, `java`, and `scala`.
+
+An unterminated fence, unknown fence language, malformed code block, or code
+edit without the typed opening fence in its hunk context remains unmatched.
+Multiple equivalent fenced blocks are subject to the same final-byte
+uniqueness rule as ordinary source files.
 
 ### Pure move
 
@@ -887,6 +918,14 @@ Every case must preserve source bytes exactly.
 - known optional trailing-comma differences are accepted;
 - comments and literal contents remain exact;
 - malformed source or fragments reject structural recovery;
+- UTF-8 byte edits remain correct after multibyte UTF-16 characters;
+- typed Markdown fences recover supported-language code reflow;
+- formatter-aligned Markdown tables match exact cell contents;
+- reflowed plain Markdown paragraphs recover insertions and replacements;
+- Markdown hard breaks, inline code, links, escaped table pipes, lists, and
+  other whitespace-sensitive constructs reject prose recovery;
+- a changed nearest insertion context is not bypassed using older context;
+- obsolete context-only chunks do not block a later uniquely located edit;
 - unsupported extensions retain conservative line matching; and
 - strict Codex matching behavior remains first and unchanged.
 
