@@ -464,6 +464,248 @@ void test("does not invent a blank line when recovering into an empty file", asy
   assert.equal(await readFile(join(cwd, "empty.txt"), "utf8"), "first\n");
 });
 
+void test("applies end-of-file to the complete recovered chunk", async (t) => {
+  const cwd = await workspace(t);
+  await rejectWithoutWrite(
+    cwd,
+    "middle.ts",
+    "const value = combine(alpha, beta);\nconst tail = true;\n",
+    `*** Begin Patch
+*** Update File: middle.ts
+@@ stale
+-const value = combine(
+-  alpha,
+-  beta,
+-);
++const value = merge(
++  alpha,
++  beta,
++);
+*** End of File
+*** End Patch`,
+    /Failed to find context/u,
+  );
+
+  await writeFile(join(cwd, "tail-context.txt"), "head\nold\nfooter\n");
+  await applyPatch(
+    cwd,
+    `*** Begin Patch
+*** Update File: tail-context.txt
+@@ stale
+-old
++new
+ footer
+*** End of File
+*** End Patch`,
+  );
+  assert.equal(await readFile(join(cwd, "tail-context.txt"), "utf8"), "head\nnew\nfooter\n");
+
+  await writeFile(join(cwd, "append.txt"), "anchor\nmiddle\ntail\n");
+  await rejectWithoutWrite(
+    cwd,
+    "append.txt",
+    "anchor\nmiddle\ntail\n",
+    `*** Begin Patch
+*** Update File: append.txt
+@@ stale
+ anchor
++inserted
+*** End of File
+*** End Patch`,
+    /Failed to find context/u,
+  );
+});
+
+void test("rejects tolerant candidates before a present anchor", async (t) => {
+  const cwd = await workspace(t);
+  await rejectWithoutWrite(
+    cwd,
+    "anchor.txt",
+    "target\nanchor\n",
+    `*** Begin Patch
+*** Update File: anchor.txt
+@@ anchor
+-target
++changed
+*** End Patch`,
+    /Failed to find expected lines/u,
+  );
+  await rejectWithoutWrite(
+    cwd,
+    "anchor.ts",
+    "const value = combine(alpha, beta);\nanchor\n",
+    `*** Begin Patch
+*** Update File: anchor.ts
+@@ anchor
+-const value = combine(
+-  alpha,
+-  beta,
+-);
++const value = merge(
++  alpha,
++  beta,
++);
+*** End Patch`,
+    /Failed to find expected lines/u,
+  );
+});
+
+void test("preserves indentation and CRLF for partial structural replacements", async (t) => {
+  const cwd = await workspace(t);
+  await writeFile(join(cwd, "indent.ts"), "function run() {\n  combine(alpha, beta);\n}\n");
+  await applyPatch(
+    cwd,
+    `*** Begin Patch
+*** Update File: indent.ts
+@@ stale
+-combine(
+-  alpha,
+-  beta,
+-)
++merge(
++  alpha,
++  beta,
++  gamma,
++)
+*** End Patch`,
+  );
+  assert.equal(
+    await readFile(join(cwd, "indent.ts"), "utf8"),
+    ["function run() {", "  merge(", "    alpha,", "    beta,", "    gamma,", "  );", "}", ""].join(
+      "\n",
+    ),
+  );
+
+  await writeFile(
+    join(cwd, "crlf.ts"),
+    "function run() {\r\n  return combine(alpha, beta);\r\n}\r\n",
+  );
+  await applyPatch(
+    cwd,
+    `*** Begin Patch
+*** Update File: crlf.ts
+@@ stale
+-return combine(
+-  alpha,
+-  beta,
+-);
++return merge(
++  alpha,
++  beta,
++  gamma,
++);
+*** End Patch`,
+  );
+  assert.equal(
+    await readFile(join(cwd, "crlf.ts"), "utf8"),
+    "function run() {\r\n  return merge(\r\n    alpha,\r\n    beta,\r\n    gamma,\r\n  );\r\n}\r\n",
+  );
+});
+
+void test("does not normalize JavaScript array elisions as trailing commas", async (t) => {
+  const cwd = await workspace(t);
+  await rejectWithoutWrite(
+    cwd,
+    "elision.js",
+    "const values = [,];\n",
+    `*** Begin Patch
+*** Update File: elision.js
+@@ stale
+-[]
++[value]
+*** End Patch`,
+    /Failed to find context/u,
+  );
+});
+
+void test("rejects divergent line-level and structural candidates", async (t) => {
+  const cwd = await workspace(t);
+  await rejectWithoutWrite(
+    cwd,
+    "decoy.ts",
+    [
+      "/*",
+      "combine(",
+      "  alpha,",
+      "  beta,",
+      ");",
+      "*/",
+      "function run() {",
+      "  combine(alpha, beta);",
+      "}",
+      "",
+    ].join("\n"),
+    `*** Begin Patch
+*** Update File: decoy.ts
+@@ stale
+-combine(
+-  alpha,
+-  beta,
+-);
++merge(
++  alpha,
++  beta,
++);
+*** End Patch`,
+    /candidate mappings produce different files/u,
+  );
+});
+
+void test("keeps Markdown tolerant matching outside closed and fenced blocks", async (t) => {
+  const cwd = await workspace(t);
+  await rejectWithoutWrite(
+    cwd,
+    "table-fence.md",
+    "```text\n| alpha      | one |\n```\n",
+    `*** Begin Patch
+*** Update File: table-fence.md
+@@ stale
+ | alpha | one |
++| beta | two |
+*** End Patch`,
+    /Failed to find context/u,
+  );
+  await rejectWithoutWrite(
+    cwd,
+    "closed-fence.md",
+    "```ts\nconst value = combine(alpha, beta);\n```\n\nsomewhere else: combine(alpha, beta)\n",
+    `*** Begin Patch
+*** Update File: closed-fence.md
+@@
+ \`\`\`ts
+ const value = combine(alpha, beta);
+ \`\`\`
+ somewhere else:
+-combine(
+-  alpha,
+-  beta,
+-)
++merge(
++  alpha,
++  beta,
++)
+*** End Patch`,
+    /Failed to find expected lines/u,
+  );
+});
+
+void test("applies Markdown safety rules consistently to CRLF files", async (t) => {
+  const cwd = await workspace(t);
+  await rejectWithoutWrite(
+    cwd,
+    "hard-break-crlf.md",
+    "A line with a hard break.  \r\nThe continuation remains separate.\r\n",
+    `*** Begin Patch
+*** Update File: hard-break-crlf.md
+@@ stale
+-A line with a hard break.
+-The continuation remains separate.
++replacement
+*** End Patch`,
+    /Failed to find context/u,
+  );
+});
+
 void test("rejects ambiguous duplicate code blocks and structural expressions", async (t) => {
   const cwd = await workspace(t);
   await rejectWithoutWrite(
@@ -758,6 +1000,22 @@ void test("fails closed when equivalent mappings exceed the exhaustive-search li
 *** End Patch`,
     /more than 256 candidate mappings/u,
   );
+});
+
+void test("bounds exhaustive mapping work at the configured limit", async (t) => {
+  const cwd = await workspace(t);
+  const groups = Array.from({ length: 6 }, (_, index) => `@@ stale ${index + 1}\n-\n`).join("");
+  const startedAt = performance.now();
+  await rejectWithoutWrite(
+    cwd,
+    "bounded-mappings.txt",
+    "\n".repeat(64),
+    `*** Begin Patch
+*** Update File: bounded-mappings.txt
+${groups}*** End Patch`,
+    /more than 256 candidate mappings/u,
+  );
+  assert.ok(performance.now() - startedAt < 1_000, "mapping limit should bound traversal work");
 });
 
 void test("reports ambiguity as a preflight failure with no committed instructions", async (t) => {

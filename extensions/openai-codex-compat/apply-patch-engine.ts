@@ -1258,7 +1258,12 @@ class SemanticPlanner {
     }
 
     const oldContent = await this.readText(source, operation.absolutePath);
-    const newContent = await deriveNewContent(oldContent, operation.chunks, operation.absolutePath);
+    const newContent = await deriveNewContent(
+      oldContent,
+      operation.chunks,
+      operation.absolutePath,
+      this.signal,
+    );
     const content = Buffer.from(newContent, "utf8");
     const semanticMove = updateHasSemanticMove(operation);
     if (!semanticMove && buffersEqual(source.content.value!.bytes, content)) return;

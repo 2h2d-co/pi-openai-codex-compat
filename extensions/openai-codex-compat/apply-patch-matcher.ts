@@ -39,6 +39,7 @@ type EditGroup = {
   newLines: string[];
   beforeContext: string[];
   afterContext: string[];
+  endsChunk: boolean;
 };
 
 type SyntaxPathEntry = {
@@ -124,6 +125,10 @@ const languagePromises = new Map<GrammarName, Promise<Language>>();
 let parserInitialization: Promise<void> | undefined;
 
 export class FormatterMatchAmbiguityError extends Error {}
+
+function throwIfAborted(signal: AbortSignal | undefined): void {
+  if (signal?.aborted) throw new Error("apply_patch was cancelled.");
+}
 
 function isRustWhitespace(codePoint: number): boolean {
   return (
@@ -277,9 +282,16 @@ function markdownTableLinesMatch(actual: string, expected: string): boolean {
   );
 }
 
+function withoutCarriageReturn(value: string): string {
+  return value.endsWith("\r") ? value.slice(0, -1) : value;
+}
+
 function markdownTolerantLineIsSafe(actual: string, expected: string): boolean {
   if (actual === expected) return true;
-  return !/[\t ]{2}$|\\$/u.test(actual) && !/[\t ]{2}$|\\$/u.test(expected);
+  return (
+    !/[\t ]{2}$|\\$/u.test(withoutCarriageReturn(actual)) &&
+    !/[\t ]{2}$|\\$/u.test(withoutCarriageReturn(expected))
+  );
 }
 
 function findTolerantSequences(
@@ -301,9 +313,11 @@ function findTolerantSequences(
 
   const last = lines.length - pattern.length;
   const searchStart = endOfFile ? last : start;
+  const fencedLines = markdownFencedLines(lines);
   const matches: number[] = [];
   for (let index = searchStart; index <= last; index++) {
     if (
+      !pattern.some((_, offset) => fencedLines.has(index + offset)) &&
       pattern.every((expected, offset) => markdownTableLinesMatch(lines[index + offset]!, expected))
     ) {
       matches.push(index);
@@ -314,6 +328,7 @@ function findTolerantSequences(
 
 function isSafeMarkdownProseLine(line: string): boolean {
   const trimmed = rustTrim(line);
+  const lineWithoutCarriageReturn = withoutCarriageReturn(line);
   return (
     trimmed.length > 0 &&
     line === rustTrimStart(line) &&
@@ -321,7 +336,7 @@ function isSafeMarkdownProseLine(line: string): boolean {
     !/^(?:={2,}|-{3,}|\*{3,}|_{3,})$/u.test(trimmed) &&
     !Array.from(trimmed).some((character) => ["`", "<", ">", "[", "]", "\\"].includes(character)) &&
     !/[\t ]{2,}/u.test(trimmed) &&
-    !/[\t ]{2}$/u.test(line)
+    !/[\t ]{2}$/u.test(lineWithoutCarriageReturn)
   );
 }
 
@@ -415,6 +430,7 @@ function deriveStrictContent(
 function editGroups(chunks: readonly UpdateChunk[]): EditGroup[] {
   const groups: EditGroup[] = [];
   for (const chunk of chunks) {
+    const chunkGroups: EditGroup[] = [];
     for (let index = 0; index < chunk.lines.length;) {
       if (chunk.lines[index]!.kind === "context") {
         index += 1;
@@ -431,14 +447,18 @@ function editGroups(chunks: readonly UpdateChunk[]): EditGroup[] {
       while (afterEnd < chunk.lines.length && chunk.lines[afterEnd]!.kind === "context") {
         afterEnd += 1;
       }
-      groups.push({
+      chunkGroups.push({
         chunk,
         oldLines: segment.filter((line) => line.kind === "delete").map((line) => line.text),
         newLines: segment.filter((line) => line.kind === "add").map((line) => line.text),
         beforeContext: chunk.lines.slice(beforeStart, start).map((line) => line.text),
         afterContext: chunk.lines.slice(index, afterEnd).map((line) => line.text),
+        endsChunk: false,
       });
     }
+    const finalGroup = chunkGroups.at(-1);
+    if (finalGroup) finalGroup.endsChunk = true;
+    groups.push(...chunkGroups);
   }
   return groups;
 }
@@ -515,6 +535,35 @@ function candidateScore(
   return score;
 }
 
+function anchorLines(group: EditGroup, sourceLines: readonly string[], path: string): number[] {
+  if (!group.chunk.context) return [];
+  return sourceLines.flatMap((line, index) =>
+    contextMatchScore(line, group.chunk.context!, path) > 0 ? [index] : [],
+  );
+}
+
+function candidateFollowsAnchor(
+  group: EditGroup,
+  sourceLines: readonly string[],
+  startLine: number,
+  path: string,
+): boolean {
+  const anchors = anchorLines(group, sourceLines, path);
+  return anchors.length === 0 || anchors.some((line) => line < startLine);
+}
+
+function candidateSatisfiesEndOfFile(
+  group: EditGroup,
+  sourceLineCount: number,
+  endLine: number,
+): boolean {
+  return (
+    !group.chunk.endOfFile ||
+    !group.endsChunk ||
+    endLine + group.afterContext.length === sourceLineCount
+  );
+}
+
 function keepBestCandidates(candidates: EditCandidate[], path: string): EditCandidate[] {
   if (candidates.length === 0) return [];
   const bestScore = Math.max(...candidates.map((candidate) => candidate.score));
@@ -533,24 +582,30 @@ function lineCandidates(
   lineStarts: readonly number[],
   path: string,
 ): EditCandidate[] {
-  const starts = findTolerantSequences(sourceLines, group.oldLines, 0, group.chunk.endOfFile, path);
-  const ordinary = starts.map((startLine) => {
-    const endLine = startLine + group.oldLines.length;
-    const start = lineStarts[startLine]!;
-    const end = lineStarts[endLine]!;
-    const replacement =
-      group.newLines.length === 0
-        ? Buffer.alloc(0)
-        : Buffer.from(`${group.newLines.join("\n")}\n`, "utf8");
-    return {
-      start,
-      end,
-      startLine,
-      endLine,
-      score: candidateScore(group, sourceLines, startLine, endLine, path),
-      edits: [{ start, end, replacement }],
-    };
-  });
+  const starts = findTolerantSequences(sourceLines, group.oldLines, 0, false, path);
+  const ordinary = starts
+    .map((startLine) => {
+      const endLine = startLine + group.oldLines.length;
+      const start = lineStarts[startLine]!;
+      const end = lineStarts[endLine]!;
+      const replacement =
+        group.newLines.length === 0
+          ? Buffer.alloc(0)
+          : Buffer.from(`${group.newLines.join("\n")}\n`, "utf8");
+      return {
+        start,
+        end,
+        startLine,
+        endLine,
+        score: candidateScore(group, sourceLines, startLine, endLine, path),
+        edits: [{ start, end, replacement }],
+      };
+    })
+    .filter(
+      (candidate) =>
+        candidateFollowsAnchor(group, sourceLines, candidate.startLine, path) &&
+        candidateSatisfiesEndOfFile(group, sourceLines.length, candidate.endLine),
+    );
   if (ordinary.length > 0 || !isMarkdownPath(path)) return ordinary;
 
   const expectedKey = markdownProseKey(group.oldLines);
@@ -558,7 +613,8 @@ function lineCandidates(
   return markdownProseRanges(sourceLines).flatMap((range) => {
     if (
       markdownProseKey(sourceLines.slice(range.start, range.end)) !== expectedKey ||
-      (group.chunk.endOfFile && range.end !== sourceLines.length)
+      !candidateSatisfiesEndOfFile(group, sourceLines.length, range.end) ||
+      !candidateFollowsAnchor(group, sourceLines, range.start, path)
     ) {
       return [];
     }
@@ -614,24 +670,44 @@ function insertionCandidates(
       if (afterKey && key === afterKey) boundaries.add(range.start);
     }
   }
-  if (group.chunk.endOfFile) boundaries.add(sourceLines.length);
+  if (
+    group.chunk.endOfFile &&
+    group.endsChunk &&
+    group.beforeContext.length === 0 &&
+    group.afterContext.length === 0
+  ) {
+    boundaries.add(sourceLines.length);
+  }
 
   const replacement = Buffer.from(`${group.newLines.join("\n")}\n`, "utf8");
-  return [...boundaries].map((line) => {
-    const byte = lineStarts[line]!;
-    return {
-      start: byte,
-      end: byte,
-      startLine: line,
-      endLine: line,
-      score: candidateScore(group, sourceLines, line, line, path),
-      edits: [{ start: byte, end: byte, replacement }],
-    };
-  });
+  return [...boundaries]
+    .filter(
+      (line) =>
+        candidateFollowsAnchor(group, sourceLines, line, path) &&
+        candidateSatisfiesEndOfFile(group, sourceLines.length, line),
+    )
+    .map((line) => {
+      const byte = lineStarts[line]!;
+      return {
+        start: byte,
+        end: byte,
+        startLine: line,
+        endLine: line,
+        score: candidateScore(group, sourceLines, line, line, path),
+        edits: [{ start: byte, end: byte, replacement }],
+      };
+    });
 }
 
 function parserInitializationPromise(): Promise<void> {
-  return (parserInitialization ??= Parser.init());
+  if (!parserInitialization) {
+    const promise = Parser.init();
+    parserInitialization = promise;
+    void promise.catch(() => {
+      if (parserInitialization === promise) parserInitialization = undefined;
+    });
+  }
+  return parserInitialization;
 }
 
 async function loadLanguage(grammar: GrammarName): Promise<Language> {
@@ -642,6 +718,9 @@ async function loadLanguage(grammar: GrammarName): Promise<Language> {
       return Language.load(fileURLToPath(wasmURL(grammar)));
     })();
     languagePromises.set(grammar, promise);
+    void promise.catch(() => {
+      if (languagePromises.get(grammar) === promise) languagePromises.delete(grammar);
+    });
   }
   return promise;
 }
@@ -653,6 +732,7 @@ function grammarForPath(path: string): GrammarName | undefined {
 function fenceGrammar(group: EditGroup): GrammarName | undefined {
   const context = [...(group.chunk.context ? [group.chunk.context] : []), ...group.beforeContext];
   for (const line of context.toReversed()) {
+    if (/^ {0,3}(?:`{3,}|~{3,})[\t ]*$/u.test(line)) return undefined;
     const match = rustTrim(line).match(/^(?:`{3,}|~{3,})[\t ]*([A-Za-z0-9_+-]+)/u);
     if (match) return GRAMMAR_BY_FENCE_INFO.get(match[1]!.toLowerCase());
   }
@@ -700,21 +780,48 @@ function syntaxTokens(root: SyntaxNode, source: string): SyntaxToken[] {
   return tokens;
 }
 
+function sameSyntaxParent(left: SyntaxToken | undefined, right: SyntaxToken): boolean {
+  return left?.path.at(-2)?.id === right.path.at(-2)?.id;
+}
+
 function optionalTrailingComma(
   token: SyntaxToken,
-  laterTokens: readonly SyntaxToken[],
+  previous: SyntaxToken | undefined,
+  next: SyntaxToken | undefined,
   grammar: GrammarName,
 ): boolean {
   if (token.text !== "," || !token.parentType) return false;
   const parents = OPTIONAL_TRAILING_COMMA_PARENTS[grammar];
   if (!parents?.has(token.parentType)) return false;
-  const next = laterTokens.find((candidate) => !candidate.type.includes("comment"));
+  if (
+    ["javascript", "jsx", "typescript", "tsx"].includes(grammar) &&
+    token.parentType === "array" &&
+    sameSyntaxParent(previous, token) &&
+    (previous?.text === "[" || previous?.text === ",")
+  ) {
+    return false;
+  }
   return next !== undefined && [")", "]", "}"].includes(next.text);
 }
 
 function normalizeTokens(tokens: readonly SyntaxToken[], grammar: GrammarName): SyntaxToken[] {
+  const previousTokens = Array.from<SyntaxToken | undefined>({ length: tokens.length });
+  const nextTokens = Array.from<SyntaxToken | undefined>({ length: tokens.length });
+  let previous: SyntaxToken | undefined;
+  for (let index = 0; index < tokens.length; index++) {
+    const token = tokens[index]!;
+    previousTokens[index] = previous;
+    if (!token.type.includes("comment")) previous = token;
+  }
+  let next: SyntaxToken | undefined;
+  for (let index = tokens.length - 1; index >= 0; index--) {
+    const token = tokens[index]!;
+    nextTokens[index] = next;
+    if (!token.type.includes("comment")) next = token;
+  }
   return tokens.filter(
-    (token, index) => !optionalTrailingComma(token, tokens.slice(index + 1), grammar),
+    (token, index) =>
+      !optionalTrailingComma(token, previousTokens[index], nextTokens[index], grammar),
   );
 }
 
@@ -722,13 +829,18 @@ async function parseStructuralDocument(
   grammar: GrammarName,
   source: string,
   byteOffset = 0,
+  signal?: AbortSignal,
 ): Promise<StructuralDocument | null> {
   try {
+    throwIfAborted(signal);
     const language = await loadLanguage(grammar);
     const parser = new Parser();
     try {
       parser.setLanguage(language);
-      const tree = parser.parse(source);
+      const tree = parser.parse(source, null, {
+        progressCallback: () => signal?.aborted ?? false,
+      });
+      throwIfAborted(signal);
       if (!tree) return null;
       try {
         if (tree.rootNode.hasError) return null;
@@ -768,8 +880,24 @@ function fenceOpening(
 
 function fenceClosing(line: string, opening: { marker: "`" | "~"; length: number }): boolean {
   const marker = opening.marker === "`" ? "`" : "~";
-  const match = line.match(new RegExp(`^ {0,3}(${marker}{${opening.length},})[\\\\t ]*$`, "u"));
+  const match = line.match(new RegExp(`^ {0,3}(${marker}{${opening.length},})[\\t ]*$`, "u"));
   return match !== null;
+}
+
+function markdownFencedLines(sourceLines: readonly string[]): Set<number> {
+  const fenced = new Set<number>();
+  for (let index = 0; index < sourceLines.length; index++) {
+    const opening = fenceOpening(sourceLines[index]!);
+    if (!opening) continue;
+    fenced.add(index);
+    index += 1;
+    while (index < sourceLines.length) {
+      fenced.add(index);
+      if (fenceClosing(sourceLines[index]!, opening)) break;
+      index += 1;
+    }
+  }
+  return fenced;
 }
 
 async function embeddedStructuralDocuments(
@@ -777,6 +905,7 @@ async function embeddedStructuralDocuments(
   source: string,
   sourceLines: readonly string[],
   lineStarts: readonly number[],
+  signal?: AbortSignal,
 ): Promise<StructuralDocument[]> {
   const documents: StructuralDocument[] = [];
   const sourceBytes = Buffer.from(source, "utf8");
@@ -796,6 +925,7 @@ async function embeddedStructuralDocuments(
         grammar,
         sourceBytes.subarray(start, end).toString("utf8"),
         start,
+        signal,
       );
       if (document) documents.push(document);
     }
@@ -810,16 +940,17 @@ async function structuralDocuments(
   source: string,
   sourceLines: readonly string[],
   lineStarts: readonly number[],
+  signal?: AbortSignal,
 ): Promise<StructuralDocument[]> {
   const grammar = grammarForPath(path);
   if (grammar) {
-    const document = await parseStructuralDocument(grammar, source);
+    const document = await parseStructuralDocument(grammar, source, 0, signal);
     return document ? [document] : [];
   }
   if (!isMarkdownPath(path)) return [];
   const embeddedGrammar = fenceGrammar(group);
   return embeddedGrammar
-    ? embeddedStructuralDocuments(embeddedGrammar, source, sourceLines, lineStarts)
+    ? embeddedStructuralDocuments(embeddedGrammar, source, sourceLines, lineStarts, signal)
     : [];
 }
 
@@ -999,7 +1130,9 @@ function lineBounds(
   const lineEnd = nextNewline < 0 ? source.length : nextNewline;
   const afterLine = nextNewline < 0 ? source.length : nextNewline + 1;
   const prefix = source.subarray(lineStart, start).toString("utf8");
-  const suffix = source.subarray(end, lineEnd).toString("utf8");
+  const contentLineEnd =
+    lineEnd > lineStart && source[lineEnd - 1] === 0x0d ? lineEnd - 1 : lineEnd;
+  const suffix = source.subarray(end, contentLineEnd).toString("utf8");
   return {
     lineStart,
     lineEnd,
@@ -1009,13 +1142,19 @@ function lineBounds(
   };
 }
 
-function formattedReplacement(value: string, indent: string, trailingNewline: boolean): Buffer {
+function formattedReplacement(
+  value: string,
+  indent: string,
+  trailingNewline: boolean,
+  lineEnding: "\n" | "\r\n",
+  indentFirstLine = true,
+): Buffer {
   if (!value) return Buffer.alloc(0);
   const normalized = dedent(value)
     .split("\n")
-    .map((line) => `${indent}${line}`)
-    .join("\n");
-  return Buffer.from(`${normalized}${trailingNewline ? "\n" : ""}`, "utf8");
+    .map((line, index) => `${indentFirstLine || index > 0 ? indent : ""}${line}`)
+    .join(lineEnding);
+  return Buffer.from(`${normalized}${trailingNewline ? lineEnding : ""}`, "utf8");
 }
 
 async function tokenCandidates(
@@ -1025,7 +1164,9 @@ async function tokenCandidates(
   sourceLines: readonly string[],
   lineStarts: readonly number[],
   path: string,
+  signal?: AbortSignal,
 ): Promise<EditCandidate[]> {
+  throwIfAborted(signal);
   const oldTokens = await parseFragment(document.grammar, group.oldLines.join("\n"));
   if (!oldTokens || oldTokens.length === 0 || oldTokens.length > document.tokens.length) return [];
   const expectedShape = relativeShape(oldTokens);
@@ -1038,6 +1179,7 @@ async function tokenCandidates(
   const candidates: EditCandidate[] = [];
 
   for (let index = 0; index <= document.tokens.length - oldTokens.length; index++) {
+    throwIfAborted(signal);
     const window = document.tokens.slice(index, index + oldTokens.length);
     if (!tokenSignatureMatches(window, oldTokens) || relativeShape(window) !== expectedShape) {
       continue;
@@ -1045,6 +1187,8 @@ async function tokenCandidates(
     const first = window[0]!;
     const last = window.at(-1)!;
     const bounds = lineBounds(sourceBytes, first.start, last.end);
+    const lineEnding: "\n" | "\r\n" =
+      bounds.lineEnd > bounds.lineStart && sourceBytes[bounds.lineEnd - 1] === 0x0d ? "\r\n" : "\n";
     let start = first.start;
     let end = last.end;
     let edits: ByteEdit[];
@@ -1076,6 +1220,7 @@ async function tokenCandidates(
             group.newLines.join("\n"),
             bounds.indent,
             end > bounds.lineEnd,
+            lineEnding,
           ),
         },
       ];
@@ -1084,20 +1229,32 @@ async function tokenCandidates(
         {
           start,
           end,
-          replacement: formattedReplacement(group.newLines.join("\n"), bounds.indent, false),
+          replacement: formattedReplacement(
+            group.newLines.join("\n"),
+            bounds.indent,
+            false,
+            lineEnding,
+            false,
+          ),
         },
       ];
     }
     const startLine = lineForByte(lineStarts, first.start);
     const endLine = Math.min(sourceLines.length, lineForByte(lineStarts, last.end - 1) + 1);
-    candidates.push({
+    const candidate = {
       start,
       end,
       startLine,
       endLine,
       score: candidateScore(group, sourceLines, startLine, endLine, path),
       edits,
-    });
+    };
+    if (
+      candidateFollowsAnchor(group, sourceLines, candidate.startLine, path) &&
+      candidateSatisfiesEndOfFile(group, sourceLines.length, candidate.endLine)
+    ) {
+      candidates.push(candidate);
+    }
   }
   return candidates;
 }
@@ -1125,6 +1282,7 @@ function applyEdits(source: Buffer, edits: readonly ByteEdit[]): Buffer {
 function distinctMappedOutputs(
   source: string,
   candidateSets: readonly EditCandidate[][],
+  signal?: AbortSignal,
 ): { outputs: Map<string, Buffer>; exhaustive: boolean } {
   const outputs = new Map<string, Buffer>();
   const sourceBytes = Buffer.from(source, "utf8");
@@ -1132,12 +1290,13 @@ function distinctMappedOutputs(
   let exhaustive = true;
 
   const visit = (groupIndex: number, previousEnd: number, edits: ByteEdit[]): void => {
+    throwIfAborted(signal);
     if (outputs.size > 1) return;
+    if (mappings >= MAX_COMPLETE_MAPPINGS) {
+      exhaustive = false;
+      return;
+    }
     if (groupIndex === candidateSets.length) {
-      if (mappings >= MAX_COMPLETE_MAPPINGS) {
-        exhaustive = false;
-        return;
-      }
       mappings += 1;
       const output = applyEdits(sourceBytes, edits);
       outputs.set(output.toString("base64"), output);
@@ -1157,6 +1316,7 @@ async function deriveFormatterTolerantContent(
   content: string,
   chunks: readonly UpdateChunk[],
   path: string,
+  signal?: AbortSignal,
 ): Promise<string | undefined> {
   const groups = editGroups(chunks);
   if (groups.length === 0) return undefined;
@@ -1165,11 +1325,13 @@ async function deriveFormatterTolerantContent(
   const candidates: EditCandidate[][] = [];
 
   for (const group of groups) {
-    let groupCandidates =
+    throwIfAborted(signal);
+    const lineLevelCandidates =
       group.oldLines.length === 0
         ? insertionCandidates(group, normalized.lines, normalized.lineStarts, path)
         : lineCandidates(group, normalized.lines, normalized.lineStarts, path);
-    if (groupCandidates.length === 0 && group.oldLines.length > 0) {
+    let structuralCandidates: EditCandidate[] = [];
+    if (group.oldLines.length > 0) {
       const grammar =
         grammarForPath(path) ?? (isMarkdownPath(path) ? fenceGrammar(group) : undefined);
       if (grammar) {
@@ -1182,11 +1344,12 @@ async function deriveFormatterTolerantContent(
             normalized.source,
             normalized.lines,
             normalized.lineStarts,
+            signal,
           );
           documentCache.set(cacheKey, documentsPromise);
         }
         const documents = await documentsPromise;
-        groupCandidates = (
+        structuralCandidates = (
           await Promise.all(
             documents.map((document) =>
               tokenCandidates(
@@ -1196,18 +1359,20 @@ async function deriveFormatterTolerantContent(
                 normalized.lines,
                 normalized.lineStarts,
                 path,
+                signal,
               ),
             ),
           )
         ).flat();
       }
     }
+    const groupCandidates = [...lineLevelCandidates, ...structuralCandidates];
     const best = keepBestCandidates(groupCandidates, path);
     if (best.length === 0) return undefined;
     candidates.push(best);
   }
 
-  const { outputs, exhaustive } = distinctMappedOutputs(normalized.source, candidates);
+  const { outputs, exhaustive } = distinctMappedOutputs(normalized.source, candidates, signal);
   if (outputs.size === 0) return undefined;
   if (outputs.size > 1) {
     throw new FormatterMatchAmbiguityError(
@@ -1234,12 +1399,14 @@ export async function deriveNewContent(
   content: string,
   chunks: readonly UpdateChunk[],
   path: string,
+  signal?: AbortSignal,
 ): Promise<string> {
+  throwIfAborted(signal);
   try {
     return deriveStrictContent(content, chunks, path);
   } catch (error) {
     if (!isContextMismatch(error)) throw error;
-    const tolerant = await deriveFormatterTolerantContent(content, chunks, path);
+    const tolerant = await deriveFormatterTolerantContent(content, chunks, path, signal);
     if (tolerant !== undefined) return tolerant;
     throw error;
   }
