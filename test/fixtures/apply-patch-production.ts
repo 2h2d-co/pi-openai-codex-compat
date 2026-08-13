@@ -1076,6 +1076,41 @@ export const PRODUCTION_APPLY_PATCH_FIXTURES: ProductionApplyPatchFixture[] = [
     },
   },
   {
+    id: "current-session omitted second file header rejects",
+    sourceFingerprints: ["96c7ea1eb34da115"],
+    productionObservation:
+      "A patch in this session accidentally placed a second file's count update inside the first file's update hunk.",
+    characteristics: [
+      "current-session failure",
+      "grammar-valid caller error",
+      "omitted update-file header",
+      "preflight prevents partial write",
+    ],
+    initialFiles: [
+      {
+        path: "<CWD>/fixtures.ts",
+        content: 'export const fixtures = ["existing"];\n',
+      },
+      {
+        path: "<CWD>/fixtures.test.ts",
+        content: "assert.equal(fixtures.length, 19);\n",
+      },
+    ],
+    patch: `*** Begin Patch
+*** Update File: <CWD>/fixtures.ts
+@@
+-export const fixtures = ["existing"];
++export const fixtures = ["existing", "new"];
+@@
+-assert.equal(fixtures.length, 19);
++assert.equal(fixtures.length, 20);
+*** End Patch`,
+    expected: {
+      outcome: "verification-error",
+      messagePattern: /Failed to find expected lines/,
+    },
+  },
+  {
     id: "multi-chunk unicode insertion and deletion",
     sourceFingerprints: ["2ed7736dbe45facc", "46fbd0dc973e9eec"],
     productionObservation:
