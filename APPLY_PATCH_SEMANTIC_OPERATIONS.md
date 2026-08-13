@@ -36,6 +36,9 @@ The objective is semantic correctness, not pedantic tool-call validation:
   with one location selected for each edit group.
 - **Opaque content:** File content that has not been decoded as text. It may be
   valid UTF-8, binary data, or an empty byte sequence.
+- **Path alias:** A different path spelling that identifies the same directory
+  entry because of filesystem case or Unicode normalization behavior, or
+  because a parent directory is reached through a symbolic link.
 - **Pure move:** An `Update File` hunk with a `Move to` destination and no
   state-changing content chunks.
 - **Virtual filesystem:** The ordered, in-memory model used during preflight to
@@ -205,13 +208,21 @@ continues to require valid UTF-8.
 
 ### Add file
 
-`Add File: P` unconditionally writes its grammar-provided content to `P`.
-Existing destination overwrite behavior is retained.
+`Add File: P` establishes a regular-file entry at the exact requested path
+spelling.
 
 - If `P` already contains exactly the requested bytes, the operation is a
-  no-op.
+  no-op only when `P` is already a regular file at the requested exact
+  spelling. This no-op does not break an existing hard-link relationship.
 - If `P` is absent, it is created along with missing parent directories.
-- If `P` is an existing regular file, it is overwritten.
+- If `P` is an existing regular file with different bytes, only the named
+  directory entry is replaced by an independent regular file. Other hard links
+  retain their original inode and contents. The replacement preserves the
+  replaced regular file's permission bits.
+- If `P` is a symbolic link, including a dangling link, the link entry is
+  replaced by a regular file. Its target is not followed, created, or modified.
+- If a case- or Unicode-normalized alias of `P` exists, that entry is replaced
+  and the exact spelling requested by the add is established.
 - If `P` is a directory or another unsupported special entry, reject.
 - The operation does not semantically depend on previous file content, even
   though rendering or history code may inspect it.
@@ -267,6 +278,16 @@ Pure insertion chunks require particular care: existing matching text does
 not by itself prove that another insertion would be a no-op because duplicate
 insertion may be intentional.
 
+An ordinary text update follows a symbolic link and edits its target. It also
+edits the shared inode reached through a hard link, so every hard-linked entry
+observes the new content and the hard-link relationship remains intact.
+
+A state-changing update through a dangling symbolic link rejects during
+preflight. This applies whether the link was initially dangling or an earlier
+operation in the same patch deleted or moved away its target. The update MUST
+NOT recreate the old target or redirect itself to a move destination. Empty
+and identity-only updates retain their no-op semantics.
+
 ### Formatter-tolerant text matching
 
 Formatter-tolerant matching is a conservative fallback after the established
@@ -293,6 +314,16 @@ write.
 The grammar does not provide line numbers. Matching therefore MUST NOT invent
 line-number semantics. An `@@ context` value is a textual anchor, while
 ordinary unchanged hunk lines are contextual evidence around an edit group.
+
+`*** End of File` has the official Codex meaning: the complete old side of the
+chunk, including unchanged trailing context, MUST end at the end of the source
+file. Formatter-tolerant recovery may bridge formatter-controlled layout
+changes, but it MUST preserve this boundary. EOF insertions are placed at EOF;
+line, Markdown, and structural candidates in the middle of the file are
+ineligible.
+
+A present `@@ context` anchor has positional force. Candidates preceding the
+matched anchor are ineligible; the anchor is not merely a scoring bonus.
 
 #### Line-level recovery
 
@@ -352,6 +383,18 @@ token byte ranges are replaced so the current file's whitespace and line
 wrapping remain intact. Otherwise, the matched token span is replaced using
 the hunk's requested structure and the current location's indentation.
 
+Recovery validates where the old side maps; it does not lint, repair,
+reinterpret, or reject the replacement merely because the requested new code
+would be invalid in its surrounding language context. The implementation MUST
+nevertheless avoid corruption of its own making, including double-applying
+indentation, changing unaffected line endings, or treating semantic commas such
+as JavaScript array elisions as formatter-controlled trailing commas.
+
+Line-level, Markdown, and structural candidate sources MUST be considered
+together when one tier can produce a textual decoy for a viable structural
+location. A verbatim block in a comment or string MUST NOT silently suppress a
+different structural mapping; differing outcomes reject as ambiguous.
+
 Unsupported extensions retain line-level recovery but do not receive
 structural token recovery. The implementation does not run a formatter,
 consult source-control history, or search a previous file snapshot.
@@ -368,7 +411,8 @@ modes:
 
 1. Table rows may match after trimming cell-edge padding. Cell contents and
    column count remain exact. Rows containing escaped pipes or inline code do
-   not use this recovery.
+   not use this recovery. The table fallback does not operate inside fenced
+   code blocks.
 2. Plain prose paragraphs may match after line wrapping changes. Joining lines
    with ordinary single spaces must reproduce the exact paragraph text.
    Lists, headings, block quotes, tables, inline code, links, inline HTML,
@@ -381,6 +425,12 @@ An unterminated fence, unknown fence language, malformed code block, or code
 edit without the typed opening fence in its hunk context remains unmatched.
 Multiple equivalent fenced blocks are subject to the same final-byte
 uniqueness rule as ordinary source files.
+
+A typed opening fence authorizes structural recovery only while the edit group
+is still inside that fence in the hunk context. An intervening closing fence
+ends that authorization. CommonMark fence whitespace, including a trailing
+tab on a closing fence, is recognized correctly. CRLF line endings do not
+weaken Markdown hard-break or other whitespace-sensitive exclusions.
 
 ### Pure move
 
@@ -415,6 +465,12 @@ Pure moves:
 - MUST create missing destination parent directories consistently with
   existing move behavior.
 
+A move destination is always the exact path named by the patch. A directory at
+that path rejects; the implementation does not append the source basename or
+replace the directory. Replacing an existing destination replaces only that
+directory entry, so other hard links to the former destination remain
+unchanged.
+
 If source and destination are on different filesystems, a byte-preserving
 copy-to-temporary, destination-replace, and source-unlink fallback MAY be used.
 The fallback MUST:
@@ -427,6 +483,12 @@ The fallback MUST:
 
 Metadata SHOULD be preserved where the platform permits it. Byte preservation
 is mandatory.
+
+When the source has other hard links, a same-filesystem native rename preserves
+the relationship between the destination and those remaining links. A
+cross-filesystem move follows ordinary copy-and-remove behavior: the
+destination has an independent inode while the remaining source-filesystem
+links retain the original inode.
 
 ### Move with identity chunks
 
@@ -443,11 +505,36 @@ operation:
 
 1. read and decode the source as UTF-8;
 2. derive the new text;
-3. write the result at the destination; and
-4. remove the source entry.
+3. materialize an independent regular file at the destination; and
+4. remove only the named source entry.
 
-Existing destination overwrite and partial-failure tracking behavior remains
-in force.
+The independently materialized destination:
+
+- replaces only the named destination directory entry;
+- replaces a destination symbolic link without modifying its target;
+- detaches the named destination from any former hard-link set without
+  modifying the other links;
+- preserves the source regular file's permission bits;
+- receives normal new-file ownership, ACL, extended-attribute, and timestamp
+  behavior; and
+- is created with normal new-file permissions when the source is a symbolic
+  link rather than a regular file.
+
+If the source is a symbolic link, its target supplies the text to edit, the
+updated result is materialized as a regular destination file, the source link
+entry is removed, and its former target remains unchanged. A dangling source
+link rejects because its old text cannot be verified.
+
+If another hard link refers to the source inode, that other entry retains the
+original inode and content. The state-changing move does not mutate the shared
+source inode before materializing the result.
+
+For case- or Unicode-only moves, update the content and establish the requested
+destination spelling with a native rename strategy. If source and destination
+reach the same entry through a symbolic-link parent, update in place and treat
+the move effect as already satisfied.
+
+Partial-failure tracking remains in force.
 
 This operation is not byte-opaque because it intentionally changes content.
 
@@ -490,6 +577,12 @@ Path identity must account for:
 Path normalization is used to understand dependencies, not to impose the
 official Codex current-main rule that rejects all duplicate resolved targets.
 This extension intentionally does not adopt that blanket rejection.
+
+Case-, Unicode-, and symbolic-link-parent aliases share one virtual directory
+entry. Later operations observe earlier changes regardless of which equivalent
+spelling they use. Hard-linked paths do not: they are distinct directory
+entries whose content state is shared until an operation deliberately replaces
+one entry.
 
 ### Required examples
 
@@ -639,6 +732,12 @@ The implementation MAY begin with conservative proofs for clear
 add/delete-dominated cases. Unsupported proofs must become conflicts, not
 unsafe acceptance.
 
+For a failed move, domination of the source path alone is insufficient. Every
+source-removal, destination-installation, destination-replacement, and
+parent-directory effect must be dominated before observation. In particular,
+`Move A -> B` with both paths absent does not become dead merely because a
+later operation deletes `A`.
+
 ## Filesystem identity edge cases
 
 ### Lexical self-move
@@ -664,10 +763,21 @@ rename even though both names resolve to the same underlying entry. Use a
 filesystem-native rename strategy that preserves the result. Never resolve
 this case by blindly unlinking the source after writing the destination.
 
+The same rule applies to Unicode-normalization-only renames. Pure moves
+establish the requested spelling. State-changing moves update the file and then
+establish the requested spelling.
+
 ### Hard links
 
 Distinct hard-linked paths are distinct directory entries even though they
 share an inode.
+
+Ordinary text updates mutate the shared inode and are visible through every
+hard link. `Add File` and state-changing moves instead replace or materialize
+only the named entry, leaving other hard links unchanged. A pure same-filesystem
+move preserves the source inode and its remaining hard-link relationship;
+cross-filesystem copy-and-remove necessarily creates an independent destination
+inode.
 
 For a pure move `A -> B` where `A` and existing `B` are hard links to the same
 file, the required postcondition remains:
@@ -680,6 +790,10 @@ Some native rename implementations report success without removing `A` when
 both names identify the same inode. The executor must account for that case
 without deleting `B`.
 
+Replacing a destination that has other hard links replaces only the named
+destination entry. The other hard links retain their original inode and
+content for both pure and state-changing moves.
+
 ### Symbolic links
 
 Pure moves operate on links themselves:
@@ -689,12 +803,105 @@ Pure moves operate on links themselves:
 - a pure move does not modify either link target.
 
 Text updates retain the existing text-operation behavior and are not silently
-converted into link-entry moves.
+converted into link-entry moves. Specifically:
+
+- ordinary text updates follow a live source link;
+- state-changing updates through dangling links reject;
+- `Add File` replaces live and dangling destination links;
+- pure moves move a source link entry without dereferencing it, including when
+  dangling;
+- pure moves replace destination link entries without modifying their targets;
+- state-changing moves materialize a regular destination and leave the former
+  source-link target unchanged; and
+- state-changing moves replace destination link entries without modifying
+  their targets.
 
 ### Unsupported entry types
 
 Directories, sockets, devices, FIFOs, and other special entries are outside
 the pure-file move extension and MUST be rejected.
+
+Add, delete, update, and move operations targeting a directory or unsupported
+special entry reject during preflight. No operation invents shell-style
+"move into directory" behavior or recursively removes a directory. Semantic
+no-ops that require no filesystem interaction remain successful.
+
+## Reviewed implementation scope
+
+This section records the disposition of the adversarial review so future
+implementors do not have to reconstruct decisions from session history.
+
+### Confirmed defects to fix
+
+The implementation MUST address these confirmed defect classes:
+
+1. **Matcher constraints:** enforce complete-hunk EOF alignment and positional
+   `@@` anchors across line, insertion, Markdown, and structural recovery.
+2. **Matcher fidelity:** fix partial-span indentation and CRLF preservation,
+   JavaScript array-elision normalization, ordinary-line decoys suppressing
+   structural candidates, table fallback inside fences, closed-fence grammar
+   leakage, closing-fence tab handling, and CRLF Markdown hard-break checks.
+3. **Bounded work:** make optional-comma normalization linear; stop mapping
+   traversal immediately when its exhaustive bound is exceeded; thread
+   cancellation through long matcher loops; and retain conservative size/work
+   bounds.
+4. **Entry identity:** prevent write-then-unlink data loss for case, Unicode,
+   symbolic-link-parent, and destination-link aliases; keep hard-link entries
+   distinct; and make sequential virtual state coherent across equivalent path
+   spellings and symbolic-link targets.
+5. **Execution continuity:** account for link-count changes caused by the plan
+   itself and for fresh destination identity after cross-filesystem moves, so
+   valid later operations do not fail as apparent external drift.
+6. **Preflight:** reject predictable directory and unsupported-entry conflicts,
+   including write-through destinations that resolve to directories, before
+   any mutation.
+7. **Failure accounting:** mark partial writes inexact; report destination loss
+   during cross-filesystem replacement retries; preserve the exact committed
+   prefix; and keep same-inode completion checks from masking a missing
+   destination.
+8. **Diagnostics:** derive parse-failure instruction details with parser-aware
+   line roles so header-looking context lines do not manufacture instructions.
+9. **Harness quality:** compare complete success and failure trees, including
+   directories, symlinks, entry types, modes, and collateral paths.
+
+### Intentional non-goals and rejected proposals
+
+The implementation MUST NOT:
+
+- lint, repair, reinterpret, or reject replacement code merely because the LLM
+  requested code that is invalid in its language context;
+- add language-specific contextual-keyword blacklists;
+- weaken the requirement that structural source documents and wrapped
+  fragments parse without error;
+- guess an unanchored tolerant insertion;
+- move candidate-score pruning after mapping enumeration;
+- reject exhaustive mappings that produce byte-identical final content;
+- replace the original strict context error when tolerant matching declines;
+- scan beyond an unclosed CommonMark fence as though later fences were outside
+  it;
+- require production-fixture fingerprints to hash sanitized fixture text;
+- infer that fixture minimization or operation count caused an observed
+  production failure without evidence; or
+- preserve ownership, ACLs, extended attributes, or timestamps for
+  independently materialized text results.
+
+The following review claims were disproved or narrowed and MUST NOT drive
+implementation:
+
+- a proposed call-argument-tail versus parenthesized-sequence fixture did not
+  apply and is not evidence of a matcher defect;
+- raw `parseFragment` language-load failure after successful document loading
+  is not an independent practical path because both use the same cached
+  language promise;
+- UTF-16-to-UTF-8 offset conversion is linear and is not the primary memory or
+  performance defect;
+- cross-process serialization is outside the in-process mutation queue's
+  contract; missing-tail aliases remain an in-process canonicalization concern;
+- every literal pipe in a Markdown link or HTML fragment is not inherently a
+  false match, although table recovery must remain semantically exact and
+  fence-aware; and
+- generic exact line recovery inside a Markdown block is not itself a prose
+  recovery defect.
 
 ## Virtual filesystem and planning model
 
@@ -900,7 +1107,13 @@ Every case must preserve source bytes exactly.
 - empty update of missing path succeeds;
 - identity update of missing path succeeds;
 - add of identical bytes succeeds without rewriting;
+- add replaces live and dangling symlinks without modifying or creating their
+  targets;
+- add replaces only the named member of a hard-link set, preserves its mode,
+  and leaves other links unchanged;
+- add through a case or Unicode alias establishes the requested spelling;
 - missing source plus unrelated existing destination is rejected;
+- missing source plus missing destination is rejected unless the move is dead;
 - deletion-only text update leaves an existing zero-byte file;
 - deletion-only text update of an absent path rejects unless dead.
 
@@ -916,18 +1129,37 @@ Every case must preserve source bytes exactly.
   formatter-reflowed edit through the packaged grammar;
 - current line wrapping is preserved for token-type-compatible replacements;
 - known optional trailing-comma differences are accepted;
+- JavaScript array elisions remain semantically distinct from empty arrays;
 - comments and literal contents remain exact;
+- line-level decoys do not suppress divergent structural candidates;
 - malformed source or fragments reject structural recovery;
 - UTF-8 byte edits remain correct after multibyte UTF-16 characters;
+- partial-span replacements preserve indentation and source line endings;
+- a present `@@` anchor excludes candidates before it;
+- `*** End of File` aligns the complete old side, including trailing context,
+  across line, Markdown, and structural recovery;
 - typed Markdown fences recover supported-language code reflow;
 - formatter-aligned Markdown tables match exact cell contents;
+- table recovery ignores fenced-code rows;
+- closed fences do not authorize later edit groups, and closing fences with
+  trailing tabs are recognized;
 - reflowed plain Markdown paragraphs recover insertions and replacements;
 - Markdown hard breaks, inline code, links, escaped table pipes, lists, and
   other whitespace-sensitive constructs reject prose recovery;
+- CRLF files enforce the same Markdown safety exclusions as LF files;
 - a changed nearest insertion context is not bypassed using older context;
 - obsolete context-only chunks do not block a later uniquely located edit;
 - unsupported extensions retain conservative line matching; and
 - strict Codex matching behavior remains first and unchanged.
+
+### Bounded matching and cancellation
+
+- optional trailing-comma normalization is linear in token count;
+- reaching the complete-mapping limit immediately stops traversal;
+- cancellation interrupts long structural and mapping loops with no writes;
+- cached parser or language initialization failures can be retried rather than
+  poisoning the process permanently; and
+- bounded-work failures remain conservative context or ambiguity failures.
 
 ### Path identity
 
@@ -935,19 +1167,44 @@ Every case must preserve source bytes exactly.
 - lexical self-move;
 - self-move with text changes becomes in-place update;
 - case-only rename on case-insensitive filesystems;
+- Unicode-normalization-only rename where the filesystem aliases spellings;
+- equivalent case, Unicode, and symbolic-link-parent spellings share virtual
+  sequential state;
 - distinct hard links;
 - source and destination hard links to the same inode;
+- ordinary updates remain visible through all hard links;
+- add and state-changing moves detach only the named hard-link entry;
+- pure move through a symbolic-link-parent self-alias preserves the entry;
+- ordinary text update follows a live source symlink;
+- ordinary text update through an initially or virtually dangling symlink
+  rejects before writes;
+- state-changing move from a live source symlink materializes a regular
+  destination and leaves the target unchanged;
+- state-changing move from a dangling source symlink rejects;
+- pure move of a live or dangling source symlink moves the link entry;
+- pure and state-changing moves replace destination symlink entries without
+  modifying targets;
 - directory and unsupported special-entry rejection.
 
 ### Atomicity, preflight, and history
 
 - any conflict prevents all writes;
 - all involved paths participate in mutation queues;
+- missing-tail paths below symbolic-link parents use the same in-process queue;
 - external drift after preflight is detected;
+- link-count changes caused by earlier planned operations do not masquerade as
+  external drift;
 - native move failure leaves source intact when no mutation committed;
+- cross-filesystem move followed by update, delete, or another move succeeds;
 - cross-filesystem partial failure reports the committed prefix;
+- partial writes and destination-replacement retry failures are marked inexact;
 - pure binary move history contains no binary payload;
 - pure move rendering is path-only;
+- parse-failure instruction details ignore header-looking hunk context lines;
+- production fixtures compare complete trees including directories, symlinks,
+  entry types, modes, and collateral paths;
+- model-facing summaries report add, modify/move destination, and delete paths
+  accurately;
 - all-no-op patch reports success with no changed files; and
 - mixed applied/no-op/dead patches report only actual filesystem changes.
 
