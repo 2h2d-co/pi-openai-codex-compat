@@ -23,11 +23,17 @@ The objective is semantic correctness, not pedantic tool-call validation:
   symbolic link. A pure move operates on this entry, not on decoded text.
 - **Dominating operation:** A later operation that unconditionally determines
   a path's state, making an earlier result at that path irrelevant.
+- **Edit group:** One contiguous run of added and deleted hunk lines, bounded
+  by unchanged context lines.
 - **Dead operation:** An operation whose removal provably leaves the same final
   observable filesystem state and does not change anything observed by an
   intervening operation.
+- **Formatter-tolerant matching:** Recovery that locates uniquely determined
+  edit groups after formatting changed line boundaries or nearby context.
 - **Identity update:** An update whose old and new line sequences are
   structurally identical and therefore has no content effect.
+- **Mapping:** One ordered, non-overlapping selection of candidate locations,
+  with one location selected for each edit group.
 - **Opaque content:** File content that has not been decoded as text. It may be
   valid UTF-8, binary data, or an empty byte sequence.
 - **Pure move:** An `Update File` hunk with a `Move to` destination and no
@@ -260,6 +266,90 @@ new text somewhere in the file is insufficient.
 Pure insertion chunks require particular care: existing matching text does
 not by itself prove that another insertion would be a no-op because duplicate
 insertion may be intentional.
+
+### Formatter-tolerant text matching
+
+Formatter-tolerant matching is a conservative fallback after the established
+Codex line matcher fails. It does not replace or weaken successful strict
+matching.
+
+The fallback MUST:
+
+1. preserve each hunk line's context, addition, or deletion role during
+   parsing;
+2. partition each hunk into edit groups;
+3. locate candidates for every edit group against the same pre-update file;
+4. retain only the highest contextual-score candidates for each group;
+5. enumerate ordered, non-overlapping mappings;
+6. derive the final bytes for every retained mapping; and
+7. apply the patch only when the enumeration is exhaustive and every mapping
+   produces byte-identical final content.
+
+If no complete mapping exists, matching falls back to the original context
+error. If retained mappings produce different files, overlap, or exceed a
+bounded exhaustive-search limit, reject the update as ambiguous before any
+write.
+
+The grammar does not provide line numbers. Matching therefore MUST NOT invent
+line-number semantics. An `@@ context` value is a textual anchor, while
+ordinary unchanged hunk lines are contextual evidence around an edit group.
+
+#### Line-level recovery
+
+For replacements and deletions, the fallback first searches for the actual
+deleted lines without requiring every unchanged context line to remain
+adjacent. The existing exact, trailing-whitespace, trimmed-whitespace, and
+Unicode punctuation matching modes remain in force. Adjacent surviving
+context before and after a candidate determines its contextual score.
+
+For pure insertions, candidates may be derived only from surviving context,
+an `@@ context` anchor, or an explicit end-of-file marker. An unanchored
+insertion MUST NOT be guessed. Context on both sides may have formatter-added
+lines between it; the insertion is accepted only if contextual scoring and
+final-output equivalence make the result unique.
+
+This permits harmless stale context, such as an unrelated formatter-added
+line, when the requested edit itself remains uniquely identifiable. It does
+not permit an old deletion to match text that is absent.
+
+#### Structural token recovery
+
+When deleted lines no longer match because a formatter changed line
+boundaries, supported languages use the official `web-tree-sitter` runtime
+with grammar assets from `@2h2d/tree-sitter-wasms`.
+
+The supported extensions are:
+
+| Language   | Extensions              |
+| ---------- | ----------------------- |
+| JavaScript | `.js`, `.mjs`, `.cjs`   |
+| JSX        | `.jsx`                  |
+| TypeScript | `.ts`, `.mts`, `.cts`   |
+| TSX        | `.tsx`                  |
+| Python     | `.py`, `.pyi`           |
+| Go         | `.go`                   |
+| Java       | `.java`                 |
+| Scala      | `.scala`, `.sc`, `.sbt` |
+
+Both the current file and grammar-wrapped old/new fragments MUST parse
+without error. Every non-whitespace fragment byte MUST be represented by the
+concrete syntax tree. Candidate matching compares leaf token types, exact
+token text, and relative concrete-syntax-tree shape.
+
+Ordinary formatter-controlled whitespace is absent from leaf-token matching.
+Known optional trailing commas may be ignored only in grammar node types where
+the language permits a formatter to add or remove them. Comments, identifiers,
+operators, keywords, string contents, numeric contents, and JSX text remain
+exact tokens; they MUST NOT be treated as trivia.
+
+When old and new fragments have the same token-type sequence, only changed
+token byte ranges are replaced so the current file's whitespace and line
+wrapping remain intact. Otherwise, the matched token span is replaced using
+the hunk's requested structure and the current location's indentation.
+
+Unsupported extensions retain line-level recovery but do not receive
+structural token recovery. The implementation does not run a formatter,
+consult source-control history, or search a previous file snapshot.
 
 ### Pure move
 
@@ -783,6 +873,23 @@ Every case must preserve source bytes exactly.
 - deletion-only text update leaves an existing zero-byte file;
 - deletion-only text update of an absent path rejects unless dead.
 
+### Formatter-tolerant matching
+
+- parsed update hunks retain context, addition, and deletion roles;
+- a uniquely located edit survives unrelated stale context;
+- pure insertion uses surviving context and rejects an unanchored location;
+- multiple mappings with byte-identical final content succeed;
+- multiple mappings with different final content reject before writes;
+- candidate and mapping search limits reject rather than assume uniqueness;
+- JavaScript, JSX, TypeScript, TSX, Python, Go, Java, and Scala each recover a
+  formatter-reflowed edit through the packaged grammar;
+- current line wrapping is preserved for token-type-compatible replacements;
+- known optional trailing-comma differences are accepted;
+- comments and literal contents remain exact;
+- malformed source or fragments reject structural recovery;
+- unsupported extensions retain conservative line matching; and
+- strict Codex matching behavior remains first and unchanged.
+
 ### Path identity
 
 - `A`, `./A`, and normalized absolute aliases;
@@ -820,5 +927,7 @@ The implementation is complete when:
 7. missing-file updates are skipped only under a sound no-op or dead-operation
    proof;
 8. result history and rendering represent opaque moves without binary
-   serialization; and
-9. tests cover every required scenario above.
+   serialization;
+9. formatter-tolerant matching accepts only exhaustively proven
+   byte-equivalent outcomes; and
+10. tests cover every required scenario above.

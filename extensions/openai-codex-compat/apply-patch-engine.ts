@@ -19,6 +19,9 @@ import type { Stats } from "node:fs";
 import { randomUUID } from "node:crypto";
 import { basename, dirname, isAbsolute, parse, relative, resolve, sep } from "node:path";
 import { generateDiffString, withFileMutationQueue } from "@earendil-works/pi-coding-agent";
+import { deriveNewContent, type UpdateChunk, type UpdateHunkLine } from "./apply-patch-matcher.ts";
+
+export type { UpdateChunk, UpdateHunkLine } from "./apply-patch-matcher.ts";
 
 const BEGIN_PATCH = "*** Begin Patch";
 const END_PATCH = "*** End Patch";
@@ -70,13 +73,6 @@ type ParserMode =
   | { kind: "delete" }
   | { kind: "update"; hunkLineNumber: number }
   | { kind: "ended" };
-
-export type UpdateChunk = {
-  context?: string;
-  oldLines: string[];
-  newLines: string[];
-  endOfFile: boolean;
-};
 
 export type PatchOperation =
   | { kind: "add"; path: string; content: string }
@@ -309,10 +305,20 @@ class PatchParser {
   private ensureUpdateChunk(operation: Extract<PatchOperation, { kind: "update" }>): UpdateChunk {
     let chunk = operation.chunks.at(-1);
     if (!chunk) {
-      chunk = { oldLines: [], newLines: [], endOfFile: false };
+      chunk = { oldLines: [], newLines: [], lines: [], endOfFile: false };
       operation.chunks.push(chunk);
     }
     return chunk;
+  }
+
+  private appendUpdateLine(
+    operation: Extract<PatchOperation, { kind: "update" }>,
+    line: UpdateHunkLine,
+  ): void {
+    const chunk = this.ensureUpdateChunk(operation);
+    chunk.lines.push(line);
+    if (line.kind !== "add") chunk.oldLines.push(line.text);
+    if (line.kind !== "delete") chunk.newLines.push(line.text);
   }
 
   private processLine(line: string): void {
@@ -370,7 +376,7 @@ class PatchParser {
         }
 
         if (updateLine === EMPTY_CHANGE_CONTEXT) {
-          operation.chunks.push({ oldLines: [], newLines: [], endOfFile: false });
+          operation.chunks.push({ oldLines: [], newLines: [], lines: [], endOfFile: false });
           return;
         }
         if (updateLine.startsWith(CHANGE_CONTEXT)) {
@@ -378,6 +384,7 @@ class PatchParser {
             context: updateLine.slice(CHANGE_CONTEXT.length),
             oldLines: [],
             newLines: [],
+            lines: [],
             endOfFile: false,
           });
           return;
@@ -389,23 +396,19 @@ class PatchParser {
         }
 
         if (line === "") {
-          const chunk = this.ensureUpdateChunk(operation);
-          chunk.oldLines.push("");
-          chunk.newLines.push("");
+          this.appendUpdateLine(operation, { kind: "context", text: "" });
           return;
         }
         if (line.startsWith(" ")) {
-          const chunk = this.ensureUpdateChunk(operation);
-          chunk.oldLines.push(line.slice(1));
-          chunk.newLines.push(line.slice(1));
+          this.appendUpdateLine(operation, { kind: "context", text: line.slice(1) });
           return;
         }
         if (line.startsWith("+")) {
-          this.ensureUpdateChunk(operation).newLines.push(line.slice(1));
+          this.appendUpdateLine(operation, { kind: "add", text: line.slice(1) });
           return;
         }
         if (line.startsWith("-")) {
-          this.ensureUpdateChunk(operation).oldLines.push(line.slice(1));
+          this.appendUpdateLine(operation, { kind: "delete", text: line.slice(1) });
           return;
         }
 
@@ -473,135 +476,6 @@ export function parsePatchDocument(patch: string): ParsedPatch {
 
 export function parsePatch(patch: string): PatchOperation[] {
   return parsePatchDocument(patch).operations;
-}
-
-function normalizeFuzzyText(value: string): string {
-  const replacements: Record<string, string> = {
-    "\u2010": "-",
-    "\u2011": "-",
-    "\u2012": "-",
-    "\u2013": "-",
-    "\u2014": "-",
-    "\u2015": "-",
-    "\u2212": "-",
-    "\u2018": "'",
-    "\u2019": "'",
-    "\u201a": "'",
-    "\u201b": "'",
-    "\u201c": '"',
-    "\u201d": '"',
-    "\u201e": '"',
-    "\u201f": '"',
-    "\u00a0": " ",
-    "\u2002": " ",
-    "\u2003": " ",
-    "\u2004": " ",
-    "\u2005": " ",
-    "\u2006": " ",
-    "\u2007": " ",
-    "\u2008": " ",
-    "\u2009": " ",
-    "\u200a": " ",
-    "\u202f": " ",
-    "\u205f": " ",
-    "\u3000": " ",
-  };
-  return Array.from(rustTrim(value))
-    .map((character) => replacements[character] ?? character)
-    .join("");
-}
-
-function sequenceMatches(
-  lines: readonly string[],
-  pattern: readonly string[],
-  index: number,
-  mode: "exact" | "trim-end" | "trim" | "unicode",
-): boolean {
-  const candidate = lines.slice(index, index + pattern.length);
-  if (candidate.length !== pattern.length) return false;
-  return candidate.every((line, offset) => {
-    const expected = pattern[offset]!;
-    switch (mode) {
-      case "exact":
-        return line === expected;
-      case "trim-end":
-        return rustTrimEnd(line) === rustTrimEnd(expected);
-      case "trim":
-        return rustTrim(line) === rustTrim(expected);
-      case "unicode":
-        return normalizeFuzzyText(line) === normalizeFuzzyText(expected);
-    }
-  });
-}
-
-function findSequence(
-  lines: readonly string[],
-  pattern: readonly string[],
-  start: number,
-  endOfFile: boolean,
-): number | undefined {
-  if (pattern.length === 0) return start;
-  if (pattern.length > lines.length) return undefined;
-  const last = lines.length - pattern.length;
-  const searchStart = endOfFile ? last : start;
-  for (const mode of ["exact", "trim-end", "trim", "unicode"] as const) {
-    for (let index = searchStart; index <= last; index++) {
-      if (sequenceMatches(lines, pattern, index, mode)) return index;
-    }
-  }
-  return undefined;
-}
-
-function deriveNewContent(content: string, chunks: readonly UpdateChunk[], path: string): string {
-  const lines = content.split("\n");
-  if (lines.at(-1) === "") lines.pop();
-  const replacements: Array<{ index: number; oldLength: number; newLines: string[] }> = [];
-  let cursor = 0;
-
-  for (const chunk of chunks) {
-    if (chunk.context) {
-      const contextIndex = findSequence(lines, [chunk.context], cursor, false);
-      if (contextIndex === undefined) {
-        throw new Error(`Failed to find context '${chunk.context}' in ${path}`);
-      }
-      cursor = contextIndex + 1;
-    }
-
-    if (chunk.oldLines.length === 0) {
-      const insertionIndex = lines.at(-1) === "" ? lines.length - 1 : lines.length;
-      replacements.push({
-        index: insertionIndex,
-        oldLength: 0,
-        newLines: [...chunk.newLines],
-      });
-      continue;
-    }
-
-    let oldLines = chunk.oldLines;
-    let newLines = chunk.newLines;
-    let found = findSequence(lines, oldLines, cursor, chunk.endOfFile);
-    if (found === undefined && oldLines.at(-1) === "") {
-      oldLines = oldLines.slice(0, -1);
-      if (newLines.at(-1) === "") newLines = newLines.slice(0, -1);
-      found = findSequence(lines, oldLines, cursor, chunk.endOfFile);
-    }
-    if (found === undefined) {
-      throw new Error(`Failed to find expected lines in ${path}:\n${chunk.oldLines.join("\n")}`);
-    }
-    replacements.push({
-      index: found,
-      oldLength: oldLines.length,
-      newLines: [...newLines],
-    });
-    cursor = found + oldLines.length;
-  }
-
-  replacements.sort((left, right) => left.index - right.index);
-  for (const replacement of replacements.toReversed()) {
-    lines.splice(replacement.index, replacement.oldLength, ...replacement.newLines);
-  }
-  if (lines.at(-1) !== "") lines.push("");
-  return lines.join("\n");
 }
 
 function hasErrorCode(error: unknown, code: string): boolean {
@@ -1384,7 +1258,7 @@ class SemanticPlanner {
     }
 
     const oldContent = await this.readText(source, operation.absolutePath);
-    const newContent = deriveNewContent(oldContent, operation.chunks, operation.absolutePath);
+    const newContent = await deriveNewContent(oldContent, operation.chunks, operation.absolutePath);
     const content = Buffer.from(newContent, "utf8");
     const semanticMove = updateHasSemanticMove(operation);
     if (!semanticMove && buffersEqual(source.content.value!.bytes, content)) return;

@@ -502,15 +502,15 @@ export const PRODUCTION_APPLY_PATCH_FIXTURES: ProductionApplyPatchFixture[] = [
     },
   },
   {
-    id: "stale context rejects the complete multi-operation patch",
+    id: "stale context recovers the complete multi-operation patch",
     sourceFingerprints: ["f8e65c8b75037f8e"],
     productionObservation:
       "A 13-operation maintenance patch failed on stale README context and was retried with corrected context.",
     characteristics: [
-      "production context mismatch",
+      "production context recovery",
       "valid operation before conflict",
       "replacement operations after conflict",
-      "preflight must prevent every write",
+      "uniquely located insertion around an extra line",
     ],
     initialFiles: [
       {
@@ -547,31 +547,44 @@ export const PRODUCTION_APPLY_PATCH_FIXTURES: ProductionApplyPatchFixture[] = [
 +## Unreleased
 *** End Patch`,
     expected: {
-      outcome: "verification-error",
-      messagePattern: /Failed to find expected lines/,
+      outcome: "success",
+      files: [
+        {
+          path: "<CWD>/package.json",
+          content:
+            '{\n  "scripts": {\n    "check": "hk check",\n    "pack:dry": "npm pack --dry-run"\n  }\n}\n',
+        },
+        {
+          path: "<CWD>/README.md",
+          content: "```text\nnpm run check\nnpm test\nnpm run pack:dry\nnpm run build\n```\n",
+        },
+        {
+          path: "<CWD>/CHANGELOG.md",
+          content: "# Changelog\n\n## Unreleased\n",
+        },
+      ],
+      absent: [],
+      changeKinds: ["update", "update", "delete", "add"],
     },
   },
   {
-    id: "current-session stale replacement rejects without writes",
-    sourceFingerprints: ["684cab162b03aa44", "a197ec50edaaa85b"],
+    id: "current-session formatter-reflowed engine method",
+    sourceFingerprints: ["684cab162b03aa44"],
     productionObservation:
-      "Two implementation patches in the fixture-creation session missed context after the target code had evolved.",
+      "An implementation patch missed after the formatter collapsed a method signature.",
     characteristics: [
       "current-session failure",
-      "single large replacement",
-      "stale structural context",
-      "no-write verification failure",
+      "formatter-reflowed TypeScript",
+      "single structural replacement",
+      "current formatting preserved",
     ],
     initialFiles: [
       {
         path: "<CWD>/planner.ts",
         content: [
           "class Planner {",
-          "  private readonly values = new Map<string, string>();",
-          "  private readonly operations: readonly string[];",
-          "",
-          "  constructor(operations: readonly string[]) {",
-          "    this.operations = operations;",
+          "  private describe(index: number, operation: string): string {",
+          "    return `${index}:${operation}`;",
           "  }",
           "}",
           "",
@@ -582,17 +595,90 @@ export const PRODUCTION_APPLY_PATCH_FIXTURES: ProductionApplyPatchFixture[] = [
 *** Update File: <CWD>/planner.ts
 @@
  class Planner {
--  constructor(operations: readonly string[]) {
--    this.operations = operations;
+-  private describe(
+-    index: number,
+-    operation: string,
+-  ): string {
+-    return \`\${index}:\${operation}\`;
 -  }
-+  constructor(
-+    private readonly operations: readonly string[],
-+  ) {}
++  private describe(
++    index: number,
++    operation: string,
++  ): string {
++    return \`\${index}=\${operation}\`;
++  }
  }
 *** End Patch`,
     expected: {
-      outcome: "verification-error",
-      messagePattern: /Failed to find expected lines/,
+      outcome: "success",
+      files: [
+        {
+          path: "<CWD>/planner.ts",
+          content: [
+            "class Planner {",
+            "  private describe(index: number, operation: string): string {",
+            "    return `${index}=${operation}`;",
+            "  }",
+            "}",
+            "",
+          ].join("\n"),
+        },
+      ],
+      absent: [],
+      changeKinds: ["update"],
+    },
+  },
+  {
+    id: "current-session formatter-reflowed production assertion",
+    sourceFingerprints: ["a197ec50edaaa85b"],
+    productionObservation:
+      "A production-fixture test patch missed after the formatter collapsed an assertion call.",
+    characteristics: [
+      "current-session failure",
+      "formatter-reflowed TypeScript",
+      "single structural replacement",
+      "current formatting preserved",
+    ],
+    initialFiles: [
+      {
+        path: "<CWD>/fixture.test.ts",
+        content: [
+          'void test("fixture", async () => {',
+          "  await assert.rejects(applyPatch(cwd, invalidPatch), ApplyPatchVerificationError);",
+          "});",
+          "",
+        ].join("\n"),
+      },
+    ],
+    patch: `*** Begin Patch
+*** Update File: <CWD>/fixture.test.ts
+@@
+ void test("fixture", async () => {
+-  await assert.rejects(
+-    applyPatch(cwd, invalidPatch),
+-    ApplyPatchVerificationError,
+-  );
++  await assert.rejects(
++    applyPatch(cwd, ambiguousPatch),
++    ApplyPatchVerificationError,
++  );
+ });
+*** End Patch`,
+    expected: {
+      outcome: "success",
+      files: [
+        {
+          path: "<CWD>/fixture.test.ts",
+          content: [
+            'void test("fixture", async () => {',
+            "  await assert.rejects(applyPatch(cwd, ambiguousPatch), ApplyPatchVerificationError);",
+            "});",
+            "",
+          ].join("\n"),
+        },
+      ],
+      absent: [],
+      changeKinds: ["update"],
     },
   },
   {
