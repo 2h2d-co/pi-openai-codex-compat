@@ -84,7 +84,6 @@ type SyntaxToken = {
   text: string;
   start: number;
   end: number;
-  parentType?: string;
   path: SyntaxPathEntry[];
   unsafe: boolean;
 };
@@ -135,23 +134,6 @@ const GRAMMAR_BY_FENCE_INFO = new Map<string, GrammarName>([
   ["java", "java"],
   ["scala", "scala"],
 ]);
-
-const OPTIONAL_TRAILING_COMMA_PARENTS: Partial<Record<GrammarName, ReadonlySet<string>>> = {
-  javascript: new Set(["arguments", "array", "formal_parameters", "object"]),
-  jsx: new Set(["arguments", "array", "formal_parameters", "object"]),
-  typescript: new Set(["arguments", "array", "formal_parameters", "object"]),
-  tsx: new Set(["arguments", "array", "formal_parameters", "object"]),
-  python: new Set(["argument_list", "dictionary", "list", "parameters", "set"]),
-  go: new Set([
-    "argument_list",
-    "composite_literal",
-    "literal_value",
-    "parameter_list",
-    "type_arguments",
-  ]),
-  java: new Set(["annotation_argument_list", "array_initializer"]),
-  scala: new Set(["arguments", "bindings", "parameters"]),
-};
 
 const languagePromises = new Map<GrammarName, Promise<Language>>();
 let parserInitialization: Promise<void> | undefined;
@@ -626,10 +608,14 @@ function lineEndingAtBoundary(sourceLines: readonly string[], line: number): "\n
   return adjacent?.endsWith("\r") ? "\r\n" : "\n";
 }
 
-function replacementLines(lines: readonly string[], lineEnding: "\n" | "\r\n"): Buffer {
+function replacementLines(
+  lines: readonly string[],
+  lineEnding: "\n" | "\r\n",
+  trailingNewline = true,
+): Buffer {
   return lines.length === 0
     ? Buffer.alloc(0)
-    : Buffer.from(`${lines.join(lineEnding)}${lineEnding}`, "utf8");
+    : Buffer.from(`${lines.join(lineEnding)}${trailingNewline ? lineEnding : ""}`, "utf8");
 }
 
 function lineCandidates(
@@ -784,7 +770,6 @@ function syntaxTokens(root: SyntaxNode, source: string): SyntaxToken[] {
           text: node.text,
           start: byteOffsets[node.startIndex]!,
           end: byteOffsets[node.endIndex]!,
-          ...(path.at(-1)?.type ? { parentType: path.at(-1)!.type } : {}),
           path: nextPath,
           unsafe: nextUnsafe,
         });
@@ -795,51 +780,6 @@ function syntaxTokens(root: SyntaxNode, source: string): SyntaxToken[] {
   };
   visit(root, [], false);
   return tokens;
-}
-
-function sameSyntaxParent(left: SyntaxToken | undefined, right: SyntaxToken): boolean {
-  return left?.path.at(-2)?.id === right.path.at(-2)?.id;
-}
-
-function optionalTrailingComma(
-  token: SyntaxToken,
-  previous: SyntaxToken | undefined,
-  next: SyntaxToken | undefined,
-  grammar: GrammarName,
-): boolean {
-  if (token.text !== "," || !token.parentType) return false;
-  const parents = OPTIONAL_TRAILING_COMMA_PARENTS[grammar];
-  if (!parents?.has(token.parentType)) return false;
-  if (
-    ["javascript", "jsx", "typescript", "tsx"].includes(grammar) &&
-    token.parentType === "array" &&
-    sameSyntaxParent(previous, token) &&
-    (previous?.text === "[" || previous?.text === ",")
-  ) {
-    return false;
-  }
-  return next !== undefined && [")", "]", "}"].includes(next.text);
-}
-
-function normalizeTokens(tokens: readonly SyntaxToken[], grammar: GrammarName): SyntaxToken[] {
-  const previousTokens = Array.from<SyntaxToken | undefined>({ length: tokens.length });
-  const nextTokens = Array.from<SyntaxToken | undefined>({ length: tokens.length });
-  let previous: SyntaxToken | undefined;
-  for (let index = 0; index < tokens.length; index++) {
-    const token = tokens[index]!;
-    previousTokens[index] = previous;
-    if (!token.type.includes("comment")) previous = token;
-  }
-  let next: SyntaxToken | undefined;
-  for (let index = tokens.length - 1; index >= 0; index--) {
-    const token = tokens[index]!;
-    nextTokens[index] = next;
-    if (!token.type.includes("comment")) next = token;
-  }
-  return tokens.filter(
-    (token, index) =>
-      !optionalTrailingComma(token, previousTokens[index], nextTokens[index], grammar),
-  );
 }
 
 async function parseStructuralDocument(
@@ -861,13 +801,11 @@ async function parseStructuralDocument(
       if (!tree) return null;
       try {
         if (tree.rootNode.hasError) return null;
-        const tokens = normalizeTokens(syntaxTokens(tree.rootNode, source), grammar).map(
-          (token) => ({
-            ...token,
-            start: token.start + byteOffset,
-            end: token.end + byteOffset,
-          }),
-        );
+        const tokens = syntaxTokens(tree.rootNode, source).map((token) => ({
+          ...token,
+          start: token.start + byteOffset,
+          end: token.end + byteOffset,
+        }));
         if (tokens.some((token) => token.unsafe)) return null;
         return { grammar, tokens };
       } finally {
@@ -1081,8 +1019,7 @@ async function parseFragment(grammar: GrammarName, value: string): Promise<Synta
           tokens.length > 0 &&
           tokens.every((token) => !token.unsafe) &&
           fragmentCovered(fragment, tokens);
-        const normalized = valid ? normalizeTokens(tokens, grammar) : [];
-        if (normalized.length > 0) return normalized;
+        if (valid) return tokens;
       } finally {
         tree.delete();
       }
@@ -1138,7 +1075,6 @@ function lineBounds(
   lineStart: number;
   lineEnd: number;
   afterLine: number;
-  indent: string;
   fullLines: boolean;
 } {
   const previousNewline = source.lastIndexOf(0x0a, Math.max(0, start - 1));
@@ -1154,23 +1090,8 @@ function lineBounds(
     lineStart,
     lineEnd,
     afterLine,
-    indent: /^[\t ]*$/u.test(prefix) ? prefix : "",
     fullLines: /^[\t ]*$/u.test(prefix) && /^[\t ]*$/u.test(suffix),
   };
-}
-
-function formattedReplacement(
-  value: string,
-  indent: string,
-  trailingNewline: boolean,
-  lineEnding: "\n" | "\r\n",
-): Buffer {
-  if (!value) return Buffer.alloc(0);
-  const normalized = dedent(value)
-    .split("\n")
-    .map((line) => `${indent}${line}`)
-    .join(lineEnding);
-  return Buffer.from(`${normalized}${trailingNewline ? lineEnding : ""}`, "utf8");
 }
 
 async function tokenCandidates(
@@ -1187,11 +1108,6 @@ async function tokenCandidates(
   if (!oldTokens || oldTokens.length < 2 || oldTokens.length > document.tokens.length) return [];
   const expectedShape = relativeShape(oldTokens);
   const sourceBytes = Buffer.from(source, "utf8");
-  const newTokens =
-    group.newLines.length === 0
-      ? []
-      : await parseFragment(document.grammar, group.newLines.join("\n"));
-  if (!newTokens) return [];
   const candidates: EditCandidate[] = [];
 
   for (let index = 0; index <= document.tokens.length - oldTokens.length; index++) {
@@ -1208,38 +1124,13 @@ async function tokenCandidates(
       bounds.lineEnd > bounds.lineStart && sourceBytes[bounds.lineEnd - 1] === 0x0d ? "\r\n" : "\n";
     const start = bounds.lineStart;
     const end = bounds.afterLine;
-    let edits: ByteEdit[];
-    if (
-      newTokens &&
-      newTokens.length === oldTokens.length &&
-      newTokens.every((token, tokenIndex) => token.type === oldTokens[tokenIndex]!.type)
-    ) {
-      edits = window.flatMap((token, tokenIndex) => {
-        const replacement = newTokens[tokenIndex]!.text;
-        return replacement === token.text
-          ? []
-          : [
-              {
-                start: token.start,
-                end: token.end,
-                replacement: Buffer.from(replacement, "utf8"),
-              },
-            ];
-      });
-    } else {
-      edits = [
-        {
-          start,
-          end,
-          replacement: formattedReplacement(
-            group.newLines.join("\n"),
-            bounds.indent,
-            end > bounds.lineEnd,
-            lineEnding,
-          ),
-        },
-      ];
-    }
+    const edits: ByteEdit[] = [
+      {
+        start,
+        end,
+        replacement: replacementLines(group.newLines, lineEnding, end > bounds.lineEnd),
+      },
+    ];
     const startLine = lineForByte(lineStarts, first.start);
     const endLine = Math.min(sourceLines.length, lineForByte(lineStarts, last.end - 1) + 1);
     const candidate = {

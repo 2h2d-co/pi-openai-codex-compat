@@ -560,7 +560,8 @@ export const PRODUCTION_APPLY_PATCH_FIXTURES: ProductionApplyPatchFixture[] = [
       "current-session failure",
       "formatter-reflowed TypeScript",
       "single structural replacement",
-      "current formatting preserved",
+      "punctuation-changing formatter reflow",
+      "intentional rejection",
     ],
     initialFiles: [
       {
@@ -594,22 +595,8 @@ export const PRODUCTION_APPLY_PATCH_FIXTURES: ProductionApplyPatchFixture[] = [
  }
 *** End Patch`,
     expected: {
-      outcome: "success",
-      files: [
-        {
-          path: "<CWD>/planner.ts",
-          content: [
-            "class Planner {",
-            "  private describe(index: number, operation: string): string {",
-            "    return `${index}=${operation}`;",
-            "  }",
-            "}",
-            "",
-          ].join("\n"),
-        },
-      ],
-      absent: [],
-      changeKinds: ["update"],
+      outcome: "verification-error",
+      messagePattern: /No formatter-tolerant candidate/u,
     },
   },
   {
@@ -621,7 +608,8 @@ export const PRODUCTION_APPLY_PATCH_FIXTURES: ProductionApplyPatchFixture[] = [
       "current-session failure",
       "formatter-reflowed TypeScript",
       "single structural replacement",
-      "current formatting preserved",
+      "punctuation-changing formatter reflow",
+      "intentional rejection",
     ],
     initialFiles: [
       {
@@ -649,20 +637,8 @@ export const PRODUCTION_APPLY_PATCH_FIXTURES: ProductionApplyPatchFixture[] = [
  });
 *** End Patch`,
     expected: {
-      outcome: "success",
-      files: [
-        {
-          path: "<CWD>/fixture.test.ts",
-          content: [
-            'void test("fixture", async () => {',
-            "  await assert.rejects(applyPatch(cwd, ambiguousPatch), ApplyPatchVerificationError);",
-            "});",
-            "",
-          ].join("\n"),
-        },
-      ],
-      absent: [],
-      changeKinds: ["update"],
+      outcome: "verification-error",
+      messagePattern: /No formatter-tolerant candidate/u,
     },
   },
   {
@@ -737,7 +713,8 @@ export const PRODUCTION_APPLY_PATCH_FIXTURES: ProductionApplyPatchFixture[] = [
       "last-two-days failure",
       "typed Markdown fence",
       "formatter-reflowed TypeScript",
-      "preflight batch recovery",
+      "punctuation-changing formatter reflow",
+      "intentional rejection",
     ],
     initialFiles: [
       {
@@ -766,24 +743,8 @@ export const PRODUCTION_APPLY_PATCH_FIXTURES: ProductionApplyPatchFixture[] = [
  \`\`\`
 *** End Patch`,
     expected: {
-      outcome: "success",
-      files: [
-        {
-          path: "<CWD>/README.md",
-          content: [
-            "# Package API",
-            "",
-            "```ts",
-            "const grammar = new URL(",
-            '  import.meta.resolve("@scope/package/grammar.wasm"),',
-            ");",
-            "```",
-            "",
-          ].join("\n"),
-        },
-      ],
-      absent: [],
-      changeKinds: ["update"],
+      outcome: "verification-error",
+      messagePattern: /No formatter-tolerant candidate/u,
     },
   },
   {

@@ -44,7 +44,7 @@ void test("recovers reflowed code inside a typed Markdown fence", async (t) => {
  \`\`\`ts
 -const value = new URL(
 -  "@scope/pkg",
--  import.meta.url,
+-  import.meta.url
 -);
 +const value = new URL(
 +  import.meta.resolve("@scope/pkg"),
@@ -92,11 +92,11 @@ void test("scopes fenced recovery to the declared language", async (t) => {
  \`\`\`ts
 -const value: string = combine(
 -  alpha,
--  beta,
+-  beta
 -);
 +const value: string = merge(
 +  alpha,
-+  beta,
++  beta
 +);
  \`\`\`
 *** End Patch`,
@@ -110,7 +110,10 @@ void test("scopes fenced recovery to the declared language", async (t) => {
       "```",
       "",
       "```ts",
-      "const value: string = merge(alpha, beta);",
+      "const value: string = merge(",
+      "  alpha,",
+      "  beta",
+      ");",
       "```",
       "",
     ].join("\n"),
@@ -225,11 +228,11 @@ void test("does not use contextual preference to choose among structural matches
  function second() {
 -  return combine(
 -    alpha,
--    beta,
+-    beta
 -  );
 +  return merge(
 +    alpha,
-+    beta,
++    beta
 +  );
  }
 *** End Patch`,
@@ -247,7 +250,7 @@ void test("does not let stronger context hide a structural decoy", async (t) => 
       "before old",
       "combine(",
       "  alpha,",
-      "  beta,",
+      "  beta",
       ");",
       "after old",
       "*/",
@@ -263,11 +266,11 @@ void test("does not let stronger context hide a structural decoy", async (t) => 
  before old
 -combine(
 -  alpha,
--  beta,
+-  beta
 -);
 +merge(
 +  alpha,
-+  beta,
++  beta
 +);
  after old
 @@ stale marker
@@ -294,31 +297,41 @@ void test("applies ordered non-overlapping structural groups against one snapsho
 @@
 -const first = combine(
 -  alpha,
--  beta,
+-  beta
 -);
 +const first = merge(
 +  alpha,
-+  beta,
++  beta
 +);
 @@
 -const second = combine(
 -  gamma,
--  delta,
+-  delta
 -);
 +const second = merge(
 +  gamma,
-+  delta,
++  delta
 +);
 *** End Patch`,
   );
 
   assert.equal(
     await readFile(join(cwd, "groups.ts"), "utf8"),
-    "const first = merge(alpha, beta);\nconst second = merge(gamma, delta);\n",
+    [
+      "const first = merge(",
+      "  alpha,",
+      "  beta",
+      ");",
+      "const second = merge(",
+      "  gamma,",
+      "  delta",
+      ");",
+      "",
+    ].join("\n"),
   );
 });
 
-void test("preserves multibyte prefixes and CRLF around token-only edits", async (t) => {
+void test("preserves multibyte prefixes and CRLF around structural replacements", async (t) => {
   const cwd = await workspace(t);
   await writeFile(
     join(cwd, "unicode.ts"),
@@ -332,18 +345,18 @@ void test("preserves multibyte prefixes and CRLF around token-only edits", async
 @@
 -const result = combine(
 -  alpha,
--  beta,
+-  beta
 -);
 +const result = merge(
 +  alpha,
-+  beta,
++  beta
 +);
 *** End Patch`,
   );
 
   assert.equal(
     await readFile(join(cwd, "unicode.ts"), "utf8"),
-    'const emoji = "😀";\r\nconst result = merge(alpha, beta);\r\n',
+    'const emoji = "😀";\r\nconst result = merge(\r\n  alpha,\r\n  beta\r\n);\r\n',
   );
 });
 
@@ -368,7 +381,7 @@ void test("preserves CRLF during line-level recovery", async (t) => {
   );
 });
 
-void test("uses current indentation when a structural replacement changes token count", async (t) => {
+void test("applies structurally recovered replacement indentation exactly", async (t) => {
   const cwd = await workspace(t);
   await writeFile(
     join(cwd, "tokens.ts"),
@@ -380,15 +393,15 @@ void test("uses current indentation when a structural replacement changes token 
     `*** Begin Patch
 *** Update File: tokens.ts
 @@
--const result = [
--  alpha,
--  beta,
--];
-+const result = [
-+  alpha,
-+  beta,
-+  gamma,
-+];
+-  const result = [
+-    alpha,
+-    beta
+-  ];
++  const result = [
++    alpha,
++    beta,
++    gamma,
++  ];
 *** End Patch`,
   );
 
@@ -419,14 +432,14 @@ void test("recovers only complete formatter-collapsed line content", async (t) =
 -void func() {
 -  return a;
 -}
-+void func() {
-+  return b;
-+}
++  void func() {
++    return b;
++  }
 *** End Patch`,
   );
   assert.equal(
     await readFile(join(cwd, "Complete.java"), "utf8"),
-    "class Complete {\n  void func() { return b; }\n}\n",
+    "class Complete {\n  void func() {\n    return b;\n  }\n}\n",
   );
 
   await rejectWithoutWrite(
@@ -458,7 +471,7 @@ void test("rejects structural matches that cover only part of a source line", as
 @@ stale
 -combine(
 -  alpha,
--  beta,
+-  beta
 -)
 +merge(
 +  alpha,
@@ -561,7 +574,7 @@ void test("applies end-of-file to the complete recovered chunk", async (t) => {
 @@ stale
 -const value = combine(
 -  alpha,
--  beta,
+-  beta
 -);
 +const value = merge(
 +  alpha,
@@ -625,7 +638,7 @@ void test("rejects tolerant candidates before a present anchor", async (t) => {
 @@ anchor
 -const value = combine(
 -  alpha,
--  beta,
+-  beta
 -);
 +const value = merge(
 +  alpha,
@@ -636,7 +649,7 @@ void test("rejects tolerant candidates before a present anchor", async (t) => {
   );
 });
 
-void test("preserves indentation and CRLF for full-line structural replacements", async (t) => {
+void test("applies exact indentation and preserves CRLF for structural replacements", async (t) => {
   const cwd = await workspace(t);
   await writeFile(join(cwd, "indent.ts"), "function run() {\n  combine(alpha, beta);\n}\n");
   await applyPatch(
@@ -644,15 +657,15 @@ void test("preserves indentation and CRLF for full-line structural replacements"
     `*** Begin Patch
 *** Update File: indent.ts
 @@ stale
--combine(
--  alpha,
--  beta,
--);
-+merge(
-+  alpha,
-+  beta,
-+  gamma,
-+);
+-  combine(
+-    alpha,
+-    beta
+-  );
++  merge(
++    alpha,
++    beta,
++    gamma,
++  );
 *** End Patch`,
   );
   assert.equal(
@@ -671,15 +684,15 @@ void test("preserves indentation and CRLF for full-line structural replacements"
     `*** Begin Patch
 *** Update File: crlf.ts
 @@ stale
--return combine(
--  alpha,
--  beta,
--);
-+return merge(
-+  alpha,
-+  beta,
-+  gamma,
-+);
+-  return combine(
+-    alpha,
+-    beta
+-  );
++  return merge(
++    alpha,
++    beta,
++    gamma,
++  );
 *** End Patch`,
   );
   assert.equal(
@@ -688,7 +701,7 @@ void test("preserves indentation and CRLF for full-line structural replacements"
   );
 });
 
-void test("does not normalize JavaScript array elisions as trailing commas", async (t) => {
+void test("treats JavaScript array elisions as exact punctuation", async (t) => {
   const cwd = await workspace(t);
   await rejectWithoutWrite(
     cwd,
@@ -713,7 +726,7 @@ void test("rejects divergent line-level and structural candidates", async (t) =>
       "/*",
       "combine(",
       "  alpha,",
-      "  beta,",
+      "  beta",
       ");",
       "*/",
       "function run() {",
@@ -726,11 +739,11 @@ void test("rejects divergent line-level and structural candidates", async (t) =>
 @@ stale
 -combine(
 -  alpha,
--  beta,
+-  beta
 -);
 +merge(
 +  alpha,
-+  beta,
++  beta
 +);
 *** End Patch`,
     /candidate mappings produce different files/u,
@@ -764,7 +777,7 @@ void test("keeps Markdown tolerant matching outside closed and fenced blocks", a
  somewhere else:
 -combine(
 -  alpha,
--  beta,
+-  beta
 -)
 +merge(
 +  alpha,
@@ -804,11 +817,11 @@ void test("rejects ambiguous duplicate code blocks and full-line structural expr
  \`\`\`ts
 -const value = combine(
 -  alpha,
--  beta,
+-  beta
 -);
 +const value = merge(
 +  alpha,
-+  beta,
++  beta
 +);
 *** End Patch`,
     /candidate mappings produce different files/u,
@@ -823,11 +836,11 @@ void test("rejects ambiguous duplicate code blocks and full-line structural expr
 @@ stale
 -const value = combine(
 -  alpha,
--  beta,
+-  beta
 -);
 +const value = merge(
 +  alpha,
-+  beta,
++  beta
 +);
 *** End Patch`,
     /candidate mappings produce different files/u,
@@ -927,23 +940,23 @@ void test("rejects overlapping edit groups even when each group is identifiable"
 @@ stale declaration
 -const value = combine(
 -  alpha,
--  beta,
+-  beta
 -);
 +const value = merge(
 +  alpha,
 +  beta,
 +);
-@@ stale call
--combine(
+@@ stale declaration again
+-const value = combine(
 -  alpha,
--  beta,
--)
-+transform(
+-  beta
+-);
++const value = transform(
 +  alpha,
 +  beta,
-+)
++);
 *** End Patch`,
-    /Failed to find context/u,
+    /overlaps edit group 1/u,
   );
 });
 

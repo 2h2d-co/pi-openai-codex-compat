@@ -368,35 +368,40 @@ The supported extensions are:
 | Java       | `.java`                 |
 | Scala      | `.scala`, `.sc`, `.sbt` |
 
-Both the current file and grammar-wrapped old/new fragments MUST parse
-without error. Every non-whitespace fragment byte MUST be represented by the
+Both the current file and grammar-wrapped old fragment MUST parse without
+error. Every non-whitespace old-fragment byte MUST be represented by the
 concrete syntax tree. Candidate matching compares leaf token types, exact
-token text, and relative concrete-syntax-tree shape.
+token text, and relative concrete-syntax-tree shape. The requested new lines
+are opaque replacement instructions and do not participate in structural
+matching.
 
 Structural recovery is a whole-line formatting bridge, not a sub-line editing
 mechanism. The old fragment MUST contain at least two concrete tokens, and its
 matching source token span MUST cover complete physical lines except for
 leading and trailing indentation. Non-whitespace source content before the
 first matched token or after the last matched token makes the candidate
-ineligible. Single-token and partial-line structural candidates reject.
+ineligible. The two-token requirement is only the activation floor for
+Tree-sitter recovery: for example, `foo;` has two concrete tokens and
+`foo();` has four. Single-token and partial-line structural candidates reject.
 
 Ordinary formatter-controlled whitespace is absent from leaf-token matching.
-Known optional trailing commas may be ignored only in grammar node types where
-the language permits a formatter to add or remove them. Comments, identifiers,
-operators, keywords, string contents, numeric contents, and JSX text remain
-exact tokens; they MUST NOT be treated as trivia.
+Every concrete token remains exact, including commas and other punctuation,
+comments, identifiers, operators, keywords, string contents, numeric contents,
+and JSX text. Structural recovery therefore permits only whitespace and
+physical line-boundary differences on the old side.
 
-When old and new fragments have the same token-type sequence, only changed
-token byte ranges are replaced so the current file's whitespace and line
-wrapping remain intact. Otherwise, the matched token span is replaced using
-the hunk's requested structure and the current location's indentation.
+After the old-side mapping is proven unambiguous by its final bytes, its
+complete physical lines are replaced with the hunk's requested new lines
+exactly. Structural recovery MUST NOT parse, normalize, dedent, reindent,
+token-map, or otherwise reinterpret the new lines. It converts their line
+separators to the local source line ending, consistent with ordinary line-level
+recovery.
 
 Recovery validates where the old side maps; it does not lint, repair,
 reinterpret, or reject the replacement merely because the requested new code
 would be invalid in its surrounding language context. The implementation MUST
-nevertheless avoid corruption of its own making, including double-applying
-indentation, changing unaffected line endings, or treating semantic commas such
-as JavaScript array elisions as formatter-controlled trailing commas.
+nevertheless avoid corruption of its own making, including changing unaffected
+line endings or altering explicit replacement punctuation.
 
 Line-level, Markdown, and structural candidate sources MUST be considered
 together when one tier can produce a textual decoy for a viable structural
@@ -860,15 +865,14 @@ The implementation MUST address these confirmed defect classes:
 
 1. **Matcher constraints:** enforce complete-hunk EOF alignment and positional
    `@@` anchors across line, insertion, Markdown, and structural recovery.
-2. **Matcher fidelity:** require complete-line structural matches and preserve
-   indentation and CRLF,
-   JavaScript array-elision normalization, ordinary-line decoys suppressing
-   structural candidates, table fallback inside fences, closed-fence grammar
-   leakage, and closing-fence tab handling.
-3. **Bounded work:** make optional-comma normalization linear; stop mapping
-   traversal immediately when its exhaustive bound is exceeded; thread
-   cancellation through long matcher loops; and retain conservative size/work
-   bounds.
+2. **Matcher fidelity:** require complete-line structural matches, exact
+   old-side tokens, opaque new-side replacement lines, and preserved CRLF;
+   address ordinary-line decoys suppressing structural candidates, table
+   fallback inside fences, closed-fence grammar leakage, and closing-fence tab
+   handling.
+3. **Bounded work:** stop mapping traversal immediately when its exhaustive
+   bound is exceeded; thread cancellation through long matcher loops; and
+   retain conservative size/work bounds.
 4. **Entry identity:** prevent write-then-unlink data loss for case, Unicode,
    symbolic-link-parent, and destination-link aliases; keep hard-link entries
    distinct; and make sequential virtual state coherent across equivalent path
@@ -1153,19 +1157,20 @@ Every case must preserve source bytes exactly.
 - multiple mappings with different final content reject before writes;
 - candidate and mapping search limits reject rather than assume uniqueness;
 - JavaScript, JSX, TypeScript, TSX, Python, Go, Java, and Scala each recover a
-  formatter-reflowed edit through the packaged grammar;
+  whitespace-only formatter-reflowed edit through the packaged grammar;
 - structural recovery rejects single-token and partial-line candidates;
-- current line wrapping is preserved for token-type-compatible replacements;
+- every old-side concrete token, including punctuation, remains exact;
+- requested new lines are applied exactly and may contain invalid syntax;
 - line-level insertions and replacements preserve the local source line
   ending;
-- known optional trailing-comma differences are accepted;
-- JavaScript array elisions remain semantically distinct from empty arrays;
+- optional trailing-comma differences reject;
+- JavaScript array elisions remain exact punctuation;
 - comments and literal contents remain exact;
 - line-level decoys do not suppress divergent structural candidates;
 - malformed source or fragments reject structural recovery;
 - UTF-8 byte edits remain correct after multibyte UTF-16 characters;
-- full-line structural replacements preserve indentation and source line
-  endings;
+- full-line structural replacements apply requested indentation exactly and
+  preserve source line endings;
 - a present `@@` anchor excludes candidates before it;
 - `*** End of File` aligns the complete old side, including trailing context,
   across line, Markdown, and structural recovery;
@@ -1182,7 +1187,7 @@ Every case must preserve source bytes exactly.
 
 ### Bounded matching and cancellation
 
-- optional trailing-comma normalization is linear in token count;
+- exact token extraction and signature comparison are linear in token count;
 - reaching the complete-mapping limit immediately stops traversal;
 - cancellation interrupts long structural and mapping loops with no writes;
 - cached parser or language initialization failures can be retried rather than

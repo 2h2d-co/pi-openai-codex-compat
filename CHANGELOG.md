@@ -6,7 +6,7 @@
 
 - Omit Pi's auto-compaction state from the compatibility footer until extensions can observe its live value.
 - Evaluate grammar-valid `apply_patch` operations against a sequential virtual filesystem, accepting harmless no-ops and provably dead updates while rejecting conflicts before writes.
-- Recover uniquely determined `apply_patch` edits after formatter-only line reflow using the official `web-tree-sitter` runtime and packaged `@2h2d/tree-sitter-wasms` grammars for JavaScript, JSX, TypeScript, TSX, Python, Go, Java, and Scala, including typed Markdown code fences, formatter-aligned tables, and safely reflowed plain prose.
+- Recover uniquely determined `apply_patch` edits after whitespace-only formatter line reflow using the official `web-tree-sitter` runtime and packaged `@2h2d/tree-sitter-wasms` grammars for JavaScript, JSX, TypeScript, TSX, Python, Go, Java, and Scala, including typed Markdown code fences and formatter-aligned tables; require exact old-side punctuation and apply requested replacement lines without reinterpretation.
 - Move regular files and symbolic-link entries opaquely for move-only `apply_patch` hunks, preserving arbitrary binary bytes and rendering path-only move history.
 - Render failed `apply_patch` calls with their failure phase and reason, instruction counts, per-instruction statuses, and expanded instruction details.
 

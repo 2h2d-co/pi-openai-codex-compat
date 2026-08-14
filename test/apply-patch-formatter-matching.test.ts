@@ -56,23 +56,23 @@ void test("uses packaged Tree-sitter grammars to recover formatter-reflowed edit
     {
       path: "sample.js",
       current: "const result = combine(alpha, beta);\n",
-      oldLines: ["const result = combine(", "  alpha,", "  beta,", ");"],
-      newLines: ["const result = merge(", "  alpha,", "  beta,", ");"],
-      expected: "const result = merge(alpha, beta);\n",
+      oldLines: ["const result = combine(", "  alpha,", "  beta", ");"],
+      newLines: ["const result = merge(", "  alpha,", "  beta", ");"],
+      expected: "const result = merge(\n  alpha,\n  beta\n);\n",
     },
     {
       path: "sample.jsx",
       current: 'const view = <Panel title="old"><Item /></Panel>;\n',
       oldLines: ["const view = <Panel", '  title="old"', ">", "  <Item />", "</Panel>;"],
       newLines: ["const view = <Panel", '  title="new"', ">", "  <Item />", "</Panel>;"],
-      expected: 'const view = <Panel title="new"><Item /></Panel>;\n',
+      expected: 'const view = <Panel\n  title="new"\n>\n  <Item />\n</Panel>;\n',
     },
     {
       path: "sample.ts",
       current: "const result: string = combine(alpha, beta);\n",
-      oldLines: ["const result: string = combine(", "  alpha,", "  beta,", ");"],
-      newLines: ["const result: string = merge(", "  alpha,", "  beta,", ");"],
-      expected: "const result: string = merge(alpha, beta);\n",
+      oldLines: ["const result: string = combine(", "  alpha,", "  beta", ");"],
+      newLines: ["const result: string = merge(", "  alpha,", "  beta", ");"],
+      expected: "const result: string = merge(\n  alpha,\n  beta\n);\n",
     },
     {
       path: "sample.tsx",
@@ -91,38 +91,47 @@ void test("uses packaged Tree-sitter grammars to recover formatter-reflowed edit
         "  <Item />",
         "</Panel>;",
       ],
-      expected: 'const view: JSX.Element = <Panel title="new"><Item /></Panel>;\n',
+      expected: 'const view: JSX.Element = <Panel\n  title="new"\n>\n  <Item />\n</Panel>;\n',
     },
     {
       path: "sample.py",
       current: "result = combine(alpha, beta)\n",
-      oldLines: ["result = combine(", "    alpha,", "    beta,", ")"],
-      newLines: ["result = merge(", "    alpha,", "    beta,", ")"],
-      expected: "result = merge(alpha, beta)\n",
+      oldLines: ["result = combine(", "    alpha,", "    beta", ")"],
+      newLines: ["result = merge(", "    alpha,", "    beta", ")"],
+      expected: "result = merge(\n    alpha,\n    beta\n)\n",
     },
     {
       path: "sample.go",
-      current:
-        "package sample\n\nfunc run() {\n\tresult := combine(alpha, beta)\n\t_ = result\n}\n",
-      oldLines: ["result := combine(", "\talpha,", "\tbeta,", ")"],
-      newLines: ["result := merge(", "\talpha,", "\tbeta,", ")"],
-      expected: "package sample\n\nfunc run() {\n\tresult := merge(alpha, beta)\n\t_ = result\n}\n",
+      current: "package sample\n\nfunc run() {\n\tresult := alpha + beta\n\t_ = result\n}\n",
+      oldLines: ["\tresult := alpha +", "\t\tbeta"],
+      newLines: ["\tresult := alpha +", "\t\tgamma"],
+      expected: "package sample\n\nfunc run() {\n\tresult := alpha +\n\t\tgamma\n\t_ = result\n}\n",
     },
     {
       path: "Sample.java",
       current:
         "class Sample {\n    void run() {\n        var result = combine(alpha, beta);\n    }\n}\n",
-      oldLines: ["var result = combine(", "    alpha,", "    beta", ");"],
-      newLines: ["var result = merge(", "    alpha,", "    beta", ");"],
+      oldLines: [
+        "        var result = combine(",
+        "            alpha,",
+        "            beta",
+        "        );",
+      ],
+      newLines: [
+        "        var result = merge(",
+        "            alpha,",
+        "            beta",
+        "        );",
+      ],
       expected:
-        "class Sample {\n    void run() {\n        var result = merge(alpha, beta);\n    }\n}\n",
+        "class Sample {\n    void run() {\n        var result = merge(\n            alpha,\n            beta\n        );\n    }\n}\n",
     },
     {
       path: "Sample.scala",
       current: "object Sample {\n  val result = combine(alpha, beta)\n}\n",
-      oldLines: ["val result = combine(", "  alpha,", "  beta", ")"],
-      newLines: ["val result = merge(", "  alpha,", "  beta", ")"],
-      expected: "object Sample {\n  val result = merge(alpha, beta)\n}\n",
+      oldLines: ["  val result = combine(", "    alpha,", "    beta", "  )"],
+      newLines: ["  val result = merge(", "    alpha,", "    beta", "  )"],
+      expected: "object Sample {\n  val result = merge(\n    alpha,\n    beta\n  )\n}\n",
     },
   ] as const;
 
@@ -219,14 +228,14 @@ void test("does not ignore comments, literals, or unsupported-language reflow", 
     {
       path: "comment.ts",
       content: "const result = combine(alpha /* keep */, beta);\n",
-      oldLines: ["const result = combine(", "  alpha,", "  beta,", ");"],
-      newLines: ["const result = merge(", "  alpha,", "  beta,", ");"],
+      oldLines: ["const result = combine(", "  alpha,", "  beta", ");"],
+      newLines: ["const result = merge(", "  alpha,", "  beta", ");"],
     },
     {
       path: "literal.ts",
       content: 'const result = format("current", value);\n',
-      oldLines: ['const result = format("expected",', "  value,", ");"],
-      newLines: ['const result = format("updated",', "  value,", ");"],
+      oldLines: ['const result = format("expected",', "  value", ");"],
+      newLines: ['const result = format("updated",', "  value", ");"],
     },
     {
       path: "unsupported.txt",
@@ -237,14 +246,8 @@ void test("does not ignore comments, literals, or unsupported-language reflow", 
     {
       path: "malformed-source.ts",
       content: "const broken = ;\nconst result = combine(alpha, beta);\n",
-      oldLines: ["const result = combine(", "  alpha,", "  beta,", ");"],
-      newLines: ["const result = merge(", "  alpha,", "  beta,", ");"],
-    },
-    {
-      path: "malformed-replacement.ts",
-      content: "const result = combine(alpha, beta);\n",
-      oldLines: ["const result = combine(", "  alpha,", "  beta,", ");"],
-      newLines: ["const result = merge(", "  alpha,", "  beta,"],
+      oldLines: ["const result = combine(", "  alpha,", "  beta", ");"],
+      newLines: ["const result = merge(", "  alpha,", "  beta", ");"],
     },
   ] as const;
 
@@ -259,4 +262,125 @@ void test("does not ignore comments, literals, or unsupported-language reflow", 
     assert.equal(await readFile(path, "utf8"), fixture.content);
   }
   assert.equal((await lstat(join(cwd, "comment.ts"))).isFile(), true);
+});
+
+void test("treats structurally recovered replacement lines as opaque instructions", async (t) => {
+  const cwd = await workspace(t);
+  await writeFile(join(cwd, "opaque.ts"), "const result = combine(alpha, beta);\n");
+
+  await applyPatch(
+    cwd,
+    updatePatch(
+      "opaque.ts",
+      ["const result = combine(", "  alpha,", "  beta", ");"],
+      ["const result = merge(", "  alpha,"],
+    ),
+  );
+
+  assert.equal(await readFile(join(cwd, "opaque.ts"), "utf8"), "const result = merge(\n  alpha,\n");
+});
+
+void test("applies explicit punctuation additions and deletions from replacement lines", async (t) => {
+  const cwd = await workspace(t);
+  await writeFile(join(cwd, "punctuation.ts"), "const result = combine(alpha, beta);\n");
+
+  await applyPatch(
+    cwd,
+    updatePatch(
+      "punctuation.ts",
+      ["const result = combine(", "  alpha,", "  beta", ");"],
+      ["const result = combine(", "  alpha,", "  beta,", ");"],
+    ),
+  );
+
+  assert.equal(
+    await readFile(join(cwd, "punctuation.ts"), "utf8"),
+    "const result = combine(\n  alpha,\n  beta,\n);\n",
+  );
+
+  await writeFile(join(cwd, "punctuation-removal.ts"), "const result = combine(alpha, beta,);\n");
+  await applyPatch(
+    cwd,
+    updatePatch(
+      "punctuation-removal.ts",
+      ["const result = combine(", "  alpha,", "  beta,", ");"],
+      ["const result = combine(", "  alpha,", "  beta", ");"],
+    ),
+  );
+  assert.equal(
+    await readFile(join(cwd, "punctuation-removal.ts"), "utf8"),
+    "const result = combine(\n  alpha,\n  beta\n);\n",
+  );
+});
+
+void test("requires exact old-side punctuation during structural recovery", async (t) => {
+  const cwd = await workspace(t);
+  const fixtures = [
+    {
+      path: "punctuation.js",
+      content: "const result = combine(alpha, beta);\n",
+      oldLines: ["const result = combine(", "  alpha,", "  beta,", ");"],
+      newLines: ["const result = replacement;"],
+    },
+    {
+      path: "punctuation.jsx",
+      content: "const result = combine(alpha, beta);\n",
+      oldLines: ["const result = combine(", "  alpha,", "  beta,", ");"],
+      newLines: ["const result = replacement;"],
+    },
+    {
+      path: "punctuation.ts",
+      content: "const result = combine(alpha, beta);\n",
+      oldLines: ["const result = combine(", "  alpha,", "  beta,", ");"],
+      newLines: ["const result = replacement;"],
+    },
+    {
+      path: "punctuation.tsx",
+      content: "const result = combine(alpha, beta);\n",
+      oldLines: ["const result = combine(", "  alpha,", "  beta,", ");"],
+      newLines: ["const result = replacement;"],
+    },
+    {
+      path: "punctuation.py",
+      content: "result = combine(alpha, beta)\n",
+      oldLines: ["result = combine(", "    alpha,", "    beta,", ")"],
+      newLines: ["result = replacement"],
+    },
+    {
+      path: "punctuation.go",
+      content:
+        "package sample\n\nfunc run() {\n\tresult := combine(alpha, beta)\n\t_ = result\n}\n",
+      oldLines: ["\tresult := combine(", "\t\talpha,", "\t\tbeta,", "\t)"],
+      newLines: ["\tresult := replacement"],
+    },
+    {
+      path: "Punctuation.java",
+      content: "class Punctuation {\n  int[] values = {1};\n}\n",
+      oldLines: ["  int[] values = {", "    1,", "  };"],
+      newLines: ["  int[] values = replacement;"],
+    },
+    {
+      path: "Punctuation.scala",
+      content: "object Punctuation {\n  val result = combine(alpha, beta)\n}\n",
+      oldLines: ["  val result = combine(", "    alpha,", "    beta,", "  )"],
+      newLines: ["  val result = replacement"],
+    },
+    {
+      path: "additional-punctuation.ts",
+      content: "const result = combine(alpha, beta,);\n",
+      oldLines: ["const result = combine(", "  alpha,", "  beta", ");"],
+      newLines: ["const result = replacement;"],
+    },
+  ] as const;
+
+  for (const fixture of fixtures) {
+    const path = join(cwd, fixture.path);
+    await writeFile(path, fixture.content);
+    await assert.rejects(
+      applyPatch(cwd, updatePatch(fixture.path, fixture.oldLines, fixture.newLines)),
+      /Failed to find expected lines/u,
+      fixture.path,
+    );
+    assert.equal(await readFile(path, "utf8"), fixture.content);
+  }
 });
