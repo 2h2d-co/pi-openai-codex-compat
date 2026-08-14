@@ -369,51 +369,6 @@ function findTolerantSequences(
   return matches;
 }
 
-function isSafeMarkdownProseLine(line: string): boolean {
-  const trimmed = rustTrim(line);
-  const lineWithoutCarriageReturn = withoutCarriageReturn(line);
-  return (
-    trimmed.length > 0 &&
-    line === rustTrimStart(line) &&
-    !/^(?:#{1,6}\s|[-+*]\s|\d+[.)]\s|>\s?|```|~~~|\|)/u.test(trimmed) &&
-    !/^(?:={2,}|-{3,}|\*{3,}|_{3,})$/u.test(trimmed) &&
-    !Array.from(trimmed).some((character) => ["`", "<", ">", "[", "]", "\\"].includes(character)) &&
-    !/[\t ]{2,}/u.test(trimmed) &&
-    !/[\t ]{2}$/u.test(lineWithoutCarriageReturn)
-  );
-}
-
-function markdownProseKey(lines: readonly string[]): string | undefined {
-  if (lines.length === 0 || !lines.every(isSafeMarkdownProseLine)) return undefined;
-  return lines.map((line) => rustTrim(line)).join(" ");
-}
-
-function markdownProseRanges(lines: readonly string[]): Array<{ start: number; end: number }> {
-  const ranges: Array<{ start: number; end: number }> = [];
-  for (let index = 0; index < lines.length;) {
-    if (!isSafeMarkdownProseLine(lines[index]!)) {
-      index += 1;
-      continue;
-    }
-    const start = index;
-    while (index < lines.length && isSafeMarkdownProseLine(lines[index]!)) index += 1;
-    ranges.push({ start, end: index });
-  }
-  return ranges;
-}
-
-function trailingMarkdownProse(lines: readonly string[]): string[] {
-  let start = lines.length;
-  while (start > 0 && isSafeMarkdownProseLine(lines[start - 1]!)) start -= 1;
-  return lines.slice(start);
-}
-
-function leadingMarkdownProse(lines: readonly string[]): string[] {
-  let end = 0;
-  while (end < lines.length && isSafeMarkdownProseLine(lines[end]!)) end += 1;
-  return lines.slice(0, end);
-}
-
 function deriveStrictContent(
   content: string,
   chunks: readonly UpdateChunk[],
@@ -662,6 +617,21 @@ function enforceCandidateLimit(
   return candidates;
 }
 
+function lineEndingForLine(sourceLines: readonly string[], line: number): "\n" | "\r\n" {
+  return sourceLines[line]?.endsWith("\r") ? "\r\n" : "\n";
+}
+
+function lineEndingAtBoundary(sourceLines: readonly string[], line: number): "\n" | "\r\n" {
+  const adjacent = sourceLines[line - 1] ?? sourceLines[line];
+  return adjacent?.endsWith("\r") ? "\r\n" : "\n";
+}
+
+function replacementLines(lines: readonly string[], lineEnding: "\n" | "\r\n"): Buffer {
+  return lines.length === 0
+    ? Buffer.alloc(0)
+    : Buffer.from(`${lines.join(lineEnding)}${lineEnding}`, "utf8");
+}
+
 function lineCandidates(
   group: EditGroup,
   sourceLines: readonly string[],
@@ -674,10 +644,10 @@ function lineCandidates(
       const endLine = startLine + group.oldLines.length;
       const start = lineStarts[startLine]!;
       const end = lineStarts[endLine]!;
-      const replacement =
-        group.newLines.length === 0
-          ? Buffer.alloc(0)
-          : Buffer.from(`${group.newLines.join("\n")}\n`, "utf8");
+      const replacement = replacementLines(
+        group.newLines,
+        lineEndingForLine(sourceLines, startLine),
+      );
       return {
         start,
         end,
@@ -691,34 +661,7 @@ function lineCandidates(
         candidateFollowsAnchor(group, sourceLines, candidate.startLine, path) &&
         candidateSatisfiesEndOfFile(group, sourceLines.length, candidate.endLine),
     );
-  if (ordinary.length > 0 || !isMarkdownPath(path)) return ordinary;
-
-  const expectedKey = markdownProseKey(group.oldLines);
-  if (!expectedKey) return [];
-  return markdownProseRanges(sourceLines).flatMap((range) => {
-    if (
-      markdownProseKey(sourceLines.slice(range.start, range.end)) !== expectedKey ||
-      !candidateSatisfiesEndOfFile(group, sourceLines.length, range.end) ||
-      !candidateFollowsAnchor(group, sourceLines, range.start, path)
-    ) {
-      return [];
-    }
-    const start = lineStarts[range.start]!;
-    const end = lineStarts[range.end]!;
-    const replacement =
-      group.newLines.length === 0
-        ? Buffer.alloc(0)
-        : Buffer.from(`${group.newLines.join("\n")}\n`, "utf8");
-    return [
-      {
-        start,
-        end,
-        startLine: range.start,
-        endLine: range.end,
-        edits: [{ start, end, replacement }],
-      },
-    ];
-  });
+  return ordinary;
 }
 
 function insertionCandidates(
@@ -745,15 +688,6 @@ function insertionCandidates(
       boundaries.add(match + 1);
     }
   }
-  if (isMarkdownPath(path)) {
-    const beforeKey = markdownProseKey(trailingMarkdownProse(group.beforeContext));
-    const afterKey = markdownProseKey(leadingMarkdownProse(group.afterContext));
-    for (const range of markdownProseRanges(sourceLines)) {
-      const key = markdownProseKey(sourceLines.slice(range.start, range.end));
-      if (beforeKey && key === beforeKey) boundaries.add(range.end);
-      if (afterKey && key === afterKey) boundaries.add(range.start);
-    }
-  }
   if (
     group.chunk.endOfFile &&
     group.endsChunk &&
@@ -763,7 +697,6 @@ function insertionCandidates(
     boundaries.add(sourceLines.length);
   }
 
-  const replacement = Buffer.from(`${group.newLines.join("\n")}\n`, "utf8");
   return [...boundaries]
     .filter(
       (line) =>
@@ -772,6 +705,7 @@ function insertionCandidates(
     )
     .map((line) => {
       const byte = lineStarts[line]!;
+      const replacement = replacementLines(group.newLines, lineEndingAtBoundary(sourceLines, line));
       return {
         start: byte,
         end: byte,
@@ -1230,12 +1164,11 @@ function formattedReplacement(
   indent: string,
   trailingNewline: boolean,
   lineEnding: "\n" | "\r\n",
-  indentFirstLine = true,
 ): Buffer {
   if (!value) return Buffer.alloc(0);
   const normalized = dedent(value)
     .split("\n")
-    .map((line, index) => `${indentFirstLine || index > 0 ? indent : ""}${line}`)
+    .map((line) => `${indent}${line}`)
     .join(lineEnding);
   return Buffer.from(`${normalized}${trailingNewline ? lineEnding : ""}`, "utf8");
 }
@@ -1251,7 +1184,7 @@ async function tokenCandidates(
 ): Promise<EditCandidate[]> {
   throwIfAborted(signal);
   const oldTokens = await parseFragment(document.grammar, group.oldLines.join("\n"));
-  if (!oldTokens || oldTokens.length === 0 || oldTokens.length > document.tokens.length) return [];
+  if (!oldTokens || oldTokens.length < 2 || oldTokens.length > document.tokens.length) return [];
   const expectedShape = relativeShape(oldTokens);
   const sourceBytes = Buffer.from(source, "utf8");
   const newTokens =
@@ -1270,10 +1203,11 @@ async function tokenCandidates(
     const first = window[0]!;
     const last = window.at(-1)!;
     const bounds = lineBounds(sourceBytes, first.start, last.end);
+    if (!bounds.fullLines) continue;
     const lineEnding: "\n" | "\r\n" =
       bounds.lineEnd > bounds.lineStart && sourceBytes[bounds.lineEnd - 1] === 0x0d ? "\r\n" : "\n";
-    let start = first.start;
-    let end = last.end;
+    const start = bounds.lineStart;
+    const end = bounds.afterLine;
     let edits: ByteEdit[];
     if (
       newTokens &&
@@ -1292,9 +1226,7 @@ async function tokenCandidates(
               },
             ];
       });
-    } else if (bounds.fullLines) {
-      start = bounds.lineStart;
-      end = bounds.afterLine;
+    } else {
       edits = [
         {
           start,
@@ -1304,20 +1236,6 @@ async function tokenCandidates(
             bounds.indent,
             end > bounds.lineEnd,
             lineEnding,
-          ),
-        },
-      ];
-    } else {
-      edits = [
-        {
-          start,
-          end,
-          replacement: formattedReplacement(
-            group.newLines.join("\n"),
-            bounds.indent,
-            false,
-            lineEnding,
-            false,
           ),
         },
       ];

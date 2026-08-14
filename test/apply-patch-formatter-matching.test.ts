@@ -102,24 +102,27 @@ void test("uses packaged Tree-sitter grammars to recover formatter-reflowed edit
     },
     {
       path: "sample.go",
-      current: "package sample\n\nfunc run() { result := combine(alpha, beta); _ = result }\n",
+      current:
+        "package sample\n\nfunc run() {\n\tresult := combine(alpha, beta)\n\t_ = result\n}\n",
       oldLines: ["result := combine(", "\talpha,", "\tbeta,", ")"],
       newLines: ["result := merge(", "\talpha,", "\tbeta,", ")"],
-      expected: "package sample\n\nfunc run() { result := merge(alpha, beta); _ = result }\n",
+      expected: "package sample\n\nfunc run() {\n\tresult := merge(alpha, beta)\n\t_ = result\n}\n",
     },
     {
       path: "Sample.java",
-      current: "class Sample { void run() { var result = combine(alpha, beta); } }\n",
+      current:
+        "class Sample {\n    void run() {\n        var result = combine(alpha, beta);\n    }\n}\n",
       oldLines: ["var result = combine(", "    alpha,", "    beta", ");"],
       newLines: ["var result = merge(", "    alpha,", "    beta", ");"],
-      expected: "class Sample { void run() { var result = merge(alpha, beta); } }\n",
+      expected:
+        "class Sample {\n    void run() {\n        var result = merge(alpha, beta);\n    }\n}\n",
     },
     {
       path: "Sample.scala",
-      current: "object Sample { val result = combine(alpha, beta) }\n",
+      current: "object Sample {\n  val result = combine(alpha, beta)\n}\n",
       oldLines: ["val result = combine(", "  alpha,", "  beta", ")"],
       newLines: ["val result = merge(", "  alpha,", "  beta", ")"],
-      expected: "object Sample { val result = merge(alpha, beta) }\n",
+      expected: "object Sample {\n  val result = merge(alpha, beta)\n}\n",
     },
   ] as const;
 

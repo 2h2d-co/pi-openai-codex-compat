@@ -373,6 +373,13 @@ without error. Every non-whitespace fragment byte MUST be represented by the
 concrete syntax tree. Candidate matching compares leaf token types, exact
 token text, and relative concrete-syntax-tree shape.
 
+Structural recovery is a whole-line formatting bridge, not a sub-line editing
+mechanism. The old fragment MUST contain at least two concrete tokens, and its
+matching source token span MUST cover complete physical lines except for
+leading and trailing indentation. Non-whitespace source content before the
+first matched token or after the last matched token makes the candidate
+ineligible. Single-token and partial-line structural candidates reject.
+
 Ordinary formatter-controlled whitespace is absent from leaf-token matching.
 Known optional trailing commas may be ignored only in grammar node types where
 the language permits a formatter to add or remove them. Comments, identifiers,
@@ -407,20 +414,20 @@ multibyte character earlier in the file otherwise shifts the edit.
 
 #### Markdown recovery
 
-Markdown files (`.md` and `.markdown`) have three narrowly scoped recovery
+Markdown files (`.md` and `.markdown`) have two narrowly scoped recovery
 modes:
 
 1. Table rows may match after trimming cell-edge padding. Cell contents and
    column count remain exact. Rows containing escaped pipes or inline code do
    not use this recovery. The table fallback does not operate inside fenced
    code blocks.
-2. Plain prose paragraphs may match after line wrapping changes. Joining lines
-   with ordinary single spaces must reproduce the exact paragraph text.
-   Lists, headings, block quotes, tables, inline code, links, inline HTML,
-   backslash escapes, repeated spaces, and hard line breaks are excluded.
-3. Code inside a typed fenced block may use the structural grammar named by
+2. Code inside a typed fenced block may use the structural grammar named by
    the fence. Supported fence names are `js`, `javascript`, `jsx`, `ts`,
    `typescript`, `tsx`, `py`, `python`, `go`, `java`, and `scala`.
+
+Plain-prose line-reflow recovery is unsupported. Markdown prose continues to
+use the ordinary Codex line matcher and conservative line-level recovery only;
+different physical line wrapping does not make prose equivalent.
 
 An unterminated fence, unknown fence language, malformed code block, or code
 edit without the typed opening fence in its hunk context remains unmatched.
@@ -853,10 +860,11 @@ The implementation MUST address these confirmed defect classes:
 
 1. **Matcher constraints:** enforce complete-hunk EOF alignment and positional
    `@@` anchors across line, insertion, Markdown, and structural recovery.
-2. **Matcher fidelity:** fix partial-span indentation and CRLF preservation,
+2. **Matcher fidelity:** require complete-line structural matches and preserve
+   indentation and CRLF,
    JavaScript array-elision normalization, ordinary-line decoys suppressing
    structural candidates, table fallback inside fences, closed-fence grammar
-   leakage, closing-fence tab handling, and CRLF Markdown hard-break checks.
+   leakage, and closing-fence tab handling.
 3. **Bounded work:** make optional-comma normalization linear; stop mapping
    traversal immediately when its exhaustive bound is exceeded; thread
    cancellation through long matcher loops; and retain conservative size/work
@@ -1146,14 +1154,18 @@ Every case must preserve source bytes exactly.
 - candidate and mapping search limits reject rather than assume uniqueness;
 - JavaScript, JSX, TypeScript, TSX, Python, Go, Java, and Scala each recover a
   formatter-reflowed edit through the packaged grammar;
+- structural recovery rejects single-token and partial-line candidates;
 - current line wrapping is preserved for token-type-compatible replacements;
+- line-level insertions and replacements preserve the local source line
+  ending;
 - known optional trailing-comma differences are accepted;
 - JavaScript array elisions remain semantically distinct from empty arrays;
 - comments and literal contents remain exact;
 - line-level decoys do not suppress divergent structural candidates;
 - malformed source or fragments reject structural recovery;
 - UTF-8 byte edits remain correct after multibyte UTF-16 characters;
-- partial-span replacements preserve indentation and source line endings;
+- full-line structural replacements preserve indentation and source line
+  endings;
 - a present `@@` anchor excludes candidates before it;
 - `*** End of File` aligns the complete old side, including trailing context,
   across line, Markdown, and structural recovery;
@@ -1162,10 +1174,7 @@ Every case must preserve source bytes exactly.
 - table recovery ignores fenced-code rows;
 - closed fences do not authorize later edit groups, and closing fences with
   trailing tabs are recognized;
-- reflowed plain Markdown paragraphs recover insertions and replacements;
-- Markdown hard breaks, inline code, links, escaped table pipes, lists, and
-  other whitespace-sensitive constructs reject prose recovery;
-- CRLF files enforce the same Markdown safety exclusions as LF files;
+- reflowed plain Markdown paragraphs reject;
 - a changed nearest insertion context is not bypassed using older context;
 - obsolete context-only chunks do not block a later uniquely located edit;
 - unsupported extensions retain conservative line matching; and

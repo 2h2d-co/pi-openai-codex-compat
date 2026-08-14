@@ -897,7 +897,7 @@ export const PRODUCTION_APPLY_PATCH_FIXTURES: ProductionApplyPatchFixture[] = [
     },
   },
   {
-    id: "recent reflowed Markdown paragraph insertion",
+    id: "recent reflowed Markdown paragraph insertion rejects",
     sourceFingerprints: ["de34398026b29d09"],
     productionObservation:
       "A research-note insertion failed after its plain-text anchor paragraph was reflowed from two lines to one.",
@@ -905,7 +905,7 @@ export const PRODUCTION_APPLY_PATCH_FIXTURES: ProductionApplyPatchFixture[] = [
       "last-two-days failure",
       "plain Markdown prose",
       "paragraph reflow",
-      "unique insertion",
+      "unsupported prose recovery",
     ],
     initialFiles: [
       {
@@ -923,16 +923,8 @@ export const PRODUCTION_APPLY_PATCH_FIXTURES: ProductionApplyPatchFixture[] = [
 +A final audit confirmed the expected processing semantics.
 *** End Patch`,
     expected: {
-      outcome: "success",
-      files: [
-        {
-          path: "<CWD>/research.md",
-          content:
-            "Existing automation separately exercises alpha-only, beta-only, and mixed outputs.\n\nA final audit confirmed the expected processing semantics.\n",
-        },
-      ],
-      absent: [],
-      changeKinds: ["update"],
+      outcome: "verification-error",
+      messagePattern: /No formatter-tolerant candidate/u,
     },
   },
   {

@@ -151,10 +151,11 @@ void test("matches formatter-aligned Markdown table rows by cells", async (t) =>
   );
 });
 
-void test("locates reflowed plain Markdown paragraphs for insertions and replacements", async (t) => {
+void test("rejects reflowed plain Markdown paragraphs", async (t) => {
   const cwd = await workspace(t);
-  await writeFile(
-    join(cwd, "notes.md"),
+  await rejectWithoutWrite(
+    cwd,
+    "notes.md",
     [
       "# Notes",
       "",
@@ -163,10 +164,6 @@ void test("locates reflowed plain Markdown paragraphs for insertions and replace
       "The old paragraph is currently formatted onto one line.",
       "",
     ].join("\n"),
-  );
-
-  await applyPatch(
-    cwd,
     `*** Begin Patch
 *** Update File: notes.md
 @@
@@ -179,20 +176,7 @@ void test("locates reflowed plain Markdown paragraphs for insertions and replace
 +The replacement paragraph is
 +intentionally wrapped.
 *** End Patch`,
-  );
-
-  assert.equal(
-    await readFile(join(cwd, "notes.md"), "utf8"),
-    [
-      "# Notes",
-      "",
-      "Existing automation separately exercises audio-only, subtitle-only, and mixed extension outputs.",
-      "A uniquely anchored finding.",
-      "",
-      "The replacement paragraph is",
-      "intentionally wrapped.",
-      "",
-    ].join("\n"),
+    /No formatter-tolerant candidate/u,
   );
 });
 
@@ -338,7 +322,7 @@ void test("preserves multibyte prefixes and CRLF around token-only edits", async
   const cwd = await workspace(t);
   await writeFile(
     join(cwd, "unicode.ts"),
-    'const emoji = "😀"; const result = combine(alpha, beta);\r\n',
+    'const emoji = "😀";\r\nconst result = combine(alpha, beta);\r\n',
   );
 
   await applyPatch(
@@ -359,7 +343,28 @@ void test("preserves multibyte prefixes and CRLF around token-only edits", async
 
   assert.equal(
     await readFile(join(cwd, "unicode.ts"), "utf8"),
-    'const emoji = "😀"; const result = merge(alpha, beta);\r\n',
+    'const emoji = "😀";\r\nconst result = merge(alpha, beta);\r\n',
+  );
+});
+
+void test("preserves CRLF during line-level recovery", async (t) => {
+  const cwd = await workspace(t);
+  await writeFile(join(cwd, "line-recovery.txt"), "current context\r\nold\r\n");
+
+  await applyPatch(
+    cwd,
+    `*** Begin Patch
+*** Update File: line-recovery.txt
+@@
+ stale context
+-old
++new
+*** End Patch`,
+  );
+
+  assert.equal(
+    await readFile(join(cwd, "line-recovery.txt"), "utf8"),
+    "current context\r\nnew\r\n",
   );
 });
 
@@ -402,12 +407,52 @@ void test("uses current indentation when a structural replacement changes token 
   );
 });
 
-void test("preserves surrounding tokens when an inline replacement changes token count", async (t) => {
+void test("recovers only complete formatter-collapsed line content", async (t) => {
   const cwd = await workspace(t);
-  await writeFile(join(cwd, "inline.ts"), "function run() { return combine(alpha, beta); }\n");
+  await writeFile(join(cwd, "Complete.java"), "class Complete {\n  void func() { return a; }\n}\n");
 
   await applyPatch(
     cwd,
+    `*** Begin Patch
+*** Update File: Complete.java
+@@ stale
+-void func() {
+-  return a;
+-}
++void func() {
++  return b;
++}
+*** End Patch`,
+  );
+  assert.equal(
+    await readFile(join(cwd, "Complete.java"), "utf8"),
+    "class Complete {\n  void func() { return b; }\n}\n",
+  );
+
+  await rejectWithoutWrite(
+    cwd,
+    "Additional.java",
+    "class Additional {\n  public void func() { return a; }\n}\n",
+    `*** Begin Patch
+*** Update File: Additional.java
+@@ stale
+-void func() {
+-  return a;
+-}
++void func() {
++  return b;
++}
+*** End Patch`,
+    /No formatter-tolerant candidate/u,
+  );
+});
+
+void test("rejects structural matches that cover only part of a source line", async (t) => {
+  const cwd = await workspace(t);
+  await rejectWithoutWrite(
+    cwd,
+    "inline.ts",
+    "function run() { return combine(alpha, beta); }\n",
     `*** Begin Patch
 *** Update File: inline.ts
 @@ stale
@@ -421,11 +466,23 @@ void test("preserves surrounding tokens when an inline replacement changes token
 +  gamma,
 +)
 *** End Patch`,
+    /No formatter-tolerant candidate/u,
   );
+});
 
-  assert.equal(
-    await readFile(join(cwd, "inline.ts"), "utf8"),
-    ["function run() { return merge(", "  alpha,", "  beta,", "  gamma,", "); }", ""].join("\n"),
+void test("rejects single-token structural recovery", async (t) => {
+  const cwd = await workspace(t);
+  await rejectWithoutWrite(
+    cwd,
+    "single-token.ts",
+    "function run() { return value; }\n",
+    `*** Begin Patch
+*** Update File: single-token.ts
+@@ stale
+-value
++replacement
+*** End Patch`,
+    /No formatter-tolerant candidate/u,
   );
 });
 
@@ -579,7 +636,7 @@ void test("rejects tolerant candidates before a present anchor", async (t) => {
   );
 });
 
-void test("preserves indentation and CRLF for partial structural replacements", async (t) => {
+void test("preserves indentation and CRLF for full-line structural replacements", async (t) => {
   const cwd = await workspace(t);
   await writeFile(join(cwd, "indent.ts"), "function run() {\n  combine(alpha, beta);\n}\n");
   await applyPatch(
@@ -590,12 +647,12 @@ void test("preserves indentation and CRLF for partial structural replacements", 
 -combine(
 -  alpha,
 -  beta,
--)
+-);
 +merge(
 +  alpha,
 +  beta,
 +  gamma,
-+)
++);
 *** End Patch`,
   );
   assert.equal(
@@ -735,7 +792,7 @@ void test("applies Markdown safety rules consistently to CRLF files", async (t) 
   );
 });
 
-void test("rejects ambiguous duplicate code blocks and structural expressions", async (t) => {
+void test("rejects ambiguous duplicate code blocks and full-line structural expressions", async (t) => {
   const cwd = await workspace(t);
   await rejectWithoutWrite(
     cwd,
@@ -760,24 +817,24 @@ void test("rejects ambiguous duplicate code blocks and structural expressions", 
   await rejectWithoutWrite(
     cwd,
     "duplicate.ts",
-    "const first = combine(alpha, beta);\nconst second = combine(alpha, beta);\n",
+    "const value = combine(alpha, beta);\nconst value = combine(alpha, beta);\n",
     `*** Begin Patch
 *** Update File: duplicate.ts
 @@ stale
--combine(
+-const value = combine(
 -  alpha,
 -  beta,
--)
-+merge(
+-);
++const value = merge(
 +  alpha,
 +  beta,
-+)
++);
 *** End Patch`,
     /candidate mappings produce different files/u,
   );
 });
 
-void test("rejects duplicate reflowed prose and table insertion boundaries", async (t) => {
+void test("rejects unsupported reflowed prose and ambiguous table insertion boundaries", async (t) => {
   const cwd = await workspace(t);
   await rejectWithoutWrite(
     cwd,
@@ -795,7 +852,7 @@ void test("rejects duplicate reflowed prose and table insertion boundaries", asy
  paragraph on one line.
 +inserted
 *** End Patch`,
-    /candidate mappings produce different files/u,
+    /No formatter-tolerant candidate/u,
   );
 
   await rejectWithoutWrite(
