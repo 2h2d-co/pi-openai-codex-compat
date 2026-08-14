@@ -12,8 +12,9 @@ a conscious compatibility divergence, not an accidental parser discrepancy.
 
 The objective is semantic correctness, not pedantic tool-call validation:
 
-> Accept a grammar-valid operation when it can be applied safely, is already
-> satisfied, or can be proven irrelevant to the final filesystem state.
+> Accept a grammar-valid operation when it can be applied safely, has a
+> directly verifiable no-op postcondition, or can be proven irrelevant to the
+> final filesystem state.
 > Reject an operation only when its intended effect is ambiguous, conflicting,
 > or unsafe.
 
@@ -269,10 +270,10 @@ A state-changing text update:
 If the source is absent or cannot be decoded, reject unless the operation is
 proven dead.
 
-If normal old-line matching fails, the planner MAY accept the operation as
-already satisfied only when it can prove that every requested replacement is
-already present at the uniquely identified location. Merely finding similar
-new text somewhere in the file is insufficient.
+If the old side cannot be mapped, the update MUST be rejected. Finding the
+requested replacement text in the current file does not prove that this update
+was previously applied and MUST NOT make the operation a no-op. Replacement
+locations MAY be reported only as diagnostic evidence.
 
 Pure insertion chunks require particular care: existing matching text does
 not by itself prove that another insertion would be a no-op because duplicate
@@ -300,7 +301,7 @@ The fallback MUST:
    parsing;
 2. partition each hunk into edit groups;
 3. locate candidates for every edit group against the same pre-update file;
-4. retain only the highest contextual-score candidates for each group;
+4. retain every eligible candidate for each group without heuristic ranking;
 5. enumerate ordered, non-overlapping mappings;
 6. derive the final bytes for every retained mapping; and
 7. apply the patch only when the enumeration is exhaustive and every mapping
@@ -331,13 +332,13 @@ For replacements and deletions, the fallback first searches for the actual
 deleted lines without requiring every unchanged context line to remain
 adjacent. The existing exact, trailing-whitespace, trimmed-whitespace, and
 Unicode punctuation matching modes remain in force. Adjacent surviving
-context before and after a candidate determines its contextual score.
+context does not rank otherwise eligible candidates.
 
 For pure insertions, candidates may be derived only from surviving context,
 an `@@ context` anchor, or an explicit end-of-file marker. An unanchored
 insertion MUST NOT be guessed. Context on both sides may have formatter-added
-lines between it; the insertion is accepted only if contextual scoring and
-final-output equivalence make the result unique.
+lines between it; the insertion is accepted only if exhaustive final-output
+equivalence makes the result unique.
 
 Only the nearest unchanged line on each side may directly establish an
 insertion boundary. If that line changed semantically, an older surviving line
@@ -716,6 +717,21 @@ At minimum, dependency analysis uses these semantic sets:
 Rendering and history inspection do not make content semantically required for
 an otherwise unconditional add, delete, or pure move.
 
+The write set of an ordinary text update follows filesystem identity:
+
+- an update through a symbolic link writes the resolved target, not the link
+  entry;
+- an update through one hard-link name writes the shared inode and is visible
+  through every surviving hard link; and
+- case, Unicode, and symbolic-link-parent aliases of one entry share the same
+  effect.
+
+Deleting or replacing only a symbolic link does not dominate an update of its
+target. Deleting only one hard-link name does not dominate content still
+visible through another name. A dead-update proof MUST account for the resolved
+target and every surviving link to the affected inode. When all aliases cannot
+be identified and dominated safely, the update remains a conflict.
+
 ### General elimination condition
 
 An inapplicable operation may be marked dead only when:
@@ -874,7 +890,7 @@ The implementation MUST NOT:
 - weaken the requirement that structural source documents and wrapped
   fragments parse without error;
 - guess an unanchored tolerant insertion;
-- move candidate-score pruning after mapping enumeration;
+- rank or discard eligible candidates using heuristic scores;
 - reject exhaustive mappings that produce byte-identical final content;
 - replace the original strict context error when tolerant matching declines;
 - scan beyond an unclosed CommonMark fence as though later fences were outside
@@ -913,8 +929,11 @@ Directory
 RegularFile(KnownTextBytes | OpaqueBytesReference)
 SymbolicLink(LinkTarget)
 UnsupportedEntry
-UnknownResult
 ```
+
+The planner MUST track the possible effects of an inapplicable operation while
+performing dead-operation analysis. This does not require an explicit
+`UnknownResult` variant when an equivalent read/write-set proof is used.
 
 Opaque content should be represented by provenance and filesystem entry
 metadata sufficient to execute the planned move. The planner does not need to

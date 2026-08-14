@@ -502,15 +502,15 @@ export const PRODUCTION_APPLY_PATCH_FIXTURES: ProductionApplyPatchFixture[] = [
     },
   },
   {
-    id: "stale context recovers the complete multi-operation patch",
+    id: "stale insertion context rejects the complete multi-operation patch",
     sourceFingerprints: ["f8e65c8b75037f8e"],
     productionObservation:
       "A 13-operation maintenance patch failed on stale README context and was retried with corrected context.",
     characteristics: [
-      "production context recovery",
+      "production context rejection",
       "valid operation before conflict",
       "replacement operations after conflict",
-      "uniquely located insertion around an extra line",
+      "ambiguous insertion around an extra line",
     ],
     initialFiles: [
       {
@@ -547,24 +547,8 @@ export const PRODUCTION_APPLY_PATCH_FIXTURES: ProductionApplyPatchFixture[] = [
 +## Unreleased
 *** End Patch`,
     expected: {
-      outcome: "success",
-      files: [
-        {
-          path: "<CWD>/package.json",
-          content:
-            '{\n  "scripts": {\n    "check": "hk check",\n    "pack:dry": "npm pack --dry-run"\n  }\n}\n',
-        },
-        {
-          path: "<CWD>/README.md",
-          content: "```text\nnpm run check\nnpm test\nnpm run pack:dry\nnpm run build\n```\n",
-        },
-        {
-          path: "<CWD>/CHANGELOG.md",
-          content: "# Changelog\n\n## Unreleased\n",
-        },
-      ],
-      absent: [],
-      changeKinds: ["update", "update", "delete", "add"],
+      outcome: "verification-error",
+      messagePattern: /candidate mappings produce different files/u,
     },
   },
   {

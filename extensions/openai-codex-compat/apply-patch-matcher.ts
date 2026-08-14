@@ -29,7 +29,6 @@ type EditCandidate = {
   end: number;
   startLine: number;
   endLine: number;
-  score: number;
   edits: ByteEdit[];
 };
 
@@ -537,54 +536,17 @@ function lineForByte(lineStarts: readonly number[], byte: number): number {
   return low;
 }
 
-function contextMatchScore(actual: string, expected: string, path: string): number {
-  for (const [index, mode] of MATCH_MODES.entries()) {
-    if (linesMatch(actual, expected, mode)) return MATCH_MODES.length - index;
-  }
-  if (isMarkdownPath(path) && markdownTableLinesMatch(actual, expected)) return 1;
-  return 0;
-}
-
-function candidateScore(
-  group: EditGroup,
-  sourceLines: readonly string[],
-  startLine: number,
-  endLine: number,
-  path: string,
-): number {
-  let score = 0;
-  let sourceIndex = startLine - 1;
-  for (const expected of group.beforeContext.toReversed()) {
-    if (sourceIndex < 0) break;
-    const lineScore = contextMatchScore(sourceLines[sourceIndex]!, expected, path);
-    if (lineScore === 0) break;
-    score += lineScore;
-    sourceIndex -= 1;
-  }
-  sourceIndex = endLine;
-  for (const expected of group.afterContext) {
-    if (sourceIndex >= sourceLines.length) break;
-    const lineScore = contextMatchScore(sourceLines[sourceIndex]!, expected, path);
-    if (lineScore === 0) break;
-    score += lineScore;
-    sourceIndex += 1;
-  }
-  if (group.chunk.context) {
-    const anchor = group.chunk.context;
-    for (let index = 0; index < startLine; index++) {
-      if (contextMatchScore(sourceLines[index]!, anchor, path) > 0) {
-        score += 2;
-        break;
-      }
-    }
-  }
-  return score;
+function contextMatches(actual: string, expected: string, path: string): boolean {
+  return (
+    MATCH_MODES.some((mode) => linesMatch(actual, expected, mode)) ||
+    (isMarkdownPath(path) && markdownTableLinesMatch(actual, expected))
+  );
 }
 
 function anchorLines(group: EditGroup, sourceLines: readonly string[], path: string): number[] {
   if (!group.chunk.context) return [];
   return sourceLines.flatMap((line, index) =>
-    contextMatchScore(line, group.chunk.context!, path) > 0 ? [index] : [],
+    contextMatches(line, group.chunk.context!, path) ? [index] : [],
   );
 }
 
@@ -659,7 +621,7 @@ export function formatFormatterMatchFailure(details: FormatterMatchFailureDetail
       return `No ordered formatter-tolerant mapping for ${group}${chunk} in ${details.path}: ${relation}. The hunks may be in reverse source order or overlap.`;
     }
     case "too-many-candidates":
-      return `Formatter-tolerant match is ambiguous for ${group}${chunk} in ${details.path}: ${details.candidateCount} equally ranked locations exceed the ${MAX_CANDIDATES_PER_GROUP}-candidate limit.`;
+      return `Formatter-tolerant match is ambiguous for ${group}${chunk} in ${details.path}: ${details.candidateCount} eligible locations exceed the ${MAX_CANDIDATES_PER_GROUP}-candidate limit.`;
     case "ambiguous-output":
       return `Formatter-tolerant match is ambiguous in ${details.path}: candidate mappings produce different files.`;
     case "mapping-limit":
@@ -677,17 +639,14 @@ function oldExcerpt(group: EditGroup): string | undefined {
   return excerpt.length > 240 ? `${excerpt.slice(0, 239)}…` : excerpt;
 }
 
-function keepBestCandidates(
+function enforceCandidateLimit(
   candidates: EditCandidate[],
   path: string,
   group: EditGroup,
   groupIndex: number,
   groupCount: number,
 ): EditCandidate[] {
-  if (candidates.length === 0) return [];
-  const bestScore = Math.max(...candidates.map((candidate) => candidate.score));
-  const best = candidates.filter((candidate) => candidate.score === bestScore);
-  if (best.length > MAX_CANDIDATES_PER_GROUP) {
+  if (candidates.length > MAX_CANDIDATES_PER_GROUP) {
     const details: FormatterMatchFailureDetails = {
       reason: "too-many-candidates",
       path,
@@ -695,12 +654,12 @@ function keepBestCandidates(
       groupIndex: groupIndex + 1,
       chunkCount: group.chunkCount,
       chunkIndex: group.chunkIndex,
-      candidateCount: best.length,
-      candidates: candidateRanges(best),
+      candidateCount: candidates.length,
+      candidates: candidateRanges(candidates),
     };
     throw new FormatterMatchAmbiguityError(formatFormatterMatchFailure(details), details);
   }
-  return best;
+  return candidates;
 }
 
 function lineCandidates(
@@ -724,7 +683,6 @@ function lineCandidates(
         end,
         startLine,
         endLine,
-        score: candidateScore(group, sourceLines, startLine, endLine, path),
         edits: [{ start, end, replacement }],
       };
     })
@@ -757,7 +715,6 @@ function lineCandidates(
         end,
         startLine: range.start,
         endLine: range.end,
-        score: candidateScore(group, sourceLines, range.start, range.end, path),
         edits: [{ start, end, replacement }],
       },
     ];
@@ -820,7 +777,6 @@ function insertionCandidates(
         end: byte,
         startLine: line,
         endLine: line,
-        score: candidateScore(group, sourceLines, line, line, path),
         edits: [{ start: byte, end: byte, replacement }],
       };
     });
@@ -1373,7 +1329,6 @@ async function tokenCandidates(
       end,
       startLine,
       endLine,
-      score: candidateScore(group, sourceLines, startLine, endLine, path),
       edits,
     };
     if (
@@ -1586,8 +1541,8 @@ async function deriveFormatterTolerantContent(
       documentCache,
       signal,
     );
-    const best = keepBestCandidates(groupCandidates, path, group, groupIndex, groups.length);
-    if (best.length === 0) {
+    const eligible = enforceCandidateLimit(groupCandidates, path, group, groupIndex, groups.length);
+    if (eligible.length === 0) {
       const replacements = await requestedReplacementCandidates(
         group,
         normalized,
@@ -1615,7 +1570,7 @@ async function deriveFormatterTolerantContent(
       };
       throw new FormatterMatchError(formatFormatterMatchFailure(details), details);
     }
-    candidates.push(best);
+    candidates.push(eligible);
   }
 
   let outputs: Map<string, Buffer>;

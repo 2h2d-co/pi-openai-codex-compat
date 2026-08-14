@@ -902,6 +902,10 @@ function sameFingerprintExceptLinkCount(left: EntryFingerprint, right: EntryFing
   );
 }
 
+function samePhysicalEntry(left: EntryFingerprint, right: EntryFingerprint): boolean {
+  return left.device === right.device && left.inode === right.inode;
+}
+
 function entryType(metadata: Stats): string {
   if (metadata.isDirectory()) return "directory";
   if (metadata.isSocket()) return "socket";
@@ -1200,13 +1204,7 @@ class SemanticPlanner {
   }
 
   private virtualSpellingSatisfied(entryPath: string, requestedPath: string): boolean {
-    const entryName = basename(entryPath);
-    const requestedName = basename(requestedPath);
-    return (
-      entryName === requestedName ||
-      (process.platform === "darwin" &&
-        entryName.normalize("NFD") === requestedName.normalize("NFD"))
-    );
+    return basename(entryPath) === basename(requestedPath);
   }
 
   private snapshot(entry: VirtualEntry): VirtualEntry {
@@ -1325,15 +1323,88 @@ class SemanticPlanner {
     return [operation.absolutePath, operation.moveAbsolutePath];
   }
 
+  private async resolvedTextTarget(
+    path: string,
+  ): Promise<{ path: string; entry: VirtualEntry } | undefined> {
+    let targetPath = path;
+    let target = await this.stateAt(targetPath);
+    const visited = new Set<string>();
+    while (target.kind === "symlink") {
+      const key = await this.pathKey(target.entryPath);
+      if (visited.has(key)) return undefined;
+      visited.add(key);
+      targetPath = target.targetPath;
+      target = await this.stateAt(targetPath);
+    }
+    return { path: targetPath, entry: target };
+  }
+
+  private async operationObservesPhysicalEntry(
+    operation: ResolvedOperation,
+    fingerprint: EntryFingerprint,
+  ): Promise<boolean> {
+    if (operation.kind === "update" && !chunksAreIdentity(operation.chunks)) {
+      const target = await this.resolvedTextTarget(operation.absolutePath);
+      return (
+        target?.entry.kind === "regular" &&
+        target.entry.fingerprint !== undefined &&
+        samePhysicalEntry(target.entry.fingerprint, fingerprint)
+      );
+    }
+    if (operation.kind === "update" && chunksAreIdentity(operation.chunks)) {
+      if (!updateHasSemanticMove(operation)) return false;
+      const source = await this.stateAt(operation.absolutePath);
+      const destination = await this.stateAt(operation.moveAbsolutePath!);
+      return [source, destination].some(
+        (entry) =>
+          entry.kind === "regular" &&
+          entry.fingerprint !== undefined &&
+          samePhysicalEntry(entry.fingerprint, fingerprint),
+      );
+    }
+    return false;
+  }
+
   private async isDeadUpdate(index: number, targetPath: string): Promise<boolean> {
+    const target = await this.resolvedTextTarget(targetPath);
+    if (!target) return false;
+
     const targetKey = await this.pathKey(targetPath);
-    for (const operation of this.operations.slice(index + 1)) {
-      if (
-        (operation.kind === "add" || operation.kind === "delete") &&
-        (await this.pathKey(operation.absolutePath)) === targetKey
-      ) {
-        return true;
+    if (target.entry.kind === "absent") {
+      for (const operation of this.operations.slice(index + 1)) {
+        if (
+          (operation.kind === "add" || operation.kind === "delete") &&
+          (await this.pathKey(operation.absolutePath)) === targetKey
+        ) {
+          return true;
+        }
+        if (
+          operation.kind === "update" &&
+          !updateHasSemanticMove(operation) &&
+          chunksAreIdentity(operation.chunks)
+        ) {
+          continue;
+        }
+        if (
+          (
+            await Promise.all(
+              this.operationRelatedPaths(operation).map(async (path) => {
+                return (await this.pathKey(path)) === targetKey || pathIsRelated(path, targetPath);
+              }),
+            )
+          ).some(Boolean)
+        ) {
+          return false;
+        }
       }
+      return false;
+    }
+
+    if (target.entry.kind !== "regular" || !target.entry.fingerprint) return false;
+    const affectedFingerprint = target.entry.fingerprint;
+    const affectedKey = await this.pathKey(target.path);
+    const deletedEntryKeys = new Set<string>();
+    for (const operation of this.operations.slice(index + 1)) {
       if (
         operation.kind === "update" &&
         !updateHasSemanticMove(operation) &&
@@ -1341,11 +1412,26 @@ class SemanticPlanner {
       ) {
         continue;
       }
+      if (operation.kind === "delete") {
+        const deleted = await this.stateAt(operation.absolutePath);
+        if (
+          deleted.kind === "regular" &&
+          deleted.fingerprint !== undefined &&
+          samePhysicalEntry(deleted.fingerprint, affectedFingerprint)
+        ) {
+          deletedEntryKeys.add(await this.pathKey(operation.absolutePath));
+          if (deletedEntryKeys.size >= affectedFingerprint.linkCount) return true;
+          continue;
+        }
+      }
+      if (await this.operationObservesPhysicalEntry(operation, affectedFingerprint)) {
+        return false;
+      }
       if (
         (
           await Promise.all(
             this.operationRelatedPaths(operation).map(async (path) => {
-              return (await this.pathKey(path)) === targetKey || pathIsRelated(path, targetPath);
+              return (await this.pathKey(path)) === affectedKey || pathIsRelated(path, target.path);
             }),
           )
         ).some(Boolean)
@@ -2271,14 +2357,8 @@ async function exactSpellingExists(path: string): Promise<boolean> {
 }
 
 async function requestedSpellingExists(path: string): Promise<boolean> {
-  const requestedName = basename(path);
   try {
-    return (await readdir(dirname(path))).some((name) => {
-      return (
-        name === requestedName ||
-        (process.platform === "darwin" && name.normalize("NFD") === requestedName.normalize("NFD"))
-      );
-    });
+    return (await readdir(dirname(path))).includes(basename(path));
   } catch {
     return false;
   }
@@ -2307,10 +2387,6 @@ async function finishSameInodeRename(sourcePath: string, destinationPath: string
     exactSpellingExists(sourcePath),
     exactSpellingExists(destinationPath),
   ]);
-  const normalizationOnlyRename =
-    process.platform === "darwin" &&
-    basename(sourcePath).normalize("NFD") === basename(destinationPath).normalize("NFD");
-  if (normalizationOnlyRename) return;
   if (!destinationNameExists) {
     throw new Error(`rename did not install destination ${destinationPath}`);
   }

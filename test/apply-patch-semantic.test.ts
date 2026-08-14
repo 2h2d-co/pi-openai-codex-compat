@@ -389,6 +389,86 @@ void test("tracks symlink chains and rejects links made dangling earlier in the 
   assert.equal(await readFile(join(cwd, "target.txt"), "utf8"), "final\n");
 });
 
+void test("proves dead updates across symlink, hard-link, and path aliases", async (t) => {
+  const cwd = await workspace(t);
+
+  await writeFile(join(cwd, "symlink-target.txt"), "before\n");
+  await symlink("symlink-target.txt", join(cwd, "symlink-alias.txt"));
+  await assert.rejects(
+    applyPatch(
+      cwd,
+      patch(
+        "*** Update File: symlink-alias.txt\n@@\n-missing\n+after\n",
+        "*** Delete File: symlink-alias.txt\n",
+      ),
+    ),
+    ApplyPatchVerificationError,
+  );
+  assert.equal(await readFile(join(cwd, "symlink-target.txt"), "utf8"), "before\n");
+  assert.equal(await readlink(join(cwd, "symlink-alias.txt")), "symlink-target.txt");
+
+  await writeFile(join(cwd, "hard-a.txt"), "before\n");
+  await link(join(cwd, "hard-a.txt"), join(cwd, "hard-b.txt"));
+  await assert.rejects(
+    applyPatch(
+      cwd,
+      patch("*** Update File: hard-a.txt\n@@\n-missing\n+after\n", "*** Delete File: hard-a.txt\n"),
+    ),
+    ApplyPatchVerificationError,
+  );
+  assert.equal(await readFile(join(cwd, "hard-a.txt"), "utf8"), "before\n");
+  assert.equal(await readFile(join(cwd, "hard-b.txt"), "utf8"), "before\n");
+
+  await writeFile(join(cwd, "dominated-target.txt"), "before\n");
+  await symlink("dominated-target.txt", join(cwd, "dominated-alias.txt"));
+  const symlinkTargetDominated = await applyPatch(
+    cwd,
+    patch(
+      "*** Update File: dominated-alias.txt\n@@\n-missing\n+after\n",
+      "*** Delete File: dominated-target.txt\n",
+    ),
+  );
+  assert.deepEqual(
+    symlinkTargetDominated.instructions?.map(({ status }) => status),
+    ["dead", "applied"],
+  );
+  await assertMissing(join(cwd, "dominated-target.txt"));
+  assert.equal(await readlink(join(cwd, "dominated-alias.txt")), "dominated-target.txt");
+
+  await writeFile(join(cwd, "all-hard-a.txt"), "before\n");
+  await link(join(cwd, "all-hard-a.txt"), join(cwd, "all-hard-b.txt"));
+  const allHardLinksDominated = await applyPatch(
+    cwd,
+    patch(
+      "*** Update File: all-hard-a.txt\n@@\n-missing\n+after\n",
+      "*** Delete File: all-hard-a.txt\n",
+      "*** Delete File: all-hard-b.txt\n",
+    ),
+  );
+  assert.deepEqual(
+    allHardLinksDominated.instructions?.map(({ status }) => status),
+    ["dead", "applied", "applied"],
+  );
+  await assertMissing(join(cwd, "all-hard-a.txt"));
+  await assertMissing(join(cwd, "all-hard-b.txt"));
+
+  await mkdir(join(cwd, "real-parent"));
+  await symlink("real-parent", join(cwd, "alias-parent"));
+  await writeFile(join(cwd, "real-parent", "file.txt"), "before\n");
+  const parentAliasDominated = await applyPatch(
+    cwd,
+    patch(
+      "*** Update File: alias-parent/file.txt\n@@\n-missing\n+after\n",
+      "*** Delete File: real-parent/file.txt\n",
+    ),
+  );
+  assert.deepEqual(
+    parentAliasDominated.instructions?.map(({ status }) => status),
+    ["dead", "applied"],
+  );
+  await assertMissing(join(cwd, "real-parent", "file.txt"));
+});
+
 void test("materializes state-changing symlink moves without modifying either target", async (t) => {
   const cwd = await workspace(t);
   await writeFile(join(cwd, "source-target.txt"), "source old\n");
@@ -627,6 +707,44 @@ void test(
     assert.equal(await readFile(join(cwd, "state.txt"), "utf8"), "after\n");
     assert.equal(await readFile(join(cwd, "state-hardlink.txt"), "utf8"), "before\n");
     assert.equal(await readFile(join(cwd, "add.txt"), "utf8"), "after add\n");
+  },
+);
+
+void test(
+  "establishes exact Unicode-normalization-only spellings",
+  { skip: process.platform !== "darwin" },
+  async (t) => {
+    const cwd = await workspace(t);
+    const composed = "\u00e9";
+    const decomposed = "e\u0301";
+    await writeFile(join(cwd, `pure-${composed}.txt`), "pure\n");
+    await writeFile(join(cwd, `state-${composed}.txt`), "before\n");
+    await writeFile(join(cwd, `add-${composed}.txt`), "same\n");
+
+    await applyPatch(
+      cwd,
+      patch(
+        `*** Update File: pure-${composed}.txt\n*** Move to: pure-${decomposed}.txt\n`,
+        `*** Update File: state-${composed}.txt\n`,
+        `*** Move to: state-${decomposed}.txt\n`,
+        "@@\n",
+        "-before\n",
+        "+after\n",
+        `*** Add File: add-${decomposed}.txt\n`,
+        "+same\n",
+      ),
+    );
+
+    const names = await readdir(cwd);
+    assert.ok(names.includes(`pure-${decomposed}.txt`));
+    assert.ok(names.includes(`state-${decomposed}.txt`));
+    assert.ok(names.includes(`add-${decomposed}.txt`));
+    assert.ok(!names.includes(`pure-${composed}.txt`));
+    assert.ok(!names.includes(`state-${composed}.txt`));
+    assert.ok(!names.includes(`add-${composed}.txt`));
+    assert.equal(await readFile(join(cwd, `pure-${decomposed}.txt`), "utf8"), "pure\n");
+    assert.equal(await readFile(join(cwd, `state-${decomposed}.txt`), "utf8"), "after\n");
+    assert.equal(await readFile(join(cwd, `add-${decomposed}.txt`), "utf8"), "same\n");
   },
 );
 

@@ -169,12 +169,14 @@ void test("accepts only a unique formatter-tolerant final file", async (t) => {
   assert.deepEqual(await readFile(join(cwd, "ambiguous.txt")), before);
 });
 
-void test("recovers uniquely anchored insertions but rejects ambiguous locations", async (t) => {
+void test("rejects insertions with multiple eligible boundaries", async (t) => {
   const cwd = await workspace(t);
   await writeFile(join(cwd, "unique.txt"), "anchor\nbefore\nformatter-added\nafter\n");
-  await applyPatch(
-    cwd,
-    `*** Begin Patch
+  const uniqueBefore = await readFile(join(cwd, "unique.txt"));
+  await assert.rejects(
+    applyPatch(
+      cwd,
+      `*** Begin Patch
 *** Update File: unique.txt
 @@
  anchor
@@ -182,11 +184,10 @@ void test("recovers uniquely anchored insertions but rejects ambiguous locations
 +inserted
  after
 *** End Patch`,
+    ),
+    /candidate mappings produce different files/u,
   );
-  assert.equal(
-    await readFile(join(cwd, "unique.txt"), "utf8"),
-    "anchor\nbefore\ninserted\nformatter-added\nafter\n",
-  );
+  assert.deepEqual(await readFile(join(cwd, "unique.txt")), uniqueBefore);
 
   await writeFile(
     join(cwd, "repeated.txt"),

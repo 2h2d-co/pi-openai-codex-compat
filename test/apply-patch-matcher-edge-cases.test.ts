@@ -220,23 +220,21 @@ void test("ignores a stale context-only chunk when the actual insertion is uniqu
   );
 });
 
-void test("uses surviving context to disambiguate duplicate structural matches", async (t) => {
+void test("does not use contextual preference to choose among structural matches", async (t) => {
   const cwd = await workspace(t);
-  await writeFile(
-    join(cwd, "calls.ts"),
-    [
-      "function first() {",
-      "  return combine(alpha, beta);",
-      "}",
-      "function second() {",
-      "  return combine(alpha, beta);",
-      "}",
-      "",
-    ].join("\n"),
-  );
-
-  await applyPatch(
+  const content = [
+    "function first() {",
+    "  return combine(alpha, beta);",
+    "}",
+    "function second() {",
+    "  return combine(alpha, beta);",
+    "}",
+    "",
+  ].join("\n");
+  await rejectWithoutWrite(
     cwd,
+    "calls.ts",
+    content,
     `*** Begin Patch
 *** Update File: calls.ts
 @@
@@ -251,19 +249,50 @@ void test("uses surviving context to disambiguate duplicate structural matches",
 +  );
  }
 *** End Patch`,
+    /candidate mappings produce different files/u,
   );
+});
 
-  assert.equal(
-    await readFile(join(cwd, "calls.ts"), "utf8"),
+void test("does not let stronger context hide a structural decoy", async (t) => {
+  const cwd = await workspace(t);
+  await rejectWithoutWrite(
+    cwd,
+    "scored-decoy.ts",
     [
-      "function first() {",
-      "  return combine(alpha, beta);",
+      "/*",
+      "before old",
+      "combine(",
+      "  alpha,",
+      "  beta,",
+      ");",
+      "after old",
+      "*/",
+      "function run() {",
+      "  combine(alpha, beta);",
       "}",
-      "function second() {",
-      "  return merge(alpha, beta);",
-      "}",
+      "const marker = old();",
       "",
     ].join("\n"),
+    `*** Begin Patch
+*** Update File: scored-decoy.ts
+@@
+ before old
+-combine(
+-  alpha,
+-  beta,
+-);
++merge(
++  alpha,
++  beta,
++);
+ after old
+@@ stale marker
+-const marker = old(
+-);
++const marker = fresh(
++);
+*** End Patch`,
+    /candidate mappings produce different files/u,
   );
 });
 
@@ -966,7 +995,7 @@ void test("does not anchor an insertion to older context after nearer context ch
   );
 });
 
-void test("fails closed when equally ranked locations exceed the candidate limit", async (t) => {
+void test("fails closed when eligible locations exceed the candidate limit", async (t) => {
   const cwd = await workspace(t);
   const content = `${Array.from({ length: 65 }, () => "target").join("\n")}\n`;
   await rejectWithoutWrite(
@@ -979,7 +1008,7 @@ void test("fails closed when equally ranked locations exceed the candidate limit
 -target
 +changed
 *** End Patch`,
-    /65 equally ranked locations exceed the 64-candidate limit/u,
+    /65 eligible locations exceed the 64-candidate limit/u,
   );
 });
 
