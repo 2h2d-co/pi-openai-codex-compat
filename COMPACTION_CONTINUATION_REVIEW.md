@@ -10,21 +10,24 @@
 - **Provider subrequest**: One OpenAI request made internally by the extension while producing one Pi assistant response. The extension may make multiple subrequests for response continuation or retry.
 - **Threshold compaction**: Proactive Pi compaction after an agent run. Pi intentionally sets `willRetry: false`.
 - **Overflow compaction**: Pi recovery after a recognized context-overflow or recoverable length response. Pi sets `willRetry: true` and continues the interrupted run.
+- **Logical compaction**: One distinct compaction entry after de-duplicating entries copied into forked session files by entry ID and timestamp.
 
 ## Conclusion
 
-The three-day window contained exactly **two matching stalls**. Both occurred in the same long-running session and had the same failure shape:
+The seven-day window contained exactly **four distinct matching stalls**. All had the same failure shape:
 
-1. Codex emitted an `apply_patch` tool call at the effective context/output ceiling.
+1. Codex emitted one or more tool calls at the effective context/output ceiling.
 2. The extension made another provider subrequest after appending response items, but without a tool output for that call.
-3. OpenAI rejected the subrequest with `No tool output found for custom tool call ...`.
+3. OpenAI rejected the subrequest with `No tool output found for function call ...` or `No tool output found for custom tool call ...`.
 4. Pi did not classify that error as retryable or as context overflow.
 5. Pi then performed a successful **threshold** compaction with `willRetry: false`, as designed.
-6. The agent settled until Kaan sent `please continue`.
+6. The agent settled until Kaan restarted the work.
+
+Three incidents were followed directly by `please continue`. In the fourth, the same logical session was resumed through a fork about 66 minutes later with `what's the issue`, followed by `ok, please proceed`.
 
 The checkpoint compaction itself did not fail and was not the component that dropped a continuation. The run had already ended on a non-retryable provider error. Compaction was the last visible automatic action, which made the symptom look like a compaction continuation failure.
 
-Pi 0.84.2 does **not** solve either incident. Its OpenAI `end_turn` change only preserves the value on `AssistantMessage` for diagnostics and explicitly does not affect control flow.
+Pi 0.84.2 does **not** solve any of the four incidents. Its OpenAI `end_turn` change only preserves the value on `AssistantMessage` for diagnostics and explicitly does not affect control flow.
 
 ## Audit Scope
 
@@ -33,42 +36,114 @@ Pi 0.84.2 does **not** solve either incident. Its OpenAI `end_turn` change only 
 The audit used entry timestamps, not file creation times or modification times:
 
 ```text
-2026-08-12T19:30:46Z through 2026-08-15T19:30:46Z
+2026-08-08T20:23:24Z through 2026-08-15T20:23:24Z
 ```
 
 Using entry timestamps includes sessions created before the window but still active during it.
 
 ### Coverage
 
-- 34 session files contained entries in the window.
+- 64 session files contained entries in the window.
 - Every JSONL line parsed successfully.
-- 19 extension-provided native compactions were found.
-- The 19 compactions occurred in 3 session files.
-- 10 user messages matched a broad continuation-language search. Manual branch review reduced these to 2 messages that directly followed compaction and existed only to restart stalled work.
+- 47 physical extension-provided native-compaction records were found in 10 session files.
+- Forked sessions copy prior JSONL entries. De-duplicating by entry ID and timestamp reduced the 47 physical records to 40 logical compactions.
+- 62 physical assistant-error records represented 54 distinct errors after de-duplication. Exactly 4 distinct errors used missing-tool-output wording; no other missing-result variant was found.
+- 58 physical user-message records matched a broad continuation-language search, representing 44 distinct messages after the same de-duplication. Manual branch review reduced these to 4 relevant stall branches.
 
 Session inventory by working directory:
 
-| Working directory                                            | Sessions checked |
-| ------------------------------------------------------------ | ---------------: |
-| `/Users/kaan/dev/2h2d-co/pi-openai-codex-compat`             |               18 |
-| `/Users/kaan/dev/2h2d-co`                                    |                5 |
-| `/Users/kaan/.pi/agent`                                      |                4 |
-| `/Users/kaan/dev/deltatre`                                   |                3 |
-| `/Users/kaan/dev/personal-repositories/soc/sai-backend/main` |                2 |
-| `/Users/kaan/dev/personal-repositories/trainwith.cc-next`    |                1 |
-| `/Users/kaan`                                                |                1 |
+| Working directory                                              | Sessions checked |
+| -------------------------------------------------------------- | ---------------: |
+| `/Users/kaan/dev/2h2d-co/pi-openai-codex-compat`               |               23 |
+| `/Users/kaan/dev/2h2d-co`                                      |               13 |
+| `/Users/kaan/dev/deltatre`                                     |                9 |
+| `/Users/kaan/.pi/agent`                                        |                5 |
+| `/Users/kaan/dev/personal-repositories/soc/sai-backend/main`   |                5 |
+| `/Users/kaan/dev/personal-repositories/soc/soc-new-admin/main` |                3 |
+| `/Users/kaan/dev/personal-repositories/trainwith.cc-next`      |                1 |
+| `/Users/kaan/dev/2h2d-co/homebrew-safe`                        |                1 |
+| `/Users/kaan/dev/2h2d-co/vscode-node-tests`                    |                1 |
+| `/Users/kaan/.config/mise`                                     |                1 |
+| `/Users/kaan/dev`                                              |                1 |
+| `/Users/kaan`                                                  |                1 |
 
 ### Compaction outcome classification
 
-| Outcome immediately around compaction                                     | Count | Classification                                              |
-| ------------------------------------------------------------------------- | ----: | ----------------------------------------------------------- |
-| Completed assistant response, then an ordinary later user request         |     8 | Expected; no unfinished run to continue                     |
-| Recognized context overflow, then automatic assistant/tool activity       |     6 | Automatic continuation succeeded                            |
-| Recognized context overflow, then a user message queued during compaction |     1 | Not a stall; message was appended 5 ms after compaction     |
-| Aborted run, then a later user request                                    |     2 | User cancellation/abort, not automatic-continuation failure |
-| Missing-tool-output error, threshold compaction, then `please continue`   |     2 | Matching incidents                                          |
+Counts below use the 40 de-duplicated logical compactions.
+
+| Outcome immediately around compaction                                      | Count | Classification                                               |
+| -------------------------------------------------------------------------- | ----: | ------------------------------------------------------------ |
+| Completed assistant response, then an ordinary later request or no child   |    17 | Expected; no unfinished run to continue                      |
+| Recognized context overflow, then automatic assistant/tool activity        |    14 | Automatic continuation succeeded                             |
+| Recognized context overflow, then a user message queued during compaction  |     1 | Not a post-compaction stall; message was appended 5 ms later |
+| Aborted run, then a later user request                                     |     2 | User cancellation/abort, not automatic-continuation failure  |
+| Model-switch boundary, then a user message queued during compaction        |     1 | Expected; the preceding assistant response had completed     |
+| Tool-result boundary, then `please continue` queued during compaction      |     1 | Near-match, but not a post-compaction stall                  |
+| Missing-tool-output error, threshold compaction, then a later user restart |     4 | Matching incidents                                           |
+
+The excluded tool-result-boundary near-match was compaction `134df48f` on August 11. Its `please continue` entry was persisted only 5 ms after the compaction entry. A human could not have reacted after completion in that interval; the input was already queued while compaction was running. It therefore does not show that the completed compaction settled instead of continuing.
 
 ## Matching Incidents
+
+### Incident overview
+
+|   # | Assistant error                          | Native compaction             | Restart                                                                     | Tool kind                 |
+| --: | ---------------------------------------- | ----------------------------- | --------------------------------------------------------------------------- | ------------------------- |
+|   1 | `cb0f2bda` at `2026-08-10T21:02:06.395Z` | `daccf045` at `21:03:26.484Z` | Session resumed at `22:09:34.560Z`; `ok, please proceed` at `22:10:35.569Z` | `bash` function call      |
+|   2 | `cf51a8a5` at `2026-08-12T08:30:44.803Z` | `9d2d8700` at `08:33:18.407Z` | `please continue` at `08:37:00.447Z`                                        | Two `bash` function calls |
+|   3 | `6a141ac1` at `2026-08-13T08:45:46.724Z` | `73badf39` at `08:47:04.677Z` | `please continue` at `08:47:08.755Z`                                        | `apply_patch` custom call |
+|   4 | `27371470` at `2026-08-13T20:27:37.247Z` | `1f0eb03a` at `20:29:02.835Z` | `please continue` at `20:30:45.891Z`                                        | `apply_patch` custom call |
+
+All four assistant messages reported exactly `371,566` total tokens. Each contained the call ID named by OpenAI's missing-output error, and no preceding `toolResult` existed for that new call.
+
+### Incident 1: August 10 function call
+
+The original entries are in:
+
+```text
+~/.pi/agent/sessions/--Users-kaan-dev-2h2d-co--/
+2026-08-10T13-53-54-997Z_019febf3-8d35-792a-b0c9-719222615a95.jsonl
+```
+
+They were copied into a resumed fork:
+
+```text
+2026-08-10T22-08-20-424Z_019fedb8-35c8-7d8e-8625-dacd01a7f8de.jsonl
+```
+
+Evidence:
+
+- Assistant `stopReason`: `error`
+- Error: `Codex error: No tool output found for function call ...`
+- Assistant content included one `bash` call whose provider call ID matched the error.
+- Assistant usage: `371,566` total tokens, including `977` output tokens.
+- Compaction `tokensBefore`: `370,954`
+- Provider diagnostics show full history growing from 665 to 668 items before transport recovery. The three additions were response items, including the new `bash` call; no corresponding function output was present.
+- Compaction was extension-provided: `fromHook: true`, `details.kind: openai-codex-compat-remote-compaction`.
+- The fork resumed from the same compaction ID about 66 minutes later. Kaan asked `what's the issue`, then sent `ok, please proceed`.
+
+The repeated entries in the fork are one logical incident, not a second occurrence.
+
+### Incident 2: August 12 function calls
+
+This incident is in:
+
+```text
+~/.pi/agent/sessions/--Users-kaan-dev-deltatre--/
+2026-08-11T07-41-14-828Z_019fefc4-b8cc-7fae-97da-b8c3191b6150.jsonl
+```
+
+Evidence:
+
+- Assistant `stopReason`: `error`
+- Error: `Codex error: No tool output found for function call ...`
+- Assistant content included two `bash` calls; the first provider call ID matched the error.
+- Assistant usage: `371,566` total tokens, including `258` output tokens.
+- Compaction `tokensBefore`: `371,372`
+- Provider diagnostics show full history growing from 541 to 544 items before transport recovery. The additions were reasoning and two function calls, with no corresponding outputs.
+- `please continue` is the compaction's direct child.
+
+### Incidents 3 and 4: August 13 custom calls
 
 Both incidents are in:
 
@@ -77,43 +152,38 @@ Both incidents are in:
 2026-08-11T06-38-53-376Z_019fef8b-a1c0-70bb-a87c-6e22e87e077f.jsonl
 ```
 
-### Incident 1
-
-| Event             | UTC timestamp              | Entry                          |
-| ----------------- | -------------------------- | ------------------------------ |
-| Assistant error   | `2026-08-13T08:45:46.724Z` | `6a141ac1`                     |
-| Native compaction | `2026-08-13T08:47:04.677Z` | `73badf39`                     |
-| User restart      | `2026-08-13T08:47:08.755Z` | `c6f90bbc` (`please continue`) |
-
-Evidence:
+Incident 3 evidence:
 
 - Assistant `stopReason`: `error`
 - Error: `Codex error: No tool output found for custom tool call ...`
-- Assistant content included an `apply_patch` tool call whose provider call ID matched the error.
-- Assistant usage: exactly `371,566` total tokens, including `2,191` output tokens.
+- Assistant content included an `apply_patch` call whose provider call ID matched the error.
+- Assistant usage: `371,566` total tokens, including `2,191` output tokens.
 - Compaction `tokensBefore`: `371,849`
-- Provider diagnostics show the request history growing from 476 to 478 full input items. The two added items correspond to the response's reasoning and tool-call items, but there was no intervening Pi tool result.
-- Compaction was extension-provided: `fromHook: true`, `details.kind: openai-codex-compat-remote-compaction`.
+- Provider diagnostics show request history growing from 476 to 478 full input items. The additions were reasoning and the custom call, with no intervening Pi tool result.
+- `please continue` is the compaction's direct child.
 
-### Incident 2
-
-| Event             | UTC timestamp              | Entry                          |
-| ----------------- | -------------------------- | ------------------------------ |
-| Assistant error   | `2026-08-13T20:27:37.247Z` | `27371470`                     |
-| Native compaction | `2026-08-13T20:29:02.835Z` | `1f0eb03a`                     |
-| User restart      | `2026-08-13T20:30:45.891Z` | `b35d69bb` (`please continue`) |
-
-Evidence:
+Incident 4 evidence:
 
 - Assistant `stopReason`: `error`
 - Error: `No tool output found for custom tool call ...`
-- Assistant content included an `apply_patch` tool call whose provider call ID matched the error.
-- Assistant usage: exactly `371,566` total tokens, including `404` output tokens.
+- Assistant content included an `apply_patch` call whose provider call ID matched the error.
+- Assistant usage: `371,566` total tokens, including `404` output tokens.
 - Compaction `tokensBefore`: `371,433`
-- Provider diagnostics show consecutive full SSE histories of 652 and 653 input items. The added item was the tool call, with no intervening Pi tool result.
-- Compaction was extension-provided with the same checkpoint kind as incident 1.
+- Provider diagnostics show consecutive full SSE histories of 652 and 653 input items. The added item was the custom call, with no intervening Pi tool result.
+- `please continue` is the compaction's direct child.
 
-The identical `371,566` totals, low remaining output budgets, and added provider-history items strongly indicate that both first subresponses reached the effective context/output ceiling while producing a tool call.
+The identical `371,566` totals, low remaining output budgets, and added provider-history items strongly indicate that all four first subresponses reached the effective context/output ceiling while producing tool calls.
+
+## Meaning of the Missing-Output Error
+
+OpenAI's Responses protocol represents a tool invocation and its result as separate linked items:
+
+- a `function_call` requires a later `function_call_output`;
+- a `custom_tool_call` requires a later `custom_tool_call_output`.
+
+`No tool output found ...` means the extension sent a provider request containing a call item without the required linked output item.
+
+It does **not** mean Pi lost an already-recorded tool result in these incidents. The branch histories contain matching results for earlier tool calls. The call IDs named by the four errors first appear in the failed assistant messages, and those messages have `stopReason: "error"`. Pi never received a successful tool-use response for those calls, so it never executed them and could not produce their outputs.
 
 ## Root Cause
 
@@ -131,7 +201,7 @@ This disables the extension's provider-boundary percentage compaction and leaves
 
 Pi 0.84.2 checks proactive threshold compaction after `agent_end`, not between every tool-calling turn in the same agent run. A long run can therefore be below the threshold when it starts, accumulate tool results over several turns, and exceed the safe request budget before `agent_end`.
 
-That is what the token evidence indicates here: both failed assistant messages reached the same effective total-token ceiling.
+That is what the token evidence indicates here: all four failed assistant messages reached the same effective total-token ceiling.
 
 ### 2. The extension continued a response after it contained a tool call
 
@@ -147,13 +217,13 @@ The raw terminal event from the first subrequest was not persisted, so the sessi
 - the unguarded `response.incomplete`/`response.failed` retry branch; or
 - the `end_turn: false` branch after streamed completion bookkeeping failed to recognize a terminal-only tool item.
 
-The first case is more likely because both responses ended at the same token ceiling. Both cases have the same protocol defect: a provider subrequest must not replay a tool call that requires client execution before its corresponding tool output exists.
+The first case is more likely because all four responses ended at the same token ceiling. Both cases have the same protocol defect: a provider subrequest must not replay a tool call that requires client execution before its corresponding tool output exists.
 
-### 3. OpenAI correctly rejected the dangling custom tool call
+### 3. OpenAI correctly rejected the dangling tool calls
 
-The extension's next provider history contained the emitted `apply_patch` call but no `custom_tool_call_output`. Pi had not received a successful assistant tool-use response yet, so it had no opportunity to execute `apply_patch`.
+The extension's next provider histories contained emitted `bash` or `apply_patch` calls but no corresponding `function_call_output` or `custom_tool_call_output`. Pi had not received successful assistant tool-use responses yet, so it had no opportunity to execute those calls.
 
-OpenAI rejected the malformed sequence with `No tool output found for custom tool call ...`.
+OpenAI rejected the malformed sequences with `No tool output found for function call ...` or `No tool output found for custom tool call ...`.
 
 ### 4. Pi correctly treated the subsequent compaction as non-continuing
 
@@ -196,7 +266,7 @@ The type comment is explicit:
 
 Current Pi `main` still contains no `endTurn` references in `packages/agent`; [issue #7689](https://github.com/earendil-works/pi/issues/7689) remains open.
 
-It solves **0 of the 2 incidents** because:
+It solves **0 of the 4 incidents** because:
 
 1. the observed terminal messages had `stopReason: "error"` and no `endTurn` value;
 2. Pi 0.84.2 does not use `endTurn` to trigger another agent turn;
@@ -255,7 +325,7 @@ When all of the following hold:
 
 normalize the failure into a bounded overflow-recovery signal so Pi compacts with `willRetry: true`.
 
-This would have recovered both observed incidents. It must remain narrow because a missing tool output at ordinary context usage usually indicates deterministic history corruption, not transient overflow.
+This would have recovered all four observed incidents. It must remain narrow because a missing tool output at ordinary context usage usually indicates deterministic history corruption, not transient overflow.
 
 ### P1: Persist safe continuation diagnostics
 
@@ -280,7 +350,7 @@ If Pi's agent loop begins honoring successful `endTurn === false`:
 3. retain explicit tool-use and length-stop behavior;
 4. test that extension and Pi do not both continue the same response.
 
-This is useful cleanup and protocol alignment, but it is not a direct fix for the two observed error messages.
+This is useful cleanup and protocol alignment, but it is not a direct fix for the four observed error messages.
 
 ### P2: Consider proactive compaction between Pi turns
 
