@@ -8,7 +8,7 @@
 - Evaluate grammar-valid `apply_patch` operations against a sequential virtual filesystem, accepting harmless no-ops and provably dead updates while rejecting conflicts before writes.
 - Recover uniquely determined `apply_patch` edits after whitespace-only formatter line reflow using the official `web-tree-sitter` runtime and packaged `@2h2d/tree-sitter-wasms` grammars for JavaScript, JSX, TypeScript, TSX, Python, Go, Java, and Scala, including typed Markdown code fences and formatter-aligned tables; require exact old-side punctuation and apply requested replacement lines without reinterpretation.
 - Move regular files and symbolic-link entries opaquely for move-only `apply_patch` hunks, preserving arbitrary binary bytes and rendering path-only move history.
-- Render failed `apply_patch` calls with their failure phase and reason, instruction counts, per-instruction statuses, and expanded instruction details.
+- Preserve the aggregate `apply_patch` changed-file summary and list every concise source-ordered result under `Instruction results:` in model and TUI feedback.
 
 ### Fixed
 
@@ -16,15 +16,20 @@
 - Model native renames and cross-filesystem copy-and-unlink moves with distinct hard-link topology, and account for earlier planned unlinks when proving later edits dead.
 - Record symbolic-link deletion as a path-only entry operation so history and rendering never claim that the link target's bytes were deleted.
 - Serialize same-process `apply_patch` calls across case, Unicode, symlink-parent, and hard-link aliases while retaining Pi's ordinary path queues.
-- Explain every successful no-op and provably dead instruction in model output and the TUI, with bounded collapsed output and expanded domination evidence.
-- Include failed instruction labels, committed-prefix exactness, and every instruction status in model-facing execution-failure context.
-- Execute the move strategy proven during preflight, with an injectable filesystem boundary covering native rename, cross-filesystem replacement, Windows overwrite fallback, and exact or inexact failure prefixes.
+- Render semantic no-change and skipped results in simplified technical English, without instruction limits, detached proof sections, or repeated patch text.
+- Attribute completed filesystem effects, deterministic post-failure path states, matcher evidence, and errors to the instruction that produced them.
+- Preserve confirmed partial-move effects in changed-file summaries when later inspection is unavailable, without rendering the partial operation as a completed rename.
+- Report parent-directory and temporary-entry failure effects without a false no-change summary.
+- Report patch-level errors once and distinguish stopped instructions from input failures.
+- Keep unreadable previous content and diff availability out of model feedback.
+- Execute the move strategy proven during validation, with an injectable filesystem boundary covering native rename, cross-filesystem replacement, Windows overwrite fallback, and partial-failure inspection.
 - Retry Tree-sitter parser and grammar initialization after transient failures, and cover cancellation across queue, matching, pre-mutation, and committed-prefix phases.
 - Reject FIFOs, Unix sockets, directories, and available character or block devices during side-effect-free preflight.
 - Avoid dereferencing symbolic-link targets while queuing entry-only operations and no-op updates, including cyclic links.
 - Replay later add/delete entry state when proving stale hard-link updates dead.
 - Preserve cancellation raised during Tree-sitter work and classify pure-move filesystems from the source entry rather than its parent.
 - Re-resolve relative symbolic-link targets from their destination after native or cross-filesystem pure moves.
+- Deduplicate byte-identical line and structural matcher candidates before applying candidate and mapping limits.
 
 ### Security
 

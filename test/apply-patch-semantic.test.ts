@@ -28,7 +28,9 @@ import {
   applyPatch,
   type ApplyPatchDetails,
   ApplyPatchExecutionError,
+  ApplyPatchInputError,
   ApplyPatchVerificationError,
+  formatApplyPatchFailureSummary,
   formatApplyPatchSummary,
   parsePatch,
   previewPatch,
@@ -64,6 +66,13 @@ function filesystemError(code: string, message: string): NodeJS.ErrnoException {
   return Object.assign(new Error(message), { code });
 }
 
+function pathLikeBasename(path: unknown): string {
+  if (typeof path === "string") return basename(path);
+  if (Buffer.isBuffer(path)) return basename(path.toString());
+  if (path instanceof URL) return basename(path.pathname);
+  return "";
+}
+
 void test("accepts grammar-valid empty and identity updates as no-ops", async (t) => {
   const cwd = await workspace(t);
   await writeFile(join(cwd, "same.txt"), "same\n");
@@ -91,12 +100,13 @@ void test("accepts grammar-valid empty and identity updates as no-ops", async (t
     formatApplyPatchSummary(details),
     [
       "Success. No files were changed.",
-      "Instructions with no filesystem effect:",
-      "NO-OP 1. Update missing.txt - empty update has no effect",
-      "NO-OP 2. Update also-missing.txt - old and new sides are identical",
-      "NO-OP 3. Update same.txt - old and new sides are identical",
-      "NO-OP 4. Add same.txt - requested bytes are already present",
-      "NO-OP 5. Delete absent.txt - path is already absent",
+      "",
+      "Instruction results:",
+      "1. NO CHANGE - Update missing.txt - The instruction contains no changes.",
+      "2. NO CHANGE - Update also-missing.txt - Old and replacement content are identical.",
+      "3. NO CHANGE - Update same.txt - Old and replacement content are identical.",
+      "4. NO CHANGE - Add same.txt - Requested content already present.",
+      "5. NO CHANGE - Delete absent.txt - Path already absent.",
       "",
     ].join("\n"),
   );
@@ -113,6 +123,50 @@ void test("accepts grammar-valid empty and identity updates as no-ops", async (t
   const after = await stat(join(cwd, "same.txt"));
   assert.equal(after.ino, before.ino);
   assert.equal(after.mtimeMs, before.mtimeMs);
+});
+
+void test("reports patch-level input and format failures once", async (t) => {
+  const cwd = await workspace(t);
+
+  await assert.rejects(applyPatch(cwd, "not a patch"), (error: unknown) => {
+    assert.ok(error instanceof ApplyPatchVerificationError);
+    const feedback = formatApplyPatchFailureSummary(error.details, cwd);
+    const reason = "The first line of the patch must be '*** Begin Patch'";
+    assert.equal(feedback.split(reason).length - 1, 1);
+    assert.doesNotMatch(feedback, /Instruction results:/u);
+    return true;
+  });
+
+  await assert.rejects(
+    applyPatch(
+      cwd,
+      patch("*** Environment ID: unavailable\n", "*** Add File: not-run.txt\n+not run\n"),
+    ),
+    (error: unknown) => {
+      assert.ok(error instanceof ApplyPatchInputError);
+      const feedback = formatApplyPatchFailureSummary(error.details!, cwd);
+      assert.match(
+        feedback,
+        /^Patch input error: apply_patch environment selection is unavailable for this turn$/mu,
+      );
+      assert.match(feedback, /^1\. NOT RUN - Add not-run\.txt - Patch input error\.$/mu);
+      return true;
+    },
+  );
+
+  const controller = new AbortController();
+  controller.abort();
+  await assert.rejects(
+    applyPatch(cwd, patch("*** Add File: cancelled.txt\n+cancelled\n"), controller.signal),
+    (error: unknown) => {
+      assert.ok(error instanceof ApplyPatchInputError);
+      const feedback = formatApplyPatchFailureSummary(error.details!, cwd);
+      assert.match(feedback, /^Patch stopped before execution\.$/mu);
+      assert.match(feedback, /^1\. NOT RUN - Add cancelled\.txt - Patch stopped\.$/mu);
+      assert.doesNotMatch(feedback, /Filesystem setup failed|Patch input error/u);
+      return true;
+    },
+  );
 });
 
 void test("explains every no-op and dead operation to the model and TUI", async (t) => {
@@ -153,14 +207,17 @@ void test("explains every no-op and dead operation to the model and TUI", async 
   assert.deepEqual(details.instructions?.[6]?.reason?.dominatingInstructions, [8]);
 
   const model = formatApplyPatchSummary(details);
-  assert.match(model, /NO-OP 1\. Update same-content\.txt - requested bytes are already present/u);
   assert.match(
     model,
-    /NO-OP 4\. Move move-source\.txt -> move-destination\.txt - an earlier move already established this destination/u,
+    /1\. NO CHANGE - Update same-content\.txt - Requested content already present\./u,
   );
   assert.match(
     model,
-    /DEAD 5\. Update dead-delete\.txt - later instruction 6 makes this operation unobservable/u,
+    /4\. NO CHANGE - Move move-source\.txt -> move-destination\.txt - Instruction 3 already moved this entry\./u,
+  );
+  assert.match(
+    model,
+    /5\. SKIPPED - Update dead-delete\.txt - Instruction 6 determines the final filesystem state before another instruction reads it\./u,
   );
   assert.doesNotMatch(model, /[○↷→—]/u);
 
@@ -169,15 +226,17 @@ void test("explains every no-op and dead operation to the model and TUI", async 
     bold: (text: string) => text,
   } as unknown as Theme;
   const collapsed = new ApplyPatchDiffComponent(details, theme, cwd, false).render(140).join("\n");
-  assert.match(collapsed, /○ 1\. Update same-content\.txt — requested bytes are already present/u);
-  assert.match(collapsed, /↷ 5\. Update dead-delete\.txt — later instruction 6/u);
+  assert.match(collapsed, /Instruction results:/u);
+  assert.match(collapsed, /○ 1\. Update same-content\.txt — Requested content already present\./u);
+  assert.match(collapsed, /↷ 5\. Update dead-delete\.txt — Instruction 6 determines/u);
   assert.doesNotMatch(collapsed, /Proof:/u);
   const expanded = new ApplyPatchDiffComponent(details, theme, cwd, true).render(140).join("\n");
-  assert.match(expanded, /Proof: filesystem effects are fully dominated by instruction 6/u);
-  assert.match(expanded, /Proof: filesystem effects are fully dominated by instruction 8/u);
+  assert.match(expanded, /↷ 5\. Update dead-delete\.txt — Instruction 6 determines/u);
+  assert.match(expanded, /↷ 7\. Update dead-add\.txt — Instruction 8 determines/u);
+  assert.doesNotMatch(expanded, /Proof:/u);
 });
 
-void test("bounds collapsed and model no-op explanations while expanded TUI shows all", async (t) => {
+void test("reports every instruction to the model and TUI without a limit", async (t) => {
   const cwd = await workspace(t);
   const operations = Array.from(
     { length: 11 },
@@ -185,16 +244,16 @@ void test("bounds collapsed and model no-op explanations while expanded TUI show
   );
   const details = await applyPatch(cwd, patch(...operations));
   const model = formatApplyPatchSummary(details);
-  assert.equal((model.match(/^NO-OP /gmu) ?? []).length, 8);
-  assert.match(model, /3 more instruction explanations omitted\./u);
+  assert.equal((model.match(/^\d+\. NO CHANGE - Delete/gmu) ?? []).length, 11);
+  assert.doesNotMatch(model, /omitted|more instruction explanations/u);
 
   const theme = {
     fg: (_color: string, text: string) => text,
     bold: (text: string) => text,
   } as unknown as Theme;
   const collapsed = new ApplyPatchDiffComponent(details, theme, cwd, false).render(120).join("\n");
-  assert.equal((collapsed.match(/○ \d+\. Delete/gmu) ?? []).length, 8);
-  assert.match(collapsed, /… 3 more instruction explanations/u);
+  assert.equal((collapsed.match(/○ \d+\. Delete/gmu) ?? []).length, 11);
+  assert.doesNotMatch(collapsed, /more instruction explanations/u);
   const expanded = new ApplyPatchDiffComponent(details, theme, cwd, true).render(120).join("\n");
   assert.equal((expanded.match(/○ \d+\. Delete/gmu) ?? []).length, 11);
   assert.doesNotMatch(expanded, /more instruction explanations/u);
@@ -213,15 +272,80 @@ void test("bounds collapsed and model no-op explanations while expanded TUI show
       status: "dead" as const,
       reason: {
         code: "dead-dominated" as const,
-        message: `later instruction ${index + 2} makes this operation unobservable`,
+        message: `Instruction ${index + 2} determines the final filesystem state before another instruction reads it.`,
         dominatingInstructions: [index + 2],
       },
     })),
   };
   assert.match(
     formatApplyPatchSummary(allDead),
-    /DEAD 1\. Update dead-1\.txt - later instruction 3 makes this operation unobservable/u,
+    /1\. SKIPPED - Update dead-1\.txt - Instruction 3 determines the final filesystem state before another instruction reads it\./u,
   );
+
+  for (const count of [1, 8, 9, 100, 500]) {
+    const complete: ApplyPatchDetails = {
+      status: "completed",
+      exact: true,
+      changes: [],
+      added: [],
+      modified: [],
+      deleted: [],
+      instructions: Array.from({ length: count }, (_, offset) => ({
+        index: offset + 1,
+        kind: "delete" as const,
+        path: `large-${offset + 1}.txt`,
+        status: "no-op" as const,
+        reason: {
+          code: "path-already-absent" as const,
+          message: "Path already absent.",
+        },
+      })),
+    };
+    assert.equal(
+      (formatApplyPatchSummary(complete).match(/^\d+\. NO CHANGE - Delete/gmu) ?? []).length,
+      count,
+    );
+    assert.equal(
+      (
+        new ApplyPatchDiffComponent(complete, theme, cwd, false)
+          .render(120)
+          .join("\n")
+          .match(/○ \d+\. Delete/gmu) ?? []
+      ).length,
+      count,
+    );
+  }
+
+  const failedInstruction = 250;
+  const failedLarge: ApplyPatchDetails = {
+    status: "failed",
+    exact: true,
+    changes: [],
+    added: [],
+    modified: [],
+    deleted: [],
+    instructions: Array.from({ length: 500 }, (_, offset) => ({
+      index: offset + 1,
+      kind: "delete" as const,
+      path: `failed-large-${offset + 1}.txt`,
+      status: offset + 1 === failedInstruction ? ("failed" as const) : ("not-run" as const),
+      ...(offset + 1 === failedInstruction ? { error: "injected failure" } : {}),
+    })),
+    failure: {
+      phase: "execution",
+      message: "injected failure",
+      failedInstruction,
+    },
+    error: "injected failure",
+  };
+  const failedModel = formatApplyPatchFailureSummary(failedLarge, cwd);
+  assert.equal((failedModel.match(/^\d+\. (?:FAILED|NOT RUN) - Delete/gmu) ?? []).length, 500);
+  assert.doesNotMatch(failedModel, /omitted/u);
+  const failedTui = new ApplyPatchDiffComponent(failedLarge, theme, cwd, false)
+    .render(120)
+    .join("\n");
+  assert.equal((failedTui.match(/[–✘] \d+\. Delete/gmu) ?? []).length, 500);
+  assert.doesNotMatch(failedTui, /omitted/u);
 });
 
 void test("moves opaque regular files without decoding or changing bytes", async (t) => {
@@ -530,7 +654,7 @@ void test("follows symlinks for updates but replaces them for adds", async (t) =
   await writeFile(join(cwd, "target.txt"), "before\n");
   await symlink("target.txt", join(cwd, "alias.txt"));
 
-  await applyPatch(
+  const details = await applyPatch(
     cwd,
     patch(
       "*** Update File: alias.txt\n@@\n-before\n+after\n",
@@ -543,6 +667,12 @@ void test("follows symlinks for updates but replaces them for adds", async (t) =
   assert.equal(await readFile(join(cwd, "target.txt"), "utf8"), "final\n");
   assert.equal(await readFile(join(cwd, "alias.txt"), "utf8"), "done\n");
   await assert.rejects(readlink(join(cwd, "alias.txt")), { code: "EINVAL" });
+  const feedback = formatApplyPatchSummary(details, cwd);
+  assert.match(feedback, /1\. APPLIED - Update alias\.txt - Updated the link target/u);
+  assert.match(
+    feedback,
+    /3\. APPLIED - Add alias\.txt - Replaced alias\.txt; Link target for alias\.txt was unchanged\./u,
+  );
 });
 
 void test("replaces live and dangling symlinks on add without touching their targets", async (t) => {
@@ -1039,11 +1169,100 @@ void test("executes planned move strategies and reports every injected failure p
         false,
       );
       assert.equal(error.details.failure?.failedInstruction, 1);
+      const feedback = formatApplyPatchFailureSummary(error.details, cwd);
+      assert.match(feedback, /Patch failed at instruction 1 of 1\./u);
+      assert.match(feedback, /Files changed:\nA installed-destination\.txt/u);
+      assert.match(
+        feedback,
+        /1\. FAILED - Move installed-source\.txt -> installed-destination\.txt - Created installed-destination\.txt; installed-source\.txt remains; Move failed: injected source removal failure\./u,
+      );
+      const theme = {
+        fg: (_color: string, text: string) => text,
+        bold: (text: string) => text,
+      } as unknown as Theme;
+      const tui = new ApplyPatchDiffComponent(error.details, theme, cwd, true)
+        .render(120)
+        .join("\n");
+      assert.match(tui, /A installed-destination\.txt/u);
+      assert.match(tui, /Created installed-destination\.txt/u);
+      assert.doesNotMatch(tui, /Moved installed-source\.txt/u);
       return true;
     },
   );
   assert.equal(await readFile(join(cwd, "installed-source.txt"), "utf8"), "installed\n");
   assert.equal(await readFile(join(cwd, "installed-destination.txt"), "utf8"), "installed\n");
+
+  await writeFile(join(cwd, "replaced-source.txt"), "replacement\n");
+  await writeFile(join(cwd, "replaced-destination.txt"), "old destination\n");
+  await assert.rejects(
+    applyPatch(
+      cwd,
+      patch("*** Update File: replaced-source.txt\n*** Move to: replaced-destination.txt\n"),
+      undefined,
+      {
+        selectMoveStrategy: () => "copy-unlink",
+        filesystem: {
+          async unlink(path) {
+            if (path === join(cwd, "replaced-source.txt")) {
+              throw filesystemError("EACCES", "injected replacement source removal failure");
+            }
+            await unlink(path);
+          },
+        },
+      },
+    ),
+    (error: unknown) => {
+      assert.ok(error instanceof ApplyPatchExecutionError);
+      const feedback = formatApplyPatchFailureSummary(error.details, cwd);
+      assert.match(feedback, /Files changed:\nM replaced-destination\.txt/u);
+      assert.match(feedback, /Replaced replaced-destination\.txt; replaced-source\.txt remains/u);
+      return true;
+    },
+  );
+  assert.equal(await readFile(join(cwd, "replaced-source.txt"), "utf8"), "replacement\n");
+  assert.equal(await readFile(join(cwd, "replaced-destination.txt"), "utf8"), "replacement\n");
+
+  await writeFile(join(cwd, "unverified-move-source.txt"), "source\n");
+  await assert.rejects(
+    applyPatch(
+      cwd,
+      patch(
+        "*** Update File: unverified-move-source.txt\n",
+        "*** Move to: unverified-move-destination.txt\n",
+      ),
+      undefined,
+      {
+        selectMoveStrategy: () => "copy-unlink",
+        filesystem: {
+          async unlink(path) {
+            if (path === join(cwd, "unverified-move-source.txt")) {
+              throw filesystemError("EACCES", "injected source removal failure");
+            }
+            await unlink(path);
+          },
+          lstat: (async (path) => {
+            if (path === join(cwd, "unverified-move-destination.txt")) {
+              throw filesystemError("EIO", "injected final-state inspection failure");
+            }
+            return lstat(path);
+          }) as typeof lstat,
+        },
+      },
+    ),
+    (error: unknown) => {
+      assert.ok(error instanceof ApplyPatchExecutionError);
+      const feedback = formatApplyPatchFailureSummary(error.details, cwd);
+      assert.match(feedback, /Files changed:\nA unverified-move-destination\.txt/u);
+      assert.match(
+        feedback,
+        /Created unverified-move-destination\.txt; unverified-move-source\.txt remains/u,
+      );
+      assert.match(feedback, /Final state not verified for unverified-move-destination\.txt\./u);
+      assert.doesNotMatch(feedback, /No files were changed\./u);
+      return true;
+    },
+  );
+  assert.equal(await readFile(join(cwd, "unverified-move-destination.txt"), "utf8"), "source\n");
 
   await writeFile(join(cwd, "text-move-source.txt"), "before\n");
   await assert.rejects(
@@ -1073,6 +1292,10 @@ void test("executes planned move strategies and reports every injected failure p
       assert.equal(error.details.changes[0]?.kind, "add");
       assert.equal(error.details.failure?.failedInstruction, 1);
       assert.match(error.message, /Failed to remove original/u);
+      assert.match(
+        formatApplyPatchFailureSummary(error.details, cwd),
+        /1\. FAILED - Update text-move-source\.txt -> text-move-destination\.txt - Created text-move-destination\.txt; text-move-source\.txt remains; Source removal failed: injected text-move source removal failure\./u,
+      );
       return true;
     },
   );
@@ -1103,7 +1326,7 @@ void test("executes planned move strategies and reports every injected failure p
               if (failedInstallAttempts === 1) {
                 throw filesystemError("EEXIST", "injected Windows replacement conflict");
               }
-              throw filesystemError("EIO", "injected destination installation failure");
+              throw filesystemError("EIO", "injected destination replacement failure");
             }
             await rename(source, destination);
           },
@@ -1120,6 +1343,16 @@ void test("executes planned move strategies and reports every injected failure p
       );
       assert.equal(error.details.failure?.failedInstruction, 2);
       assert.match(error.message, /destination was removed before replacement failed/u);
+      const feedback = formatApplyPatchFailureSummary(error.details, cwd);
+      assert.match(
+        feedback,
+        /Files changed:\nA committed-prefix\.txt\nD removed-destination\.txt/u,
+      );
+      assert.match(
+        feedback,
+        /2\. FAILED - Move removed-source\.txt -> removed-destination\.txt - Deleted removed-destination\.txt; removed-source\.txt remains; Move failed: injected destination replacement failure\./u,
+      );
+      assert.match(feedback, /3\. NOT RUN - Add not-run\.txt - Instruction 2 failed\./u);
       return true;
     },
   );
@@ -1157,6 +1390,332 @@ void test("executes planned move strategies and reports every injected failure p
   assert.equal(windowsInstallAttempts, 2);
   await assertMissing(join(cwd, "windows-source.txt"));
   assert.equal(await readFile(join(cwd, "windows-destination.txt"), "utf8"), "source\n");
+});
+
+void test("reports deterministic file states after write failures", async (t) => {
+  const cwd = await workspace(t);
+  const theme = {
+    fg: (_color: string, text: string) => text,
+    bold: (text: string) => text,
+  } as unknown as Theme;
+  const cases = [
+    {
+      name: "unchanged",
+      before: "before\n",
+      mutate: false,
+      mutation: "",
+      summary: /No files were changed\./u,
+      result: /Write failed: injected unchanged write failure; unchanged\.txt is unchanged\./u,
+    },
+    {
+      name: "requested",
+      before: "before\n",
+      mutate: true,
+      mutation: "requested\n",
+      summary: /Files changed:\nM requested\.txt/u,
+      result:
+        /Write failed: injected requested write failure; requested\.txt contains the requested content\./u,
+    },
+    {
+      name: "different",
+      before: "before\n",
+      mutate: true,
+      mutation: "different\n",
+      summary: /Files changed:\nM different\.txt/u,
+      result:
+        /Write failed: injected different write failure; different\.txt contains unexpected content\./u,
+    },
+  ] as const;
+
+  for (const fixture of cases) {
+    const path = join(cwd, `${fixture.name}.txt`);
+    await writeFile(path, fixture.before);
+    await assert.rejects(
+      applyPatch(
+        cwd,
+        patch(`*** Update File: ${fixture.name}.txt\n@@\n-before\n+requested\n`),
+        undefined,
+        {
+          filesystem: {
+            async writeFile(target, data, options) {
+              if (target === path) {
+                if (fixture.mutate) await writeFile(target, fixture.mutation, options);
+                throw filesystemError("EIO", `injected ${fixture.name} write failure`);
+              }
+              await writeFile(target, data, options);
+            },
+          },
+        },
+      ),
+      (error: unknown) => {
+        assert.ok(error instanceof ApplyPatchExecutionError);
+        const feedback = formatApplyPatchFailureSummary(error.details, cwd);
+        assert.match(feedback, fixture.summary);
+        assert.match(feedback, fixture.result);
+        const tui = formatApplyPatchRenderText(error.details, theme, cwd);
+        assert.match(tui, fixture.result);
+        if (fixture.name === "unchanged") assert.match(tui, /No files were changed\./u);
+        else assert.match(tui, /Changed 1 file/u);
+        assert.doesNotMatch(
+          feedback,
+          /Committed prefix|exact|inexact|might|possibly|probably|likely/u,
+        );
+        return true;
+      },
+    );
+  }
+
+  const unverifiedPath = join(cwd, "unverified.txt");
+  await writeFile(unverifiedPath, "before\n");
+  await assert.rejects(
+    applyPatch(
+      cwd,
+      patch("*** Update File: unverified.txt\n@@\n-before\n+requested\n"),
+      undefined,
+      {
+        filesystem: {
+          async writeFile(target, data, options) {
+            if (target === unverifiedPath) {
+              await writeFile(target, data, options);
+              throw filesystemError("EIO", "injected unverified write failure");
+            }
+            await writeFile(target, data, options);
+          },
+          readFile: (async (target, options) => {
+            if (target === unverifiedPath) {
+              throw filesystemError("EIO", "injected final-state read failure");
+            }
+            return readFile(target, options);
+          }) as typeof readFile,
+        },
+      },
+    ),
+    (error: unknown) => {
+      assert.ok(error instanceof ApplyPatchExecutionError);
+      const feedback = formatApplyPatchFailureSummary(error.details, cwd);
+      assert.doesNotMatch(feedback, /No files were changed\./u);
+      assert.match(
+        feedback,
+        /Write failed: injected unverified write failure; Final state not verified for unverified\.txt\./u,
+      );
+      const tui = formatApplyPatchRenderText(error.details, theme, cwd);
+      assert.doesNotMatch(tui, /No files were changed\./u);
+      assert.match(tui, /Final state not verified for unverified\.txt\./u);
+      return true;
+    },
+  );
+
+  const changedEntryPath = join(cwd, "changed-entry.txt");
+  const replacementEntryPath = join(cwd, "changed-entry-replacement.txt");
+  await writeFile(changedEntryPath, "before\n");
+  await assert.rejects(
+    applyPatch(
+      cwd,
+      patch("*** Update File: changed-entry.txt\n@@\n-before\n+requested\n"),
+      undefined,
+      {
+        filesystem: {
+          async writeFile(path, data, options) {
+            if (path === changedEntryPath) {
+              await writeFile(replacementEntryPath, "before\n");
+              await rename(replacementEntryPath, path);
+              throw filesystemError("EIO", "injected same-content entry replacement");
+            }
+            await writeFile(path, data, options);
+          },
+        },
+      },
+    ),
+    (error: unknown) => {
+      assert.ok(error instanceof ApplyPatchExecutionError);
+      const feedback = formatApplyPatchFailureSummary(error.details, cwd);
+      assert.match(feedback, /Files changed:\nM changed-entry\.txt/u);
+      assert.match(
+        feedback,
+        /Write failed: injected same-content entry replacement; changed-entry\.txt is a different filesystem entry\./u,
+      );
+      return true;
+    },
+  );
+
+  const changedTypePath = join(cwd, "changed-type.txt");
+  await writeFile(changedTypePath, "before\n");
+  await assert.rejects(
+    applyPatch(
+      cwd,
+      patch("*** Update File: changed-type.txt\n@@\n-before\n+requested\n"),
+      undefined,
+      {
+        filesystem: {
+          async writeFile(path, data, options) {
+            if (path === changedTypePath) {
+              await unlink(path);
+              await mkdir(path);
+              throw filesystemError("EIO", "injected entry-type write failure");
+            }
+            await writeFile(path, data, options);
+          },
+        },
+      },
+    ),
+    (error: unknown) => {
+      assert.ok(error instanceof ApplyPatchExecutionError);
+      const feedback = formatApplyPatchFailureSummary(error.details, cwd);
+      assert.match(feedback, /Files changed:\nM changed-type\.txt/u);
+      assert.match(
+        feedback,
+        /Write failed: injected entry-type write failure; Entry type changed for changed-type\.txt\./u,
+      );
+      assert.doesNotMatch(feedback, /No files were changed\./u);
+      return true;
+    },
+  );
+});
+
+void test("reports parent, temporary, and post-operation failure effects", async (t) => {
+  const cwd = await workspace(t);
+  const theme = {
+    fg: (_color: string, text: string) => text,
+    bold: (text: string) => text,
+  } as unknown as Theme;
+
+  await assert.rejects(
+    applyPatch(cwd, patch("*** Add File: created-parent/file.txt\n+content\n"), undefined, {
+      filesystem: {
+        async writeFile(path, data, options) {
+          if (pathLikeBasename(path).includes(".file.txt.apply-patch-")) {
+            throw filesystemError("EIO", "injected write failure after parent creation");
+          }
+          await writeFile(path, data, options);
+        },
+      },
+    }),
+    (error: unknown) => {
+      assert.ok(error instanceof ApplyPatchExecutionError);
+      const feedback = formatApplyPatchFailureSummary(error.details, cwd);
+      assert.match(feedback, /^Filesystem changed\.$/mu);
+      assert.match(feedback, /Created directory created-parent/u);
+      assert.doesNotMatch(feedback, /No files were changed\./u);
+      const tui = formatApplyPatchRenderText(error.details, theme, cwd);
+      assert.match(tui, /Filesystem changed\./u);
+      assert.match(tui, /Created directory created-parent/u);
+      return true;
+    },
+  );
+
+  await assert.rejects(
+    applyPatch(cwd, patch("*** Add File: temporary.txt\n+content\n"), undefined, {
+      filesystem: {
+        async writeFile(path, data, options) {
+          if (pathLikeBasename(path).includes(".temporary.txt.apply-patch-")) {
+            await writeFile(path, data, options);
+            throw filesystemError("EIO", "injected temporary write failure");
+          }
+          await writeFile(path, data, options);
+        },
+        async unlink(path) {
+          if (pathLikeBasename(path).includes(".temporary.txt.apply-patch-")) {
+            throw filesystemError("EACCES", "injected temporary cleanup failure");
+          }
+          await unlink(path);
+        },
+      },
+    }),
+    (error: unknown) => {
+      assert.ok(error instanceof ApplyPatchExecutionError);
+      const feedback = formatApplyPatchFailureSummary(error.details, cwd);
+      assert.match(feedback, /^Filesystem changed\.$/mu);
+      assert.match(feedback, /Temporary entry remains at \.temporary\.txt\.apply-patch-/u);
+      assert.doesNotMatch(feedback, /No files were changed\./u);
+      return true;
+    },
+  );
+
+  await assert.rejects(
+    applyPatch(
+      cwd,
+      patch(
+        "*** Add File: planned-delete.txt\n+content\n",
+        "*** Delete File: planned-delete.txt\n",
+      ),
+      undefined,
+      {
+        filesystem: {
+          async unlink(path) {
+            if (path === join(cwd, "planned-delete.txt")) {
+              throw filesystemError("EACCES", "injected planned delete failure");
+            }
+            await unlink(path);
+          },
+        },
+      },
+    ),
+    (error: unknown) => {
+      assert.ok(error instanceof ApplyPatchExecutionError);
+      const feedback = formatApplyPatchFailureSummary(error.details, cwd);
+      assert.match(feedback, /Files changed:\nA planned-delete\.txt/u);
+      assert.match(
+        feedback,
+        /2\. FAILED - Delete planned-delete\.txt - Delete failed: injected planned delete failure; planned-delete\.txt is unchanged\./u,
+      );
+      assert.doesNotMatch(feedback, /Replaced planned-delete\.txt/u);
+      return true;
+    },
+  );
+
+  const postOperationSource = join(cwd, "post-operation-source.txt");
+  const postOperationDestination = join(cwd, "post-operation-destination.txt");
+  await writeFile(postOperationSource, "before\n");
+  await assert.rejects(
+    applyPatch(
+      cwd,
+      patch(
+        "*** Update File: post-operation-source.txt\n",
+        "*** Move to: post-operation-destination.txt\n",
+      ),
+      undefined,
+      {
+        filesystem: {
+          async rename(source, destination) {
+            await rename(source, destination);
+            if (source === postOperationSource && destination === postOperationDestination) {
+              await unlink(destination);
+            }
+          },
+        },
+      },
+    ),
+    (error: unknown) => {
+      assert.ok(error instanceof ApplyPatchExecutionError);
+      const feedback = formatApplyPatchFailureSummary(error.details, cwd);
+      assert.match(
+        feedback,
+        /Files changed:\nM post-operation-destination\.txt\nD post-operation-source\.txt/u,
+      );
+      assert.match(
+        feedback,
+        /Filesystem changed after the operation; post-operation-destination\.txt is unchanged\./u,
+      );
+      return true;
+    },
+  );
+  await assertMissing(postOperationSource);
+  await assertMissing(postOperationDestination);
+});
+
+void test("does not expose missing previous-content history to the model", async (t) => {
+  const cwd = await workspace(t);
+  const target = join(cwd, "unreadable.txt");
+  await writeFile(target, "private\n");
+  await chmod(target, 0);
+
+  const details = await applyPatch(cwd, patch("*** Add File: unreadable.txt\n+replacement\n"));
+  const feedback = formatApplyPatchSummary(details, cwd);
+  await chmod(target, 0o600);
+  assert.equal(await readFile(target, "utf8"), "replacement\n");
+  assert.match(feedback, /A unreadable\.txt/u);
+  assert.match(feedback, /1\. APPLIED - Add unreadable\.txt/u);
+  assert.doesNotMatch(feedback, /previous content|diff|history|Committed prefix|exact|inexact/u);
 });
 
 void test("serializes same-process filesystem aliases with deterministic logical keys", async (t) => {

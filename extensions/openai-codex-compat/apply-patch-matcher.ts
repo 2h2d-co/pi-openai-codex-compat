@@ -743,6 +743,19 @@ function insertionCandidates(
     });
 }
 
+function deduplicateCandidates(candidates: readonly EditCandidate[]): EditCandidate[] {
+  const unique = new Map<string, EditCandidate>();
+  for (const candidate of candidates) {
+    const key = JSON.stringify([
+      candidate.start,
+      candidate.end,
+      candidate.edits.map((edit) => [edit.start, edit.end, edit.replacement.toString("base64")]),
+    ]);
+    if (!unique.has(key)) unique.set(key, candidate);
+  }
+  return [...unique.values()];
+}
+
 function parserInitializationPromise(): Promise<void> {
   if (!parserInitialization) {
     const promise = structuralRuntime.initializeParser();
@@ -1371,7 +1384,7 @@ async function formatterCandidates(
       ),
     )
   ).flat();
-  return [...lineLevelCandidates, ...structuralCandidates];
+  return deduplicateCandidates([...lineLevelCandidates, ...structuralCandidates]);
 }
 
 async function requestedReplacementCandidates(

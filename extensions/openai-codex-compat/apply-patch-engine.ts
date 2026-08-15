@@ -154,6 +154,38 @@ export type ApplyPatchInstructionReason = {
   code: ApplyPatchInstructionReasonCode;
   message: string;
   dominatingInstructions?: number[];
+  relatedInstructions?: number[];
+};
+
+export type ApplyPatchInstructionEffect =
+  | {
+      kind:
+        | "created"
+        | "replaced"
+        | "updated"
+        | "deleted"
+        | "directory-created"
+        | "temporary-entry-remains";
+      path: string;
+    }
+  | { kind: "source-remains"; path: string }
+  | { kind: "symbolic-link-target-unchanged"; path: string }
+  | { kind: "symbolic-link-target-updated"; path: string };
+
+export type ApplyPatchFinalPathState = {
+  path: string;
+  state:
+    | "absent"
+    | "regular-file"
+    | "symbolic-link"
+    | "directory"
+    | "other-entry"
+    | "unchanged"
+    | "requested-content"
+    | "different-content"
+    | "different-entry"
+    | "different-entry-type"
+    | "not-verified";
 };
 
 export type ApplyPatchInstructionDetails = {
@@ -163,6 +195,10 @@ export type ApplyPatchInstructionDetails = {
   moveTo?: string;
   status: ApplyPatchInstructionStatus;
   reason?: ApplyPatchInstructionReason;
+  effects?: ApplyPatchInstructionEffect[];
+  finalStates?: ApplyPatchFinalPathState[];
+  matcher?: FormatterMatchFailureDetails;
+  changeIndexes?: number[];
   error?: string;
 };
 
@@ -662,6 +698,16 @@ function emptyDetails(): ApplyPatchDetails {
 }
 
 export function cloneApplyPatchDetails(details: ApplyPatchDetails): ApplyPatchDetails {
+  const cloneMatcher = (matcher: FormatterMatchFailureDetails): FormatterMatchFailureDetails => ({
+    ...matcher,
+    candidates: matcher.candidates.map((range) => ({ ...range })),
+    ...(matcher.previousCandidates
+      ? { previousCandidates: matcher.previousCandidates.map((range) => ({ ...range })) }
+      : {}),
+    ...(matcher.replacementCandidates
+      ? { replacementCandidates: matcher.replacementCandidates.map((range) => ({ ...range })) }
+      : {}),
+  });
   return {
     ...details,
     changes: details.changes.map((change) => ({ ...change })),
@@ -672,6 +718,14 @@ export function cloneApplyPatchDetails(details: ApplyPatchDetails): ApplyPatchDe
       ? {
           instructions: details.instructions.map((instruction) => ({
             ...instruction,
+            ...(instruction.effects
+              ? { effects: instruction.effects.map((effect) => ({ ...effect })) }
+              : {}),
+            ...(instruction.finalStates
+              ? { finalStates: instruction.finalStates.map((state) => ({ ...state })) }
+              : {}),
+            ...(instruction.matcher ? { matcher: cloneMatcher(instruction.matcher) } : {}),
+            ...(instruction.changeIndexes ? { changeIndexes: [...instruction.changeIndexes] } : {}),
             ...(instruction.reason
               ? {
                   reason: {
@@ -679,6 +733,11 @@ export function cloneApplyPatchDetails(details: ApplyPatchDetails): ApplyPatchDe
                     ...(instruction.reason.dominatingInstructions
                       ? {
                           dominatingInstructions: [...instruction.reason.dominatingInstructions],
+                        }
+                      : {}),
+                    ...(instruction.reason.relatedInstructions
+                      ? {
+                          relatedInstructions: [...instruction.reason.relatedInstructions],
                         }
                       : {}),
                   },
@@ -691,30 +750,7 @@ export function cloneApplyPatchDetails(details: ApplyPatchDetails): ApplyPatchDe
       ? {
           failure: {
             ...details.failure,
-            ...(details.failure.matcher
-              ? {
-                  matcher: {
-                    ...details.failure.matcher,
-                    candidates: details.failure.matcher.candidates.map((range) => ({ ...range })),
-                    ...(details.failure.matcher.previousCandidates
-                      ? {
-                          previousCandidates: details.failure.matcher.previousCandidates.map(
-                            (range) => ({ ...range }),
-                          ),
-                        }
-                      : {}),
-                    ...(details.failure.matcher.replacementCandidates
-                      ? {
-                          replacementCandidates: details.failure.matcher.replacementCandidates.map(
-                            (range) => ({
-                              ...range,
-                            }),
-                          ),
-                        }
-                      : {}),
-                  },
-                }
-              : {}),
+            ...(details.failure.matcher ? { matcher: cloneMatcher(details.failure.matcher) } : {}),
           },
         }
       : {}),
@@ -737,6 +773,7 @@ export type ApplyPatchExecutionFilesystem = {
   copyFile: typeof copyFile;
   lstat: typeof lstat;
   mkdir: typeof mkdir;
+  readFile: typeof readFile;
   readlink: typeof readlink;
   readdir: typeof readdir;
   rename: typeof rename;
@@ -751,6 +788,7 @@ const DEFAULT_EXECUTION_FILESYSTEM: ApplyPatchExecutionFilesystem = {
   copyFile,
   lstat,
   mkdir,
+  readFile,
   readlink,
   readdir,
   rename,
@@ -1219,30 +1257,40 @@ type DeadOperationProof = {
 
 function instructionReason(
   code: ApplyPatchInstructionReasonCode,
-  dominatingInstructions: readonly number[] = [],
+  relatedInstructions: readonly number[] = [],
 ): ApplyPatchInstructionReason {
   switch (code) {
     case "empty-update":
-      return { code, message: "empty update has no effect" };
+      return { code, message: "The instruction contains no changes." };
     case "identity-update":
-      return { code, message: "old and new sides are identical" };
+      return { code, message: "Old and replacement content are identical." };
     case "content-already-present":
-      return { code, message: "requested bytes are already present" };
+      return { code, message: "Requested content already present." };
     case "path-already-absent":
-      return { code, message: "path is already absent" };
+      return { code, message: "Path already absent." };
     case "same-entry-move":
-      return { code, message: "source and destination already identify the same entry" };
-    case "move-already-fulfilled":
-      return { code, message: "an earlier move already established this destination" };
+      return { code, message: "Source and destination identify the same entry." };
+    case "move-already-fulfilled": {
+      const instruction = relatedInstructions[0];
+      return {
+        code,
+        message:
+          instruction === undefined
+            ? "An earlier instruction already moved this entry."
+            : `Instruction ${instruction} already moved this entry.`,
+        ...(instruction === undefined ? {} : { relatedInstructions: [instruction] }),
+      };
+    }
     case "dead-dominated": {
-      const instructions = [...new Set(dominatingInstructions)].toSorted(
+      const instructions = [...new Set(relatedInstructions)].toSorted(
         (left, right) => left - right,
       );
       const noun = instructions.length === 1 ? "instruction" : "instructions";
       return {
         code,
-        message: `later ${noun} ${instructions.join(", ")} ${instructions.length === 1 ? "makes" : "make"} this operation unobservable`,
+        message: `${noun[0]!.toUpperCase()}${noun.slice(1)} ${instructions.join(", ")} ${instructions.length === 1 ? "determines" : "determine"} the final filesystem state before another instruction reads it.`,
         dominatingInstructions: instructions,
+        relatedInstructions: instructions,
       };
     }
   }
@@ -1278,7 +1326,7 @@ class SemanticPlanner {
   private readonly mutations: PlannedMutation[] = [];
   private readonly fulfilledMoves = new Map<
     string,
-    { destinationKey: string; destinationEntryId: string }
+    { destinationKey: string; destinationEntryId: string; instruction: number }
   >();
   private nextEntryId = 0;
   private nextPhysicalId = 0;
@@ -1341,6 +1389,7 @@ class SemanticPlanner {
         }
         instruction.status = "failed";
         instruction.error = errorMessage(error);
+        if (error instanceof FormatterMatchError) instruction.matcher = error.details;
         throw new SemanticPlanningError(
           instruction.error,
           this.instructions.map((item) => ({ ...item })),
@@ -2248,6 +2297,7 @@ class SemanticPlanner {
       this.fulfilledMoves.set(sourceKey, {
         destinationKey,
         destinationEntryId: resultingEntry.id,
+        instruction: instructionIndex + 1,
       });
       return;
     }
@@ -2340,6 +2390,7 @@ class SemanticPlanner {
     this.fulfilledMoves.set(sourceKey, {
       destinationKey,
       destinationEntryId: resultingEntry.id,
+      instruction: instructionIndex + 1,
     });
   }
 
@@ -2419,7 +2470,9 @@ class SemanticPlanner {
         (destination.kind === "regular" || destination.kind === "symlink") &&
         fulfilled.destinationEntryId === destination.id
       ) {
-        this.markNoOp(instructionIndex, "move-already-fulfilled");
+        this.instructions[instructionIndex]!.reason = instructionReason("move-already-fulfilled", [
+          fulfilled.instruction,
+        ]);
         return;
       }
       throw new Error(
@@ -2539,16 +2592,19 @@ class SemanticPlanner {
     this.fulfilledMoves.set(sourceKey, {
       destinationKey,
       destinationEntryId: resultingEntry.id,
+      instruction: instructionIndex + 1,
     });
   }
 }
 
 class RegularFileReplacementError extends Error {
-  readonly installed: boolean;
+  readonly destinationChanged: boolean;
+  readonly temporaryPath: string | undefined;
 
-  constructor(message: string, installed: boolean) {
+  constructor(message: string, destinationChanged: boolean, temporaryPath?: string) {
     super(message);
-    this.installed = installed;
+    this.destinationChanged = destinationChanged;
+    this.temporaryPath = temporaryPath;
   }
 }
 
@@ -2562,13 +2618,14 @@ async function replaceRegularFile(
     dirname(path),
     `.${basename(path)}.apply-patch-${randomUUID()}.tmp`,
   );
-  let installed = false;
+  let destinationChanged = false;
+  let temporaryEntryRemains = false;
   let pendingError: unknown;
   try {
     await filesystem.writeFile(temporaryPath, content);
     if (mode !== undefined) await filesystem.chmod(temporaryPath, mode & 0o7777);
     await filesystem.rename(temporaryPath, path);
-    installed = true;
+    destinationChanged = true;
     await establishExactSpelling(path, filesystem);
   } catch (error) {
     pendingError = error;
@@ -2576,11 +2633,18 @@ async function replaceRegularFile(
     try {
       await filesystem.unlink(temporaryPath);
     } catch (error) {
-      if (!isNotFound(error) && pendingError === undefined) pendingError = error;
+      if (!isNotFound(error)) {
+        temporaryEntryRemains = true;
+        if (pendingError === undefined) pendingError = error;
+      }
     }
   }
   if (pendingError !== undefined) {
-    throw new RegularFileReplacementError(errorMessage(pendingError), installed);
+    throw new RegularFileReplacementError(
+      errorMessage(pendingError),
+      destinationChanged,
+      temporaryEntryRemains ? temporaryPath : undefined,
+    );
   }
 }
 
@@ -2626,8 +2690,20 @@ async function establishExactSpelling(
   }
 }
 
-function appendChange(details: ApplyPatchDetails, change: AppliedPatchChange): void {
+function appendChange(
+  details: ApplyPatchDetails,
+  change: AppliedPatchChange,
+  instructionIndex?: number,
+): void {
+  const changeIndex = details.changes.length;
   details.changes.push(change);
+  if (instructionIndex !== undefined) {
+    const instruction = details.instructions?.[instructionIndex];
+    if (instruction) {
+      instruction.changeIndexes ??= [];
+      instruction.changeIndexes.push(changeIndex);
+    }
+  }
   if (change.kind === "add") details.added.push(change.path);
   else if (change.kind === "delete") details.deleted.push(change.path);
   else if (change.kind === "move") details.modified.push(change.destinationPath);
@@ -2638,7 +2714,9 @@ function detailsForPlan(plan: SemanticPlan): ApplyPatchDetails {
   const details = emptyDetails();
   details.exact = plan.exact;
   details.instructions = plan.instructions.map((instruction) => ({ ...instruction }));
-  for (const mutation of plan.mutations) appendChange(details, mutation.change);
+  for (const mutation of plan.mutations) {
+    appendChange(details, mutation.change, mutation.instructionIndex);
+  }
   return details;
 }
 
@@ -2896,11 +2974,17 @@ async function finishSameInodeRename(
 }
 
 class PureMoveExecutionError extends Error {
-  readonly destinationState: "unchanged" | "removed" | "installed";
+  readonly destinationState: "unchanged" | "removed" | "created" | "replaced";
+  readonly temporaryPath: string | undefined;
 
-  constructor(message: string, destinationState: "unchanged" | "removed" | "installed") {
+  constructor(
+    message: string,
+    destinationState: "unchanged" | "removed" | "created" | "replaced",
+    temporaryPath?: string,
+  ) {
     super(message);
     this.destinationState = destinationState;
+    this.temporaryPath = temporaryPath;
   }
 }
 
@@ -2914,8 +2998,9 @@ async function installCrossDeviceMove(
     dirname(destinationPath),
     `.${basename(destinationPath)}.apply-patch-${randomUUID()}.tmp`,
   );
-  let destinationInstalled = false;
+  let destinationChanged = false;
   let destinationRemoved = false;
+  let temporaryEntryRemains = false;
   let pendingError: unknown;
   try {
     if (mutation.expectedSource.kind === "regular") {
@@ -2944,7 +3029,7 @@ async function installCrossDeviceMove(
       destinationRemoved = true;
       await filesystem.rename(temporaryPath, destinationPath);
     }
-    destinationInstalled = true;
+    destinationChanged = true;
     await filesystem.unlink(sourcePath);
   } catch (error) {
     pendingError = error;
@@ -2952,17 +3037,27 @@ async function installCrossDeviceMove(
     try {
       await filesystem.unlink(temporaryPath);
     } catch (error) {
-      if (!isNotFound(error) && pendingError === undefined) pendingError = error;
+      if (!isNotFound(error)) {
+        temporaryEntryRemains = true;
+        if (pendingError === undefined) pendingError = error;
+      }
     }
   }
   if (pendingError !== undefined) {
     const message =
-      destinationRemoved && !destinationInstalled
+      destinationRemoved && !destinationChanged
         ? `${errorMessage(pendingError)}; destination was removed before replacement failed`
         : errorMessage(pendingError);
     throw new PureMoveExecutionError(
       message,
-      destinationInstalled ? "installed" : destinationRemoved ? "removed" : "unchanged",
+      destinationChanged
+        ? mutation.expectedDestination.kind === "absent"
+          ? "created"
+          : "replaced"
+        : destinationRemoved
+          ? "removed"
+          : "unchanged",
+      temporaryEntryRemains ? temporaryPath : undefined,
     );
   }
 }
@@ -2981,22 +3076,469 @@ async function executePureMove(
     await filesystem.rename(sourcePath, destinationPath);
   } catch (error) {
     if (hasErrorCode(error, "EXDEV")) {
-      throw new Error("rename unexpectedly crossed filesystem boundaries after preflight");
+      throw new Error("rename unexpectedly crossed filesystem boundaries after validation");
     }
     throw error;
   }
   try {
     await finishSameInodeRename(sourcePath, destinationPath, filesystem);
   } catch (error) {
-    let destinationInstalled = false;
+    let destinationChanged = false;
     try {
       await filesystem.lstat(destinationPath);
-      destinationInstalled = true;
+      destinationChanged = true;
     } catch {}
     throw new PureMoveExecutionError(
       errorMessage(error),
-      destinationInstalled ? "installed" : "unchanged",
+      destinationChanged
+        ? mutation.expectedDestination.kind === "absent"
+          ? "created"
+          : "replaced"
+        : "unchanged",
     );
+  }
+}
+
+function addInstructionEffect(
+  instruction: ApplyPatchInstructionDetails,
+  effect: ApplyPatchInstructionEffect,
+): void {
+  instruction.effects ??= [];
+  if (
+    !instruction.effects.some(
+      (candidate) => candidate.kind === effect.kind && candidate.path === effect.path,
+    )
+  ) {
+    instruction.effects.push(effect);
+  }
+}
+
+function addInstructionFinalState(
+  instruction: ApplyPatchInstructionDetails,
+  state: ApplyPatchFinalPathState,
+): void {
+  instruction.finalStates ??= [];
+  const existing = instruction.finalStates.findIndex((candidate) => candidate.path === state.path);
+  if (existing === -1) instruction.finalStates.push(state);
+  else instruction.finalStates[existing] = state;
+}
+
+function currentEntryFinalState(entry: VirtualEntry): ApplyPatchFinalPathState["state"] {
+  switch (entry.kind) {
+    case "absent":
+      return "absent";
+    case "regular":
+      return "regular-file";
+    case "symlink":
+      return "symbolic-link";
+    case "directory":
+      return "directory";
+    case "unsupported":
+      return "other-entry";
+  }
+}
+
+function entriesHaveSameIdentity(actual: VirtualEntry, expected: VirtualEntry): boolean {
+  if (actual.kind !== expected.kind) return false;
+  if (
+    (actual.kind === "regular" || actual.kind === "symlink") &&
+    (expected.kind === "regular" || expected.kind === "symlink")
+  ) {
+    if (actual.fingerprint && expected.fingerprint) {
+      return sameFingerprintExceptLinkCount(actual.fingerprint, expected.fingerprint);
+    }
+    return actual.kind === "symlink" && expected.kind === "symlink"
+      ? actual.target === expected.target
+      : false;
+  }
+  if (actual.kind === "directory" && expected.kind === "directory") {
+    return (
+      actual.fingerprint !== undefined &&
+      expected.fingerprint !== undefined &&
+      sameFingerprintExceptLinkCount(actual.fingerprint, expected.fingerprint)
+    );
+  }
+  return actual.kind === "absent" && expected.kind === "absent";
+}
+
+async function currentExecutionEntry(
+  path: string,
+  filesystem: ApplyPatchExecutionFilesystem,
+): Promise<VirtualEntry> {
+  try {
+    const metadata = await filesystem.lstat(path);
+    const entryFingerprint = fingerprint(metadata);
+    if (metadata.isFile()) {
+      return {
+        kind: "regular",
+        id: "",
+        entryPath: path,
+        fingerprint: entryFingerprint,
+        content: { planned: false },
+      };
+    }
+    if (metadata.isSymbolicLink()) {
+      const target = await filesystem.readlink(path);
+      return {
+        kind: "symlink",
+        id: "",
+        entryPath: path,
+        fingerprint: entryFingerprint,
+        target,
+        targetPath: resolve(dirname(path), target),
+        content: { planned: false },
+      };
+    }
+    if (metadata.isDirectory()) return { kind: "directory", fingerprint: entryFingerprint };
+    return {
+      kind: "unsupported",
+      entryType: entryType(metadata),
+      fingerprint: entryFingerprint,
+    };
+  } catch (error) {
+    if (isNotFound(error)) return ABSENT_ENTRY;
+    throw error;
+  }
+}
+
+async function inspectFinalPath(
+  absolutePath: string,
+  displayPath: string,
+  expected: VirtualEntry,
+  filesystem: ApplyPatchExecutionFilesystem,
+  requestedContent?: Buffer,
+): Promise<ApplyPatchFinalPathState> {
+  try {
+    const actual = await currentExecutionEntry(absolutePath, filesystem);
+    const physicalEntryChanged =
+      actual.kind === expected.kind &&
+      (actual.kind === "regular" || actual.kind === "symlink") &&
+      (expected.kind === "regular" || expected.kind === "symlink") &&
+      actual.fingerprint !== undefined &&
+      expected.fingerprint !== undefined &&
+      !samePhysicalEntry(actual.fingerprint, expected.fingerprint);
+    if (requestedContent && (actual.kind === "regular" || actual.kind === "symlink")) {
+      try {
+        const bytes = await filesystem.readFile(absolutePath);
+        if (buffersEqual(bytes, requestedContent)) {
+          return { path: displayPath, state: "requested-content" };
+        }
+        if (physicalEntryChanged) {
+          return { path: displayPath, state: "different-entry" };
+        }
+        if (expected.kind === "regular" || expected.kind === "symlink") {
+          const expectedBytes = expected.content.value?.bytes;
+          if (expectedBytes && buffersEqual(bytes, expectedBytes)) {
+            return { path: displayPath, state: "unchanged" };
+          }
+        }
+        return { path: displayPath, state: "different-content" };
+      } catch {
+        return {
+          path: displayPath,
+          state: physicalEntryChanged ? "different-entry" : "not-verified",
+        };
+      }
+    }
+    if (physicalEntryChanged) {
+      return { path: displayPath, state: "different-entry" };
+    }
+    if (
+      (actual.kind === "regular" || actual.kind === "symlink") &&
+      (expected.kind === "regular" || expected.kind === "symlink") &&
+      expected.content.value
+    ) {
+      try {
+        const bytes = await filesystem.readFile(absolutePath);
+        return {
+          path: displayPath,
+          state: buffersEqual(bytes, expected.content.value.bytes)
+            ? "unchanged"
+            : "different-content",
+        };
+      } catch {
+        return { path: displayPath, state: "not-verified" };
+      }
+    }
+    if (entriesHaveSameIdentity(actual, expected)) {
+      return { path: displayPath, state: "unchanged" };
+    }
+    if (actual.kind !== expected.kind && actual.kind !== "absent" && expected.kind !== "absent") {
+      return { path: displayPath, state: "different-entry-type" };
+    }
+    if (
+      actual.kind === expected.kind &&
+      "fingerprint" in actual &&
+      actual.fingerprint &&
+      "fingerprint" in expected &&
+      expected.fingerprint
+    ) {
+      return { path: displayPath, state: "different-entry" };
+    }
+    return { path: displayPath, state: currentEntryFinalState(actual) };
+  } catch {
+    return { path: displayPath, state: "not-verified" };
+  }
+}
+
+function finalStateHasChangedPresentEntry(
+  state: ApplyPatchFinalPathState | undefined,
+  expected: VirtualEntry,
+): boolean {
+  if (!state) return false;
+  switch (state.state) {
+    case "requested-content":
+    case "different-content":
+    case "different-entry":
+    case "different-entry-type":
+      return true;
+    case "regular-file":
+    case "symbolic-link":
+    case "directory":
+    case "other-entry":
+      return expected.kind === "absent";
+    case "unchanged":
+    case "absent":
+    case "not-verified":
+      return false;
+  }
+}
+
+async function recordFailureInspection(
+  mutation: PlannedMutation,
+  instruction: ApplyPatchInstructionDetails,
+  filesystem: ApplyPatchExecutionFilesystem,
+  filesystemMutationStarted: boolean,
+  temporaryPath?: string,
+): Promise<void> {
+  const inspected: ApplyPatchFinalPathState[] = [];
+  if (mutation.kind === "add") {
+    inspected.push(
+      await inspectFinalPath(
+        mutation.operation.absolutePath,
+        mutation.operation.path,
+        mutation.expectedTarget,
+        filesystem,
+        mutation.content,
+      ),
+    );
+  } else if (mutation.kind === "delete") {
+    inspected.push(
+      await inspectFinalPath(
+        mutation.operation.absolutePath,
+        mutation.operation.path,
+        mutation.expectedTarget,
+        filesystem,
+      ),
+    );
+  } else if (mutation.kind === "text-update") {
+    inspected.push(
+      await inspectFinalPath(
+        mutation.operation.absolutePath,
+        mutation.operation.path,
+        mutation.expectedSource,
+        filesystem,
+        mutation.operation.moveAbsolutePath ? undefined : mutation.content,
+      ),
+    );
+    if (mutation.operation.moveAbsolutePath && mutation.expectedDestination) {
+      inspected.push(
+        await inspectFinalPath(
+          mutation.operation.moveAbsolutePath,
+          mutation.operation.moveTo!,
+          mutation.expectedDestination,
+          filesystem,
+          mutation.content,
+        ),
+      );
+    }
+  } else {
+    inspected.push(
+      await inspectFinalPath(
+        mutation.operation.absolutePath,
+        mutation.operation.path,
+        mutation.expectedSource,
+        filesystem,
+      ),
+    );
+    inspected.push(
+      await inspectFinalPath(
+        mutation.operation.moveAbsolutePath!,
+        mutation.operation.moveTo!,
+        mutation.expectedDestination,
+        filesystem,
+      ),
+    );
+  }
+
+  for (const state of inspected) addInstructionFinalState(instruction, state);
+  if (!filesystemMutationStarted) return;
+
+  const sourceState = inspected.find((state) => state.path === mutation.operation.path);
+  const destinationPath =
+    mutation.kind === "text-update" || mutation.kind === "move"
+      ? mutation.operation.moveTo
+      : undefined;
+  const destinationState = destinationPath
+    ? inspected.find((state) => state.path === destinationPath)
+    : undefined;
+
+  if (mutation.kind === "add") {
+    if (finalStateHasChangedPresentEntry(sourceState, mutation.expectedTarget)) {
+      addInstructionEffect(instruction, {
+        kind: mutation.expectedTarget.kind === "absent" ? "created" : "replaced",
+        path: mutation.operation.path,
+      });
+    }
+  } else if (mutation.kind === "delete") {
+    if (sourceState?.state === "absent") {
+      addInstructionEffect(instruction, { kind: "deleted", path: mutation.operation.path });
+    } else if (finalStateHasChangedPresentEntry(sourceState, mutation.expectedTarget)) {
+      addInstructionEffect(instruction, { kind: "replaced", path: mutation.operation.path });
+    }
+  } else if (mutation.kind === "text-update") {
+    if (mutation.operation.moveTo) {
+      if (
+        destinationState &&
+        mutation.expectedDestination &&
+        finalStateHasChangedPresentEntry(destinationState, mutation.expectedDestination)
+      ) {
+        addInstructionEffect(instruction, {
+          kind: mutation.expectedDestination?.kind === "absent" ? "created" : "replaced",
+          path: mutation.operation.moveTo,
+        });
+      } else if (
+        destinationState?.state === "absent" &&
+        mutation.expectedDestination?.kind !== "absent"
+      ) {
+        addInstructionEffect(instruction, { kind: "deleted", path: mutation.operation.moveTo });
+      }
+      if (sourceState?.state === "unchanged") {
+        addInstructionEffect(instruction, {
+          kind: "source-remains",
+          path: mutation.operation.path,
+        });
+      } else if (sourceState?.state === "absent") {
+        addInstructionEffect(instruction, { kind: "deleted", path: mutation.operation.path });
+      } else if (finalStateHasChangedPresentEntry(sourceState, mutation.expectedSource)) {
+        addInstructionEffect(instruction, { kind: "replaced", path: mutation.operation.path });
+      }
+    } else if (sourceState?.state === "absent") {
+      addInstructionEffect(instruction, { kind: "deleted", path: mutation.operation.path });
+    } else if (finalStateHasChangedPresentEntry(sourceState, mutation.expectedSource)) {
+      addInstructionEffect(instruction, { kind: "updated", path: mutation.operation.path });
+    }
+  } else {
+    if (
+      destinationState &&
+      finalStateHasChangedPresentEntry(destinationState, mutation.expectedDestination)
+    ) {
+      addInstructionEffect(instruction, {
+        kind: mutation.expectedDestination.kind === "absent" ? "created" : "replaced",
+        path: mutation.operation.moveTo!,
+      });
+    } else if (
+      destinationState?.state === "absent" &&
+      mutation.expectedDestination.kind !== "absent"
+    ) {
+      addInstructionEffect(instruction, {
+        kind: "deleted",
+        path: mutation.operation.moveTo!,
+      });
+    }
+    if (sourceState?.state === "unchanged") {
+      addInstructionEffect(instruction, {
+        kind: "source-remains",
+        path: mutation.operation.path,
+      });
+    } else if (sourceState?.state === "absent") {
+      addInstructionEffect(instruction, { kind: "deleted", path: mutation.operation.path });
+    } else if (finalStateHasChangedPresentEntry(sourceState, mutation.expectedSource)) {
+      addInstructionEffect(instruction, { kind: "replaced", path: mutation.operation.path });
+    }
+  }
+
+  const createdParents = "parents" in mutation ? mutation.parents.createdPaths : [];
+  for (const parent of createdParents) {
+    try {
+      if ((await filesystem.lstat(parent)).isDirectory()) {
+        addInstructionEffect(instruction, { kind: "directory-created", path: parent });
+      }
+    } catch {}
+  }
+
+  if (temporaryPath) {
+    try {
+      await filesystem.lstat(temporaryPath);
+      addInstructionEffect(instruction, {
+        kind: "temporary-entry-remains",
+        path: temporaryPath,
+      });
+    } catch {}
+  }
+}
+
+function recordAppliedInstructionEffects(
+  mutation: PlannedMutation,
+  instruction: ApplyPatchInstructionDetails,
+): void {
+  switch (mutation.kind) {
+    case "add":
+      if (mutation.expectedTarget.kind !== "absent") {
+        addInstructionEffect(instruction, {
+          kind: "replaced",
+          path: mutation.operation.path,
+        });
+      }
+      if (mutation.expectedTarget.kind === "symlink") {
+        addInstructionEffect(instruction, {
+          kind: "symbolic-link-target-unchanged",
+          path: mutation.operation.path,
+        });
+      }
+      return;
+    case "delete":
+      if (mutation.expectedTarget.kind === "symlink") {
+        addInstructionEffect(instruction, {
+          kind: "symbolic-link-target-unchanged",
+          path: mutation.operation.path,
+        });
+      }
+      return;
+    case "text-update":
+      if (mutation.expectedSource.kind === "symlink") {
+        addInstructionEffect(
+          instruction,
+          mutation.operation.moveTo
+            ? { kind: "symbolic-link-target-unchanged", path: mutation.operation.path }
+            : { kind: "symbolic-link-target-updated", path: mutation.operation.path },
+        );
+      }
+      if (
+        mutation.operation.moveTo &&
+        mutation.expectedDestination &&
+        mutation.expectedDestination.kind !== "absent"
+      ) {
+        addInstructionEffect(instruction, {
+          kind: "replaced",
+          path: mutation.operation.moveTo,
+        });
+      }
+      return;
+    case "move":
+      if (mutation.expectedSource.kind === "symlink") {
+        addInstructionEffect(instruction, {
+          kind: "symbolic-link-target-unchanged",
+          path: mutation.operation.path,
+        });
+      }
+      if (mutation.expectedDestination.kind !== "absent") {
+        addInstructionEffect(instruction, {
+          kind: "replaced",
+          path: mutation.operation.moveTo!,
+        });
+      }
+      return;
   }
 }
 
@@ -3010,10 +3552,16 @@ async function executePlan(
   details.exact = plan.exact;
   details.instructions = plan.instructions.map((instruction) => ({ ...instruction }));
   let activeInstruction: ApplyPatchInstructionDetails | undefined;
+  let activeMutation: PlannedMutation | undefined;
+  let activeTemporaryPath: string | undefined;
+  let activeFilesystemMutationStarted = false;
   const committedEntryMutations: CommittedEntryMutation[] = [];
   try {
     for (const mutation of plan.mutations) {
       activeInstruction = details.instructions[mutation.instructionIndex];
+      activeMutation = mutation;
+      activeTemporaryPath = undefined;
+      activeFilesystemMutationStarted = false;
       throwIfAborted(signal);
       if (mutation.kind === "add") {
         await assertMutationEntryMatches(
@@ -3024,6 +3572,7 @@ async function executePlan(
         );
         await assertParentPlanMatches(mutation.parents);
         try {
+          activeFilesystemMutationStarted = true;
           await createPlannedParents(mutation.parents, filesystem);
           await replaceRegularFile(
             mutation.operation.absolutePath,
@@ -3033,14 +3582,23 @@ async function executePlan(
           );
         } catch (error) {
           details.exact = false;
-          if (error instanceof RegularFileReplacementError && error.installed) {
-            appendChange(details, mutation.change);
+          if (error instanceof RegularFileReplacementError) {
+            activeTemporaryPath = error.temporaryPath;
+            if (error.destinationChanged) {
+              appendChange(details, mutation.change, mutation.instructionIndex);
+              if (activeInstruction) {
+                addInstructionEffect(activeInstruction, {
+                  kind: mutation.expectedTarget.kind === "absent" ? "created" : "replaced",
+                  path: mutation.operation.path,
+                });
+              }
+            }
           }
           throw new Error(
             `Failed to write file ${mutation.operation.absolutePath}: ${errorMessage(error)}`,
           );
         }
-        appendChange(details, mutation.change);
+        appendChange(details, mutation.change, mutation.instructionIndex);
       } else if (mutation.kind === "delete") {
         await assertMutationEntryMatches(
           mutation.operation.absolutePath,
@@ -3049,13 +3607,14 @@ async function executePlan(
           committedEntryMutations,
         );
         try {
+          activeFilesystemMutationStarted = true;
           await filesystem.unlink(mutation.operation.absolutePath);
         } catch (error) {
           throw new Error(
             `Failed to delete file ${mutation.operation.absolutePath}: ${errorMessage(error)}`,
           );
         }
-        appendChange(details, mutation.change);
+        appendChange(details, mutation.change, mutation.instructionIndex);
       } else if (mutation.kind === "text-update") {
         await assertMutationEntryMatches(
           mutation.operation.absolutePath,
@@ -3065,6 +3624,7 @@ async function executePlan(
         );
         if (mutation.sameEntryMove) {
           try {
+            activeFilesystemMutationStarted = true;
             await replaceRegularFile(
               mutation.operation.absolutePath,
               mutation.content,
@@ -3073,14 +3633,23 @@ async function executePlan(
             );
           } catch (error) {
             details.exact = false;
-            if (error instanceof RegularFileReplacementError && error.installed) {
-              appendChange(details, mutation.provisionalChange!);
+            if (error instanceof RegularFileReplacementError) {
+              activeTemporaryPath = error.temporaryPath;
+              if (error.destinationChanged) {
+                appendChange(details, mutation.provisionalChange!, mutation.instructionIndex);
+                if (activeInstruction) {
+                  addInstructionEffect(activeInstruction, {
+                    kind: "updated",
+                    path: mutation.operation.path,
+                  });
+                }
+              }
             }
             throw new Error(
               `Failed to write file ${mutation.operation.absolutePath}: ${errorMessage(error)}`,
             );
           }
-          appendChange(details, mutation.provisionalChange!);
+          appendChange(details, mutation.provisionalChange!, mutation.instructionIndex);
           if (mutation.sameEntryMove === "rename") {
             try {
               await filesystem.rename(
@@ -3110,6 +3679,7 @@ async function executePlan(
           );
           await assertParentPlanMatches(mutation.parents);
           try {
+            activeFilesystemMutationStarted = true;
             await createPlannedParents(mutation.parents, filesystem);
             await replaceRegularFile(
               mutation.operation.moveAbsolutePath,
@@ -3119,14 +3689,23 @@ async function executePlan(
             );
           } catch (error) {
             details.exact = false;
-            if (error instanceof RegularFileReplacementError && error.installed) {
-              appendChange(details, mutation.provisionalChange!);
+            if (error instanceof RegularFileReplacementError) {
+              activeTemporaryPath = error.temporaryPath;
+              if (error.destinationChanged) {
+                appendChange(details, mutation.provisionalChange!, mutation.instructionIndex);
+                if (activeInstruction) {
+                  addInstructionEffect(activeInstruction, {
+                    kind: mutation.expectedDestination.kind === "absent" ? "created" : "replaced",
+                    path: mutation.operation.moveTo!,
+                  });
+                }
+              }
             }
             throw new Error(
               `Failed to write file ${mutation.operation.moveAbsolutePath}: ${errorMessage(error)}`,
             );
           }
-          appendChange(details, mutation.provisionalChange!);
+          appendChange(details, mutation.provisionalChange!, mutation.instructionIndex);
           try {
             await filesystem.unlink(mutation.operation.absolutePath);
           } catch (error) {
@@ -3140,6 +3719,7 @@ async function executePlan(
           details.modified.push(mutation.operation.moveTo!);
         } else {
           try {
+            activeFilesystemMutationStarted = true;
             await filesystem.writeFile(mutation.operation.absolutePath, mutation.content);
           } catch (error) {
             details.exact = false;
@@ -3147,7 +3727,7 @@ async function executePlan(
               `Failed to write file ${mutation.operation.absolutePath}: ${errorMessage(error)}`,
             );
           }
-          appendChange(details, mutation.change);
+          appendChange(details, mutation.change, mutation.instructionIndex);
         }
       } else {
         await assertMutationEntryMatches(
@@ -3164,24 +3744,44 @@ async function executePlan(
         );
         await assertParentPlanMatches(mutation.parents);
         try {
+          activeFilesystemMutationStarted = true;
           await createPlannedParents(mutation.parents, filesystem);
           await executePureMove(mutation, filesystem);
         } catch (error) {
+          if (error instanceof PureMoveExecutionError) {
+            activeTemporaryPath = error.temporaryPath;
+          }
           if (mutation.parents.createdPaths.length > 0) details.exact = false;
-          if (error instanceof PureMoveExecutionError && error.destinationState === "installed") {
+          if (
+            error instanceof PureMoveExecutionError &&
+            (error.destinationState === "created" || error.destinationState === "replaced")
+          ) {
             const inexactMove = { ...mutation.change, exact: false };
-            appendChange(details, inexactMove);
+            appendChange(details, inexactMove, mutation.instructionIndex);
+            if (activeInstruction) {
+              addInstructionEffect(activeInstruction, {
+                kind: error.destinationState,
+                path: mutation.operation.moveTo!,
+              });
+            }
             details.exact = false;
           }
           if (error instanceof PureMoveExecutionError && error.destinationState === "removed") {
+            if (activeInstruction) {
+              addInstructionEffect(activeInstruction, {
+                kind: "deleted",
+                path: mutation.operation.moveTo!,
+              });
+            }
             details.exact = false;
           }
           throw new Error(
             `Failed to move ${mutation.operation.absolutePath} to ${mutation.operation.moveAbsolutePath}: ${errorMessage(error)}`,
           );
         }
-        appendChange(details, mutation.change);
+        appendChange(details, mutation.change, mutation.instructionIndex);
       }
+      if (activeInstruction) recordAppliedInstructionEffects(mutation, activeInstruction);
       try {
         committedEntryMutations.push(
           ...(await captureCommittedEntryMutations(mutation.entryMutations)),
@@ -3195,6 +3795,7 @@ async function executePlan(
         delete activeInstruction.error;
       }
       activeInstruction = undefined;
+      activeMutation = undefined;
       throwIfAborted(signal);
       onProgress?.(cloneApplyPatchDetails(details));
     }
@@ -3202,6 +3803,15 @@ async function executePlan(
   } catch (error) {
     const message = errorMessage(error);
     if (activeInstruction) {
+      if (activeMutation) {
+        await recordFailureInspection(
+          activeMutation,
+          activeInstruction,
+          filesystem,
+          activeFilesystemMutationStarted,
+          activeTemporaryPath,
+        );
+      }
       activeInstruction.status = "failed";
       activeInstruction.error = message;
     }
@@ -3438,32 +4048,398 @@ export function formatApplyPatchInstructionLabel(
     : `${verb} ${instruction.path}`;
 }
 
-export function formatApplyPatchSummary(details: ApplyPatchDetails): string {
+function feedbackPath(path: string, cwd: string): string {
+  if (!isAbsolute(path)) return path;
+  const relativePath = relative(cwd, path);
+  return relativePath === "" ||
+    relativePath === ".." ||
+    relativePath.startsWith(`..${sep}`) ||
+    isAbsolute(relativePath)
+    ? path
+    : relativePath;
+}
+
+function matcherRangeLabel(range: { startLine: number; endLine: number }): string {
+  return range.startLine === range.endLine
+    ? `line ${range.startLine}`
+    : `lines ${range.startLine}-${range.endLine}`;
+}
+
+function matcherInstructionFeedback(matcher: FormatterMatchFailureDetails): string {
+  const ranges = matcher.candidates.map(matcherRangeLabel).join(" and ");
+  switch (matcher.reason) {
+    case "no-candidate": {
+      const replacements = matcher.replacementCandidates?.map(matcherRangeLabel).join(" and ");
+      return replacements
+        ? `Requested replacement found at ${replacements}, but old content was not found.`
+        : "Old content was not found.";
+    }
+    case "no-ordered-mapping": {
+      const previous = matcher.previousCandidates?.map(matcherRangeLabel).join(" and ");
+      if (matcher.reverseOrdered) {
+        return `Edit group ${matcher.groupIndex} matches before edit group ${matcher.previousGroupIndex}; matches at ${ranges} and ${previous}.`;
+      }
+      if (matcher.overlapping) {
+        return `Edit group ${matcher.groupIndex} overlaps edit group ${matcher.previousGroupIndex}; matches at ${ranges} and ${previous}.`;
+      }
+      return `Edit group ${matcher.groupIndex} does not follow edit group ${matcher.previousGroupIndex}; matches at ${ranges} and ${previous}.`;
+    }
+    case "too-many-candidates":
+      return `${matcher.candidateCount} matching locations exceed the 64-location limit.`;
+    case "ambiguous-output":
+      return `Matching locations${ranges ? ` at ${ranges}` : ""} produce different results.`;
+    case "mapping-limit":
+      return "Matching stopped after 256 complete mappings.";
+    case "overlapping-edits":
+      return `Matching edits${ranges ? ` at ${ranges}` : ""} overlap.`;
+  }
+}
+
+function conciseInstructionError(error: string): string {
+  const message = error
+    .replace(/^apply_patch verification failed:\s*/u, "")
+    .replace(/^invalid patch:\s*/u, "")
+    .replace(/^invalid hunk at line \d+,\s*/u, "")
+    .replace(/^Failed to write file .*?:\s*/u, "Write failed: ")
+    .replace(/^Failed to delete file .*?:\s*/u, "Delete failed: ")
+    .replace(/^Failed to remove original .*?:\s*/u, "Source removal failed: ")
+    .replace(/^Failed to establish move from .*?:\s*/u, "Rename failed: ")
+    .replace(/^Failed to read file to update .*?:\s*/u, "Read failed: ")
+    .replace(/^Failed to inspect .*?:\s*/u, "Filesystem inspection failed: ")
+    .replace(/^Cannot add .*?: path is\s*/u, "Validation failed: Path is ")
+    .replace(/^Cannot delete .*?: path is\s*/u, "Validation failed: Path is ")
+    .replace(/^Cannot move update to .*?: destination is\s*/u, "Validation failed: Destination is ")
+    .replace(/^Failed to move to .*?: destination is\s*/u, "Validation failed: Destination is ")
+    .replace(/^Failed to move .*?: source is\s*/u, "Validation failed: Source is ")
+    .replace(
+      /^Failed to move .*?: source path does not exist and destination provenance is unproven$/u,
+      "Validation failed: Source path does not exist and the destination is not from an earlier instruction.",
+    )
+    .replace(
+      /^Cannot create .*?: parent path .*? is not a directory$/u,
+      "Validation failed: Parent path is not a directory.",
+    )
+    .replace(/^Cannot determine filesystem for .*$/u, "Filesystem check failed.")
+    .replace(/^Failed to move .*? to .*?:\s*/u, "Move failed: ")
+    .replace(/^Failed to find context [^\n]*/u, "Context was not found.")
+    .replace(/^Failed to find expected lines in [^\n]*/u, "Old content was not found.")
+    .replace(
+      /^Filesystem changed after apply_patch preflight at .*$/u,
+      "Filesystem changed after validation.",
+    )
+    .replace(
+      /^Filesystem changed while committing apply_patch at .*$/u,
+      "Filesystem changed after the operation.",
+    )
+    .replace(/; destination was removed before replacement failed$/u, "")
+    .replace(/^apply_patch was cancelled\.$/u, "Patch stopped.");
+  return message.split("\n")[0]!;
+}
+
+function instructionEffectFeedback(effect: ApplyPatchInstructionEffect, cwd: string): string {
+  const path = feedbackPath(effect.path, cwd);
+  switch (effect.kind) {
+    case "created":
+      return `Created ${path}.`;
+    case "replaced":
+      return `Replaced ${path}.`;
+    case "updated":
+      return `Updated ${path}.`;
+    case "deleted":
+      return `Deleted ${path}.`;
+    case "directory-created":
+      return `Created directory ${path}.`;
+    case "temporary-entry-remains":
+      return `Temporary entry remains at ${path}.`;
+    case "source-remains":
+      return `${path} remains.`;
+    case "symbolic-link-target-unchanged":
+      return `Link target for ${path} was unchanged.`;
+    case "symbolic-link-target-updated":
+      return `Updated the link target for ${path}.`;
+  }
+}
+
+function finalStateFeedback(state: ApplyPatchFinalPathState, cwd: string): string {
+  const path = feedbackPath(state.path, cwd);
+  switch (state.state) {
+    case "absent":
+      return `${path} is absent.`;
+    case "regular-file":
+      return `${path} is present as a regular file.`;
+    case "symbolic-link":
+      return `${path} is present as a symbolic link.`;
+    case "directory":
+      return `${path} is present as a directory.`;
+    case "other-entry":
+      return `${path} is present as another entry type.`;
+    case "unchanged":
+      return `${path} is unchanged.`;
+    case "requested-content":
+      return `${path} contains the requested content.`;
+    case "different-content":
+      return `${path} contains unexpected content.`;
+    case "different-entry":
+      return `${path} is a different filesystem entry.`;
+    case "different-entry-type":
+      return `Entry type changed for ${path}.`;
+    case "not-verified":
+      return `Final state not verified for ${path}.`;
+  }
+}
+
+function instructionStatusLabel(status: ApplyPatchInstructionStatus): string {
+  switch (status) {
+    case "applied":
+      return "APPLIED";
+    case "planned":
+      return "PLANNED";
+    case "no-op":
+      return "NO CHANGE";
+    case "dead":
+      return "SKIPPED";
+    case "failed":
+      return "FAILED";
+    case "not-run":
+      return "NOT RUN";
+  }
+}
+
+function sentenceClause(value: string): string {
+  return value.endsWith(".") ? value.slice(0, -1) : value;
+}
+
+export function formatApplyPatchInstructionFeedback(
+  instruction: ApplyPatchInstructionDetails,
+  details: ApplyPatchDetails,
+  cwd = process.cwd(),
+): string | undefined {
+  const clauses: string[] = [];
+  if (instruction.status === "no-op" || instruction.status === "dead") {
+    if (instruction.reason) clauses.push(instruction.reason.message);
+  }
+  for (const effect of instruction.effects ?? []) {
+    if (instruction.status === "failed" && effect.kind === "updated") continue;
+    clauses.push(instructionEffectFeedback(effect, cwd));
+  }
+  if (instruction.status === "failed") {
+    if (instruction.matcher) clauses.push(matcherInstructionFeedback(instruction.matcher));
+    else if (instruction.error) clauses.push(conciseInstructionError(instruction.error));
+    const effectPaths = new Set((instruction.effects ?? []).map((effect) => effect.path));
+    for (const state of instruction.finalStates ?? []) {
+      const pathEffects = (instruction.effects ?? []).filter(
+        (effect) => effect.path === state.path,
+      );
+      if (
+        state.state === "not-verified" ||
+        state.state === "different-content" ||
+        state.state === "different-entry" ||
+        state.state === "different-entry-type" ||
+        (state.state === "requested-content" &&
+          (pathEffects.length === 0 || pathEffects.some((effect) => effect.kind === "updated"))) ||
+        !effectPaths.has(state.path)
+      ) {
+        clauses.push(finalStateFeedback(state, cwd));
+      }
+    }
+  }
+  if (instruction.status === "not-run") {
+    if (details.failure?.failedInstruction !== undefined) {
+      clauses.push(`Instruction ${details.failure.failedInstruction} failed.`);
+    } else if (details.failure?.message === "apply_patch was cancelled.") {
+      clauses.push("Patch stopped.");
+    } else if (details.failure?.phase === "parse") {
+      clauses.push("Patch format error.");
+    } else if (details.failure?.phase === "preflight") {
+      clauses.push("Filesystem setup failed.");
+    } else if (details.failure?.phase === "input") {
+      clauses.push("Patch input error.");
+    } else {
+      clauses.push("Patch stopped.");
+    }
+  }
+
+  if (clauses.length === 0) return undefined;
+  return `${clauses.map(sentenceClause).join("; ")}.`;
+}
+
+export function formatApplyPatchInstructionResult(
+  instruction: ApplyPatchInstructionDetails,
+  details: ApplyPatchDetails,
+  cwd = process.cwd(),
+): string {
+  const result = `${instruction.index}. ${instructionStatusLabel(instruction.status)} - ${formatApplyPatchInstructionLabel(instruction)}`;
+  const feedback = formatApplyPatchInstructionFeedback(instruction, details, cwd);
+  return feedback ? `${result} - ${feedback}` : result;
+}
+
+export function applyPatchSummaryPaths(details: ApplyPatchDetails): {
+  added: string[];
+  modified: string[];
+  deleted: string[];
+} {
+  const added = new Set(details.added);
+  const modified = new Set(details.modified);
+  const deleted = new Set(details.deleted);
+  const partialMoveChanges = new Set(
+    (details.instructions ?? []).flatMap((instruction) =>
+      instruction.status === "failed"
+        ? (instruction.changeIndexes ?? []).filter((index) => {
+            const change = details.changes[index];
+            return change?.kind === "move" && !change.exact;
+          })
+        : [],
+    ),
+  );
+  const completedChangePaths = new Set(
+    details.changes.flatMap((change, index) => {
+      if (partialMoveChanges.has(index)) return [];
+      if (change.kind === "move") return [change.destinationPath];
+      if (change.kind === "update") return [change.moveTo ?? change.path];
+      return [change.path];
+    }),
+  );
+  for (const index of partialMoveChanges) {
+    const change = details.changes[index];
+    if (change?.kind === "move" && !completedChangePaths.has(change.destinationPath)) {
+      modified.delete(change.destinationPath);
+    }
+  }
+  const confirmedPaths = new Set([...added, ...modified, ...deleted]);
+  for (const instruction of details.instructions ?? []) {
+    for (const effect of instruction.effects ?? []) {
+      if (added.has(effect.path) || modified.has(effect.path) || deleted.has(effect.path)) {
+        if (
+          effect.kind === "created" ||
+          effect.kind === "replaced" ||
+          effect.kind === "updated" ||
+          effect.kind === "deleted"
+        ) {
+          confirmedPaths.add(effect.path);
+        }
+        continue;
+      }
+      if (effect.kind === "created") {
+        added.add(effect.path);
+        confirmedPaths.add(effect.path);
+      } else if (effect.kind === "replaced" || effect.kind === "updated") {
+        modified.add(effect.path);
+        confirmedPaths.add(effect.path);
+      } else if (effect.kind === "deleted") {
+        deleted.add(effect.path);
+        confirmedPaths.add(effect.path);
+      }
+    }
+  }
+  const unverifiedPaths = new Set(
+    (details.instructions ?? []).flatMap((instruction) =>
+      (instruction.finalStates ?? []).flatMap((state) =>
+        state.state === "not-verified" ? [state.path] : [],
+      ),
+    ),
+  );
+  for (const path of unverifiedPaths) {
+    if (confirmedPaths.has(path)) continue;
+    added.delete(path);
+    modified.delete(path);
+    deleted.delete(path);
+  }
+  return { added: [...added], modified: [...modified], deleted: [...deleted] };
+}
+
+export function applyPatchHasOtherFilesystemChanges(details: ApplyPatchDetails): boolean {
+  return (details.instructions ?? []).some((instruction) =>
+    instruction.effects?.some(
+      (effect) => effect.kind === "directory-created" || effect.kind === "temporary-entry-remains",
+    ),
+  );
+}
+
+function instructionResults(details: ApplyPatchDetails, cwd: string): string[] {
+  const instructions = details.instructions ?? [];
+  if (instructions.length === 0) return [];
+  return [
+    "Instruction results:",
+    ...instructions.map((instruction) =>
+      formatApplyPatchInstructionResult(instruction, details, cwd),
+    ),
+  ];
+}
+
+export function formatApplyPatchSummary(details: ApplyPatchDetails, cwd = process.cwd()): string {
   const lines: string[] = [];
-  if (details.added.length === 0 && details.modified.length === 0 && details.deleted.length === 0) {
+  const summary = applyPatchSummaryPaths(details);
+  if (summary.added.length === 0 && summary.modified.length === 0 && summary.deleted.length === 0) {
     lines.push("Success. No files were changed.");
   } else {
     lines.push("Success. Updated the following files:");
-    for (const path of details.added) lines.push(`A ${path}`);
-    for (const path of details.modified) lines.push(`M ${path}`);
-    for (const path of details.deleted) lines.push(`D ${path}`);
+    for (const path of summary.added) lines.push(`A ${feedbackPath(path, cwd)}`);
+    for (const path of summary.modified) lines.push(`M ${feedbackPath(path, cwd)}`);
+    for (const path of summary.deleted) lines.push(`D ${feedbackPath(path, cwd)}`);
+  }
+  const results = instructionResults(details, cwd);
+  if (results.length > 0) lines.push("", ...results);
+  return `${lines.join("\n")}\n`;
+}
+
+export function formatApplyPatchFailureHeading(details: ApplyPatchDetails): string[] {
+  const lines: string[] = [];
+  const instructions = details.instructions ?? [];
+  const failed = instructions.find((instruction) => instruction.status === "failed");
+  if (failed) {
+    lines.push(`Patch failed at instruction ${failed.index} of ${instructions.length}.`);
+  } else if (details.failure?.phase === "parse") {
+    const line = details.failure.message.match(/line (\d+)/u)?.[1];
+    lines.push(
+      `Patch format error${line ? ` at line ${line}` : ""}: ${conciseInstructionError(details.failure.message)}`,
+    );
+  } else if (details.failure?.phase === "preflight") {
+    lines.push(`Patch setup failed: ${conciseInstructionError(details.failure.message)}`);
+  } else if (
+    details.failure?.phase === "input" &&
+    details.failure.message !== "apply_patch was cancelled."
+  ) {
+    lines.push(`Patch input error: ${conciseInstructionError(details.failure.message)}`);
+  } else {
+    const lastApplied = instructions.findLast((instruction) => instruction.status === "applied");
+    lines.push(
+      lastApplied
+        ? `Patch stopped after instruction ${lastApplied.index}.`
+        : "Patch stopped before execution.",
+    );
+    if (details.failure?.message && details.failure.message !== "apply_patch was cancelled.") {
+      lines.push(`Patch error: ${conciseInstructionError(details.failure.message)}`);
+    }
+  }
+  return lines;
+}
+
+export function formatApplyPatchFailureSummary(
+  details: ApplyPatchDetails,
+  cwd = process.cwd(),
+): string {
+  const lines = formatApplyPatchFailureHeading(details);
+  const instructions = details.instructions ?? [];
+  const summary = applyPatchSummaryPaths(details);
+  const hasSummary =
+    summary.added.length > 0 || summary.modified.length > 0 || summary.deleted.length > 0;
+  const hasOtherFilesystemChanges = applyPatchHasOtherFilesystemChanges(details);
+  const hasUnverifiedState = instructions.some((instruction) =>
+    instruction.finalStates?.some((state) => state.state === "not-verified"),
+  );
+  if (hasSummary) {
+    lines.push("Files changed:");
+    for (const path of summary.added) lines.push(`A ${feedbackPath(path, cwd)}`);
+    for (const path of summary.modified) lines.push(`M ${feedbackPath(path, cwd)}`);
+    for (const path of summary.deleted) lines.push(`D ${feedbackPath(path, cwd)}`);
+  } else if (hasOtherFilesystemChanges) {
+    lines.push("Filesystem changed.");
+  } else if (!hasUnverifiedState) {
+    lines.push("No files were changed.");
   }
 
-  const effectless = (details.instructions ?? []).filter(
-    (instruction) => instruction.status === "no-op" || instruction.status === "dead",
-  );
-  if (effectless.length > 0) {
-    lines.push("Instructions with no filesystem effect:");
-    for (const instruction of effectless.slice(0, 8)) {
-      const status = instruction.status === "no-op" ? "NO-OP" : "DEAD";
-      lines.push(
-        `${status} ${instruction.index}. ${formatApplyPatchInstructionLabel(instruction)} - ${instruction.reason?.message ?? instruction.status}`,
-      );
-    }
-    if (effectless.length > 8) {
-      lines.push(`${effectless.length - 8} more instruction explanations omitted.`);
-    }
-  }
+  const results = instructionResults(details, cwd);
+  if (results.length > 0) lines.push("", ...results);
   return `${lines.join("\n")}\n`;
 }
 

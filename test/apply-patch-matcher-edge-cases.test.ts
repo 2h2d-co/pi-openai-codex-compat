@@ -1180,6 +1180,43 @@ void test("fails closed when eligible locations exceed the candidate limit", asy
   );
 });
 
+void test("does not count byte-identical line and structural candidates twice", async (t) => {
+  const cwd = await workspace(t);
+  const exactLines = Array.from({ length: 9 }, (_, index) => `const value${index} = old${index};`);
+  await writeFile(
+    join(cwd, "deduplicated-candidates.js"),
+    [...exactLines, "const result = combine(alpha, beta);", ""].join("\n"),
+  );
+  const exactGroups = exactLines.map(
+    (line, index) => `@@
+-${line}
++const value${index} = next${index};`,
+  );
+
+  await applyPatch(
+    cwd,
+    `*** Begin Patch
+*** Update File: deduplicated-candidates.js
+${exactGroups.join("\n")}
+@@
+-const result = combine(
+-  alpha,
+-  beta
+-);
++const result = merge(alpha, beta);
+*** End Patch`,
+  );
+
+  assert.equal(
+    await readFile(join(cwd, "deduplicated-candidates.js"), "utf8"),
+    [
+      ...Array.from({ length: 9 }, (_, index) => `const value${index} = next${index};`),
+      "const result = merge(alpha, beta);",
+      "",
+    ].join("\n"),
+  );
+});
+
 void test("fails closed when equivalent mappings exceed the exhaustive-search limit", async (t) => {
   const cwd = await workspace(t);
   await rejectWithoutWrite(

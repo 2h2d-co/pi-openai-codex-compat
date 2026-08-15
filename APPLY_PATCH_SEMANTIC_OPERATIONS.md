@@ -498,8 +498,10 @@ The fallback MUST:
 1. copy bytes without decoding or transforming them;
 2. avoid exposing a partially copied destination;
 3. replace the destination only after the temporary copy is complete;
-4. remove the source only after destination installation succeeds; and
-5. report the exact committed prefix if source removal or cleanup fails.
+4. remove the source only after destination creation or replacement succeeds;
+   and
+5. attach every completed effect and inspected final path state to the failed
+   instruction if source removal or cleanup fails.
 
 Metadata SHOULD be preserved where the platform permits it. Byte preservation
 is mandatory.
@@ -783,7 +785,7 @@ likely intent, replacement text already appearing elsewhere, or preferred
 mapping is never a proof.
 
 For a failed move, domination of the source path alone is insufficient. Every
-source-removal, destination-installation, destination-replacement, and
+source-removal, destination-creation, destination-replacement, and
 parent-directory effect must be dominated before observation. In particular,
 `Move A -> B` with both paths absent does not become dead merely because a
 later operation deletes `A`.
@@ -911,10 +913,10 @@ The implementation MUST address these confirmed defect classes:
 6. **Preflight:** reject predictable directory and unsupported-entry conflicts,
    including write-through destinations that resolve to directories, before
    any mutation.
-7. **Failure accounting:** mark partial writes inexact; report destination loss
-   during cross-filesystem replacement retries; preserve the exact committed
-   prefix; and keep same-inode completion checks from masking a missing
-   destination.
+7. **Failure accounting:** inspect partial writes, report destination loss
+   during cross-filesystem replacement retries, attach completed effects to
+   their failed instruction, and keep same-inode completion checks from masking
+   a missing destination.
 8. **Diagnostics:** derive parse-failure instruction details with parser-aware
    line roles so header-looking context lines do not manufacture instructions.
 9. **Harness quality:** compare complete success and failure trees, including
@@ -1032,24 +1034,28 @@ nearest existing ancestor.
 
 ### Partial failures
 
-Low-level failures can still leave a committed prefix, especially for:
+Low-level failures can still complete part of an instruction, especially for:
 
 - cross-filesystem copy-and-unlink fallback;
-- destination installation followed by failed source removal;
+- destination creation or replacement followed by failed source removal;
 - permission changes between preflight and execution; or
 - external filesystem races.
 
-The tool result MUST retain the exact known committed path operations and mark
-the result inexact when the final content or entry state cannot be proven.
+The tool result MUST attach every completed filesystem effect to the
+instruction that produced it. After a low-level failure, inspect each relevant
+path and report its deterministic final state. If inspection fails, report
+that the final state was not verified. Do not speculate about possible states
+and do not describe a partial effect as an earlier successful instruction.
 
 The executor MUST NOT attempt destructive rollback unless a separately
 designed and verified transactional mechanism exists.
 
 ### Cancellation
 
-Cancellation is checked before preflight, after queue acquisition, and between
+Cancellation is checked before validation, after queue acquisition, and between
 operations. It must not interrupt a native rename halfway, but may stop before
-the next operation and report the committed prefix. Cancellation observed
+the next operation and report every completed instruction and filesystem
+effect. Cancellation observed
 during Tree-sitter initialization or parsing remains cancellation; it MUST NOT
 be converted into a generic formatter-candidate failure.
 
@@ -1064,7 +1070,6 @@ Move {
   destinationPath
   replacedDestination
   entryType
-  exact
 }
 ```
 
@@ -1092,27 +1097,34 @@ Success. Updated the following files:
 M B
 ```
 
-If every operation is a no-op or dead, return successful output that clearly
+If every operation has no filesystem effect, return successful output that clearly
 states:
 
 ```text
 Success. No files were changed.
 ```
 
-Every no-op and dead instruction also carries a stable structured reason.
-Model output and collapsed TUI output show concise per-instruction reasons;
-expanded TUI output additionally shows dead-operation domination evidence.
+The aggregate summary is followed by `Instruction results:` and every
+instruction in source order. There is no model or TUI instruction limit.
+Visible statuses use `APPLIED`, `NO CHANGE`, `SKIPPED`, `FAILED`, and
+`NOT RUN`. Ordinary applied instructions need only their status and operation.
+Reasons, non-obvious effects, deterministic final states, concise matcher
+evidence, and errors remain on the relevant instruction.
+
 Model-facing status labels and separators are ASCII, while the TUI may use
-Unicode symbols. Model and collapsed output show at most eight explanations
-with an omitted count; expanded output shows all explanations.
+Unicode symbols. Failed matcher feedback does not repeat old or replacement
+patch blocks. Model feedback does not discuss diff availability or unreadable
+previous content.
+
+`APPLY_PATCH_INSTRUCTION_FEEDBACK.md` defines the complete normative feedback
+contract.
 
 Do not report a harmless redundant operation as an error.
 
 Textual turn-diff aggregation must not claim reconstructable old/new text for
-an opaque move. The path operation can still be exact even when no textual
-delta exists; if the current history model cannot express that distinction,
-invalidate or mark the aggregate textual diff inexact rather than serializing
-binary content.
+an opaque move. Internal history can record that a textual delta is
+unavailable, but that rendering concern is not model feedback and must never
+cause a successful operation to be described as uncertain.
 
 ## Deliberate extensions and differences from official Codex
 
@@ -1299,8 +1311,10 @@ Every case must preserve source bytes exactly.
   external drift;
 - native move failure leaves source intact when no mutation committed;
 - cross-filesystem move followed by update, delete, or another move succeeds;
-- cross-filesystem partial failure reports the committed prefix;
-- partial writes and destination-replacement retry failures are marked inexact;
+- cross-filesystem partial failure reports every completed effect on the
+  failed instruction;
+- partial writes and destination-replacement retry failures inspect and report
+  deterministic final path states;
 - pure binary move history contains no binary payload;
 - pure move rendering is path-only;
 - parse-failure instruction details ignore header-looking hunk context lines;
@@ -1308,8 +1322,9 @@ Every case must preserve source bytes exactly.
   entry types, modes, and collateral paths;
 - model-facing summaries report add, modify/move destination, and delete paths
   accurately;
-- all-no-op patch reports success with no changed files; and
-- mixed applied/no-op/dead patches report only actual filesystem changes.
+- all-no-change patch reports success with no changed files; and
+- mixed applied/no-change/skipped patches report only confirmed filesystem
+  changes.
 
 ## Acceptance criteria
 

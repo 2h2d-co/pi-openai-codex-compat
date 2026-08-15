@@ -21,6 +21,7 @@
   },
   "files": [
     "extensions",
+    "APPLY_PATCH_INSTRUCTION_FEEDBACK.md",
     "README.md",
     "CHANGELOG.md",
     "LICENSE",

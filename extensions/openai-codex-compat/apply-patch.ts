@@ -9,7 +9,7 @@ import {
   ApplyPatchExecutionError,
   ApplyPatchInputError,
   ApplyPatchVerificationError,
-  formatApplyPatchInstructionLabel,
+  formatApplyPatchFailureSummary,
   formatApplyPatchModelOutput,
   formatApplyPatchSummary,
 } from "./apply-patch-engine.ts";
@@ -22,9 +22,11 @@ export {
   type ApplyPatchExecutionHooks,
   type ApplyPatchFailureDetails,
   type ApplyPatchInstructionDetails,
+  type ApplyPatchInstructionEffect,
   type ApplyPatchInstructionReason,
   type ApplyPatchInstructionReasonCode,
   type ApplyPatchInstructionStatus,
+  type ApplyPatchFinalPathState,
   type AppliedPatchChange,
   ApplyPatchExecutionError,
   ApplyPatchInputError,
@@ -41,43 +43,6 @@ export type { FormatterMatchFailureDetails } from "./apply-patch-matcher.ts";
 
 export const APPLY_PATCH_TOOL_NAME = "apply_patch";
 export const APPLY_PATCH_INPUT_PROPERTY = "patch";
-
-function modelFailureContext(details: ApplyPatchDetails): string {
-  const phase = details.failure?.phase ?? "preflight";
-  const phaseLabel = phase[0]!.toUpperCase() + phase.slice(1);
-  const instructions = details.instructions ?? [];
-  const failed =
-    instructions.find((instruction) => instruction.status === "failed") ??
-    (details.failure?.failedInstruction === undefined
-      ? undefined
-      : instructions.find(
-          (instruction) => instruction.index === details.failure?.failedInstruction,
-        ));
-  const summary = failed
-    ? `${phaseLabel} failed; instruction ${failed.index} of ${instructions.length}: ${formatApplyPatchInstructionLabel(failed)}.`
-    : `${phaseLabel} failed; ${instructions.length} ${instructions.length === 1 ? "instruction" : "instructions"} identified.`;
-  const filesystem =
-    details.changes.length === 0
-      ? "No files were changed."
-      : `${details.changes.length} earlier ${details.changes.length === 1 ? "change was" : "changes were"} applied before the failure.`;
-  const exactness = `Committed prefix: ${details.exact ? "exact" : "inexact"}.`;
-  const lines = [summary, filesystem, exactness];
-  if (instructions.length > 0) {
-    lines.push("Instruction statuses:");
-    const visible = instructions.slice(0, 8);
-    for (const instruction of visible) {
-      const status = instruction.status.toUpperCase();
-      const reason = instruction.reason ? ` - ${instruction.reason.message}` : "";
-      lines.push(
-        `${status} ${instruction.index}. ${formatApplyPatchInstructionLabel(instruction)}${reason}`,
-      );
-    }
-    if (visible.length < instructions.length) {
-      lines.push(`${instructions.length - visible.length} more instruction statuses omitted.`);
-    }
-  }
-  return lines.join("\n");
-}
 
 // Adapted from OpenAI Codex's Apache-2.0 apply_patch grammar; see
 // THIRD_PARTY_NOTICES.md. Pi serializes it as a native custom grammar tool for
@@ -163,7 +128,7 @@ export default function registerApplyPatch(
               text: formatApplyPatchModelOutput(
                 0,
                 executionDurationMs(),
-                formatApplyPatchSummary(details),
+                formatApplyPatchSummary(details, ctx.cwd),
               ),
             },
           ],
@@ -176,16 +141,16 @@ export default function registerApplyPatch(
             formatApplyPatchModelOutput(
               1,
               executionDurationMs(),
-              `${error.message}\n${modelFailureContext(error.details)}\n`,
+              formatApplyPatchFailureSummary(error.details, ctx.cwd),
             ),
           );
         }
         if (error instanceof ApplyPatchVerificationError) {
           failedDetails.set(toolCallId, error.details);
-          throw new Error(`${error.message}\n${modelFailureContext(error.details)}`);
+          throw new Error(formatApplyPatchFailureSummary(error.details, ctx.cwd));
         } else if (error instanceof ApplyPatchInputError && error.details) {
           failedDetails.set(toolCallId, error.details);
-          throw new Error(`${error.message}\n${modelFailureContext(error.details)}`);
+          throw new Error(formatApplyPatchFailureSummary(error.details, ctx.cwd));
         }
         throw error;
       }

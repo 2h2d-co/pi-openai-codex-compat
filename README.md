@@ -296,12 +296,12 @@ Compatibility behavior:
 - After strict matching fails, uniquely determined formatter-only line reflow can recover through exact Tree-sitter tokens for JavaScript, JSX, TypeScript, TSX, Python, Go, Java, and Scala. Requested replacement lines remain opaque and exact.
 - Markdown recovery is limited to exact-cell tables and supported code inside typed fences. Plain prose reflow, optional punctuation differences, single-token structural recovery, and partial-line structural recovery reject.
 - The parser accepts Codex's lenient marker whitespace, blank update-context lines, and direct heredoc wrappers.
-- Empty and identity updates, identical adds, absent deletes, self-moves, and same-patch fulfilled moves succeed as explained no-ops. Inapplicable operations are skipped only when later operations deterministically make every effect unobservable.
-- Successful model-facing results use Codex's exit-code and wall-time envelope. They report changed paths plus concise reasons for no-op and dead instructions.
-- Tool-result history stores per-file old/new content, display diffs, move destinations, overwrite information, and committed-prefix details after runtime failures.
+- Empty and identity updates, identical adds, absent deletes, self-moves, and same-patch fulfilled moves succeed with concise `NO CHANGE` results. Inapplicable operations are `SKIPPED` only when later operations deterministically make every effect unobservable.
+- Model-facing results retain the aggregate A/M/D summary and then list every source-ordered instruction under `Instruction results:` without an instruction limit.
+- Tool-result history stores per-file old/new content, display diffs, move destinations, overwrite information, per-instruction filesystem effects, and deterministic final-path inspection after runtime failures.
 - Opaque moves and symbolic-link deletions use path-only history, so binary bytes and link-target bytes are not serialized as textual deletions.
-- The TUI renders Codex-style `Added`, `Edited`, and `Deleted` diff blocks, structured failures, and no-op/dead reasons instead of the raw model-facing result.
-- The collapsed view shows aggregate counts and at most eight concise instruction explanations; `Ctrl+O` reveals complete hunks and domination evidence.
+- The TUI retains Codex-style changed-file summaries and renders every concise instruction result; `Ctrl+O` nests complete diffs beneath the instruction that produced them.
+- Failed instruction feedback colocates its error, completed effects, final path states, and concise matcher evidence without repeating patch text or using speculative language.
 
 Filesystem behavior:
 
@@ -309,13 +309,18 @@ Filesystem behavior:
 - `.git` paths are unrestricted.
 - Text updates follow live symbolic links; adds replace live or dangling link entries; deletes remove only the link entry; pure moves move a source link entry and replace a destination link entry; state-changing moves materialize a regular destination without modifying either former link target.
 - Entry-only operations and no-op updates do not dereference cyclic or inaccessible symbolic-link targets during mutation-queue acquisition.
-- Same-filesystem pure moves use native rename topology. Cross-filesystem moves use copy-to-temporary, destination installation, and source removal, producing an inode independent from remaining source hard links.
+- Same-filesystem pure moves use native rename topology. Cross-filesystem moves use copy-to-temporary, destination creation or replacement, and source removal, producing an inode independent from remaining source hard links.
 - Strict and formatter-recovered edits preserve the matched region's local CRLF or mixed line endings.
 - The extension does not add path filtering, sandboxing, or approval prompts.
 - Every hunk is parsed and validated before filesystem writes begin.
 - Mutations participate in Pi's per-file mutation queue and an extension-local logical queue for case, Unicode, symbolic-link-parent, and hard-link aliases. Both queues coordinate only concurrent `apply_patch` calls in the same Pi process and module instance; they do not coordinate separate Pi sessions, other processes, or unrelated edit/write tools.
 
-A low-level I/O failure can still leave a multi-file patch partially applied. The failed tool result records the known committed prefix, but inspect the working tree before retrying when that record is marked inexact.
+A low-level I/O failure can still complete part of an instruction. The failed
+instruction reports every confirmed effect and final path state; when a path
+cannot be inspected, it says that the final state was not verified.
+
+The complete feedback and rendering contract is documented in
+[`APPLY_PATCH_INSTRUCTION_FEEDBACK.md`](APPLY_PATCH_INSTRUCTION_FEEDBACK.md).
 
 ## `image_gen.imagegen`
 

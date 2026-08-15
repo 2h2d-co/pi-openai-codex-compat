@@ -10,11 +10,17 @@ import {
 import {
   type AppliedPatchChange,
   type ApplyPatchDetails,
+  type ApplyPatchFinalPathState,
   type ApplyPatchFailureDetails,
   type ApplyPatchInstructionDetails,
+  type ApplyPatchInstructionEffect,
   type ApplyPatchInstructionReason,
   type ApplyPatchInstructionStatus,
+  applyPatchHasOtherFilesystemChanges,
+  applyPatchSummaryPaths,
   coalesceAppliedPatchChangesForRendering,
+  formatApplyPatchFailureHeading,
+  formatApplyPatchInstructionFeedback,
 } from "./apply-patch-engine.ts";
 import type {
   FormatterMatchCandidateRange,
@@ -198,6 +204,7 @@ function isApplyPatchInstructionReason(value: unknown): value is ApplyPatchInstr
     code?: unknown;
     message?: unknown;
     dominatingInstructions?: unknown;
+    relatedInstructions?: unknown;
   };
   return (
     typeof reason.code === "string" &&
@@ -205,7 +212,56 @@ function isApplyPatchInstructionReason(value: unknown): value is ApplyPatchInstr
     typeof reason.message === "string" &&
     (reason.dominatingInstructions === undefined ||
       (Array.isArray(reason.dominatingInstructions) &&
-        reason.dominatingInstructions.every((index) => typeof index === "number")))
+        reason.dominatingInstructions.every((index) => typeof index === "number"))) &&
+    (reason.relatedInstructions === undefined ||
+      (Array.isArray(reason.relatedInstructions) &&
+        reason.relatedInstructions.every((index) => typeof index === "number")))
+  );
+}
+
+const INSTRUCTION_EFFECT_KINDS = new Set<ApplyPatchInstructionEffect["kind"]>([
+  "created",
+  "replaced",
+  "updated",
+  "deleted",
+  "directory-created",
+  "temporary-entry-remains",
+  "source-remains",
+  "symbolic-link-target-unchanged",
+  "symbolic-link-target-updated",
+]);
+
+function isApplyPatchInstructionEffect(value: unknown): value is ApplyPatchInstructionEffect {
+  if (typeof value !== "object" || value === null) return false;
+  const effect = value as { kind?: unknown; path?: unknown };
+  return (
+    typeof effect.kind === "string" &&
+    INSTRUCTION_EFFECT_KINDS.has(effect.kind as ApplyPatchInstructionEffect["kind"]) &&
+    typeof effect.path === "string"
+  );
+}
+
+const FINAL_PATH_STATES = new Set<ApplyPatchFinalPathState["state"]>([
+  "absent",
+  "regular-file",
+  "symbolic-link",
+  "directory",
+  "other-entry",
+  "unchanged",
+  "requested-content",
+  "different-content",
+  "different-entry",
+  "different-entry-type",
+  "not-verified",
+]);
+
+function isApplyPatchFinalPathState(value: unknown): value is ApplyPatchFinalPathState {
+  if (typeof value !== "object" || value === null) return false;
+  const state = value as { path?: unknown; state?: unknown };
+  return (
+    typeof state.path === "string" &&
+    typeof state.state === "string" &&
+    FINAL_PATH_STATES.has(state.state as ApplyPatchFinalPathState["state"])
   );
 }
 
@@ -218,6 +274,10 @@ function isApplyPatchInstruction(value: unknown): value is ApplyPatchInstruction
     moveTo?: unknown;
     status?: unknown;
     reason?: unknown;
+    effects?: unknown;
+    finalStates?: unknown;
+    matcher?: unknown;
+    changeIndexes?: unknown;
     error?: unknown;
   };
   return (
@@ -231,6 +291,16 @@ function isApplyPatchInstruction(value: unknown): value is ApplyPatchInstruction
     typeof instruction.status === "string" &&
     INSTRUCTION_STATUSES.has(instruction.status as ApplyPatchInstructionStatus) &&
     (instruction.reason === undefined || isApplyPatchInstructionReason(instruction.reason)) &&
+    (instruction.effects === undefined ||
+      (Array.isArray(instruction.effects) &&
+        instruction.effects.every(isApplyPatchInstructionEffect))) &&
+    (instruction.finalStates === undefined ||
+      (Array.isArray(instruction.finalStates) &&
+        instruction.finalStates.every(isApplyPatchFinalPathState))) &&
+    (instruction.matcher === undefined || isFormatterMatchFailure(instruction.matcher)) &&
+    (instruction.changeIndexes === undefined ||
+      (Array.isArray(instruction.changeIndexes) &&
+        instruction.changeIndexes.every((index) => typeof index === "number"))) &&
     (instruction.error === undefined || typeof instruction.error === "string")
   );
 }
@@ -525,6 +595,46 @@ function renderHeader(changes: readonly AppliedPatchChange[], theme: Theme, cwd:
   return `${theme.fg("dim", "• ")}${theme.bold("Edited")} ${changes.length} ${noun} ${countSummary(additions, deletions, theme)}`;
 }
 
+function renderFailedChangeSummary(
+  details: ApplyPatchDetails,
+  changes: readonly AppliedPatchChange[],
+  theme: Theme,
+  cwd: string,
+): string[] {
+  const summary = applyPatchSummaryPaths(details);
+  const paths = [
+    ...summary.added.map((path) => ({ status: "A", path })),
+    ...summary.modified.map((path) => ({ status: "M", path })),
+    ...summary.deleted.map((path) => ({ status: "D", path })),
+  ];
+  if (paths.length === 0) return [];
+  const additions = changes.reduce((total, change) => total + change.additions, 0);
+  const deletions = changes.reduce((total, change) => total + change.deletions, 0);
+  const noun = paths.length === 1 ? "file" : "files";
+  return [
+    `${theme.fg("dim", "• ")}${theme.bold("Changed")} ${paths.length} ${noun} ${countSummary(additions, deletions, theme)}`,
+    ...paths.map(
+      ({ status, path }) => `  ${theme.fg("dim", "└ ")}${status} ${displayPath(path, cwd)}`,
+    ),
+  ];
+}
+
+function failedResultHasChangedFiles(details: ApplyPatchDetails): boolean {
+  const summary = applyPatchSummaryPaths(details);
+  return summary.added.length > 0 || summary.modified.length > 0 || summary.deleted.length > 0;
+}
+
+function failedResultHasNoChanges(details: ApplyPatchDetails): boolean {
+  const hasUnverifiedState = (details.instructions ?? []).some((instruction) =>
+    instruction.finalStates?.some((state) => state.state === "not-verified"),
+  );
+  return (
+    !failedResultHasChangedFiles(details) &&
+    !applyPatchHasOtherFilesystemChanges(details) &&
+    !hasUnverifiedState
+  );
+}
+
 function renderChange(
   change: AppliedPatchChange,
   width: number,
@@ -541,36 +651,6 @@ function renderChange(
     1,
   );
   return lines.flatMap((line) => renderDiffLine(line, width, lineNumberWidth, theme, palette));
-}
-
-function failurePhaseLabel(phase: ApplyPatchFailureDetails["phase"]): string {
-  switch (phase) {
-    case "input":
-      return "Input";
-    case "parse":
-      return "Parse";
-    case "preflight":
-      return "Preflight";
-    case "execution":
-      return "Execution";
-  }
-}
-
-function statusDescription(status: ApplyPatchInstructionStatus): string {
-  switch (status) {
-    case "applied":
-      return "applied";
-    case "planned":
-      return "planned";
-    case "no-op":
-      return "no-op";
-    case "dead":
-      return "dead";
-    case "failed":
-      return "failed";
-    case "not-run":
-      return "not run";
-  }
 }
 
 function statusSymbol(status: ApplyPatchInstructionStatus, theme: Theme): string {
@@ -605,158 +685,59 @@ function instructionLabel(instruction: ApplyPatchInstructionDetails, cwd: string
     : `${verb} ${path}`;
 }
 
-const MAX_COLLAPSED_INSTRUCTION_EXPLANATIONS = 8;
-
-function effectlessInstructions(details: ApplyPatchDetails): ApplyPatchInstructionDetails[] {
-  return (details.instructions ?? []).filter(
-    (instruction) => instruction.status === "no-op" || instruction.status === "dead",
+function instructionChanges(
+  details: ApplyPatchDetails,
+  instructionIndex: number,
+): AppliedPatchChange[] {
+  const instruction = details.instructions?.find(
+    (candidate) => candidate.index === instructionIndex,
   );
+  return (instruction?.changeIndexes ?? []).flatMap((index) => {
+    const change = details.changes[index];
+    return change && !(instruction?.status === "failed" && change.kind === "move" && !change.exact)
+      ? [change]
+      : [];
+  });
 }
 
-function renderEffectlessInstructions(
+function renderInstructionResults(
   details: ApplyPatchDetails,
   theme: Theme,
   cwd: string,
   expanded: boolean,
-): string[] {
-  const instructions = effectlessInstructions(details);
-  if (instructions.length === 0) return [];
-  const lines = [
-    details.changes.length === 0
-      ? theme.bold("No files were changed.")
-      : theme.bold("Instructions with no filesystem effect:"),
-  ];
-  const visible = expanded
-    ? instructions
-    : instructions.slice(0, MAX_COLLAPSED_INSTRUCTION_EXPLANATIONS);
-  for (const instruction of visible) {
-    const reason = instruction.reason?.message ?? statusDescription(instruction.status);
-    lines.push(
-      `  ${statusSymbol(instruction.status, theme)} ${instruction.index}. ${instructionLabel(instruction, cwd)} ${theme.fg("dim", `— ${reason}`)}`,
-    );
-    if (
-      expanded &&
-      instruction.reason?.code === "dead-dominated" &&
-      instruction.reason.dominatingInstructions?.length
-    ) {
-      const noun =
-        instruction.reason.dominatingInstructions.length === 1 ? "instruction" : "instructions";
-      lines.push(
-        `    ${theme.fg("dim", `Proof: filesystem effects are fully dominated by ${noun} ${instruction.reason.dominatingInstructions.join(", ")}`)}`,
-      );
-    }
-  }
-  if (visible.length < instructions.length) {
-    lines.push(
-      theme.fg("dim", `  … ${instructions.length - visible.length} more instruction explanations`),
-    );
-  }
-  return lines;
-}
-
-function failureSummary(details: ApplyPatchDetails, theme: Theme): string {
-  const instructions = details.instructions ?? [];
-  const noun = instructions.length === 1 ? "instruction" : "instructions";
-  const parts = [
-    details.failure ? failurePhaseLabel(details.failure.phase) : "Failure",
-    `${instructions.length} ${noun}`,
-  ];
-  for (const status of ["applied", "failed", "no-op", "dead", "not-run", "planned"] as const) {
-    const count = instructions.filter((instruction) => instruction.status === status).length;
-    if (count > 0) parts.push(`${count} ${statusDescription(status)}`);
-  }
-  return theme.fg("dim", parts.join(" · "));
-}
-
-function normalizedFailureMessage(details: ApplyPatchDetails, cwd: string): string {
-  const message = details.failure?.message ?? details.error ?? "Unknown apply_patch failure.";
-  const cwdPrefix = `${resolve(cwd)}${sep}`;
-  const homePrefix = `${homedir()}${sep}`;
-  return message
-    .replace(/^apply_patch verification failed:\s*/i, "")
-    .replaceAll(cwdPrefix, "")
-    .replaceAll(homePrefix, `~${sep}`);
-}
-
-function matcherRange(range: FormatterMatchCandidateRange): string {
-  return range.startLine === range.endLine
-    ? `line ${range.startLine}`
-    : `lines ${range.startLine}-${range.endLine}`;
-}
-
-function matcherEvidence(
-  matcher: FormatterMatchFailureDetails,
-  cwd: string,
-  expanded: boolean,
+  width?: number,
 ): string[] {
   const lines: string[] = [];
-  if (matcher.groupIndex !== undefined) {
-    const chunk =
-      matcher.chunkIndex === undefined
-        ? ""
-        : ` · chunk ${matcher.chunkIndex} of ${matcher.chunkCount}`;
-    lines.push(`Matcher: edit group ${matcher.groupIndex} of ${matcher.groupCount}${chunk}`);
-  }
-  if (matcher.candidates.length > 0) {
-    lines.push(`Candidates: ${matcher.candidates.map(matcherRange).join(", ")}`);
-  }
-  if (matcher.previousGroupIndex !== undefined && matcher.previousCandidates?.length) {
-    lines.push(
-      `Previous group ${matcher.previousGroupIndex}: ${matcher.previousCandidates.map(matcherRange).join(", ")}`,
-    );
-  }
-  if (matcher.reverseOrdered) lines.push("Relationship: candidate precedes the previous group");
-  else if (matcher.overlapping) lines.push("Relationship: candidate overlaps the previous group");
-  if (matcher.replacementCandidateCount && matcher.replacementCandidates?.length) {
-    lines.push(
-      `Replacement already present: ${matcher.replacementCandidates.map(matcherRange).join(", ")}`,
-    );
-  }
-  if (expanded && matcher.oldExcerpt) {
-    lines.push(
-      ...matcher.oldExcerpt
-        .split("\n")
-        .map((line, index) =>
-          index === 0 ? `Expected old text: ${line}` : `                   ${line}`,
-        ),
-    );
-  }
-  return lines.map((line) => line.replace(resolve(cwd), ".").replace(homedir(), "~"));
-}
-
-function renderFailure(
-  details: ApplyPatchDetails,
-  theme: Theme,
-  cwd: string,
-  expanded: boolean,
-): string[] {
-  const lines = [theme.bold(theme.fg("error", "✘ Failed to apply patch"))];
-  lines.push(`  ${failureSummary(details, theme)}`);
-
   const instructions = details.instructions ?? [];
-  const visibleInstructions = expanded
-    ? instructions
-    : instructions.filter((instruction) => instruction.status === "failed");
-  for (const instruction of visibleInstructions) {
-    const description = instruction.reason?.message ?? statusDescription(instruction.status);
+  if (instructions.length === 0) return lines;
+  lines.push(theme.bold("Instruction results:"));
+  const palette = diffPalette(theme);
+  for (const instruction of instructions) {
+    const feedback = formatApplyPatchInstructionFeedback(instruction, details, cwd);
     lines.push(
-      `  ${statusSymbol(instruction.status, theme)} ${instruction.index}. ${instructionLabel(instruction, cwd)} ${theme.fg("dim", `— ${description}`)}`,
+      `  ${statusSymbol(instruction.status, theme)} ${instruction.index}. ${instructionLabel(instruction, cwd)}${feedback ? ` ${theme.fg("dim", `— ${feedback}`)}` : ""}`,
     );
-  }
-
-  const messageLines = normalizedFailureMessage(details, cwd).split("\n");
-  const maximumLines = expanded ? 12 : 1;
-  for (const [index, messageLine] of messageLines.slice(0, maximumLines).entries()) {
-    lines.push(
-      index === 0 ? `  ${theme.fg("error", "Reason:")} ${messageLine}` : `          ${messageLine}`,
-    );
-  }
-  if (messageLines.length > maximumLines) {
-    lines.push(theme.fg("dim", `          … ${messageLines.length - maximumLines} more lines`));
-  }
-  if (details.failure?.matcher) {
-    for (const line of matcherEvidence(details.failure.matcher, cwd, expanded)) {
-      lines.push(`  ${theme.fg("dim", line)}`);
+    if (expanded && width !== undefined) {
+      const changes = instructionChanges(details, instruction.index);
+      const inset = Math.min(4, Math.max(0, width - 1));
+      const contentWidth = Math.max(1, width - inset);
+      for (const change of changes) {
+        lines.push(
+          ...renderChange(change, contentWidth, theme, palette).map(
+            (line) => `${" ".repeat(inset)}${line}`,
+          ),
+        );
+      }
+    } else if (expanded) {
+      for (const change of instructionChanges(details, instruction.index)) {
+        lines.push(
+          ...changeDiffLines(change).map((line) => {
+            if (line.separator) return `    ${theme.fg("dim", "⋮")}`;
+            const sign = line.kind === "add" ? "+" : line.kind === "delete" ? "-" : " ";
+            return `    ${sign}${line.lineNumber ?? ""} ${line.content}`;
+          }),
+        );
+      }
     }
   }
   return lines;
@@ -769,7 +750,9 @@ export function formatApplyPatchRenderText(
 ): string {
   const lines: string[] = [];
   const changes = sortedChanges(details, cwd);
-  if (changes.length > 0) {
+  if (details.status === "failed") {
+    lines.push(...renderFailedChangeSummary(details, changes, theme, cwd));
+  } else if (changes.length > 0) {
     lines.push(renderHeader(changes, theme, cwd));
     for (const [index, change] of changes.entries()) {
       if (changes.length > 1) {
@@ -777,22 +760,37 @@ export function formatApplyPatchRenderText(
           `  ${theme.fg("dim", "└ ")}${changeListPath(change, cwd)} ${countSummary(change.additions, change.deletions, theme)}`,
         );
       }
-      lines.push(
-        ...changeDiffLines(change).map((line) => {
-          if (line.separator) return `    ${theme.fg("dim", "⋮")}`;
-          const sign = line.kind === "add" ? "+" : line.kind === "delete" ? "-" : " ";
-          return `    ${sign}${line.lineNumber ?? ""} ${line.content}`;
-        }),
-      );
+      if ((details.instructions?.length ?? 0) === 0) {
+        lines.push(
+          ...changeDiffLines(change).map((line) => {
+            if (line.separator) return `    ${theme.fg("dim", "⋮")}`;
+            const sign = line.kind === "add" ? "+" : line.kind === "delete" ? "-" : " ";
+            return `    ${sign}${line.lineNumber ?? ""} ${line.content}`;
+          }),
+        );
+      }
       if (index !== changes.length - 1) lines.push("");
     }
   }
   if (details?.status === "failed") {
     if (lines.length > 0) lines.push("");
-    lines.push(...renderFailure(details, theme, cwd, true));
+    lines.push(theme.bold(theme.fg("error", "✘ Failed to apply patch")));
+    lines.push(
+      ...formatApplyPatchFailureHeading(details).map((line) => `  ${theme.fg("dim", line)}`),
+    );
+    if (failedResultHasNoChanges(details)) lines.push("  No files were changed.");
+    else if (
+      !failedResultHasChangedFiles(details) &&
+      applyPatchHasOtherFilesystemChanges(details)
+    ) {
+      lines.push("  Filesystem changed.");
+    }
   } else {
-    if (lines.length > 0 && effectlessInstructions(details).length > 0) lines.push("");
-    lines.push(...renderEffectlessInstructions(details, theme, cwd, true));
+    if (changes.length === 0) lines.push(theme.bold("Success. No files were changed."));
+  }
+  if ((details.instructions?.length ?? 0) > 0) {
+    if (lines.length > 0) lines.push("");
+    lines.push(...renderInstructionResults(details, theme, cwd, true));
   }
   return lines.join("\n");
 }
@@ -813,10 +811,13 @@ export class ApplyPatchDiffComponent implements Component {
   render(width: number): string[] {
     const effectiveWidth = Math.max(1, width);
     const changes = sortedChanges(this.details, this.cwd);
-    const palette = diffPalette(this.theme);
     const lines: string[] = [];
 
-    if (changes.length > 0) {
+    if (this.details.status === "failed") {
+      for (const line of renderFailedChangeSummary(this.details, changes, this.theme, this.cwd)) {
+        lines.push(...wrapTextWithAnsi(line, effectiveWidth));
+      }
+    } else if (changes.length > 0) {
       lines.push(...wrapTextWithAnsi(renderHeader(changes, this.theme, this.cwd), effectiveWidth));
       for (const [index, change] of changes.entries()) {
         if (this.expanded && index > 0) lines.push("");
@@ -824,9 +825,10 @@ export class ApplyPatchDiffComponent implements Component {
           const header = `  ${this.theme.fg("dim", "└ ")}${changeListPath(change, this.cwd)} ${countSummary(change.additions, change.deletions, this.theme)}`;
           lines.push(...wrapTextWithAnsi(header, effectiveWidth));
         }
-        if (this.expanded) {
+        if (this.expanded && (this.details.instructions?.length ?? 0) === 0) {
           const inset = Math.min(4, Math.max(0, effectiveWidth - 1));
           const contentWidth = Math.max(1, effectiveWidth - inset);
+          const palette = diffPalette(this.theme);
           lines.push(
             ...renderChange(change, contentWidth, this.theme, palette).map(
               (line) => `${" ".repeat(inset)}${line}`,
@@ -838,18 +840,38 @@ export class ApplyPatchDiffComponent implements Component {
 
     if (this.details?.status === "failed") {
       if (lines.length > 0) lines.push("");
-      for (const line of renderFailure(this.details, this.theme, this.cwd, this.expanded)) {
-        lines.push(...wrapTextWithAnsi(line, effectiveWidth));
+      lines.push(
+        ...wrapTextWithAnsi(
+          this.theme.bold(this.theme.fg("error", "✘ Failed to apply patch")),
+          effectiveWidth,
+        ),
+      );
+      for (const line of formatApplyPatchFailureHeading(this.details)) {
+        lines.push(...wrapTextWithAnsi(`  ${this.theme.fg("dim", line)}`, effectiveWidth));
       }
-    } else {
-      const effectless = renderEffectlessInstructions(
+      if (failedResultHasNoChanges(this.details)) {
+        lines.push(...wrapTextWithAnsi("  No files were changed.", effectiveWidth));
+      } else if (
+        !failedResultHasChangedFiles(this.details) &&
+        applyPatchHasOtherFilesystemChanges(this.details)
+      ) {
+        lines.push(...wrapTextWithAnsi("  Filesystem changed.", effectiveWidth));
+      }
+    } else if (changes.length === 0) {
+      lines.push(
+        ...wrapTextWithAnsi(this.theme.bold("Success. No files were changed."), effectiveWidth),
+      );
+    }
+
+    if ((this.details.instructions?.length ?? 0) > 0) {
+      if (lines.length > 0) lines.push("");
+      for (const line of renderInstructionResults(
         this.details,
         this.theme,
         this.cwd,
         this.expanded,
-      );
-      if (lines.length > 0 && effectless.length > 0) lines.push("");
-      for (const line of effectless) {
+        effectiveWidth,
+      )) {
         lines.push(...wrapTextWithAnsi(line, effectiveWidth));
       }
     }

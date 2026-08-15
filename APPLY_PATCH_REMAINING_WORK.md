@@ -18,7 +18,7 @@ Official Codex was compared at:
 
 Final validation baseline:
 
-- `npm test`: 274 passed, 2 skipped
+- `npm test`: 279 passed, 2 skipped
 - `npm run check`: passed
 
 The final fresh-review pass additionally closed:
@@ -30,6 +30,25 @@ The final fresh-review pass additionally closed:
 
 The implementation pass also corrected destination-relative target resolution
 and fresh identity for moved symbolic links.
+
+The final feedback pass:
+
+- retained the aggregate changed-file summary;
+- added unlimited source-ordered model and TUI instruction results;
+- colocated no-change, skipped, failed, and not-run feedback;
+- recorded partial filesystem effects on the instruction that produced them;
+- added deterministic post-failure path inspection;
+- retained confirmed partial-move effects when later inspection is unavailable;
+- avoided rendering a partial move as a completed rename;
+- reported parent-directory and temporary-entry effects without claiming that
+  no filesystem change occurred;
+- removed model-facing committed-prefix and diff-availability terminology;
+- stopped repeating old or replacement patch blocks in model feedback; and
+- deduplicated byte-identical matcher candidates before exhaustive-search
+  limits.
+
+The full feedback contract is recorded in
+`APPLY_PATCH_INSTRUCTION_FEEDBACK.md`.
 
 ## Dictionary
 
@@ -233,9 +252,9 @@ it must not retain the source inode or hard-link identity in virtual state.
 - update remaining source hard link after cross-filesystem move;
 - delete or move destination after cross-filesystem move;
 - destination overwrite;
-- destination installation followed by failed source removal;
-- destination removal followed by failed installation;
-- exact/inexact committed-prefix reporting; and
+- destination creation or replacement followed by failed source removal;
+- destination removal followed by failed replacement;
+- per-instruction effect and deterministic final-state reporting; and
 - same-filesystem native hard-link behavior remains unchanged.
 
 Tests should use an injectable filesystem-operation boundary or deterministic
@@ -326,65 +345,30 @@ the original `nlink` and does not subtract the earlier planned deletion.
 - an intervening read through any remaining link still rejects; and
 - alias spellings of one entry count once.
 
-## Workstream 6: Explain successful no-op/dead patches
+## Workstream 6: Explain instructions without filesystem effects
 
 **Status:** Complete.
 
 ### Current behavior
 
-Model output correctly says:
+Model and TUI output retain the aggregate summary:
 
 ```text
 Success. No files were changed.
 ```
 
-The TUI body is empty because a successful result with no changes and no
-failure produces no render lines. Instruction status records `no-op` or
-`dead`, but it does not record why.
-
-### Explanation options
-
-#### Option A: Aggregate counts only
+It is followed by every source-ordered result:
 
 ```text
-No files changed · 4 no-op · 1 dead
+Instruction results:
+1. NO CHANGE - Update missing.txt - The instruction contains no changes.
+2. NO CHANGE - Update same.txt - Old and replacement content are identical.
+3. SKIPPED - Update old.txt - Instruction 4 determines the final filesystem state before another instruction reads it.
 ```
 
-This is compact but does not explain individual decisions.
-
-#### Option B: Concise per-instruction reasons
-
-```text
-No files were changed.
-○ 1. Update missing.txt — empty update has no effect
-○ 2. Update same.txt — old and new sides are identical
-○ 3. Add same.txt — requested bytes are already present
-○ 4. Delete absent.txt — path is already absent
-↷ 5. Update old.txt — superseded by instruction 6, Delete old.txt
-```
-
-This is directly actionable and is the recommended baseline.
-
-#### Option C: Full dead-proof evidence
-
-Include read/write sets, aliases, physical identity, and every dominating
-instruction. This is useful for debugging but too verbose as the default.
-
-### Required design
-
-Use a hybrid of Options B and C:
-
-- store a structured reason on every no-op/dead instruction;
-- show the concise reason in model output and collapsed TUI;
-- show proof details, including dominating instruction numbers, in expanded
-  TUI;
-- use the same canonical reason text in model and TUI rendering.
-- TUI rendering may use Unicode status symbols.
-- Model-facing feedback MUST use plain ASCII status words and separators. It
-  MUST NOT use Unicode status symbols or arrows.
-- Model and collapsed-TUI output show at most the first eight instruction
-  explanations followed by an omitted-count line; expanded TUI shows every
-  explanation.
+Model and TUI feedback have no instruction limit. Concise reasons remain on
+their instructions, and the TUI may use Unicode status symbols while model
+feedback remains ASCII.
 
 A structured reason should use stable codes rather than unrelated free-form
 strings, for example:
@@ -399,20 +383,19 @@ move-already-fulfilled
 dead-dominated
 ```
 
-Dead-operation analysis should return proof information rather than only a
-boolean so rendering can identify the dominating instruction.
+Semantic elimination returns related instruction numbers so the concise
+`SKIPPED` result can identify them without a detached proof section.
 
 ### Required tests
 
 - one fixture for every no-op reason;
 - dead update dominated by delete;
 - dead update dominated by add;
-- all-no-op model output;
-- all-dead model output;
-- mixed applied/no-op/dead model output;
-- collapsed TUI explanation;
-- expanded TUI proof details; and
-- large instruction lists follow an explicitly tested output-size policy.
+- all-no-change model output;
+- all-skipped model output;
+- mixed applied/no-change/skipped model output;
+- collapsed and expanded TUI instruction results; and
+- 1, 8, 9, 100, and 500-instruction results contain every instruction.
 
 ## Workstream 7: Add structured context to execution failure model output
 
@@ -420,34 +403,27 @@ boolean so rendering can identify the dominating instruction.
 
 ### Current behavior
 
-Parse and preflight errors append `modelFailureContext`, including the phase,
-failed instruction, instruction count, and whether earlier files changed.
-Execution failures return only the exit wrapper and raw error even though the
-same structured details are available to the TUI.
+Model and TUI feedback now share an aggregate changed-file summary and an
+unlimited source-ordered `Instruction results:` ledger.
 
 ### Required implementation
 
-- Append the structured failure context for `ApplyPatchExecutionError`.
-- Include:
-  - execution phase;
-  - failed instruction number and total count;
-  - operation label and paths;
-  - number of prior committed changes;
-  - whether the committed prefix is exact; and
-  - statuses of remaining instructions.
-- Avoid duplicating the raw error text.
+- Attribute concise errors, completed filesystem effects, and deterministic
+  final path states to the failed instruction.
+- Include every instruction without an omitted-count limit.
+- Explain every not-run instruction by referencing the failed instruction.
+- Avoid duplicating raw errors or old/replacement patch text.
 - Preserve the current exit-code and wall-time wrapper.
-- Reuse the structured instruction explanations and canonical reason formatter
-  from Workstream 6.
+- Reuse the canonical instruction-result formatter for model and TUI output.
 - Model-facing move labels use `->`, not a Unicode arrow.
 - Model-facing status output uses plain ASCII words rather than TUI symbols.
 
 ### Required tests
 
 - failure before the first mutation;
-- failure after one committed mutation;
-- inexact partial write;
-- failed state-changing move after destination installation;
+- failure after one completed instruction;
+- partial write with deterministic post-failure inspection;
+- failed state-changing move after destination creation or replacement;
 - failed cross-filesystem replacement;
 - cancellation after a committed operation; and
 - model output and TUI details describe the same statuses.
