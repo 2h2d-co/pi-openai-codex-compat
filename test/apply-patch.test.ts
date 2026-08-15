@@ -937,6 +937,51 @@ void test("registers the Codex freeform tool with model, UI, and failed-history 
   assert.match(failedText, /✘ 2\. Update partial-second\.txt — failed/);
   assert.match(failedText, /Reason: Filesystem changed after apply_patch preflight/);
 
+  await writeFile(join(cwd, "cancel-first.txt"), "before\n");
+  await writeFile(join(cwd, "cancel-second.txt"), "before\n");
+  const cancellationController = new AbortController();
+  const cancellationPatch = `*** Begin Patch
+*** Update File: cancel-first.txt
+@@
+-before
++after
+*** Update File: cancel-second.txt
+@@
+-before
++after
+*** End Patch`;
+  await assert.rejects(
+    registered!.execute(
+      "cancelled-call",
+      { patch: cancellationPatch },
+      cancellationController.signal,
+      (partial) => {
+        if ((partial.details as ApplyPatchDetails).changes.length === 1) {
+          cancellationController.abort();
+        }
+      },
+      { cwd } as never,
+    ),
+    (error: unknown) => {
+      assert.ok(error instanceof Error);
+      assert.match(error.message, /Execution failed; instruction 2 of 2/u);
+      assert.match(error.message, /1 earlier change was applied before the failure/u);
+      assert.match(error.message, /APPLIED 1\. Update cancel-first\.txt/u);
+      assert.match(error.message, /FAILED 2\. Update cancel-second\.txt/u);
+      return true;
+    },
+  );
+  const cancellationResult = toolResultHandler?.({
+    toolName: "apply_patch",
+    toolCallId: "cancelled-call",
+  });
+  assert.deepEqual(
+    cancellationResult?.details.instructions?.map(({ status }) => status),
+    ["applied", "failed"],
+  );
+  assert.equal(await readFile(join(cwd, "cancel-first.txt"), "utf8"), "after\n");
+  assert.equal(await readFile(join(cwd, "cancel-second.txt"), "utf8"), "before\n");
+
   await writeFile(join(cwd, "verification-existing.txt"), "keep\n");
   const verificationPatch = `*** Begin Patch
 *** Add File: verification-created.txt

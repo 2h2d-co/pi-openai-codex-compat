@@ -284,6 +284,8 @@ Supported operations:
 - update files with ordered context chunks;
 - delete files;
 - move an updated file;
+- move regular files or symbolic-link entries without content changes;
+- evaluate repeated and aliased paths sequentially;
 - anchor updates at the end of a file.
 
 Compatibility behavior:
@@ -291,19 +293,26 @@ Compatibility behavior:
 - `*** Add File` overwrites an existing file, matching Codex.
 - `*** Move to` overwrites an existing destination, matching Codex.
 - Hunk matching retries exact text, trailing-whitespace-insensitive text, fully trimmed text, and Codex's Unicode punctuation normalization.
+- After strict matching fails, uniquely determined formatter-only line reflow can recover through exact Tree-sitter tokens for JavaScript, JSX, TypeScript, TSX, Python, Go, Java, and Scala. Requested replacement lines remain opaque and exact.
+- Markdown recovery is limited to exact-cell tables and supported code inside typed fences. Plain prose reflow, optional punctuation differences, single-token structural recovery, and partial-line structural recovery reject.
 - The parser accepts Codex's lenient marker whitespace, blank update-context lines, and direct heredoc wrappers.
-- Successful model-facing results use Codex's exit-code, wall-time, and `Success. Updated the following files:` format.
+- Empty and identity updates, identical adds, absent deletes, self-moves, and same-patch fulfilled moves succeed as explained no-ops. Inapplicable operations are skipped only when later operations deterministically make every effect unobservable.
+- Successful model-facing results use Codex's exit-code and wall-time envelope. They report changed paths plus concise reasons for no-op and dead instructions.
 - Tool-result history stores per-file old/new content, display diffs, move destinations, overwrite information, and committed-prefix details after runtime failures.
-- The TUI renders Codex-style `Added`, `Edited`, and `Deleted` diff blocks instead of the raw model-facing result.
-- The collapsed view shows aggregate and per-file counts; `Ctrl+O` reveals complete hunks.
+- Opaque moves and symbolic-link deletions use path-only history, so binary bytes and link-target bytes are not serialized as textual deletions.
+- The TUI renders Codex-style `Added`, `Edited`, and `Deleted` diff blocks, structured failures, and no-op/dead reasons instead of the raw model-facing result.
+- The collapsed view shows aggregate counts and at most eight concise instruction explanations; `Ctrl+O` reveals complete hunks and domination evidence.
 
 Filesystem behavior:
 
 - Relative paths resolve from Pi's current working directory; absolute paths and `..` traversal are honored.
-- `.git` paths and symlinks follow normal host filesystem semantics.
+- `.git` paths are unrestricted.
+- Text updates follow live symbolic links; adds replace live or dangling link entries; deletes remove only the link entry; pure moves move a source link entry and replace a destination link entry; state-changing moves materialize a regular destination without modifying either former link target.
+- Same-filesystem pure moves use native rename topology. Cross-filesystem moves use copy-to-temporary, destination installation, and source removal, producing an inode independent from remaining source hard links.
+- Strict and formatter-recovered edits preserve the matched region's local CRLF or mixed line endings.
 - The extension does not add path filtering, sandboxing, or approval prompts.
 - Every hunk is parsed and validated before filesystem writes begin.
-- Mutations participate in Pi's per-file mutation queue and `apply_patch` calls execute sequentially.
+- Mutations participate in Pi's per-file mutation queue and an extension-local logical queue for case, Unicode, symbolic-link-parent, and hard-link aliases. Both queues coordinate only concurrent `apply_patch` calls in the same Pi process and module instance; they do not coordinate separate Pi sessions, other processes, or unrelated edit/write tools.
 
 A low-level I/O failure can still leave a multi-file patch partially applied. The failed tool result records the known committed prefix, but inspect the working tree before retrying when that record is marked inexact.
 

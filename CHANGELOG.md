@@ -19,6 +19,8 @@
 - Explain every successful no-op and provably dead instruction in model output and the TUI, with bounded collapsed output and expanded domination evidence.
 - Include failed instruction labels, committed-prefix exactness, and every instruction status in model-facing execution-failure context.
 - Execute the move strategy proven during preflight, with an injectable filesystem boundary covering native rename, cross-filesystem replacement, Windows overwrite fallback, and exact or inexact failure prefixes.
+- Retry Tree-sitter parser and grammar initialization after transient failures, and cover cancellation across queue, matching, pre-mutation, and committed-prefix phases.
+- Reject FIFOs, Unix sockets, directories, and available character or block devices during side-effect-free preflight.
 
 ### Security
 

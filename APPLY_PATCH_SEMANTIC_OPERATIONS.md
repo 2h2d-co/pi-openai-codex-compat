@@ -237,6 +237,8 @@ its target path.
 
 - If `P` is already absent, succeed as a no-op.
 - If `P` is a regular file or symbolic link, remove that entry.
+- A symbolic-link deletion is recorded as a path-only entry deletion. History
+  and rendering MUST NOT serialize or claim deletion of the target bytes.
 - If `P` is a directory, reject; never reinterpret the operation as recursive
   deletion.
 
@@ -333,6 +335,11 @@ deleted lines without requiring every unchanged context line to remain
 adjacent. The existing exact, trailing-whitespace, trimmed-whitespace, and
 Unicode punctuation matching modes remain in force. Adjacent surviving
 context does not rank otherwise eligible candidates.
+
+Strict matching retains Codex's matching-mode priority and first-match
+behavior, but preserves each matched region's local line ending when writing
+replacement lines. A strict edit of a CRLF or mixed-line-ending file MUST NOT
+convert the edited region to LF merely because patch instructions use LF.
 
 For pure insertions, candidates may be derived only from surviving context,
 an `@@ context` anchor, or an explicit end-of-file marker. An unanchored
@@ -587,9 +594,12 @@ Path identity must account for:
 - filesystem case behavior; and
 - directory-entry identity where required for safe move execution.
 
-Path normalization is used to understand dependencies, not to impose the
-official Codex current-main rule that rejects all duplicate resolved targets.
-This extension intentionally does not adopt that blanket rejection.
+Path normalization is used to understand dependencies, not to impose a
+blanket duplicate-target rejection. Official Codex does not categorically
+reject duplicate resolved targets: verification previews are stored by path
+and runtime hunks are applied sequentially. This extension makes the
+sequential semantics explicit and keeps preview, preflight, and execution
+coherent across aliases.
 
 Case-, Unicode-, and symbolic-link-parent aliases share one virtual directory
 entry. Later operations observe earlier changes regardless of which equivalent
@@ -710,9 +720,15 @@ before observation.
 
 ### Clear dominating operations
 
-- `Add File: P` completely determines the resulting bytes and existence of
-  `P`.
+- A non-no-op `Add File: P` completely determines the resulting bytes and
+  existence of `P`.
 - `Delete File: P` completely determines that `P` is absent.
+
+An add that is a no-op against the current entry MUST NOT be assumed to
+dominate an unknown earlier update. If that update had changed the bytes, the
+later add would replace the entry rather than remain a no-op, which could
+change inode or hard-link topology. Domination is accepted only from the
+filesystem effect the planner can prove.
 
 ### Read and write sets
 
@@ -756,9 +772,9 @@ An inapplicable operation may be marked dead only when:
 5. omitting it cannot change symlink, hard-link, metadata, or entry-type
    behavior visible in the final state.
 
-The implementation MAY begin with conservative proofs for clear
-add/delete-dominated cases. Unsupported proofs must become conflicts, not
-unsafe acceptance.
+Unsupported proofs become conflicts, not unsafe acceptance. A candidate score,
+likely intent, replacement text already appearing elsewhere, or preferred
+mapping is never a proof.
 
 For a failed move, domination of the source path alone is insufficient. Every
 source-removal, destination-installation, destination-replacement, and
@@ -871,8 +887,9 @@ The implementation MUST address these confirmed defect classes:
    fallback inside fences, closed-fence grammar leakage, and closing-fence tab
    handling.
 3. **Bounded work:** stop mapping traversal immediately when its exhaustive
-   bound is exceeded; thread cancellation through long matcher loops; and
-   retain conservative size/work bounds.
+   candidate or mapping bound is exceeded and thread cancellation through
+   long matcher loops. No additional source-size or token-count limit is
+   required.
 4. **Entry identity:** prevent write-then-unlink data loss for case, Unicode,
    symbolic-link-parent, and destination-link aliases; keep hard-link entries
    distinct; and make sequential virtual state coherent across equivalent path
@@ -959,8 +976,16 @@ Text decoding is lazy:
   its text.
 
 All source and destination paths, including move destinations, MUST
-participate in Pi's file mutation queue. Queue acquisition order MUST be
-deterministic to avoid deadlocks.
+participate in Pi's file mutation queue. They also participate in an
+extension-local logical-key queue that collapses proven case, Unicode,
+symbolic-link-parent, and physical hard-link aliases. Distinct hard-link
+directory entries retain distinct entry keys while sharing a physical inode
+key. Queue acquisition order MUST be deterministic to avoid deadlocks.
+
+Both queues are in-memory and process-local. They coordinate concurrent
+`apply_patch` calls sharing one Pi process and module instance. They do not
+coordinate separately launched Pi sessions, other processes, or unrelated Pi
+`edit` and `write` tools.
 
 After queues are acquired, preflight reads the required state and constructs
 the complete plan. Before executing each mutation, the implementation SHOULD
@@ -1052,6 +1077,13 @@ states:
 Success. No files were changed.
 ```
 
+Every no-op and dead instruction also carries a stable structured reason.
+Model output and collapsed TUI output show concise per-instruction reasons;
+expanded TUI output additionally shows dead-operation domination evidence.
+Model-facing status labels and separators are ASCII, while the TUI may use
+Unicode symbols. Model and collapsed output show at most eight explanations
+with an omitted count; expanded output shows all explanations.
+
 Do not report a harmless redundant operation as an error.
 
 Textual turn-diff aggregation must not claim reconstructable old/new text for
@@ -1060,17 +1092,33 @@ delta exists; if the current history model cannot express that distinction,
 invalidate or mark the aggregate textual diff inexact rather than serializing
 binary content.
 
-## Deliberate differences from official Codex
+## Deliberate extensions and differences from official Codex
 
 This extension intentionally differs from official Codex in these areas:
 
 1. A grammar-valid empty update without a move succeeds as a no-op.
-2. A grammar-valid move-only update is accepted.
-3. Pure moves support arbitrary opaque binary files.
-4. Repeated resolved target paths are evaluated sequentially instead of being
-   rejected categorically.
-5. Deleting an absent file succeeds as a no-op.
-6. Inapplicable operations may be skipped when they are proven dead.
+2. Identity-only updates succeed without requiring or rewriting a target.
+3. A grammar-valid move-only update is accepted.
+4. Pure moves support arbitrary opaque binary files and move symbolic-link
+   entries without dereferencing them.
+5. Adding already-present bytes, deleting an absent path, self-moves, and
+   same-patch fulfilled moves succeed as verified no-ops.
+6. Repeated and aliased paths receive one coherent sequential virtual
+   filesystem interpretation across preview, preflight, and execution.
+7. Inapplicable operations may be skipped only when exact read/write and
+   filesystem-identity analysis proves them dead.
+8. Conservative formatter recovery supports exact-token whole-line reflow,
+   typed Markdown fences, and exact-cell Markdown tables without changing
+   requested replacement lines.
+9. Strict edits preserve local CRLF or mixed line endings instead of retaining
+   Codex's current edited-region LF conversion.
+10. Preflight classifies the complete operation sequence, models native versus
+    cross-filesystem topology, and reports structured no-op, dead, and failure
+    evidence.
+
+These extensions retain Codex's strict matching-mode priority, first-match
+behavior, explicit EOF meaning, unrestricted path resolution, and
+line-oriented patch grammar unless a difference above says otherwise.
 
 These differences do not authorize:
 

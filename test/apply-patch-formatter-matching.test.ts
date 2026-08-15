@@ -3,11 +3,13 @@ import { lstat, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test, { type TestContext } from "node:test";
+import { Language, Parser } from "web-tree-sitter";
 import {
   applyPatch,
   ApplyPatchVerificationError,
   parsePatch,
 } from "../extensions/openai-codex-compat/apply-patch-engine.ts";
+import { setApplyPatchStructuralRuntimeForTesting } from "../extensions/openai-codex-compat/apply-patch-matcher.ts";
 
 async function workspace(t: TestContext): Promise<string> {
   const cwd = await mkdtemp(join(tmpdir(), "pi-codex-formatter-patch-"));
@@ -48,6 +50,67 @@ void test("retains context, addition, and deletion roles while parsing update hu
     { kind: "add", text: "new" },
     { kind: "context", text: "after" },
   ]);
+});
+
+void test("retries parser initialization and grammar loading after transient failures", async (t) => {
+  const cwd = await workspace(t);
+  const source = "const result = combine(alpha, beta);\n";
+  const patch = updatePatch(
+    "retry.js",
+    ["const result = combine(", "  alpha,", "  beta", ");"],
+    ["const result = merge(", "  alpha,", "  beta", ");"],
+  );
+
+  await writeFile(join(cwd, "retry.js"), source);
+  let initializationAttempts = 0;
+  const restoreInitialization = setApplyPatchStructuralRuntimeForTesting({
+    async initializeParser() {
+      initializationAttempts += 1;
+      if (initializationAttempts === 1) throw new Error("injected parser initialization failure");
+      await Parser.init();
+    },
+  });
+  try {
+    await assert.rejects(applyPatch(cwd, patch), ApplyPatchVerificationError);
+    assert.equal(initializationAttempts, 1);
+    assert.equal(await readFile(join(cwd, "retry.js"), "utf8"), source);
+    await applyPatch(cwd, patch);
+    assert.equal(initializationAttempts, 2);
+    assert.equal(
+      await readFile(join(cwd, "retry.js"), "utf8"),
+      "const result = merge(\n  alpha,\n  beta\n);\n",
+    );
+  } finally {
+    restoreInitialization();
+  }
+
+  await writeFile(join(cwd, "retry-language.js"), source);
+  const languagePatch = updatePatch(
+    "retry-language.js",
+    ["const result = combine(", "  alpha,", "  beta", ");"],
+    ["const result = merge(", "  alpha,", "  beta", ");"],
+  );
+  let languageAttempts = 0;
+  const restoreLanguage = setApplyPatchStructuralRuntimeForTesting({
+    async loadLanguage(path) {
+      languageAttempts += 1;
+      if (languageAttempts === 1) throw new Error("injected grammar loading failure");
+      return Language.load(path);
+    },
+  });
+  try {
+    await assert.rejects(applyPatch(cwd, languagePatch), ApplyPatchVerificationError);
+    assert.equal(languageAttempts, 1);
+    assert.equal(await readFile(join(cwd, "retry-language.js"), "utf8"), source);
+    await applyPatch(cwd, languagePatch);
+    assert.equal(languageAttempts, 2);
+    assert.equal(
+      await readFile(join(cwd, "retry-language.js"), "utf8"),
+      "const result = merge(\n  alpha,\n  beta\n);\n",
+    );
+  } finally {
+    restoreLanguage();
+  }
 });
 
 void test("uses packaged Tree-sitter grammars to recover formatter-reflowed edits", async (t) => {

@@ -745,7 +745,7 @@ function insertionCandidates(
 
 function parserInitializationPromise(): Promise<void> {
   if (!parserInitialization) {
-    const promise = Parser.init();
+    const promise = structuralRuntime.initializeParser();
     parserInitialization = promise;
     void promise.catch(() => {
       if (parserInitialization === promise) parserInitialization = undefined;
@@ -759,7 +759,7 @@ async function loadLanguage(grammar: GrammarName): Promise<Language> {
   if (!promise) {
     promise = (async () => {
       await parserInitializationPromise();
-      return Language.load(fileURLToPath(wasmURL(grammar)));
+      return structuralRuntime.loadLanguage(fileURLToPath(wasmURL(grammar)));
     })();
     languagePromises.set(grammar, promise);
     void promise.catch(() => {
@@ -767,6 +767,30 @@ async function loadLanguage(grammar: GrammarName): Promise<Language> {
     });
   }
   return promise;
+}
+
+type StructuralRuntime = {
+  initializeParser: () => Promise<void>;
+  loadLanguage: (path: string) => Promise<Language>;
+};
+
+const DEFAULT_STRUCTURAL_RUNTIME: StructuralRuntime = {
+  initializeParser: () => Parser.init(),
+  loadLanguage: (path) => Language.load(path),
+};
+let structuralRuntime = DEFAULT_STRUCTURAL_RUNTIME;
+
+export function setApplyPatchStructuralRuntimeForTesting(
+  overrides: Partial<StructuralRuntime>,
+): () => void {
+  parserInitialization = undefined;
+  languagePromises.clear();
+  structuralRuntime = { ...DEFAULT_STRUCTURAL_RUNTIME, ...overrides };
+  return () => {
+    parserInitialization = undefined;
+    languagePromises.clear();
+    structuralRuntime = DEFAULT_STRUCTURAL_RUNTIME;
+  };
 }
 
 function grammarForPath(path: string): GrammarName | undefined {

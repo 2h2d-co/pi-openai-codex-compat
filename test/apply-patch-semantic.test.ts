@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { execFile } from "node:child_process";
 import { writeFileSync } from "node:fs";
 import {
   chmod,
@@ -19,6 +20,8 @@ import {
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
+import { promisify } from "node:util";
+import { createServer } from "node:net";
 import test, { type TestContext } from "node:test";
 import type { Theme } from "@earendil-works/pi-coding-agent";
 import {
@@ -32,6 +35,8 @@ import {
 } from "../extensions/openai-codex-compat/apply-patch-engine.ts";
 import { ApplyPatchDiffComponent } from "../extensions/openai-codex-compat/apply-patch-diff-render.ts";
 import { formatApplyPatchRenderText } from "../extensions/openai-codex-compat/apply-patch-render.ts";
+
+const execFileAsync = promisify(execFile);
 
 async function workspace(t: TestContext): Promise<string> {
   const cwd = await mkdtemp(join(tmpdir(), "pi-codex-semantic-patch-"));
@@ -969,6 +974,40 @@ void test("executes planned move strategies and reports every injected failure p
   assert.equal(await readFile(join(cwd, "installed-source.txt"), "utf8"), "installed\n");
   assert.equal(await readFile(join(cwd, "installed-destination.txt"), "utf8"), "installed\n");
 
+  await writeFile(join(cwd, "text-move-source.txt"), "before\n");
+  await assert.rejects(
+    applyPatch(
+      cwd,
+      patch(
+        "*** Update File: text-move-source.txt\n",
+        "*** Move to: text-move-destination.txt\n",
+        "@@\n-before\n+after\n",
+      ),
+      undefined,
+      {
+        filesystem: {
+          async unlink(path) {
+            if (path === join(cwd, "text-move-source.txt")) {
+              throw filesystemError("EACCES", "injected text-move source removal failure");
+            }
+            await unlink(path);
+          },
+        },
+      },
+    ),
+    (error: unknown) => {
+      assert.ok(error instanceof ApplyPatchExecutionError);
+      assert.equal(error.details.exact, false);
+      assert.equal(error.details.changes.length, 1);
+      assert.equal(error.details.changes[0]?.kind, "add");
+      assert.equal(error.details.failure?.failedInstruction, 1);
+      assert.match(error.message, /Failed to remove original/u);
+      return true;
+    },
+  );
+  assert.equal(await readFile(join(cwd, "text-move-source.txt"), "utf8"), "before\n");
+  assert.equal(await readFile(join(cwd, "text-move-destination.txt"), "utf8"), "after\n");
+
   await writeFile(join(cwd, "removed-source.txt"), "source\n");
   await writeFile(join(cwd, "removed-destination.txt"), "destination\n");
   let failedInstallAttempts = 0;
@@ -1164,6 +1203,7 @@ void test("serializes same-process filesystem aliases with deterministic logical
 
   await mkdir(join(cwd, "real-parent"));
   await symlink("real-parent", join(cwd, "alias-parent"));
+  await assertAliasAddsSerialize("real-parent/missing-tail.txt", "alias-parent/missing-tail.txt");
   await writeFile(join(cwd, "real-parent", "queued.txt"), "before\n");
   const parentStarted = deferred();
   const releaseParent = deferred();
@@ -1195,6 +1235,73 @@ void test("serializes same-process filesystem aliases with deterministic logical
   releaseParent.resolve();
   await Promise.all([parentUpdate, parentAliasUpdate]);
   assert.equal(await readFile(join(cwd, "real-parent", "queued.txt"), "utf8"), "two\n");
+
+  await writeFile(join(cwd, "move-queue-source.txt"), "source\n");
+  const destinationHolderStarted = deferred();
+  const releaseDestinationHolder = deferred();
+  let destinationMoveStarted = false;
+  const destinationHolder = applyPatch(
+    cwd,
+    patch("*** Add File: move-queue-destination.txt\n+temporary\n"),
+    undefined,
+    {
+      async onExecutionStart() {
+        destinationHolderStarted.resolve();
+        await releaseDestinationHolder.promise;
+      },
+    },
+  );
+  await destinationHolderStarted.promise;
+  const destinationMove = applyPatch(
+    cwd,
+    patch("*** Update File: move-queue-source.txt\n*** Move to: move-queue-destination.txt\n"),
+    undefined,
+    {
+      onExecutionStart() {
+        destinationMoveStarted = true;
+      },
+    },
+  );
+  await delay(25);
+  assert.equal(destinationMoveStarted, false);
+  releaseDestinationHolder.resolve();
+  await Promise.all([destinationHolder, destinationMove]);
+  await assertMissing(join(cwd, "move-queue-source.txt"));
+  assert.equal(await readFile(join(cwd, "move-queue-destination.txt"), "utf8"), "source\n");
+
+  const sourceHolderStarted = deferred();
+  const releaseSourceHolder = deferred();
+  let sourceMoveStarted = false;
+  const sourceHolder = applyPatch(
+    cwd,
+    patch("*** Add File: move-queue-new-source.txt\n+new source\n"),
+    undefined,
+    {
+      async onExecutionStart() {
+        sourceHolderStarted.resolve();
+        await releaseSourceHolder.promise;
+      },
+    },
+  );
+  await sourceHolderStarted.promise;
+  const sourceMove = applyPatch(
+    cwd,
+    patch(
+      "*** Update File: move-queue-new-source.txt\n*** Move to: move-queue-new-destination.txt\n",
+    ),
+    undefined,
+    {
+      onExecutionStart() {
+        sourceMoveStarted = true;
+      },
+    },
+  );
+  await delay(25);
+  assert.equal(sourceMoveStarted, false);
+  releaseSourceHolder.resolve();
+  await Promise.all([sourceHolder, sourceMove]);
+  await assertMissing(join(cwd, "move-queue-new-source.txt"));
+  assert.equal(await readFile(join(cwd, "move-queue-new-destination.txt"), "utf8"), "new source\n");
 
   await writeFile(join(cwd, "order-a.txt"), "a0\n");
   await writeFile(join(cwd, "order-b.txt"), "b0\n");
@@ -1241,6 +1348,210 @@ void test("serializes same-process filesystem aliases with deterministic logical
   assert.equal(await readFile(join(cwd, "order-a.txt"), "utf8"), "a2\n");
   assert.equal(await readFile(join(cwd, "order-b.txt"), "utf8"), "b2\n");
 });
+
+void test("honors cancellation before, during, and between apply_patch phases", async (t) => {
+  const cwd = await workspace(t);
+
+  const preAborted = new AbortController();
+  preAborted.abort();
+  await assert.rejects(
+    applyPatch(cwd, patch("*** Add File: pre-aborted.txt\n+no\n"), preAborted.signal),
+    /apply_patch was cancelled/u,
+  );
+  await assertMissing(join(cwd, "pre-aborted.txt"));
+
+  await writeFile(join(cwd, "matcher-cancel.js"), "const result = combine(alpha, beta);\n");
+  let signalReads = 0;
+  let matcherExecutionStarted = false;
+  const matcherSignal = {
+    get aborted() {
+      signalReads += 1;
+      return signalReads >= 5;
+    },
+  } as AbortSignal;
+  await assert.rejects(
+    applyPatch(
+      cwd,
+      patch(
+        "*** Update File: matcher-cancel.js\n@@\n",
+        "-const result = combine(\n",
+        "-  alpha,\n",
+        "-  beta\n",
+        "-);\n",
+        "+const result = merge(\n",
+        "+  alpha,\n",
+        "+  beta\n",
+        "+);\n",
+      ),
+      matcherSignal,
+      {
+        onExecutionStart() {
+          matcherExecutionStarted = true;
+        },
+      },
+    ),
+    /apply_patch was cancelled/u,
+  );
+  assert.equal(matcherExecutionStarted, false);
+  assert.ok(signalReads >= 5);
+  assert.equal(
+    await readFile(join(cwd, "matcher-cancel.js"), "utf8"),
+    "const result = combine(alpha, beta);\n",
+  );
+
+  const firstStarted = deferred();
+  const releaseFirst = deferred();
+  const holder = applyPatch(cwd, patch("*** Add File: queued-cancel.txt\n+holder\n"), undefined, {
+    async onExecutionStart() {
+      firstStarted.resolve();
+      await releaseFirst.promise;
+    },
+  });
+  await firstStarted.promise;
+  const waitingController = new AbortController();
+  let waitingSettled = false;
+  const waiting = applyPatch(
+    cwd,
+    patch("*** Add File: queued-cancel.txt\n+cancelled\n"),
+    waitingController.signal,
+  ).finally(() => {
+    waitingSettled = true;
+  });
+  waitingController.abort();
+  await delay(25);
+  assert.equal(waitingSettled, false);
+  releaseFirst.resolve();
+  await holder;
+  await assert.rejects(waiting, /apply_patch was cancelled/u);
+  assert.equal(await readFile(join(cwd, "queued-cancel.txt"), "utf8"), "holder\n");
+
+  const beforeMutationController = new AbortController();
+  await assert.rejects(
+    applyPatch(
+      cwd,
+      patch("*** Add File: before-mutation.txt\n+no\n"),
+      beforeMutationController.signal,
+      {
+        onExecutionStart() {
+          beforeMutationController.abort();
+        },
+      },
+    ),
+    (error: unknown) => {
+      assert.ok(error instanceof ApplyPatchExecutionError);
+      assert.equal(error.details.changes.length, 0);
+      assert.equal(error.details.failure?.failedInstruction, 1);
+      assert.deepEqual(
+        error.details.instructions?.map(({ status }) => status),
+        ["failed"],
+      );
+      return true;
+    },
+  );
+  await assertMissing(join(cwd, "before-mutation.txt"));
+
+  const betweenController = new AbortController();
+  await assert.rejects(
+    applyPatch(
+      cwd,
+      patch(
+        "*** Add File: between-first.txt\n+first\n",
+        "*** Add File: between-second.txt\n+second\n",
+      ),
+      betweenController.signal,
+      {
+        onProgress() {
+          betweenController.abort();
+        },
+      },
+    ),
+    (error: unknown) => {
+      assert.ok(error instanceof ApplyPatchExecutionError);
+      assert.equal(error.details.changes.length, 1);
+      assert.equal(error.details.failure?.failedInstruction, 2);
+      assert.deepEqual(
+        error.details.instructions?.map(({ status }) => status),
+        ["applied", "failed"],
+      );
+      return true;
+    },
+  );
+  assert.equal(await readFile(join(cwd, "between-first.txt"), "utf8"), "first\n");
+  await assertMissing(join(cwd, "between-second.txt"));
+
+  await applyPatch(cwd, patch("*** Add File: queue-released.txt\n+yes\n"));
+  assert.equal(await readFile(join(cwd, "queue-released.txt"), "utf8"), "yes\n");
+});
+
+void test(
+  "rejects directories, FIFOs, sockets, and available device entries before mutation",
+  { skip: process.platform === "win32" },
+  async (t) => {
+    const cwd = await workspace(t);
+    const directory = join(cwd, "directory");
+    const fifo = join(cwd, "named-pipe");
+    const socket = join(cwd, "unix-socket");
+    await mkdir(directory);
+    await execFileAsync("mkfifo", [fifo]);
+
+    const server = createServer();
+    await new Promise<void>((resolvePromise, reject) => {
+      server.once("error", reject);
+      server.listen(socket, resolvePromise);
+    });
+    try {
+      const specialPaths: Array<{ path: string; kind: string }> = [
+        { path: directory, kind: "directory" },
+        { path: fifo, kind: "fifo" },
+        { path: socket, kind: "socket" },
+      ];
+      try {
+        if ((await lstat("/dev/null")).isCharacterDevice()) {
+          specialPaths.push({ path: "/dev/null", kind: "character device" });
+        }
+      } catch {}
+      try {
+        for (const name of await readdir("/dev")) {
+          const candidate = join("/dev", name);
+          if ((await lstat(candidate)).isBlockDevice()) {
+            specialPaths.push({ path: candidate, kind: "block device" });
+            break;
+          }
+        }
+      } catch {}
+
+      for (const special of specialPaths) {
+        await assert.rejects(
+          applyPatch(cwd, patch(`*** Update File: ${special.path}\n@@\n-old\n+new\n`)),
+          (error: unknown) => {
+            assert.ok(error instanceof ApplyPatchVerificationError);
+            assert.match(error.message, new RegExp(special.kind, "u"));
+            assert.equal(error.details.changes.length, 0);
+            assert.equal(error.details.failure?.phase, "preflight");
+            return true;
+          },
+        );
+        const metadata = await lstat(special.path);
+        assert.equal(
+          special.kind === "directory"
+            ? metadata.isDirectory()
+            : special.kind === "fifo"
+              ? metadata.isFIFO()
+              : special.kind === "socket"
+                ? metadata.isSocket()
+                : special.kind === "character device"
+                  ? metadata.isCharacterDevice()
+                  : metadata.isBlockDevice(),
+          true,
+        );
+      }
+    } finally {
+      await new Promise<void>((resolvePromise, reject) => {
+        server.close((error) => (error ? reject(error) : resolvePromise()));
+      });
+    }
+  },
+);
 
 void test("deletes symbolic-link entries without deleting their targets", async (t) => {
   const cwd = await workspace(t);

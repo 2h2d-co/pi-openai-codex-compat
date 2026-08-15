@@ -2,8 +2,8 @@
 
 ## Status
 
-This is the implementation tracker for the remaining work identified by the
-fresh review after commit `9efb4dc`.
+All agreed work in this tracker is complete. It records the implementation and
+test decisions identified by the fresh review after commit `9efb4dc`.
 
 The semantic decisions in `APPLY_PATCH_SEMANTIC_OPERATIONS.md` remain
 authoritative. This document records confirmed defects, agreed follow-up work,
@@ -16,9 +16,9 @@ Official Codex was compared at:
 0bdce9f424eb9b39d7b3a8811742d10b6fbf8d54
 ```
 
-Current validation baseline:
+Final validation baseline:
 
-- `npm test`: 264 passed, 2 skipped
+- `npm test`: 273 passed, 2 skipped
 - `npm run check`: passed
 
 ## Dictionary
@@ -406,8 +406,7 @@ boolean so rendering can identify the dominating instruction.
 
 ## Workstream 7: Add structured context to execution failure model output
 
-**Status:** Structured model context implemented; injected partial-failure and
-cancellation coverage remains.
+**Status:** Complete.
 
 ### Current behavior
 
@@ -511,6 +510,9 @@ policy.
 
 ## Additional required test coverage
 
+**Status:** Complete on supported host facilities; block-device coverage runs
+when a block-device entry is available.
+
 The following gaps must be closed in addition to the workstream-specific
 tests:
 
@@ -532,6 +534,8 @@ Tests that cannot depend portably on host filesystem facilities should use
 injectable filesystem operations rather than silently remaining uncovered.
 
 ## Documentation corrections
+
+**Status:** Complete.
 
 ### `APPLY_PATCH_SEMANTIC_OPERATIONS.md`
 
