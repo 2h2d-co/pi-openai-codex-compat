@@ -104,6 +104,7 @@ export type AppliedPatchChange =
   | {
       kind: "delete";
       path: string;
+      entryType: "regular-file" | "symbolic-link";
       content?: string;
       displayDiff: string;
       additions: number;
@@ -611,6 +612,7 @@ export function coalesceAppliedPatchChangesForRendering(
         change: {
           kind: "delete",
           path: first.path,
+          entryType: "regular-file",
           content: oldContent,
           ...diffDetails(oldContent, ""),
         },
@@ -768,6 +770,11 @@ type ContentCell = {
   planned: boolean;
 };
 
+type PhysicalFileState = {
+  id: string;
+  linkCount: number;
+};
+
 type VirtualEntry =
   | { kind: "absent" }
   | { kind: "directory"; fingerprint?: EntryFingerprint }
@@ -779,6 +786,7 @@ type VirtualEntry =
       sourcePath?: string;
       fingerprint?: EntryFingerprint;
       content: ContentCell;
+      physical?: PhysicalFileState;
     }
   | {
       kind: "symlink";
@@ -839,6 +847,7 @@ type PlannedMutation = (
       parents: ParentPlan;
       sourceKey: string;
       destinationKey: string;
+      moveStrategy: "rename" | "copy-unlink";
       entryMutations: PlannedEntryMutation[];
       change: Extract<AppliedPatchChange, { kind: "move" }>;
     }
@@ -965,13 +974,17 @@ function instructionForOperation(
 
 class SemanticPlanner {
   private readonly states = new Map<string, VirtualEntry>();
-  private readonly physicalContent = new Map<string, ContentCell>();
+  private readonly physicalFiles = new Map<
+    string,
+    { content: ContentCell; physical: PhysicalFileState }
+  >();
   private readonly mutations: PlannedMutation[] = [];
   private readonly fulfilledMoves = new Map<
     string,
     { destinationKey: string; destinationEntryId: string }
   >();
   private nextEntryId = 0;
+  private nextPhysicalId = 0;
   private exact = true;
   private readonly operations: readonly ResolvedOperation[];
   private readonly instructions: ApplyPatchInstructionDetails[];
@@ -1039,6 +1052,20 @@ class SemanticPlanner {
   private newEntryId(): string {
     this.nextEntryId += 1;
     return `planned-entry-${this.nextEntryId}`;
+  }
+
+  private newPhysicalFile(linkCount = 1): PhysicalFileState {
+    this.nextPhysicalId += 1;
+    return {
+      id: `planned-physical-${this.nextPhysicalId}`,
+      linkCount,
+    };
+  }
+
+  private releasePhysicalLink(entry: VirtualEntry): void {
+    if (entry.kind === "regular" && entry.physical && entry.physical.linkCount > 0) {
+      entry.physical.linkCount -= 1;
+    }
   }
 
   private async directoryIsCaseInsensitive(directory: string): Promise<boolean> {
@@ -1140,10 +1167,13 @@ class SemanticPlanner {
       const entryFingerprint = fingerprint(metadata);
       if (metadata.isFile()) {
         const physicalKey = `${metadata.dev}:${metadata.ino}`;
-        let content = this.physicalContent.get(physicalKey);
-        if (!content) {
-          content = { planned: false };
-          this.physicalContent.set(physicalKey, content);
+        let file = this.physicalFiles.get(physicalKey);
+        if (!file) {
+          file = {
+            content: { planned: false },
+            physical: this.newPhysicalFile(metadata.nlink),
+          };
+          this.physicalFiles.set(physicalKey, file);
         }
         result = {
           kind: "regular",
@@ -1151,7 +1181,8 @@ class SemanticPlanner {
           entryPath: path,
           sourcePath: path,
           fingerprint: entryFingerprint,
-          content,
+          content: file.content,
+          physical: file.physical,
         };
       } else if (metadata.isSymbolicLink()) {
         const target = await readlink(path);
@@ -1316,6 +1347,27 @@ class SemanticPlanner {
     return { createdPaths: created, expectations };
   }
 
+  private async entryFilesystemDevice(path: string): Promise<number> {
+    const root = parse(path).root;
+    let parent = dirname(path);
+    while (true) {
+      const entry = await this.stateAt(parent);
+      if (entry.kind === "directory" && entry.fingerprint) {
+        return entry.fingerprint.device;
+      }
+      if (entry.kind === "symlink") {
+        try {
+          const metadata = await stat(entry.sourcePath ?? parent);
+          if (metadata.isDirectory()) return metadata.dev;
+        } catch {}
+      }
+      if (parent === root) {
+        throw new Error(`Cannot determine filesystem for ${path}`);
+      }
+      parent = dirname(parent);
+    }
+  }
+
   private operationRelatedPaths(operation: ResolvedOperation): string[] {
     if (operation.kind !== "update" || !operation.moveAbsolutePath) {
       return [operation.absolutePath];
@@ -1341,26 +1393,28 @@ class SemanticPlanner {
 
   private async operationObservesPhysicalEntry(
     operation: ResolvedOperation,
-    fingerprint: EntryFingerprint,
+    affected: Extract<VirtualEntry, { kind: "regular" }>,
   ): Promise<boolean> {
+    const sameEntry = (entry: VirtualEntry | undefined): boolean => {
+      if (entry?.kind !== "regular") return false;
+      if (affected.physical && entry.physical) {
+        return affected.physical.id === entry.physical.id;
+      }
+      return (
+        affected.fingerprint !== undefined &&
+        entry.fingerprint !== undefined &&
+        samePhysicalEntry(affected.fingerprint, entry.fingerprint)
+      );
+    };
     if (operation.kind === "update" && !chunksAreIdentity(operation.chunks)) {
       const target = await this.resolvedTextTarget(operation.absolutePath);
-      return (
-        target?.entry.kind === "regular" &&
-        target.entry.fingerprint !== undefined &&
-        samePhysicalEntry(target.entry.fingerprint, fingerprint)
-      );
+      return sameEntry(target?.entry);
     }
     if (operation.kind === "update" && chunksAreIdentity(operation.chunks)) {
       if (!updateHasSemanticMove(operation)) return false;
       const source = await this.stateAt(operation.absolutePath);
       const destination = await this.stateAt(operation.moveAbsolutePath!);
-      return [source, destination].some(
-        (entry) =>
-          entry.kind === "regular" &&
-          entry.fingerprint !== undefined &&
-          samePhysicalEntry(entry.fingerprint, fingerprint),
-      );
+      return [source, destination].some(sameEntry);
     }
     return false;
   }
@@ -1400,8 +1454,11 @@ class SemanticPlanner {
       return false;
     }
 
-    if (target.entry.kind !== "regular" || !target.entry.fingerprint) return false;
+    if (target.entry.kind !== "regular") return false;
     const affectedFingerprint = target.entry.fingerprint;
+    const affectedPhysical = target.entry.physical;
+    if (!affectedFingerprint && !affectedPhysical) return false;
+    const effectiveLinkCount = affectedPhysical?.linkCount ?? affectedFingerprint!.linkCount;
     const affectedKey = await this.pathKey(target.path);
     const deletedEntryKeys = new Set<string>();
     for (const operation of this.operations.slice(index + 1)) {
@@ -1416,15 +1473,17 @@ class SemanticPlanner {
         const deleted = await this.stateAt(operation.absolutePath);
         if (
           deleted.kind === "regular" &&
-          deleted.fingerprint !== undefined &&
-          samePhysicalEntry(deleted.fingerprint, affectedFingerprint)
+          ((affectedPhysical && deleted.physical && affectedPhysical.id === deleted.physical.id) ||
+            (affectedFingerprint &&
+              deleted.fingerprint !== undefined &&
+              samePhysicalEntry(deleted.fingerprint, affectedFingerprint)))
         ) {
           deletedEntryKeys.add(await this.pathKey(operation.absolutePath));
-          if (deletedEntryKeys.size >= affectedFingerprint.linkCount) return true;
+          if (deletedEntryKeys.size >= effectiveLinkCount) return true;
           continue;
         }
       }
-      if (await this.operationObservesPhysicalEntry(operation, affectedFingerprint)) {
+      if (await this.operationObservesPhysicalEntry(operation, target.entry)) {
         return false;
       }
       if (
@@ -1609,10 +1668,12 @@ class SemanticPlanner {
       ],
       change,
     });
+    this.releasePhysicalLink(target);
     await this.setState(operation.absolutePath, {
       kind: "regular",
       id: this.newEntryId(),
       entryPath: operation.absolutePath,
+      physical: this.newPhysicalFile(),
       content: {
         value: { bytes: content, text: operation.content },
         planned: true,
@@ -1633,14 +1694,17 @@ class SemanticPlanner {
     }
 
     const content =
-      target.content.value?.text ??
-      (this.hasLaterTextEdit(index, operation.absolutePath)
-        ? await this.optionalText(target, operation.absolutePath)
-        : undefined);
+      target.kind === "regular"
+        ? (target.content.value?.text ??
+          (this.hasLaterTextEdit(index, operation.absolutePath)
+            ? await this.optionalText(target, operation.absolutePath)
+            : undefined))
+        : undefined;
     const expectedTarget = this.snapshot(target);
     const change: Extract<AppliedPatchChange, { kind: "delete" }> = {
       kind: "delete",
       path: operation.path,
+      entryType: target.kind === "regular" ? "regular-file" : "symbolic-link",
       ...(content !== undefined ? { content } : {}),
       ...(content === undefined
         ? { displayDiff: "", additions: 0, deletions: 0 }
@@ -1665,6 +1729,7 @@ class SemanticPlanner {
       ],
       change,
     });
+    this.releasePhysicalLink(target);
     await this.setState(operation.absolutePath, ABSENT_ENTRY);
   }
 
@@ -1755,6 +1820,7 @@ class SemanticPlanner {
           entryPath: operation.absolutePath,
           ...(source.fingerprint?.linkCount === 1 ? {} : { sourcePath: source.sourcePath }),
           content: source.content,
+          ...(source.physical ? { physical: source.physical } : {}),
         });
       }
       return;
@@ -1808,10 +1874,12 @@ class SemanticPlanner {
           ...diffDetails(oldContent, newContent),
         },
       });
+      this.releasePhysicalLink(source);
       const resultingEntry: Extract<VirtualEntry, { kind: "regular" }> = {
         kind: "regular",
         id: this.newEntryId(),
         entryPath: destinationPath,
+        physical: this.newPhysicalFile(),
         content: {
           value: { bytes: content, text: newContent },
           planned: true,
@@ -1896,11 +1964,14 @@ class SemanticPlanner {
       change,
       provisionalChange,
     });
+    this.releasePhysicalLink(source);
+    this.releasePhysicalLink(destination);
     await this.setState(operation.absolutePath, ABSENT_ENTRY);
     const resultingEntry: Extract<VirtualEntry, { kind: "regular" }> = {
       kind: "regular",
       id: this.newEntryId(),
       entryPath: destinationPath,
+      physical: this.newPhysicalFile(),
       content: {
         value: { bytes: content, text: newContent },
         planned: true,
@@ -1959,6 +2030,7 @@ class SemanticPlanner {
           parents: { createdPaths: [], expectations: [] },
           sourceKey,
           destinationKey,
+          moveStrategy: "rename",
           entryMutations: [
             {
               path: destinationPath,
@@ -2005,6 +2077,11 @@ class SemanticPlanner {
       expectedDestination.kind === "absent"
         ? await this.ensureParents(destinationPath)
         : { createdPaths: [], expectations: [] };
+    const [sourceDevice, destinationDevice] = await Promise.all([
+      this.entryFilesystemDevice(operation.absolutePath),
+      this.entryFilesystemDevice(destinationPath),
+    ]);
+    const moveStrategy = sourceDevice === destinationDevice ? "rename" : "copy-unlink";
     const replacedDestination = expectedDestination.kind !== "absent";
     const expectedSource = this.snapshot(source) as Extract<
       VirtualEntry,
@@ -2031,6 +2108,7 @@ class SemanticPlanner {
       parents,
       sourceKey,
       destinationKey,
+      moveStrategy,
       entryMutations: [
         {
           path: operation.absolutePath,
@@ -2050,11 +2128,37 @@ class SemanticPlanner {
       ],
       change,
     });
+    this.releasePhysicalLink(expectedDestination);
+    if (moveStrategy === "copy-unlink") this.releasePhysicalLink(source);
     await this.setState(operation.absolutePath, ABSENT_ENTRY);
-    await this.setState(destinationPath, { ...source, entryPath: destinationPath });
+    let resultingEntry: Extract<VirtualEntry, { kind: "regular" | "symlink" }>;
+    if (moveStrategy === "copy-unlink" && source.kind === "regular") {
+      const content: ContentCell = {
+        ...(source.content.value ? { value: source.content.value } : {}),
+        planned: source.content.planned,
+      };
+      resultingEntry = {
+        kind: "regular",
+        id: this.newEntryId(),
+        entryPath: destinationPath,
+        sourcePath: source.sourcePath ?? source.entryPath,
+        content,
+        physical: this.newPhysicalFile(),
+      };
+    } else if (moveStrategy === "copy-unlink") {
+      resultingEntry = {
+        ...source,
+        id: this.newEntryId(),
+        entryPath: destinationPath,
+        sourcePath: source.sourcePath ?? source.entryPath,
+      };
+    } else {
+      resultingEntry = { ...source, entryPath: destinationPath };
+    }
+    await this.setState(destinationPath, resultingEntry);
     this.fulfilledMoves.set(sourceKey, {
       destinationKey,
-      destinationEntryId: source.id,
+      destinationEntryId: resultingEntry.id,
     });
   }
 }
@@ -2469,12 +2573,17 @@ async function executePureMove(
 ): Promise<void> {
   const sourcePath = mutation.operation.absolutePath;
   const destinationPath = mutation.operation.moveAbsolutePath!;
+  if (mutation.moveStrategy === "copy-unlink") {
+    await installCrossDeviceMove(mutation);
+    return;
+  }
   try {
     await rename(sourcePath, destinationPath);
   } catch (error) {
-    if (!hasErrorCode(error, "EXDEV")) throw error;
-    await installCrossDeviceMove(mutation);
-    return;
+    if (hasErrorCode(error, "EXDEV")) {
+      throw new Error("rename unexpectedly crossed filesystem boundaries after preflight");
+    }
+    throw error;
   }
   try {
     await finishSameInodeRename(sourcePath, destinationPath);

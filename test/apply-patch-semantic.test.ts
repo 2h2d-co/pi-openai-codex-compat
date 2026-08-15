@@ -15,7 +15,7 @@ import {
   writeFile,
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import test, { type TestContext } from "node:test";
 import type { Theme } from "@earendil-works/pi-coding-agent";
 import {
@@ -25,6 +25,7 @@ import {
   ApplyPatchVerificationError,
   formatApplyPatchSummary,
   parsePatch,
+  previewPatch,
 } from "../extensions/openai-codex-compat/apply-patch-engine.ts";
 import { formatApplyPatchRenderText } from "../extensions/openai-codex-compat/apply-patch-render.ts";
 
@@ -452,6 +453,71 @@ void test("proves dead updates across symlink, hard-link, and path aliases", asy
   await assertMissing(join(cwd, "all-hard-a.txt"));
   await assertMissing(join(cwd, "all-hard-b.txt"));
 
+  await writeFile(join(cwd, "prior-hard-a.txt"), "before\n");
+  await link(join(cwd, "prior-hard-a.txt"), join(cwd, "prior-hard-b.txt"));
+  const priorHardLinkRemoved = await applyPatch(
+    cwd,
+    patch(
+      "*** Delete File: prior-hard-a.txt\n",
+      "*** Update File: prior-hard-b.txt\n@@\n-missing\n+after\n",
+      "*** Delete File: prior-hard-b.txt\n",
+    ),
+  );
+  assert.deepEqual(
+    priorHardLinkRemoved.instructions?.map(({ status }) => status),
+    ["applied", "dead", "applied"],
+  );
+  await assertMissing(join(cwd, "prior-hard-a.txt"));
+  await assertMissing(join(cwd, "prior-hard-b.txt"));
+
+  await writeFile(join(cwd, "replaced-hard-a.txt"), "before\n");
+  await link(join(cwd, "replaced-hard-a.txt"), join(cwd, "replaced-hard-b.txt"));
+  const priorHardLinkReplaced = await applyPatch(
+    cwd,
+    patch(
+      "*** Add File: replaced-hard-a.txt\n+independent\n",
+      "*** Update File: replaced-hard-b.txt\n@@\n-missing\n+after\n",
+      "*** Delete File: replaced-hard-b.txt\n",
+    ),
+  );
+  assert.deepEqual(
+    priorHardLinkReplaced.instructions?.map(({ status }) => status),
+    ["applied", "dead", "applied"],
+  );
+  assert.equal(await readFile(join(cwd, "replaced-hard-a.txt"), "utf8"), "independent\n");
+  await assertMissing(join(cwd, "replaced-hard-b.txt"));
+
+  const plannedEntryDominated = await applyPatch(
+    cwd,
+    patch(
+      "*** Add File: planned-entry.txt\n+known\n",
+      "*** Update File: planned-entry.txt\n@@\n-missing\n+after\n",
+      "*** Delete File: planned-entry.txt\n",
+    ),
+  );
+  assert.deepEqual(
+    plannedEntryDominated.instructions?.map(({ status }) => status),
+    ["applied", "dead", "applied"],
+  );
+  await assertMissing(join(cwd, "planned-entry.txt"));
+
+  await writeFile(join(cwd, "moved-hard-a.txt"), "before\n");
+  await link(join(cwd, "moved-hard-a.txt"), join(cwd, "moved-hard-b.txt"));
+  await assert.rejects(
+    applyPatch(
+      cwd,
+      patch(
+        "*** Update File: moved-hard-a.txt\n*** Move to: moved-hard-c.txt\n",
+        "*** Update File: moved-hard-b.txt\n@@\n-missing\n+after\n",
+        "*** Delete File: moved-hard-b.txt\n",
+      ),
+    ),
+    ApplyPatchVerificationError,
+  );
+  assert.equal(await readFile(join(cwd, "moved-hard-a.txt"), "utf8"), "before\n");
+  assert.equal(await readFile(join(cwd, "moved-hard-b.txt"), "utf8"), "before\n");
+  await assertMissing(join(cwd, "moved-hard-c.txt"));
+
   await mkdir(join(cwd, "real-parent"));
   await symlink("real-parent", join(cwd, "alias-parent"));
   await writeFile(join(cwd, "real-parent", "file.txt"), "before\n");
@@ -594,15 +660,107 @@ void test("keeps hard-link topology for no-op adds and pure native moves", async
   );
 });
 
+void test(
+  "plans cross-filesystem hard-link moves with independent destination identity",
+  { skip: process.platform === "win32" },
+  async (t) => {
+    const cwd = await workspace(t);
+    if ((await stat(cwd)).dev === (await stat("/dev")).dev) {
+      t.skip("a distinct local filesystem is required");
+      return;
+    }
+
+    await writeFile(join(cwd, "source-a.txt"), "before\n");
+    await link(join(cwd, "source-a.txt"), join(cwd, "source-b.txt"));
+    const destination = join("/dev", `pi-cross-preview-${basename(cwd)}`);
+    await assertMissing(destination);
+
+    const independent = await previewPatch(
+      cwd,
+      patch(
+        `*** Update File: source-a.txt\n*** Move to: ${destination}\n`,
+        `*** Update File: ${destination}\n@@\n-before\n+destination\n`,
+        "*** Update File: source-b.txt\n@@\n-before\n+remaining\n",
+      ),
+    );
+    assert.deepEqual(
+      independent.instructions?.map(({ status }) => status),
+      ["planned", "planned", "planned"],
+    );
+
+    await writeFile(join(cwd, "dead-a.txt"), "before\n");
+    await link(join(cwd, "dead-a.txt"), join(cwd, "dead-b.txt"));
+    const deadDestination = join("/dev", `pi-cross-dead-preview-${basename(cwd)}`);
+    await assertMissing(deadDestination);
+    const deadAfterCrossDeviceMove = await previewPatch(
+      cwd,
+      patch(
+        `*** Update File: dead-a.txt\n*** Move to: ${deadDestination}\n`,
+        "*** Update File: dead-b.txt\n@@\n-missing\n+after\n",
+        "*** Delete File: dead-b.txt\n",
+      ),
+    );
+    assert.deepEqual(
+      deadAfterCrossDeviceMove.instructions?.map(({ status }) => status),
+      ["planned", "dead", "planned"],
+    );
+  },
+);
+
 void test("deletes symbolic-link entries without deleting their targets", async (t) => {
   const cwd = await workspace(t);
   await writeFile(join(cwd, "target.txt"), "preserved\n");
   await symlink("target.txt", join(cwd, "alias.txt"));
 
-  await applyPatch(cwd, patch("*** Delete File: alias.txt\n"));
+  const direct = await applyPatch(cwd, patch("*** Delete File: alias.txt\n"));
 
   await assertMissing(join(cwd, "alias.txt"));
   assert.equal(await readFile(join(cwd, "target.txt"), "utf8"), "preserved\n");
+  assert.deepEqual(direct.changes, [
+    {
+      kind: "delete",
+      path: "alias.txt",
+      entryType: "symbolic-link",
+      displayDiff: "",
+      additions: 0,
+      deletions: 0,
+    },
+  ]);
+
+  await symlink("missing.txt", join(cwd, "dangling.txt"));
+  const dangling = await applyPatch(cwd, patch("*** Delete File: dangling.txt\n"));
+  assert.equal(
+    dangling.changes[0]?.kind === "delete" ? dangling.changes[0].entryType : undefined,
+    "symbolic-link",
+  );
+  await assertMissing(join(cwd, "dangling.txt"));
+
+  await writeFile(join(cwd, "followed-target.txt"), "old target\n");
+  await symlink("followed-target.txt", join(cwd, "followed-link.txt"));
+  const followed = await applyPatch(
+    cwd,
+    patch(
+      "*** Update File: followed-link.txt\n@@\n-old target\n+new target\n",
+      "*** Delete File: followed-link.txt\n",
+    ),
+  );
+  assert.equal(await readFile(join(cwd, "followed-target.txt"), "utf8"), "new target\n");
+  await assertMissing(join(cwd, "followed-link.txt"));
+  assert.deepEqual(followed.changes[1], {
+    kind: "delete",
+    path: "followed-link.txt",
+    entryType: "symbolic-link",
+    displayDiff: "",
+    additions: 0,
+    deletions: 0,
+  });
+  const theme = {
+    fg: (_color: string, text: string) => text,
+    bold: (text: string) => text,
+  } as unknown as Theme;
+  const rendered = formatApplyPatchRenderText(followed, theme, cwd);
+  assert.match(rendered, /followed-link\.txt \(deleted symbolic link\)/u);
+  assert.doesNotMatch(JSON.stringify(followed.changes[1]), /old target|new target/u);
 });
 
 void test("shares virtual state through a symlinked parent without moving the entry twice", async (t) => {

@@ -95,12 +95,19 @@ function changeVerb(change: AppliedPatchChange): string {
     case "add":
       return "Added";
     case "delete":
-      return "Deleted";
+      return change.entryType === "symbolic-link" ? "Deleted symbolic link" : "Deleted";
     case "move":
       return "Moved";
     case "update":
       return "Edited";
   }
+}
+
+function changeListPath(change: AppliedPatchChange, cwd: string): string {
+  const path = changePath(change, cwd);
+  return change.kind === "delete" && change.entryType === "symbolic-link"
+    ? `${path} (deleted symbolic link)`
+    : path;
 }
 
 function countSummary(additions: number, deletions: number, theme: Theme): string {
@@ -153,7 +160,8 @@ function isAppliedPatchChange(value: unknown): value is AppliedPatchChange {
   if (typeof change.path !== "string") return false;
   if (change.kind === "add" || change.kind === "delete") {
     return change.kind === "delete"
-      ? change.content === undefined || typeof change.content === "string"
+      ? (change.entryType === "regular-file" || change.entryType === "symbolic-link") &&
+          (change.content === undefined || typeof change.content === "string")
       : typeof change.content === "string";
   }
   return (
@@ -686,7 +694,7 @@ export function formatApplyPatchRenderText(
     for (const [index, change] of changes.entries()) {
       if (changes.length > 1) {
         lines.push(
-          `  ${theme.fg("dim", "└ ")}${changePath(change, cwd)} ${countSummary(change.additions, change.deletions, theme)}`,
+          `  ${theme.fg("dim", "└ ")}${changeListPath(change, cwd)} ${countSummary(change.additions, change.deletions, theme)}`,
         );
       }
       lines.push(
@@ -730,7 +738,7 @@ export class ApplyPatchDiffComponent implements Component {
       for (const [index, change] of changes.entries()) {
         if (this.expanded && index > 0) lines.push("");
         if (changes.length > 1) {
-          const header = `  ${this.theme.fg("dim", "└ ")}${changePath(change, this.cwd)} ${countSummary(change.additions, change.deletions, this.theme)}`;
+          const header = `  ${this.theme.fg("dim", "└ ")}${changeListPath(change, this.cwd)} ${countSummary(change.additions, change.deletions, this.theme)}`;
           lines.push(...wrapTextWithAnsi(header, effectiveWidth));
         }
         if (this.expanded) {

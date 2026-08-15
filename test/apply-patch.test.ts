@@ -763,6 +763,7 @@ void test("registers the Codex freeform tool with model, UI, and failed-history 
       {
         kind: "delete",
         path: "obsolete.txt",
+        entryType: "regular-file",
         content: "remove\n",
         displayDiff: "-1 remove",
         additions: 0,

@@ -74,7 +74,7 @@ The following previously rejected review proposals remain rejected:
 
 ## Workstream 1: Preserve CRLF on the strict matching path
 
-**Status:** Implemented; final full-suite validation pending.
+**Status:** Complete.
 
 ### Current behavior
 
@@ -173,7 +173,8 @@ required.
 
 ## Workstream 3: Model cross-filesystem move topology correctly
 
-**Status:** Agreed; implementation required.
+**Status:** Planning and topology implemented; deterministic execution-failure
+coverage remains.
 
 ### Defect
 
@@ -233,7 +234,7 @@ EXDEV simulation rather than depending exclusively on host mount layout.
 
 ## Workstream 4: Represent symbolic-link deletion as an entry operation
 
-**Status:** Agreed; implementation required.
+**Status:** Complete.
 
 ### Defect
 
@@ -275,7 +276,7 @@ textual content; this behavior should be retained and tested.
 
 ## Workstream 5: Account for earlier planned hard-link removals in dead proofs
 
-**Status:** Agreed; implementation required.
+**Status:** Complete.
 
 ### Defect
 
