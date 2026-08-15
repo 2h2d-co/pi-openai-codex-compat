@@ -173,8 +173,7 @@ required.
 
 ## Workstream 3: Model cross-filesystem move topology correctly
 
-**Status:** Planning and topology implemented; deterministic execution-failure
-coverage remains.
+**Status:** Complete.
 
 ### Defect
 

@@ -18,6 +18,7 @@
 - Serialize same-process `apply_patch` calls across case, Unicode, symlink-parent, and hard-link aliases while retaining Pi's ordinary path queues.
 - Explain every successful no-op and provably dead instruction in model output and the TUI, with bounded collapsed output and expanded domination evidence.
 - Include failed instruction labels, committed-prefix exactness, and every instruction status in model-facing execution-failure context.
+- Execute the move strategy proven during preflight, with an injectable filesystem boundary covering native rename, cross-filesystem replacement, Windows overwrite fallback, and exact or inexact failure prefixes.
 
 ### Security
 

@@ -18,6 +18,8 @@ import { renderApplyPatchCall, renderApplyPatchResult } from "./apply-patch-rend
 export {
   applyPatch,
   type ApplyPatchDetails,
+  type ApplyPatchExecutionFilesystem,
+  type ApplyPatchExecutionHooks,
   type ApplyPatchFailureDetails,
   type ApplyPatchInstructionDetails,
   type ApplyPatchInstructionReason,

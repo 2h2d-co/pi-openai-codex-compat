@@ -9,9 +9,11 @@ import {
   readFile,
   readdir,
   readlink,
+  rename,
   rm,
   stat,
   symlink,
+  unlink,
   writeFile,
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -51,6 +53,10 @@ function deferred(): { promise: Promise<void>; resolve: () => void } {
     resolve = resolvePromise;
   });
   return { promise, resolve };
+}
+
+function filesystemError(code: string, message: string): NodeJS.ErrnoException {
+  return Object.assign(new Error(message), { code });
 }
 
 void test("accepts grammar-valid empty and identity updates as no-ops", async (t) => {
@@ -847,6 +853,201 @@ void test(
     );
   },
 );
+
+void test("executes planned move strategies and reports every injected failure prefix", async (t) => {
+  const cwd = await workspace(t);
+
+  await writeFile(join(cwd, "forced-a.txt"), "before\n");
+  await link(join(cwd, "forced-a.txt"), join(cwd, "forced-b.txt"));
+  const forced = await applyPatch(
+    cwd,
+    patch(
+      "*** Update File: forced-a.txt\n*** Move to: forced-z.txt\n",
+      "*** Update File: forced-z.txt\n@@\n-before\n+destination\n",
+      "*** Update File: forced-b.txt\n@@\n-before\n+remaining\n",
+    ),
+    undefined,
+    {
+      selectMoveStrategy: () => "copy-unlink",
+    },
+  );
+  assert.equal(forced.exact, true);
+  assert.equal(await readFile(join(cwd, "forced-z.txt"), "utf8"), "destination\n");
+  assert.equal(await readFile(join(cwd, "forced-b.txt"), "utf8"), "remaining\n");
+  assert.notEqual(
+    (await stat(join(cwd, "forced-z.txt"))).ino,
+    (await stat(join(cwd, "forced-b.txt"))).ino,
+  );
+
+  await writeFile(join(cwd, "cross-chain-source.txt"), "chain\n");
+  const crossChain = await applyPatch(
+    cwd,
+    patch(
+      "*** Update File: cross-chain-source.txt\n*** Move to: cross-chain-middle.txt\n",
+      "*** Update File: cross-chain-middle.txt\n*** Move to: cross-chain-final.txt\n",
+      "*** Delete File: cross-chain-final.txt\n",
+    ),
+    undefined,
+    {
+      selectMoveStrategy: () => "copy-unlink",
+    },
+  );
+  assert.deepEqual(
+    crossChain.instructions?.map(({ status }) => status),
+    ["applied", "applied", "applied"],
+  );
+  await assertMissing(join(cwd, "cross-chain-source.txt"));
+  await assertMissing(join(cwd, "cross-chain-middle.txt"));
+  await assertMissing(join(cwd, "cross-chain-final.txt"));
+
+  await writeFile(join(cwd, "native-source.txt"), "native\n");
+  await assert.rejects(
+    applyPatch(
+      cwd,
+      patch("*** Update File: native-source.txt\n*** Move to: native-destination.txt\n"),
+      undefined,
+      {
+        filesystem: {
+          async rename(source, destination) {
+            if (
+              source === join(cwd, "native-source.txt") &&
+              destination === join(cwd, "native-destination.txt")
+            ) {
+              throw filesystemError("EXDEV", "injected unexpected cross-device rename");
+            }
+            await rename(source, destination);
+          },
+        },
+      },
+    ),
+    (error: unknown) => {
+      assert.ok(error instanceof ApplyPatchExecutionError);
+      assert.equal(error.details.exact, true);
+      assert.equal(error.details.changes.length, 0);
+      assert.equal(error.details.failure?.failedInstruction, 1);
+      assert.deepEqual(
+        error.details.instructions?.map(({ status }) => status),
+        ["failed"],
+      );
+      return true;
+    },
+  );
+  assert.equal(await readFile(join(cwd, "native-source.txt"), "utf8"), "native\n");
+  await assertMissing(join(cwd, "native-destination.txt"));
+
+  await writeFile(join(cwd, "installed-source.txt"), "installed\n");
+  await assert.rejects(
+    applyPatch(
+      cwd,
+      patch("*** Update File: installed-source.txt\n*** Move to: installed-destination.txt\n"),
+      undefined,
+      {
+        selectMoveStrategy: () => "copy-unlink",
+        filesystem: {
+          async unlink(path) {
+            if (path === join(cwd, "installed-source.txt")) {
+              throw filesystemError("EACCES", "injected source removal failure");
+            }
+            await unlink(path);
+          },
+        },
+      },
+    ),
+    (error: unknown) => {
+      assert.ok(error instanceof ApplyPatchExecutionError);
+      assert.equal(error.details.exact, false);
+      assert.equal(error.details.changes.length, 1);
+      assert.equal(error.details.changes[0]?.kind, "move");
+      assert.equal(
+        error.details.changes[0]?.kind === "move" ? error.details.changes[0].exact : undefined,
+        false,
+      );
+      assert.equal(error.details.failure?.failedInstruction, 1);
+      return true;
+    },
+  );
+  assert.equal(await readFile(join(cwd, "installed-source.txt"), "utf8"), "installed\n");
+  assert.equal(await readFile(join(cwd, "installed-destination.txt"), "utf8"), "installed\n");
+
+  await writeFile(join(cwd, "removed-source.txt"), "source\n");
+  await writeFile(join(cwd, "removed-destination.txt"), "destination\n");
+  let failedInstallAttempts = 0;
+  await assert.rejects(
+    applyPatch(
+      cwd,
+      patch(
+        "*** Add File: committed-prefix.txt\n+committed\n",
+        "*** Update File: removed-source.txt\n*** Move to: removed-destination.txt\n",
+        "*** Add File: not-run.txt\n+not run\n",
+      ),
+      undefined,
+      {
+        selectMoveStrategy: () => "copy-unlink",
+        filesystem: {
+          async rename(source, destination) {
+            if (
+              destination === join(cwd, "removed-destination.txt") &&
+              basename(String(source)).includes(".apply-patch-")
+            ) {
+              failedInstallAttempts += 1;
+              if (failedInstallAttempts === 1) {
+                throw filesystemError("EEXIST", "injected Windows replacement conflict");
+              }
+              throw filesystemError("EIO", "injected destination installation failure");
+            }
+            await rename(source, destination);
+          },
+        },
+      },
+    ),
+    (error: unknown) => {
+      assert.ok(error instanceof ApplyPatchExecutionError);
+      assert.equal(error.details.exact, false);
+      assert.equal(error.details.changes.length, 1);
+      assert.deepEqual(
+        error.details.instructions?.map(({ status }) => status),
+        ["applied", "failed", "not-run"],
+      );
+      assert.equal(error.details.failure?.failedInstruction, 2);
+      assert.match(error.message, /destination was removed before replacement failed/u);
+      return true;
+    },
+  );
+  assert.equal(await readFile(join(cwd, "committed-prefix.txt"), "utf8"), "committed\n");
+  assert.equal(await readFile(join(cwd, "removed-source.txt"), "utf8"), "source\n");
+  await assertMissing(join(cwd, "removed-destination.txt"));
+  await assertMissing(join(cwd, "not-run.txt"));
+
+  await writeFile(join(cwd, "windows-source.txt"), "source\n");
+  await writeFile(join(cwd, "windows-destination.txt"), "old destination\n");
+  let windowsInstallAttempts = 0;
+  const windowsReplacement = await applyPatch(
+    cwd,
+    patch("*** Update File: windows-source.txt\n*** Move to: windows-destination.txt\n"),
+    undefined,
+    {
+      selectMoveStrategy: () => "copy-unlink",
+      filesystem: {
+        async rename(source, destination) {
+          if (
+            destination === join(cwd, "windows-destination.txt") &&
+            basename(String(source)).includes(".apply-patch-")
+          ) {
+            windowsInstallAttempts += 1;
+            if (windowsInstallAttempts === 1) {
+              throw filesystemError("EPERM", "injected Windows rename-over-existing behavior");
+            }
+          }
+          await rename(source, destination);
+        },
+      },
+    },
+  );
+  assert.equal(windowsReplacement.exact, true);
+  assert.equal(windowsInstallAttempts, 2);
+  await assertMissing(join(cwd, "windows-source.txt"));
+  assert.equal(await readFile(join(cwd, "windows-destination.txt"), "utf8"), "source\n");
+});
 
 void test("serializes same-process filesystem aliases with deterministic logical keys", async (t) => {
   const cwd = await workspace(t);

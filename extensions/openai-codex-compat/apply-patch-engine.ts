@@ -724,6 +724,40 @@ export function cloneApplyPatchDetails(details: ApplyPatchDetails): ApplyPatchDe
 export type ApplyPatchExecutionHooks = {
   onExecutionStart?: () => void | Promise<void>;
   onProgress?: (details: ApplyPatchDetails) => void;
+  selectMoveStrategy?: (
+    sourcePath: string,
+    destinationPath: string,
+    detected: "rename" | "copy-unlink",
+  ) => "rename" | "copy-unlink" | Promise<"rename" | "copy-unlink">;
+  filesystem?: Partial<ApplyPatchExecutionFilesystem>;
+};
+
+export type ApplyPatchExecutionFilesystem = {
+  chmod: typeof chmod;
+  copyFile: typeof copyFile;
+  lstat: typeof lstat;
+  mkdir: typeof mkdir;
+  readlink: typeof readlink;
+  readdir: typeof readdir;
+  rename: typeof rename;
+  symlink: typeof symlink;
+  unlink: typeof unlink;
+  utimes: typeof utimes;
+  writeFile: typeof writeFile;
+};
+
+const DEFAULT_EXECUTION_FILESYSTEM: ApplyPatchExecutionFilesystem = {
+  chmod,
+  copyFile,
+  lstat,
+  mkdir,
+  readlink,
+  readdir,
+  rename,
+  symlink,
+  unlink,
+  utimes,
+  writeFile,
 };
 
 function throwIfAborted(signal: AbortSignal | undefined): void {
@@ -1196,13 +1230,19 @@ class SemanticPlanner {
   private readonly operations: readonly ResolvedOperation[];
   private readonly instructions: ApplyPatchInstructionDetails[];
   private readonly signal: AbortSignal | undefined;
+  private readonly selectMoveStrategy: ApplyPatchExecutionHooks["selectMoveStrategy"] | undefined;
   private readonly pathKeys = new Map<string, string>();
   private readonly caseInsensitiveDirectories = new Map<string, Promise<boolean>>();
 
-  constructor(operations: readonly ResolvedOperation[], signal?: AbortSignal) {
+  constructor(
+    operations: readonly ResolvedOperation[],
+    signal?: AbortSignal,
+    selectMoveStrategy?: ApplyPatchExecutionHooks["selectMoveStrategy"],
+  ) {
     this.operations = operations;
     this.instructions = operations.map(instructionForOperation);
     this.signal = signal;
+    this.selectMoveStrategy = selectMoveStrategy;
   }
 
   async plan(): Promise<SemanticPlan> {
@@ -2323,7 +2363,10 @@ class SemanticPlanner {
       this.entryFilesystemDevice(operation.absolutePath),
       this.entryFilesystemDevice(destinationPath),
     ]);
-    const moveStrategy = sourceDevice === destinationDevice ? "rename" : "copy-unlink";
+    const detectedMoveStrategy = sourceDevice === destinationDevice ? "rename" : "copy-unlink";
+    const moveStrategy = this.selectMoveStrategy
+      ? await this.selectMoveStrategy(operation.absolutePath, destinationPath, detectedMoveStrategy)
+      : detectedMoveStrategy;
     const replacedDestination = expectedDestination.kind !== "absent";
     const expectedSource = this.snapshot(source) as Extract<
       VirtualEntry,
@@ -2414,7 +2457,12 @@ class RegularFileReplacementError extends Error {
   }
 }
 
-async function replaceRegularFile(path: string, content: Buffer, mode?: number): Promise<void> {
+async function replaceRegularFile(
+  path: string,
+  content: Buffer,
+  filesystem: ApplyPatchExecutionFilesystem,
+  mode?: number,
+): Promise<void> {
   const temporaryPath = resolve(
     dirname(path),
     `.${basename(path)}.apply-patch-${randomUUID()}.tmp`,
@@ -2422,16 +2470,16 @@ async function replaceRegularFile(path: string, content: Buffer, mode?: number):
   let installed = false;
   let pendingError: unknown;
   try {
-    await writeFile(temporaryPath, content);
-    if (mode !== undefined) await chmod(temporaryPath, mode & 0o7777);
-    await rename(temporaryPath, path);
+    await filesystem.writeFile(temporaryPath, content);
+    if (mode !== undefined) await filesystem.chmod(temporaryPath, mode & 0o7777);
+    await filesystem.rename(temporaryPath, path);
     installed = true;
-    await establishExactSpelling(path);
+    await establishExactSpelling(path, filesystem);
   } catch (error) {
     pendingError = error;
   } finally {
     try {
-      await unlink(temporaryPath);
+      await filesystem.unlink(temporaryPath);
     } catch (error) {
       if (!isNotFound(error) && pendingError === undefined) pendingError = error;
     }
@@ -2447,15 +2495,18 @@ function namesPotentiallyAlias(left: string, right: string): boolean {
   return normalizedLeft.toLocaleLowerCase() === normalizedRight.toLocaleLowerCase();
 }
 
-async function establishExactSpelling(path: string): Promise<void> {
-  if (await requestedSpellingExists(path)) return;
+async function establishExactSpelling(
+  path: string,
+  filesystem: ApplyPatchExecutionFilesystem,
+): Promise<void> {
+  if (await exactSpellingExists(path, filesystem)) return;
   const directory = dirname(path);
   const requestedName = basename(path);
-  const requestedMetadata = await lstat(path);
+  const requestedMetadata = await filesystem.lstat(path);
   let actualPath: string | undefined;
-  for (const name of await readdir(directory)) {
+  for (const name of await filesystem.readdir(directory)) {
     if (!namesPotentiallyAlias(name, requestedName)) continue;
-    const metadata = await lstat(join(directory, name));
+    const metadata = await filesystem.lstat(join(directory, name));
     if (metadata.dev === requestedMetadata.dev && metadata.ino === requestedMetadata.ino) {
       actualPath = join(directory, name);
       break;
@@ -2467,12 +2518,12 @@ async function establishExactSpelling(path: string): Promise<void> {
     directory,
     `.${requestedName}.apply-patch-spelling-${randomUUID()}.tmp`,
   );
-  await rename(actualPath, temporaryPath);
+  await filesystem.rename(actualPath, temporaryPath);
   try {
-    await rename(temporaryPath, path);
+    await filesystem.rename(temporaryPath, path);
   } catch (error) {
     try {
-      await rename(temporaryPath, actualPath);
+      await filesystem.rename(temporaryPath, actualPath);
     } catch {
       // Preserve the original error; the executor reports that the mutation is inexact.
     }
@@ -2689,14 +2740,20 @@ async function assertParentPlanMatches(parents: ParentPlan): Promise<void> {
   }
 }
 
-async function createPlannedParents(parents: ParentPlan): Promise<void> {
+async function createPlannedParents(
+  parents: ParentPlan,
+  filesystem: ApplyPatchExecutionFilesystem,
+): Promise<void> {
   const deepest = parents.createdPaths.at(-1);
-  if (deepest) await mkdir(deepest, { recursive: true });
+  if (deepest) await filesystem.mkdir(deepest, { recursive: true });
 }
 
-async function exactSpellingExists(path: string): Promise<boolean> {
+async function exactSpellingExists(
+  path: string,
+  filesystem: Pick<ApplyPatchExecutionFilesystem, "readdir"> = DEFAULT_EXECUTION_FILESYSTEM,
+): Promise<boolean> {
   try {
-    return (await readdir(dirname(path))).includes(basename(path));
+    return (await filesystem.readdir(dirname(path))).includes(basename(path));
   } catch {
     return false;
   }
@@ -2710,13 +2767,17 @@ async function requestedSpellingExists(path: string): Promise<boolean> {
   }
 }
 
-async function finishSameInodeRename(sourcePath: string, destinationPath: string): Promise<void> {
+async function finishSameInodeRename(
+  sourcePath: string,
+  destinationPath: string,
+  filesystem: ApplyPatchExecutionFilesystem,
+): Promise<void> {
   let sourceMetadata: Stats;
   let destinationMetadata: Stats;
   try {
     [sourceMetadata, destinationMetadata] = await Promise.all([
-      lstat(sourcePath),
-      lstat(destinationPath),
+      filesystem.lstat(sourcePath),
+      filesystem.lstat(destinationPath),
     ]);
   } catch (error) {
     if (isNotFound(error)) return;
@@ -2730,13 +2791,13 @@ async function finishSameInodeRename(sourcePath: string, destinationPath: string
   }
 
   const [sourceNameExists, destinationNameExists] = await Promise.all([
-    exactSpellingExists(sourcePath),
-    exactSpellingExists(destinationPath),
+    exactSpellingExists(sourcePath, filesystem),
+    exactSpellingExists(destinationPath, filesystem),
   ]);
   if (!destinationNameExists) {
     throw new Error(`rename did not install destination ${destinationPath}`);
   }
-  if (sourceNameExists) await unlink(sourcePath);
+  if (sourceNameExists) await filesystem.unlink(sourcePath);
 }
 
 class PureMoveExecutionError extends Error {
@@ -2750,6 +2811,7 @@ class PureMoveExecutionError extends Error {
 
 async function installCrossDeviceMove(
   mutation: Extract<PlannedMutation, { kind: "move" }>,
+  filesystem: ApplyPatchExecutionFilesystem,
 ): Promise<void> {
   const sourcePath = mutation.operation.absolutePath;
   const destinationPath = mutation.operation.moveAbsolutePath!;
@@ -2762,18 +2824,18 @@ async function installCrossDeviceMove(
   let pendingError: unknown;
   try {
     if (mutation.expectedSource.kind === "regular") {
-      await copyFile(sourcePath, temporaryPath, constants.COPYFILE_EXCL);
+      await filesystem.copyFile(sourcePath, temporaryPath, constants.COPYFILE_EXCL);
       if (mutation.expectedSource.fingerprint) {
-        await chmod(temporaryPath, mutation.expectedSource.fingerprint.mode);
-        const metadata = await lstat(sourcePath);
-        await utimes(temporaryPath, metadata.atime, metadata.mtime);
+        await filesystem.chmod(temporaryPath, mutation.expectedSource.fingerprint.mode);
+        const metadata = await filesystem.lstat(sourcePath);
+        await filesystem.utimes(temporaryPath, metadata.atime, metadata.mtime);
       }
     } else {
-      await symlink(await readlink(sourcePath), temporaryPath);
+      await filesystem.symlink(await filesystem.readlink(sourcePath), temporaryPath);
     }
 
     try {
-      await rename(temporaryPath, destinationPath);
+      await filesystem.rename(temporaryPath, destinationPath);
     } catch (error) {
       if (
         mutation.expectedDestination.kind === "absent" ||
@@ -2783,17 +2845,17 @@ async function installCrossDeviceMove(
       ) {
         throw error;
       }
-      await unlink(destinationPath);
+      await filesystem.unlink(destinationPath);
       destinationRemoved = true;
-      await rename(temporaryPath, destinationPath);
+      await filesystem.rename(temporaryPath, destinationPath);
     }
     destinationInstalled = true;
-    await unlink(sourcePath);
+    await filesystem.unlink(sourcePath);
   } catch (error) {
     pendingError = error;
   } finally {
     try {
-      await unlink(temporaryPath);
+      await filesystem.unlink(temporaryPath);
     } catch (error) {
       if (!isNotFound(error) && pendingError === undefined) pendingError = error;
     }
@@ -2812,15 +2874,16 @@ async function installCrossDeviceMove(
 
 async function executePureMove(
   mutation: Extract<PlannedMutation, { kind: "move" }>,
+  filesystem: ApplyPatchExecutionFilesystem,
 ): Promise<void> {
   const sourcePath = mutation.operation.absolutePath;
   const destinationPath = mutation.operation.moveAbsolutePath!;
   if (mutation.moveStrategy === "copy-unlink") {
-    await installCrossDeviceMove(mutation);
+    await installCrossDeviceMove(mutation, filesystem);
     return;
   }
   try {
-    await rename(sourcePath, destinationPath);
+    await filesystem.rename(sourcePath, destinationPath);
   } catch (error) {
     if (hasErrorCode(error, "EXDEV")) {
       throw new Error("rename unexpectedly crossed filesystem boundaries after preflight");
@@ -2828,11 +2891,11 @@ async function executePureMove(
     throw error;
   }
   try {
-    await finishSameInodeRename(sourcePath, destinationPath);
+    await finishSameInodeRename(sourcePath, destinationPath, filesystem);
   } catch (error) {
     let destinationInstalled = false;
     try {
-      await lstat(destinationPath);
+      await filesystem.lstat(destinationPath);
       destinationInstalled = true;
     } catch {}
     throw new PureMoveExecutionError(
@@ -2845,6 +2908,7 @@ async function executePureMove(
 async function executePlan(
   plan: SemanticPlan,
   signal: AbortSignal | undefined,
+  filesystem: ApplyPatchExecutionFilesystem,
   onProgress?: (details: ApplyPatchDetails) => void,
 ): Promise<ApplyPatchDetails> {
   const details = emptyDetails();
@@ -2865,10 +2929,11 @@ async function executePlan(
         );
         await assertParentPlanMatches(mutation.parents);
         try {
-          await createPlannedParents(mutation.parents);
+          await createPlannedParents(mutation.parents, filesystem);
           await replaceRegularFile(
             mutation.operation.absolutePath,
             mutation.content,
+            filesystem,
             mutation.replacementMode,
           );
         } catch (error) {
@@ -2889,7 +2954,7 @@ async function executePlan(
           committedEntryMutations,
         );
         try {
-          await unlink(mutation.operation.absolutePath);
+          await filesystem.unlink(mutation.operation.absolutePath);
         } catch (error) {
           throw new Error(
             `Failed to delete file ${mutation.operation.absolutePath}: ${errorMessage(error)}`,
@@ -2908,6 +2973,7 @@ async function executePlan(
             await replaceRegularFile(
               mutation.operation.absolutePath,
               mutation.content,
+              filesystem,
               mutation.replacementMode,
             );
           } catch (error) {
@@ -2922,10 +2988,14 @@ async function executePlan(
           appendChange(details, mutation.provisionalChange!);
           if (mutation.sameEntryMove === "rename") {
             try {
-              await rename(mutation.operation.absolutePath, mutation.operation.moveAbsolutePath!);
+              await filesystem.rename(
+                mutation.operation.absolutePath,
+                mutation.operation.moveAbsolutePath!,
+              );
               await finishSameInodeRename(
                 mutation.operation.absolutePath,
                 mutation.operation.moveAbsolutePath!,
+                filesystem,
               );
             } catch (error) {
               details.exact = false;
@@ -2945,10 +3015,11 @@ async function executePlan(
           );
           await assertParentPlanMatches(mutation.parents);
           try {
-            await createPlannedParents(mutation.parents);
+            await createPlannedParents(mutation.parents, filesystem);
             await replaceRegularFile(
               mutation.operation.moveAbsolutePath,
               mutation.content,
+              filesystem,
               mutation.replacementMode,
             );
           } catch (error) {
@@ -2962,7 +3033,7 @@ async function executePlan(
           }
           appendChange(details, mutation.provisionalChange!);
           try {
-            await unlink(mutation.operation.absolutePath);
+            await filesystem.unlink(mutation.operation.absolutePath);
           } catch (error) {
             details.exact = false;
             throw new Error(
@@ -2974,7 +3045,7 @@ async function executePlan(
           details.modified.push(mutation.operation.moveTo!);
         } else {
           try {
-            await writeFile(mutation.operation.absolutePath, mutation.content);
+            await filesystem.writeFile(mutation.operation.absolutePath, mutation.content);
           } catch (error) {
             details.exact = false;
             throw new Error(
@@ -2998,8 +3069,8 @@ async function executePlan(
         );
         await assertParentPlanMatches(mutation.parents);
         try {
-          await createPlannedParents(mutation.parents);
-          await executePureMove(mutation);
+          await createPlannedParents(mutation.parents, filesystem);
+          await executePureMove(mutation, filesystem);
         } catch (error) {
           if (mutation.parents.createdPaths.length > 0) details.exact = false;
           if (error instanceof PureMoveExecutionError && error.destinationState === "installed") {
@@ -3160,9 +3231,10 @@ function parseAndResolvePatch(cwd: string, patch: string): ResolvedOperation[] {
 async function buildPlan(
   operations: readonly ResolvedOperation[],
   signal?: AbortSignal,
+  selectMoveStrategy?: ApplyPatchExecutionHooks["selectMoveStrategy"],
 ): Promise<SemanticPlan> {
   try {
-    return await new SemanticPlanner(operations, signal).plan();
+    return await new SemanticPlanner(operations, signal, selectMoveStrategy).plan();
   } catch (error) {
     if (error instanceof ApplyPatchInputError) throw error;
     const message = errorMessage(error);
@@ -3228,14 +3300,18 @@ export async function applyPatch(
     ]);
     const logicalKeys = await logicalMutationQueueKeys(mutationPaths);
     const queuePaths = await canonicalMutationQueuePaths(mutationPaths);
+    const filesystem: ApplyPatchExecutionFilesystem = {
+      ...DEFAULT_EXECUTION_FILESYSTEM,
+      ...hooks.filesystem,
+    };
 
     return await withLogicalMutationQueues(logicalKeys, () => {
       return withMutationQueues(queuePaths, async () => {
         throwIfAborted(signal);
-        const plan = await buildPlan(operations, signal);
+        const plan = await buildPlan(operations, signal, hooks.selectMoveStrategy);
         throwIfAborted(signal);
         await hooks.onExecutionStart?.();
-        return executePlan(plan, signal, hooks.onProgress);
+        return executePlan(plan, signal, filesystem, hooks.onProgress);
       });
     });
   } catch (error) {
