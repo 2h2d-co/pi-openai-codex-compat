@@ -10,6 +10,10 @@
 - Move regular files and symbolic-link entries opaquely for move-only `apply_patch` hunks, preserving arbitrary binary bytes and rendering path-only move history.
 - Render failed `apply_patch` calls with their failure phase and reason, instruction counts, per-instruction statuses, and expanded instruction details.
 
+### Fixed
+
+- Preserve each matched source region's local line endings when strict `apply_patch` matching edits CRLF or mixed-line-ending files.
+
 ### Security
 
 - Require npm releases to match a locally built SHA-256 recorded in an SSH-signed release commit before trusted publishing can stage the package.

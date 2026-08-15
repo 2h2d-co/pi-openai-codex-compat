@@ -74,7 +74,7 @@ The following previously rejected review proposals remain rejected:
 
 ## Workstream 1: Preserve CRLF on the strict matching path
 
-**Status:** Confirmed defect; implementation required.
+**Status:** Implemented; final full-suite validation pending.
 
 ### Current behavior
 

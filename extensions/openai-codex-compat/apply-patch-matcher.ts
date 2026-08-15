@@ -375,7 +375,7 @@ function deriveStrictContent(
       replacements.push({
         index: insertionIndex,
         oldLength: 0,
-        newLines: [...chunk.newLines],
+        newLines: strictReplacementLines(lines, insertionIndex, 0, chunk, chunk.newLines),
       });
       continue;
     }
@@ -394,7 +394,7 @@ function deriveStrictContent(
     replacements.push({
       index: found,
       oldLength: oldLines.length,
-      newLines: [...newLines],
+      newLines: strictReplacementLines(lines, found, oldLines.length, chunk, newLines),
     });
     cursor = found + oldLines.length;
   }
@@ -405,6 +405,47 @@ function deriveStrictContent(
   }
   if (lines.at(-1) !== "") lines.push("");
   return lines.join("\n");
+}
+
+function withLineEnding(line: string, lineEnding: "\n" | "\r\n"): string {
+  return lineEnding === "\r\n" && !line.endsWith("\r") ? `${line}\r` : line;
+}
+
+function strictReplacementLines(
+  sourceLines: readonly string[],
+  startLine: number,
+  oldLength: number,
+  chunk: UpdateChunk,
+  newLines: readonly string[],
+): string[] {
+  const roleAware: string[] = [];
+  let sourceOffset = 0;
+  for (const line of chunk.lines) {
+    if (line.kind === "delete") {
+      sourceOffset += 1;
+      continue;
+    }
+    const lineEnding =
+      line.kind === "context"
+        ? lineEndingForLine(sourceLines, startLine + sourceOffset)
+        : lineEndingAtBoundary(sourceLines, startLine + sourceOffset);
+    roleAware.push(withLineEnding(line.text, lineEnding));
+    if (line.kind === "context") sourceOffset += 1;
+  }
+  if (
+    roleAware.length === newLines.length &&
+    roleAware.every((line, index) => withoutCarriageReturn(line) === newLines[index])
+  ) {
+    return roleAware;
+  }
+
+  return newLines.map((line, index) => {
+    const lineEnding =
+      oldLength === 0
+        ? lineEndingAtBoundary(sourceLines, startLine)
+        : lineEndingForLine(sourceLines, startLine + Math.min(index, oldLength - 1));
+    return withLineEnding(line, lineEnding);
+  });
 }
 
 function editGroups(chunks: readonly UpdateChunk[]): EditGroup[] {
