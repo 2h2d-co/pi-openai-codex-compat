@@ -15,6 +15,7 @@
 - Preserve each matched source region's local line endings when strict `apply_patch` matching edits CRLF or mixed-line-ending files.
 - Model native renames and cross-filesystem copy-and-unlink moves with distinct hard-link topology, and account for earlier planned unlinks when proving later edits dead.
 - Record symbolic-link deletion as a path-only entry operation so history and rendering never claim that the link target's bytes were deleted.
+- Serialize same-process `apply_patch` calls across case, Unicode, symlink-parent, and hard-link aliases while retaining Pi's ordinary path queues.
 
 ### Security
 

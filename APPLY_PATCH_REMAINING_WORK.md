@@ -445,7 +445,7 @@ same structured details are available to the TUI.
 
 ## Workstream 8: Mutation-queue aliases
 
-**Status:** Extension-local queue agreed; implementation required.
+**Status:** Complete for same-process `apply_patch` calls.
 
 ### Current behavior
 

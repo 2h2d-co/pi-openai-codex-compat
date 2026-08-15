@@ -16,6 +16,7 @@ import {
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
+import { setTimeout as delay } from "node:timers/promises";
 import test, { type TestContext } from "node:test";
 import type { Theme } from "@earendil-works/pi-coding-agent";
 import {
@@ -41,6 +42,14 @@ async function assertMissing(path: string): Promise<void> {
 
 function patch(...operations: string[]): string {
   return `*** Begin Patch\n${operations.join("")}*** End Patch`;
+}
+
+function deferred(): { promise: Promise<void>; resolve: () => void } {
+  let resolve!: () => void;
+  const promise = new Promise<void>((resolvePromise) => {
+    resolve = resolvePromise;
+  });
+  return { promise, resolve };
 }
 
 void test("accepts grammar-valid empty and identity updates as no-ops", async (t) => {
@@ -706,6 +715,199 @@ void test(
     );
   },
 );
+
+void test("serializes same-process filesystem aliases with deterministic logical keys", async (t) => {
+  const cwd = await workspace(t);
+
+  const assertAliasAddsSerialize = async (firstPath: string, secondPath: string): Promise<void> => {
+    const firstStarted = deferred();
+    const releaseFirst = deferred();
+    let secondStarted = false;
+    const first = applyPatch(cwd, patch(`*** Add File: ${firstPath}\n+first\n`), undefined, {
+      async onExecutionStart() {
+        firstStarted.resolve();
+        await releaseFirst.promise;
+      },
+    });
+    await firstStarted.promise;
+    const second = applyPatch(cwd, patch(`*** Add File: ${secondPath}\n+second\n`), undefined, {
+      onExecutionStart() {
+        secondStarted = true;
+      },
+    });
+    await delay(25);
+    assert.equal(secondStarted, false);
+    releaseFirst.resolve();
+    await Promise.all([first, second]);
+    assert.equal(await readFile(join(cwd, secondPath), "utf8"), "second\n");
+  };
+
+  const caseProbe = join(cwd, "CaseProbe");
+  await writeFile(caseProbe, "");
+  const caseAliases =
+    (await lstat(caseProbe)).ino ===
+    (await lstat(join(cwd, "caseprobe")).catch(() => ({ ino: -1 }))).ino;
+  await rm(caseProbe);
+  if (caseAliases) await assertAliasAddsSerialize("MissingCase.txt", "missingcase.txt");
+
+  const composed = "caf\u00e9-probe";
+  const decomposed = "cafe\u0301-probe";
+  await writeFile(join(cwd, composed), "");
+  const unicodeAliases =
+    (await lstat(join(cwd, composed))).ino ===
+    (await lstat(join(cwd, decomposed)).catch(() => ({ ino: -1 }))).ino;
+  await rm(join(cwd, composed));
+  if (unicodeAliases) {
+    await assertAliasAddsSerialize("caf\u00e9-missing.txt", "cafe\u0301-missing.txt");
+  }
+
+  await writeFile(join(cwd, "hard-a.txt"), "before\n");
+  await link(join(cwd, "hard-a.txt"), join(cwd, "hard-b.txt"));
+  const firstHardStarted = deferred();
+  const releaseHard = deferred();
+  let secondHardStarted = false;
+  const firstHard = applyPatch(
+    cwd,
+    patch("*** Update File: hard-a.txt\n@@\n-before\n+one\n"),
+    undefined,
+    {
+      async onExecutionStart() {
+        firstHardStarted.resolve();
+        await releaseHard.promise;
+      },
+    },
+  );
+  await firstHardStarted.promise;
+  const secondHard = applyPatch(
+    cwd,
+    patch("*** Update File: hard-b.txt\n@@\n-one\n+two\n"),
+    undefined,
+    {
+      onExecutionStart() {
+        secondHardStarted = true;
+      },
+    },
+  );
+  await delay(25);
+  assert.equal(secondHardStarted, false);
+  releaseHard.resolve();
+  await Promise.all([firstHard, secondHard]);
+  assert.equal(await readFile(join(cwd, "hard-a.txt"), "utf8"), "two\n");
+  assert.equal(await readFile(join(cwd, "hard-b.txt"), "utf8"), "two\n");
+
+  await writeFile(join(cwd, "replace-a.txt"), "shared\n");
+  await link(join(cwd, "replace-a.txt"), join(cwd, "replace-b.txt"));
+  const replaceStarted = deferred();
+  const releaseReplace = deferred();
+  let aliasUpdateStarted = false;
+  const replacement = applyPatch(
+    cwd,
+    patch("*** Add File: replace-a.txt\n+independent\n"),
+    undefined,
+    {
+      async onExecutionStart() {
+        replaceStarted.resolve();
+        await releaseReplace.promise;
+      },
+    },
+  );
+  await replaceStarted.promise;
+  const aliasUpdate = applyPatch(
+    cwd,
+    patch("*** Update File: replace-b.txt\n@@\n-shared\n+remaining\n"),
+    undefined,
+    {
+      onExecutionStart() {
+        aliasUpdateStarted = true;
+      },
+    },
+  );
+  await delay(25);
+  assert.equal(aliasUpdateStarted, false);
+  releaseReplace.resolve();
+  await Promise.all([replacement, aliasUpdate]);
+  assert.equal(await readFile(join(cwd, "replace-a.txt"), "utf8"), "independent\n");
+  assert.equal(await readFile(join(cwd, "replace-b.txt"), "utf8"), "remaining\n");
+
+  await mkdir(join(cwd, "real-parent"));
+  await symlink("real-parent", join(cwd, "alias-parent"));
+  await writeFile(join(cwd, "real-parent", "queued.txt"), "before\n");
+  const parentStarted = deferred();
+  const releaseParent = deferred();
+  let parentAliasStarted = false;
+  const parentUpdate = applyPatch(
+    cwd,
+    patch("*** Update File: real-parent/queued.txt\n@@\n-before\n+one\n"),
+    undefined,
+    {
+      async onExecutionStart() {
+        parentStarted.resolve();
+        await releaseParent.promise;
+      },
+    },
+  );
+  await parentStarted.promise;
+  const parentAliasUpdate = applyPatch(
+    cwd,
+    patch("*** Update File: alias-parent/queued.txt\n@@\n-one\n+two\n"),
+    undefined,
+    {
+      onExecutionStart() {
+        parentAliasStarted = true;
+      },
+    },
+  );
+  await delay(25);
+  assert.equal(parentAliasStarted, false);
+  releaseParent.resolve();
+  await Promise.all([parentUpdate, parentAliasUpdate]);
+  assert.equal(await readFile(join(cwd, "real-parent", "queued.txt"), "utf8"), "two\n");
+
+  await writeFile(join(cwd, "order-a.txt"), "a0\n");
+  await writeFile(join(cwd, "order-b.txt"), "b0\n");
+  const orderStarted = deferred();
+  const releaseOrder = deferred();
+  let reverseStarted = false;
+  const ordered = applyPatch(
+    cwd,
+    patch(
+      "*** Update File: order-a.txt\n@@\n-a0\n+a1\n",
+      "*** Update File: order-b.txt\n@@\n-b0\n+b1\n",
+    ),
+    undefined,
+    {
+      async onExecutionStart() {
+        orderStarted.resolve();
+        await releaseOrder.promise;
+      },
+    },
+  );
+  await orderStarted.promise;
+  const reversed = applyPatch(
+    cwd,
+    patch(
+      "*** Update File: order-b.txt\n@@\n-b1\n+b2\n",
+      "*** Update File: order-a.txt\n@@\n-a1\n+a2\n",
+    ),
+    undefined,
+    {
+      onExecutionStart() {
+        reverseStarted = true;
+      },
+    },
+  );
+  await delay(25);
+  assert.equal(reverseStarted, false);
+  releaseOrder.resolve();
+  await Promise.race([
+    Promise.all([ordered, reversed]),
+    delay(2_000).then(() => {
+      throw new Error("reverse-order logical queue acquisition deadlocked");
+    }),
+  ]);
+  assert.equal(await readFile(join(cwd, "order-a.txt"), "utf8"), "a2\n");
+  assert.equal(await readFile(join(cwd, "order-b.txt"), "utf8"), "b2\n");
+});
 
 void test("deletes symbolic-link entries without deleting their targets", async (t) => {
   const cwd = await workspace(t);

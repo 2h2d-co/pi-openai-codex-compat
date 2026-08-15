@@ -690,7 +690,7 @@ export function cloneApplyPatchDetails(details: ApplyPatchDetails): ApplyPatchDe
 }
 
 export type ApplyPatchExecutionHooks = {
-  onExecutionStart?: () => void;
+  onExecutionStart?: () => void | Promise<void>;
   onProgress?: (details: ApplyPatchDetails) => void;
 };
 
@@ -706,6 +706,146 @@ async function withMutationQueues<T>(
   const path = paths[index];
   if (!path) return callback();
   return withFileMutationQueue(path, () => withMutationQueues(paths, callback, index + 1));
+}
+
+const logicalMutationQueues = new Map<string, Promise<void>>();
+let logicalQueueRegistration = Promise.resolve();
+
+async function withLogicalMutationQueue<T>(key: string, callback: () => Promise<T>): Promise<T> {
+  const registration = logicalQueueRegistration.then(() => {
+    const currentQueue = logicalMutationQueues.get(key) ?? Promise.resolve();
+    let releaseNext!: () => void;
+    const nextQueue = new Promise<void>((resolveQueue) => {
+      releaseNext = resolveQueue;
+    });
+    const chainedQueue = currentQueue.then(() => nextQueue);
+    logicalMutationQueues.set(key, chainedQueue);
+    return { currentQueue, chainedQueue, releaseNext };
+  });
+  logicalQueueRegistration = registration.then(
+    () => undefined,
+    () => undefined,
+  );
+  const { currentQueue, chainedQueue, releaseNext } = await registration;
+  await currentQueue;
+  try {
+    return await callback();
+  } finally {
+    releaseNext();
+    if (logicalMutationQueues.get(key) === chainedQueue) logicalMutationQueues.delete(key);
+  }
+}
+
+async function withLogicalMutationQueues<T>(
+  keys: readonly string[],
+  callback: () => Promise<T>,
+  index = 0,
+): Promise<T> {
+  const key = keys[index];
+  if (!key) return callback();
+  return withLogicalMutationQueue(key, () => withLogicalMutationQueues(keys, callback, index + 1));
+}
+
+function normalizedAliasName(name: string): string {
+  return process.platform === "darwin" ? name.normalize("NFD") : name;
+}
+
+async function directoryIsCaseInsensitive(
+  directory: string,
+  cache: Map<string, Promise<boolean>>,
+): Promise<boolean> {
+  let cached = cache.get(directory);
+  if (!cached) {
+    cached = (async () => {
+      if (process.platform === "win32") return true;
+      let candidate = directory;
+      while (candidate !== parse(candidate).root) {
+        const name = basename(candidate);
+        const toggled = Array.from(name)
+          .map((character) =>
+            character.toLowerCase() === character
+              ? character.toUpperCase()
+              : character.toLowerCase(),
+          )
+          .join("");
+        if (toggled !== name) {
+          try {
+            const [original, alias] = await Promise.all([
+              lstat(candidate),
+              lstat(join(dirname(candidate), toggled)),
+            ]);
+            return original.dev === alias.dev && original.ino === alias.ino;
+          } catch {
+            candidate = dirname(candidate);
+            continue;
+          }
+        }
+        candidate = dirname(candidate);
+      }
+      return false;
+    })();
+    cache.set(directory, cached);
+  }
+  return cached;
+}
+
+async function namesAlias(
+  directory: string,
+  left: string,
+  right: string,
+  caseInsensitiveDirectories: Map<string, Promise<boolean>>,
+): Promise<boolean> {
+  const normalizedLeft = normalizedAliasName(left);
+  const normalizedRight = normalizedAliasName(right);
+  if (normalizedLeft === normalizedRight) return true;
+  return (
+    (await directoryIsCaseInsensitive(directory, caseInsensitiveDirectories)) &&
+    normalizedLeft.toLowerCase() === normalizedRight.toLowerCase()
+  );
+}
+
+async function logicalEntryQueueKey(
+  path: string,
+  caseInsensitiveDirectories: Map<string, Promise<boolean>>,
+): Promise<string> {
+  const parent = await realpathWithMissingTail(dirname(path));
+  const requestedName = basename(path);
+  let entryName = requestedName;
+  try {
+    const requestedMetadata = await lstat(path);
+    for (const name of await readdir(parent)) {
+      if (!(await namesAlias(parent, name, requestedName, caseInsensitiveDirectories))) {
+        continue;
+      }
+      const metadata = await lstat(join(parent, name));
+      if (metadata.dev === requestedMetadata.dev && metadata.ino === requestedMetadata.ino) {
+        entryName = name;
+        break;
+      }
+    }
+  } catch (error) {
+    if (!isNotFound(error) && !hasErrorCode(error, "ENOTDIR")) throw error;
+  }
+  entryName = normalizedAliasName(entryName);
+  if (await directoryIsCaseInsensitive(parent, caseInsensitiveDirectories)) {
+    entryName = entryName.toLowerCase();
+  }
+  return `entry:${join(parent, entryName)}`;
+}
+
+async function logicalMutationQueueKeys(paths: readonly string[]): Promise<string[]> {
+  const caseInsensitiveDirectories = new Map<string, Promise<boolean>>();
+  const keys = new Set<string>();
+  for (const path of paths) {
+    keys.add(await logicalEntryQueueKey(path, caseInsensitiveDirectories));
+    try {
+      const metadata = await stat(path);
+      if (metadata.isFile()) keys.add(`physical:${metadata.dev}:${metadata.ino}`);
+    } catch (error) {
+      if (!isNotFound(error) && !hasErrorCode(error, "ENOTDIR")) throw error;
+    }
+  }
+  return [...keys].sort();
 }
 
 async function canonicalMutationQueuePaths(paths: readonly string[]): Promise<string[]> {
@@ -1069,49 +1209,11 @@ class SemanticPlanner {
   }
 
   private async directoryIsCaseInsensitive(directory: string): Promise<boolean> {
-    let cached = this.caseInsensitiveDirectories.get(directory);
-    if (!cached) {
-      cached = (async () => {
-        if (process.platform === "win32") return true;
-        let candidate = directory;
-        while (candidate !== parse(candidate).root) {
-          const name = basename(candidate);
-          const toggled = Array.from(name)
-            .map((character) =>
-              character.toLowerCase() === character
-                ? character.toUpperCase()
-                : character.toLowerCase(),
-            )
-            .join("");
-          if (toggled !== name) {
-            try {
-              const [original, alias] = await Promise.all([
-                lstat(candidate),
-                lstat(join(dirname(candidate), toggled)),
-              ]);
-              return original.dev === alias.dev && original.ino === alias.ino;
-            } catch {
-              candidate = dirname(candidate);
-              continue;
-            }
-          }
-          candidate = dirname(candidate);
-        }
-        return false;
-      })();
-      this.caseInsensitiveDirectories.set(directory, cached);
-    }
-    return cached;
+    return directoryIsCaseInsensitive(directory, this.caseInsensitiveDirectories);
   }
 
   private async namesAlias(directory: string, left: string, right: string): Promise<boolean> {
-    const normalizedLeft = process.platform === "darwin" ? left.normalize("NFD") : left;
-    const normalizedRight = process.platform === "darwin" ? right.normalize("NFD") : right;
-    if (normalizedLeft === normalizedRight) return true;
-    return (
-      (await this.directoryIsCaseInsensitive(directory)) &&
-      normalizedLeft.toLocaleLowerCase() === normalizedRight.toLocaleLowerCase()
-    );
+    return namesAlias(directory, left, right, this.caseInsensitiveDirectories);
   }
 
   private async pathKey(path: string): Promise<string> {
@@ -2978,21 +3080,23 @@ export async function applyPatch(
   }
 
   try {
-    const queuePaths = await canonicalMutationQueuePaths(
-      operations.flatMap((operation) => [
-        operation.absolutePath,
-        ...(operation.kind === "update" && operation.moveAbsolutePath
-          ? [operation.moveAbsolutePath]
-          : []),
-      ]),
-    );
+    const mutationPaths = operations.flatMap((operation) => [
+      operation.absolutePath,
+      ...(operation.kind === "update" && operation.moveAbsolutePath
+        ? [operation.moveAbsolutePath]
+        : []),
+    ]);
+    const logicalKeys = await logicalMutationQueueKeys(mutationPaths);
+    const queuePaths = await canonicalMutationQueuePaths(mutationPaths);
 
-    return await withMutationQueues(queuePaths, async () => {
-      throwIfAborted(signal);
-      const plan = await buildPlan(operations, signal);
-      throwIfAborted(signal);
-      hooks.onExecutionStart?.();
-      return executePlan(plan, signal, hooks.onProgress);
+    return await withLogicalMutationQueues(logicalKeys, () => {
+      return withMutationQueues(queuePaths, async () => {
+        throwIfAborted(signal);
+        const plan = await buildPlan(operations, signal);
+        throwIfAborted(signal);
+        await hooks.onExecutionStart?.();
+        return executePlan(plan, signal, hooks.onProgress);
+      });
     });
   } catch (error) {
     if (
