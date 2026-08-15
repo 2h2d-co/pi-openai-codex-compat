@@ -48,6 +48,7 @@ void test("persists dedicated settings without discarding unknown configuration"
   const savedPath = await saveConfig(cwd, false, {
     fastMode: true,
     responsesLite: false,
+    applyPatchDebug: true,
     toolBackground: "none",
     imageGeneration: false,
     imageDetail: "high",
@@ -59,6 +60,7 @@ void test("persists dedicated settings without discarding unknown configuration"
   assert.deepEqual(stored["customFutureSetting"], { keep: true });
   assert.equal(stored["fastMode"], true);
   assert.equal(stored["responsesLite"], false);
+  assert.equal(stored["applyPatchDebug"], true);
   assert.equal(stored["toolBackground"], "none");
   assert.equal(stored["imageGeneration"], false);
   assert.equal(stored["imageDetail"], "high");
@@ -85,6 +87,7 @@ void test("exposes every request and tool control in the settings pane", () => {
     responsesLite: false,
     toolBackground: "status",
     applyPatch: false,
+    applyPatchDebug: true,
     imageGeneration: true,
     imageDetail: "original",
     webRun: false,
@@ -106,6 +109,7 @@ void test("exposes every request and tool control in the settings pane", () => {
       ["reasoningMode", "pro"],
       ["toolBackground", "status"],
       ["applyPatch", "off"],
+      ["applyPatchDebug", "on"],
       ["imageGeneration", "on"],
       ["imageDetail", "original"],
       ["webRun", "off"],
@@ -121,6 +125,9 @@ void test("exposes every request and tool control in the settings pane", () => {
   });
   assert.deepEqual(settingPatch("toolBackground", "none"), {
     toolBackground: "none",
+  });
+  assert.deepEqual(settingPatch("applyPatchDebug", "on"), {
+    applyPatchDebug: true,
   });
   assert.deepEqual(settingPatch("imageGeneration", "off"), {
     imageGeneration: false,
@@ -164,12 +171,13 @@ void test("exposes every request and tool control in the settings pane", () => {
 
 void test("marks environment-controlled settings as locked", () => {
   const items = settingItems(
-    { ...DEFAULT_CONFIG, fastMode: true, autoCompactAtPercent: 90 },
-    { fastMode: true, autoCompactAtPercent: 90 },
+    { ...DEFAULT_CONFIG, fastMode: true, applyPatchDebug: true, autoCompactAtPercent: 90 },
+    { fastMode: true, applyPatchDebug: true, autoCompactAtPercent: 90 },
   );
   const fastMode = items.find((item) => item.id === "fastMode");
   const threshold = items.find((item) => item.id === "autoCompactAtPercent");
   const applyPatch = items.find((item) => item.id === "applyPatch");
+  const applyPatchDebug = items.find((item) => item.id === "applyPatchDebug");
 
   assert.equal(fastMode?.currentValue, "on (env)");
   assert.equal(fastMode?.values, undefined);
@@ -177,6 +185,12 @@ void test("marks environment-controlled settings as locked", () => {
   assert.equal(threshold?.currentValue, "90% (env)");
   assert.equal(threshold?.values, undefined);
   assert.deepEqual(applyPatch?.values, ["off", "on"]);
+  assert.equal(applyPatchDebug?.currentValue, "on (env)");
+  assert.equal(applyPatchDebug?.values, undefined);
+  assert.match(
+    applyPatchDebug?.description ?? "",
+    new RegExp(CONFIG_ENVIRONMENT_VARIABLES.applyPatchDebug),
+  );
 });
 
 void test("saves on Enter or Ctrl+S and discards unsaved changes on Escape", async (t) => {

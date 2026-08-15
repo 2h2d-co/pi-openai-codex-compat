@@ -401,6 +401,13 @@ Expanded rendering nests these details beneath the relevant instruction:
 Partial effects are not rendered as detached successful operations. Failed
 matching feedback does not repeat old or replacement patch blocks.
 
+When the default-off `applyPatchDebug` setting is enabled, a completed
+collapsed result instead renders the exact text content returned to the model
+under `Model feedback:`. Expanding the same result continues to render the
+normal aggregate visual summary, instruction rows, and complete diffs. Partial
+tool-call previews are unchanged because they do not yet have final
+model-facing feedback.
+
 ## Canonical data
 
 Model and TUI formatters consume one canonical instruction-result structure:
@@ -502,6 +509,13 @@ Model feedback does not reproduce old or replacement hunk blocks.
 
 Every fixture has the same statuses, concise reasons, filesystem effects,
 final path states, and instruction attribution in model and TUI output.
+
+With `applyPatchDebug` enabled:
+
+- a completed collapsed result contains the complete model-facing text;
+- a completed expanded result contains the normal visual summary and diffs;
+- changing the setting updates existing result components; and
+- partial previews remain unchanged.
 
 ### Matcher deduplication
 

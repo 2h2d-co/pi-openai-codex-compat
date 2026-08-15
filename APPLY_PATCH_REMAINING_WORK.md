@@ -47,6 +47,10 @@ The final feedback pass:
 - deduplicated byte-identical matcher candidates before exhaustive-search
   limits.
 
+The subsequent presentation pass added a default-off `applyPatchDebug`
+setting. Completed collapsed results can show the exact model-facing text,
+while expanded results retain the normal visual summary and complete diffs.
+
 The full feedback contract is recorded in
 `APPLY_PATCH_INSTRUCTION_FEEDBACK.md`.
 

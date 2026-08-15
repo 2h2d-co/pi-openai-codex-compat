@@ -40,6 +40,51 @@ type ApplyPatchResult = {
   details?: unknown;
 };
 
+export type ApplyPatchDebugResolver = () => boolean;
+
+function modelFeedback(result: ApplyPatchResult): string | undefined {
+  const text = result.content.flatMap((item) =>
+    item.type === "text" && typeof item.text === "string" ? [item.text] : [],
+  );
+  return text.length > 0 ? text.join("\n") : undefined;
+}
+
+class ApplyPatchResultComponent implements Component {
+  private readonly ordinary: Component;
+  private readonly feedback: Container | undefined;
+  private readonly expanded: boolean;
+  private readonly resolveDebug: ApplyPatchDebugResolver;
+
+  constructor(
+    ordinary: Component,
+    result: ApplyPatchResult,
+    theme: Theme,
+    expanded: boolean,
+    resolveDebug: ApplyPatchDebugResolver,
+  ) {
+    this.ordinary = ordinary;
+    this.expanded = expanded;
+    this.resolveDebug = resolveDebug;
+    const feedback = modelFeedback(result);
+    if (feedback !== undefined) {
+      this.feedback = new Container();
+      this.feedback.addChild(new Text(theme.bold("Model feedback:"), 0, 0));
+      this.feedback.addChild(new Text(feedback, 0, 0));
+    }
+  }
+
+  render(width: number): string[] {
+    return !this.expanded && this.resolveDebug() && this.feedback
+      ? this.feedback.render(width)
+      : this.ordinary.render(width);
+  }
+
+  invalidate(): void {
+    this.ordinary.invalidate();
+    this.feedback?.invalidate();
+  }
+}
+
 export function renderApplyPatchCall(
   args: ApplyPatchArgs,
   theme: Theme,
@@ -96,6 +141,7 @@ export function renderApplyPatchResult(
   theme: Theme,
   context: ApplyPatchRenderContext,
   resolveBackground: CodexToolBackgroundResolver = () => DEFAULT_CONFIG.toolBackground,
+  resolveDebug: ApplyPatchDebugResolver = () => DEFAULT_CONFIG.applyPatchDebug,
 ): Component {
   if (options.isPartial) return new Container();
 
@@ -103,7 +149,13 @@ export function renderApplyPatchResult(
 
   if (details) {
     return new CodexToolSurfaceComponent(
-      new ApplyPatchDiffComponent(details, theme, context.cwd, context.expanded),
+      new ApplyPatchResultComponent(
+        new ApplyPatchDiffComponent(details, theme, context.cwd, context.expanded),
+        result,
+        theme,
+        context.expanded,
+        resolveDebug,
+      ),
       theme,
       {
         background: resolveBackground,
@@ -115,10 +167,20 @@ export function renderApplyPatchResult(
   }
   const text = context.isError ? theme.bold(theme.fg("error", "✘ Failed to apply patch")) : "";
   if (!text) return new Container();
-  return new CodexToolSurfaceComponent(new Text(text, 0, 0), theme, {
-    background: resolveBackground,
-    status: "error",
-    top: false,
-    bottom: true,
-  });
+  return new CodexToolSurfaceComponent(
+    new ApplyPatchResultComponent(
+      new Text(text, 0, 0),
+      result,
+      theme,
+      context.expanded,
+      resolveDebug,
+    ),
+    theme,
+    {
+      background: resolveBackground,
+      status: "error",
+      top: false,
+      bottom: true,
+    },
+  );
 }

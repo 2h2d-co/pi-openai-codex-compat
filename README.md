@@ -42,6 +42,7 @@ The compatibility baseline is official Codex CLI `0.146.0`, released July 29, 20
 | Standalone `web.run`                          | Disabled by default; when enabled, preferred over hosted `web_search` and sent with the complete reserved schema and description.                 | Enabled by default for `gpt-5.6-sol` through Responses Lite; otherwise subject to standalone-search feature and runtime gates.                | `webRun`: boolean.                                                                         |
 | Hosted web search                             | Disabled by default; when enabled, injected only for ordinary Responses while `web.run` is inactive. Responses Lite omits hosted tools.           | Omitted for `gpt-5.6-sol` while standalone `web.run` is available; otherwise defaults to cached mode when hosted search is supported.         | `webRun` and `webSearch`: `disabled`, `cached`, `indexed`, or `live`.                      |
 | Coding mutation tools                         | Enables `apply_patch` and suppresses Pi's active `edit` and `write` tools.                                                                        | Chooses its tool surface from model metadata and runtime capabilities; there are no Pi `edit` or `write` tools to suppress.                   | `applyPatch`: boolean.                                                                     |
+| `apply_patch` debug output                    | Disabled; collapsed results show the normal visual summary and instruction rows.                                                                  | Not applicable to Pi's tool-result renderer.                                                                                                  | `applyPatchDebug`: boolean.                                                                |
 | Codex tool background                         | Uses a subtle theme-derived surface for extension-owned Codex tools.                                                                              | Uses Codex's own TUI activity cells rather than Pi tool rows.                                                                                 | `toolBackground`: `subtle`, `status`, or `none`.                                           |
 | Auto-compaction trigger                       | Relies on Pi's reserve-token threshold unless a percentage is configured.                                                                         | Tracks Codex's model/token-budget state before and between sampling steps.                                                                    | `autoCompactAtPercent`: percentage or unset. Pi's own compaction settings remain separate. |
 | Fast mode                                     | Uses the normal tier.                                                                                                                             | Uses the configured Codex service tier.                                                                                                       | `fastMode`: boolean; `true` requests the priority tier.                                    |
@@ -173,6 +174,7 @@ Example:
   "responsesLite": true,
   "toolBackground": "subtle",
   "applyPatch": true,
+  "applyPatchDebug": false,
   "imageGeneration": true,
   "imageDetail": "auto",
   "webRun": false,
@@ -192,6 +194,7 @@ Defaults:
 | `responsesLite`        | boolean                                              | `false`    | Uses Codex's Responses Lite input envelope on supported GPT-5.6 models when enabled. By default, those models use ordinary Responses instructions and tools.                                                                              |
 | `toolBackground`       | `subtle`, `status`, `none`                           | `subtle`   | Controls the shared self-rendered background for `apply_patch`, `image_gen.imagegen`, and `web.run`. `status` uses Pi's pending/success/error backgrounds; `none` keeps the custom layout transparent.                                    |
 | `applyPatch`           | boolean                                              | `true`     | On selected `openai-codex` models, uses the extension's `apply_patch` tool instead of Pi's active `edit` and `write` tools. Other providers always use their normal Pi tool set.                                                          |
+| `applyPatchDebug`      | boolean                                              | `false`    | Shows the exact model-facing tool result while a completed `apply_patch` result is collapsed. Expanded results continue to show the normal visual summary and complete diffs.                                                             |
 | `imageGeneration`      | boolean                                              | `true`     | Enables the extension-owned `image_gen.imagegen` tool on selected `openai-codex` models.                                                                                                                                                  |
 | `imageDetail`          | `auto`, `low`, `high`, `original`                    | `auto`     | Sets `input_image.detail` when an image tool result is sent back to the model. It does not change `gpt-image-2` generation quality.                                                                                                       |
 | `webRun`               | boolean                                              | `false`    | Enables the extension-owned `web.run` tool on selected `openai-codex` models. When active, it replaces hosted `web_search` in the Responses tool list.                                                                                    |
@@ -211,6 +214,7 @@ Every setting can also be overridden for one Pi process with an environment vari
 | `responsesLite`        | `PI_OPENAI_CODEX_COMPAT_RESPONSES_LITE`          |
 | `toolBackground`       | `PI_OPENAI_CODEX_COMPAT_TOOL_BACKGROUND`         |
 | `applyPatch`           | `PI_OPENAI_CODEX_COMPAT_APPLY_PATCH`             |
+| `applyPatchDebug`      | `PI_OPENAI_CODEX_COMPAT_APPLY_PATCH_DEBUG`       |
 | `imageGeneration`      | `PI_OPENAI_CODEX_COMPAT_IMAGE_GENERATION`        |
 | `imageDetail`          | `PI_OPENAI_CODEX_COMPAT_IMAGE_DETAIL`            |
 | `webRun`               | `PI_OPENAI_CODEX_COMPAT_WEB_RUN`                 |
@@ -301,6 +305,7 @@ Compatibility behavior:
 - Tool-result history stores per-file old/new content, display diffs, move destinations, overwrite information, per-instruction filesystem effects, and deterministic final-path inspection after runtime failures.
 - Opaque moves and symbolic-link deletions use path-only history, so binary bytes and link-target bytes are not serialized as textual deletions.
 - The TUI retains Codex-style changed-file summaries and renders every concise instruction result; `Ctrl+O` nests complete diffs beneath the instruction that produced them.
+- With `applyPatchDebug` enabled, a completed collapsed result shows the exact text returned to the model under `Model feedback:`; expanding it with `Ctrl+O` still shows the normal visual summary and complete diffs.
 - Failed instruction feedback colocates its error, completed effects, final path states, and concise matcher evidence without repeating patch text or using speculative language.
 
 Filesystem behavior:

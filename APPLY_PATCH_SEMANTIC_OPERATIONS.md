@@ -1116,6 +1116,11 @@ Unicode symbols. Failed matcher feedback does not repeat old or replacement
 patch blocks. Model feedback does not discuss diff availability or unreadable
 previous content.
 
+The default-off `applyPatchDebug` presentation setting replaces a completed
+collapsed TUI result with the exact model-facing text. It does not change tool
+execution, stored result data, or model feedback. Expanded results continue to
+show the normal visual summary and complete diffs.
+
 `APPLY_PATCH_INSTRUCTION_FEEDBACK.md` defines the complete normative feedback
 contract.
 

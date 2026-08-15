@@ -63,8 +63,9 @@ export default function registerCodexTools(
   pi: ExtensionAPI,
   resolveConfig: ConfigResolver,
   resolveToolBackground: CodexToolBackgroundResolver = () => DEFAULT_CONFIG.toolBackground,
+  resolveApplyPatchDebug: () => boolean = () => DEFAULT_CONFIG.applyPatchDebug,
 ): void {
-  registerApplyPatch(pi, resolveToolBackground);
+  registerApplyPatch(pi, resolveToolBackground, resolveApplyPatchDebug);
   registerImageGeneration(pi, resolveConfig, resolveToolBackground);
   registerWebRun(pi, resolveConfig, resolveToolBackground);
 }

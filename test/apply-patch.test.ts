@@ -591,7 +591,12 @@ void test("registers the Codex freeform tool with model, UI, and failed-history 
   } as unknown as ExtensionAPI;
 
   let toolBackground: CodexToolBackground = "subtle";
-  registerApplyPatch(pi, () => toolBackground);
+  let applyPatchDebug = false;
+  registerApplyPatch(
+    pi,
+    () => toolBackground,
+    () => applyPatchDebug,
+  );
   assert.equal(registered?.name, "apply_patch");
   assert.equal(
     registered?.promptSnippet,
@@ -711,11 +716,20 @@ void test("registers the Codex freeform tool with model, UI, and failed-history 
   assert.ok((shellRender.match(ANSI_BACKGROUND_PATTERN) ?? []).length > 0);
   assert.ok(shellComponent.render(120).every((line) => visibleWidth(line) <= 120));
 
+  applyPatchDebug = true;
+  const debugShellText = stripAnsi(shellComponent.render(120).join("\n"));
+  assert.match(debugShellText, /Model feedback:\s+Exit code: 0/u);
+  assert.match(debugShellText, /Instruction results:\s+1\. APPLIED - Add rendered\.txt/u);
+  assert.doesNotMatch(debugShellText, /• Added rendered\.txt/u);
+
   shellComponent.setExpanded(true);
   const expandedShellRender = shellComponent.render(120).join("\n");
   const expandedShellText = stripAnsi(expandedShellRender);
+  assert.doesNotMatch(expandedShellText, /Model feedback:/u);
+  assert.match(expandedShellText, /• Added rendered\.txt/u);
   assert.match(expandedShellText, /1 \+hello/);
   assert.ok(new Set(expandedShellRender.match(ANSI_BACKGROUND_PATTERN) ?? []).size >= 2);
+  applyPatchDebug = false;
 
   const sortedText = formatApplyPatchRenderText(
     {
@@ -866,6 +880,7 @@ void test("registers the Codex freeform tool with model, UI, and failed-history 
   assert.equal((failedResult.details as ApplyPatchDetails).status, "completed");
   await writeFile(join(cwd, "partial-first.txt"), "before\n");
   await writeFile(join(cwd, "partial-second.txt"), "before\n");
+  let failedModelFeedback = "";
   await assert.rejects(
     registered!.execute(
       "failed-call",
@@ -882,6 +897,7 @@ void test("registers the Codex freeform tool with model, UI, and failed-history 
     ),
     (error: unknown) => {
       assert.ok(error instanceof Error);
+      failedModelFeedback = error.message;
       assert.match(error.message, /^Exit code: 1/u);
       assert.match(error.message, /Patch failed at instruction 2 of 2\./u);
       assert.match(error.message, /Files changed:\nM partial-first\.txt/u);
@@ -937,6 +953,37 @@ void test("registers the Codex freeform tool with model, UI, and failed-history 
     /✘ 2\. Update partial-second\.txt — Filesystem changed after validation/,
   );
   assert.doesNotMatch(failedText, /Committed prefix|exact|inexact|Preflight/);
+
+  applyPatchDebug = true;
+  const failedDebugComponent = registered!.renderResult!(
+    {
+      content: [{ type: "text", text: failedModelFeedback }],
+      details: patchedResult!.details,
+    },
+    { expanded: false, isPartial: false },
+    theme,
+    {
+      args: { patch: failedPatch },
+      toolCallId: "failed-call",
+      invalidate() {},
+      lastComponent: undefined,
+      state: {},
+      cwd,
+      executionStarted: true,
+      argsComplete: true,
+      isPartial: false,
+      expanded: false,
+      showImages: false,
+      isError: true,
+    },
+  );
+  const failedDebugText = stripAnsi(failedDebugComponent.render(240).join("\n"));
+  assert.match(failedDebugText, /Model feedback:\s+Exit code: 1/u);
+  assert.match(failedDebugText, /Patch failed at instruction 2 of 2\./u);
+  assert.match(failedDebugText, /1\. APPLIED - Update partial-first\.txt/u);
+  assert.match(failedDebugText, /2\. FAILED - Update partial-second\.txt/u);
+  assert.doesNotMatch(failedDebugText, /✘ Failed to apply patch/u);
+  applyPatchDebug = false;
 
   await writeFile(join(cwd, "cancel-first.txt"), "before\n");
   await writeFile(join(cwd, "cancel-second.txt"), "before\n");
@@ -1159,4 +1206,31 @@ void test("registers the Codex freeform tool with model, UI, and failed-history 
   );
   assert.doesNotThrow(() => genericFailureComponent.render(120));
   assert.match(genericFailureComponent.render(120).join("\n"), /✘ Failed to apply patch/);
+
+  applyPatchDebug = true;
+  const genericDebugComponent = registered!.renderResult!(
+    {
+      content: [{ type: "text", text: "Unexpected apply_patch failure." }],
+      details: {},
+    },
+    { expanded: false, isPartial: false },
+    theme,
+    {
+      args: { patch: "invalid" },
+      toolCallId: "generic-debug-call",
+      invalidate() {},
+      lastComponent: undefined,
+      state: {},
+      cwd,
+      executionStarted: true,
+      argsComplete: true,
+      isPartial: false,
+      expanded: false,
+      showImages: false,
+      isError: true,
+    },
+  );
+  const genericDebugText = stripAnsi(genericDebugComponent.render(120).join("\n"));
+  assert.match(genericDebugText, /Model feedback:\s+Unexpected apply_patch failure\./u);
+  assert.doesNotMatch(genericDebugText, /✘ Failed to apply patch/u);
 });

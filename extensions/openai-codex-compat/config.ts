@@ -20,6 +20,8 @@ export interface CodexCompatConfig {
   responsesLite: boolean;
   /** Replace Pi's active edit and write tools with the extension's apply_patch tool. */
   applyPatch: boolean;
+  /** Show exact model-facing apply_patch feedback while its TUI result is collapsed. */
+  applyPatchDebug: boolean;
   /** Select the shared background surface for extension-owned Codex tools. */
   toolBackground: CodexToolBackground;
   /** Expose the standalone Codex image-generation namespace tool. */
@@ -44,6 +46,7 @@ export const CONFIG_ENVIRONMENT_VARIABLES = {
   fastMode: `${ENV_PREFIX}FAST_MODE`,
   responsesLite: `${ENV_PREFIX}RESPONSES_LITE`,
   applyPatch: `${ENV_PREFIX}APPLY_PATCH`,
+  applyPatchDebug: `${ENV_PREFIX}APPLY_PATCH_DEBUG`,
   toolBackground: `${ENV_PREFIX}TOOL_BACKGROUND`,
   imageGeneration: `${ENV_PREFIX}IMAGE_GENERATION`,
   imageDetail: `${ENV_PREFIX}IMAGE_DETAIL`,
@@ -59,6 +62,7 @@ export type ConfigLayer = {
   fastMode?: boolean;
   responsesLite?: boolean;
   applyPatch?: boolean;
+  applyPatchDebug?: boolean;
   toolBackground?: CodexToolBackground;
   imageGeneration?: boolean;
   imageDetail?: ImageDetail;
@@ -75,6 +79,7 @@ export const DEFAULT_CONFIG: CodexCompatConfig = {
   fastMode: false,
   responsesLite: false,
   applyPatch: true,
+  applyPatchDebug: false,
   toolBackground: "subtle",
   imageGeneration: true,
   imageDetail: "auto",
@@ -151,6 +156,12 @@ export function parseEnvironmentConfig(environment: Environment = process.env): 
 
   const applyPatch = environmentBoolean(environment, CONFIG_ENVIRONMENT_VARIABLES.applyPatch);
   if (applyPatch !== undefined) layer.applyPatch = applyPatch;
+
+  const applyPatchDebug = environmentBoolean(
+    environment,
+    CONFIG_ENVIRONMENT_VARIABLES.applyPatchDebug,
+  );
+  if (applyPatchDebug !== undefined) layer.applyPatchDebug = applyPatchDebug;
 
   const toolBackground = environmentEnum(
     environment,
@@ -239,6 +250,9 @@ export function parseConfig(value: unknown): ConfigLayer {
   const applyPatch = value["applyPatch"];
   if (typeof applyPatch === "boolean") layer.applyPatch = applyPatch;
 
+  const applyPatchDebug = value["applyPatchDebug"];
+  if (typeof applyPatchDebug === "boolean") layer.applyPatchDebug = applyPatchDebug;
+
   const toolBackground = value["toolBackground"];
   if (
     typeof toolBackground === "string" &&
@@ -318,6 +332,9 @@ export function resolveConfig(
     ...(typeof merged.fastMode === "boolean" ? { fastMode: merged.fastMode } : {}),
     ...(typeof merged.responsesLite === "boolean" ? { responsesLite: merged.responsesLite } : {}),
     ...(typeof merged.applyPatch === "boolean" ? { applyPatch: merged.applyPatch } : {}),
+    ...(typeof merged.applyPatchDebug === "boolean"
+      ? { applyPatchDebug: merged.applyPatchDebug }
+      : {}),
     ...(merged.toolBackground ? { toolBackground: merged.toolBackground } : {}),
     ...(typeof merged.imageGeneration === "boolean"
       ? { imageGeneration: merged.imageGeneration }
@@ -363,6 +380,7 @@ export function configLayer(config: CodexCompatConfig): ConfigLayer {
     fastMode: config.fastMode,
     responsesLite: config.responsesLite,
     applyPatch: config.applyPatch,
+    applyPatchDebug: config.applyPatchDebug,
     toolBackground: config.toolBackground,
     imageGeneration: config.imageGeneration,
     imageDetail: config.imageDetail,

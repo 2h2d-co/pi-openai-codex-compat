@@ -13,7 +13,11 @@ import {
   formatApplyPatchModelOutput,
   formatApplyPatchSummary,
 } from "./apply-patch-engine.ts";
-import { renderApplyPatchCall, renderApplyPatchResult } from "./apply-patch-render.ts";
+import {
+  type ApplyPatchDebugResolver,
+  renderApplyPatchCall,
+  renderApplyPatchResult,
+} from "./apply-patch-render.ts";
 
 export {
   applyPatch,
@@ -70,6 +74,7 @@ eof_line: "*** End of File" LF
 export default function registerApplyPatch(
   pi: ExtensionAPI,
   resolveToolBackground: CodexToolBackgroundResolver = () => DEFAULT_CONFIG.toolBackground,
+  resolveDebug: ApplyPatchDebugResolver = () => DEFAULT_CONFIG.applyPatchDebug,
 ): void {
   const failedDetails = new Map<string, ApplyPatchDetails>();
 
@@ -159,7 +164,14 @@ export default function registerApplyPatch(
       return renderApplyPatchCall(args, theme, context, resolveToolBackground);
     },
     renderResult(result, options, theme, context) {
-      return renderApplyPatchResult(result, options, theme, context, resolveToolBackground);
+      return renderApplyPatchResult(
+        result,
+        options,
+        theme,
+        context,
+        resolveToolBackground,
+        resolveDebug,
+      );
     },
   });
 }

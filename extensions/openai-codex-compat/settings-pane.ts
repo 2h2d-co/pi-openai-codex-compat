@@ -34,6 +34,7 @@ type SettingId =
   | "reasoningMode"
   | "toolBackground"
   | "applyPatch"
+  | "applyPatchDebug"
   | "imageGeneration"
   | "imageDetail"
   | "webRun"
@@ -106,6 +107,13 @@ export function settingItems(
       label: "apply_patch tool",
       description: "Use Codex apply_patch instead of Pi's edit and write tools.",
       currentValue: toggleValue(config.applyPatch),
+      values: ["off", "on"],
+    },
+    {
+      id: "applyPatchDebug",
+      label: "apply_patch debug output",
+      description: "Show exact model feedback while apply_patch output is collapsed.",
+      currentValue: toggleValue(config.applyPatchDebug),
       values: ["off", "on"],
     },
     {
@@ -185,6 +193,8 @@ export function settingPatch(id: string, value: string): ConfigLayer | undefined
       return undefined;
     case "applyPatch":
       return value === "on" || value === "off" ? { applyPatch: value === "on" } : undefined;
+    case "applyPatchDebug":
+      return value === "on" || value === "off" ? { applyPatchDebug: value === "on" } : undefined;
     case "imageGeneration":
       return value === "on" || value === "off" ? { imageGeneration: value === "on" } : undefined;
     case "imageDetail":
@@ -214,6 +224,7 @@ function applySettingPatch(config: CodexCompatConfig, patch: ConfigLayer): Codex
   if (typeof patch.fastMode === "boolean") next.fastMode = patch.fastMode;
   if (typeof patch.responsesLite === "boolean") next.responsesLite = patch.responsesLite;
   if (typeof patch.applyPatch === "boolean") next.applyPatch = patch.applyPatch;
+  if (typeof patch.applyPatchDebug === "boolean") next.applyPatchDebug = patch.applyPatchDebug;
   if (patch.toolBackground) next.toolBackground = patch.toolBackground;
   if (typeof patch.imageGeneration === "boolean") {
     next.imageGeneration = patch.imageGeneration;

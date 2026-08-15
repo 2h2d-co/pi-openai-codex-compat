@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Added
+
+- Add a default-off `applyPatchDebug` setting, environment override, and `/codex-settings` control that shows exact model-facing `apply_patch` feedback in collapsed completed results while preserving normal diffs when expanded.
+
 ### Changed
 
 - Omit Pi's auto-compaction state from the compatibility footer until extensions can observe its live value.

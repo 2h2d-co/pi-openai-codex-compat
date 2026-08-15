@@ -32,6 +32,7 @@ function settingsSummary(ctx: ExtensionContext, config: CodexCompatConfig): stri
     `reasoning mode: ${config.reasoningMode}`,
     `Codex tool background: ${config.toolBackground}`,
     `apply_patch: ${config.applyPatch ? "on" : "off"}`,
+    `apply_patch debug output: ${config.applyPatchDebug ? "on" : "off"}`,
     `image_gen.imagegen: ${config.imageGeneration ? "on" : "off"}`,
     `image result detail: ${config.imageDetail}`,
     `web.run: ${config.webRun ? "on" : "off"}`,
@@ -51,6 +52,8 @@ export default function registerOpenAICodexCompat(pi: ExtensionAPI): void {
     return activeConfig;
   };
   const resolveToolBackground = () => activeConfig?.toolBackground ?? DEFAULT_CONFIG.toolBackground;
+  const resolveApplyPatchDebug = () =>
+    activeConfig?.applyPatchDebug ?? DEFAULT_CONFIG.applyPatchDebug;
 
   pi.on("session_start", (event, ctx) => {
     activeConfig = loadConfig(ctx.cwd, ctx.isProjectTrusted());
@@ -60,7 +63,7 @@ export default function registerOpenAICodexCompat(pi: ExtensionAPI): void {
     }
   });
 
-  registerCodexTools(pi, resolveConfig, resolveToolBackground);
+  registerCodexTools(pi, resolveConfig, resolveToolBackground, resolveApplyPatchDebug);
   registerCodexThreadLineage(pi);
   const codexProvider = registerCodexProvider(pi, resolveConfig);
   registerCodexRequestOptions(pi, resolveConfig);
