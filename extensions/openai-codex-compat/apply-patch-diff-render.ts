@@ -17,6 +17,7 @@ import {
   type ApplyPatchInstructionReason,
   type ApplyPatchInstructionStatus,
   applyPatchHasOtherFilesystemChanges,
+  applyPatchNeedsInstructionResults,
   applyPatchSummaryPaths,
   coalesceAppliedPatchChangesForRendering,
   formatApplyPatchFailureHeading,
@@ -708,7 +709,7 @@ function renderInstructionResults(
 ): string[] {
   const lines: string[] = [];
   const instructions = details.instructions ?? [];
-  if (instructions.length === 0) return lines;
+  if (!applyPatchNeedsInstructionResults(details, cwd)) return lines;
   lines.push(theme.bold("Patch instruction results:"));
   const palette = diffPalette(theme);
   for (const instruction of instructions) {
@@ -749,6 +750,7 @@ export function formatApplyPatchRenderText(
 ): string {
   const lines: string[] = [];
   const changes = sortedChanges(details, cwd);
+  const showInstructionResults = applyPatchNeedsInstructionResults(details, cwd);
   if (details.status === "failed") {
     lines.push(...renderFailedChangeSummary(details, changes, theme, cwd));
   } else if (changes.length > 0) {
@@ -759,7 +761,7 @@ export function formatApplyPatchRenderText(
           `  ${theme.fg("dim", "└ ")}${changeListPath(change, cwd)} ${countSummary(change.additions, change.deletions, theme)}`,
         );
       }
-      if ((details.instructions?.length ?? 0) === 0) {
+      if (!showInstructionResults) {
         lines.push(
           ...changeDiffLines(change).map((line) => {
             if (line.separator) return `    ${theme.fg("dim", "⋮")}`;
@@ -787,7 +789,7 @@ export function formatApplyPatchRenderText(
   } else {
     if (changes.length === 0) lines.push(theme.bold("Success. No files were changed."));
   }
-  if ((details.instructions?.length ?? 0) > 0) {
+  if (showInstructionResults) {
     if (lines.length > 0) lines.push("");
     lines.push(...renderInstructionResults(details, theme, cwd, true));
   }
@@ -810,6 +812,7 @@ export class ApplyPatchDiffComponent implements Component {
   render(width: number): string[] {
     const effectiveWidth = Math.max(1, width);
     const changes = sortedChanges(this.details, this.cwd);
+    const showInstructionResults = applyPatchNeedsInstructionResults(this.details, this.cwd);
     const lines: string[] = [];
 
     if (this.details.status === "failed") {
@@ -824,7 +827,7 @@ export class ApplyPatchDiffComponent implements Component {
           const header = `  ${this.theme.fg("dim", "└ ")}${changeListPath(change, this.cwd)} ${countSummary(change.additions, change.deletions, this.theme)}`;
           lines.push(...wrapTextWithAnsi(header, effectiveWidth));
         }
-        if (this.expanded && (this.details.instructions?.length ?? 0) === 0) {
+        if (this.expanded && !showInstructionResults) {
           const inset = Math.min(4, Math.max(0, effectiveWidth - 1));
           const contentWidth = Math.max(1, effectiveWidth - inset);
           const palette = diffPalette(this.theme);
@@ -862,7 +865,7 @@ export class ApplyPatchDiffComponent implements Component {
       );
     }
 
-    if ((this.details.instructions?.length ?? 0) > 0) {
+    if (showInstructionResults) {
       if (lines.length > 0) lines.push("");
       for (const line of renderInstructionResults(
         this.details,

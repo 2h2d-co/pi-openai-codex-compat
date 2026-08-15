@@ -15,7 +15,8 @@ semantics to the model and user.
 Feedback must:
 
 1. retain the aggregate changed-file summary;
-2. report every instruction without a model-facing limit;
+2. when an instruction ledger is needed, report every instruction without a
+   model-facing limit;
 3. attribute filesystem effects, errors, and matching evidence to the
    instruction that produced them;
 4. report failed and not-run instructions;
@@ -74,14 +75,19 @@ uses it.
 
 ## Patch instruction results
 
-The aggregate summary is followed by this exact heading:
+Append an instruction ledger when at least one instruction is not `APPLIED` or
+an applied instruction has a feedback clause. Omit the ledger when every
+instruction is `APPLIED` without feedback.
+
+When included, the aggregate summary is followed by this exact heading:
 
 ```text
 Patch instruction results:
 ```
 
-Every instruction is listed in source order. Model feedback has no instruction
-limit and no omitted-count message.
+Every instruction is then listed in source order, including ordinary applied
+instructions without feedback. Model feedback has no instruction limit and no
+omitted-count message.
 
 Visible statuses are:
 
@@ -109,7 +115,8 @@ status labels and Unicode arrows.
 
 ## Concision rules
 
-An ordinary applied instruction needs only its status and operation:
+When the ledger is included because another instruction needs explanation, an
+ordinary applied instruction needs only its status and operation:
 
 ```text
 1. [APPLIED] Add a.txt
@@ -375,8 +382,9 @@ Completed instruction effects remain listed normally.
 
 ## TUI
 
-The TUI retains its aggregate visual summary, followed by
-`Patch instruction results:` and every instruction row.
+The TUI retains its aggregate visual summary. It follows that summary with
+`Patch instruction results:` and every instruction row under the same
+conditional rule as model feedback.
 
 Collapsed rendering keeps each row concise:
 
@@ -428,8 +436,9 @@ type InstructionResult = {
 
 Only presentation differs:
 
-- ASCII versus styled Unicode symbols;
+- styled status labels;
 - path presentation;
+- ASCII versus Unicode move arrows and separators;
 - expanded TUI diffs;
 - syntax highlighting; and
 - expanded system-error details.
@@ -453,7 +462,9 @@ the exhaustive mapping bound.
 ### Completeness
 
 - model and TUI results with 1, 8, 9, 100, and 500 instructions;
-- every instruction appears;
+- every instruction appears whenever the ledger is included;
+- all-applied instructions without feedback omit the ledger;
+- one applied instruction with feedback includes every instruction;
 - no omitted-count message exists.
 
 ### Summary and attribution
@@ -477,7 +488,8 @@ Generated model and TUI feedback does not contain:
 - `Matcher diagnostics`
 - the heading `Instructions:`
 
-The heading is `Patch instruction results:`.
+When the conditional ledger is present, its heading is
+`Patch instruction results:`.
 
 ### Deterministic failures
 

@@ -12,7 +12,7 @@
 - Evaluate grammar-valid `apply_patch` operations against a sequential virtual filesystem, accepting harmless no-ops and provably dead updates while rejecting conflicts before writes.
 - Recover uniquely determined `apply_patch` edits after whitespace-only formatter line reflow using the official `web-tree-sitter` runtime and packaged `@2h2d/tree-sitter-wasms` grammars for JavaScript, JSX, TypeScript, TSX, Python, Go, Java, and Scala, including typed Markdown code fences and formatter-aligned tables; require exact old-side punctuation and apply requested replacement lines without reinterpretation.
 - Move regular files and symbolic-link entries opaquely for move-only `apply_patch` hunks, preserving arbitrary binary bytes and rendering path-only move history.
-- Preserve the aggregate `apply_patch` changed-file summary and list every concise source-ordered result under `Patch instruction results:` as `N. [STATUS] operation` in model and TUI feedback.
+- Preserve the aggregate `apply_patch` changed-file summary and, when any instruction is not applied or an applied instruction has feedback, list every concise source-ordered result under `Patch instruction results:` as `N. [STATUS] operation` in model and TUI feedback while omitting the redundant ledger for ordinary all-applied patches.
 
 ### Fixed
 

@@ -371,8 +371,8 @@ Patch instruction results:
 ```
 
 Model and TUI feedback have no instruction limit. Concise reasons remain on
-their instructions, and the TUI may use Unicode status symbols while model
-feedback remains ASCII.
+their instructions, and the TUI may style status labels while model feedback
+remains plain ASCII.
 
 A structured reason should use stable codes rather than unrelated free-form
 strings, for example:
@@ -407,7 +407,8 @@ Semantic elimination returns related instruction numbers so the concise
 
 ### Current behavior
 
-Model and TUI feedback now share an aggregate changed-file summary and an
+Model and TUI feedback now share an aggregate changed-file summary and, when
+any instruction is not applied or an applied instruction has feedback, an
 unlimited source-ordered `Patch instruction results:` ledger.
 
 ### Required implementation
@@ -415,6 +416,7 @@ unlimited source-ordered `Patch instruction results:` ledger.
 - Attribute concise errors, completed filesystem effects, and deterministic
   final path states to the failed instruction.
 - Include every instruction without an omitted-count limit.
+- Omit the ledger only when every instruction is applied without feedback.
 - Explain every not-run instruction by referencing the failed instruction.
 - Avoid duplicating raw errors or old/replacement patch text.
 - Preserve the current exit-code and wall-time wrapper.

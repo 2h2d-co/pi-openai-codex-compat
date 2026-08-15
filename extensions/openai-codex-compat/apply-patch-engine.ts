@@ -4357,9 +4357,20 @@ export function applyPatchHasOtherFilesystemChanges(details: ApplyPatchDetails):
   );
 }
 
+export function applyPatchNeedsInstructionResults(
+  details: ApplyPatchDetails,
+  cwd = process.cwd(),
+): boolean {
+  return (details.instructions ?? []).some(
+    (instruction) =>
+      instruction.status !== "applied" ||
+      formatApplyPatchInstructionFeedback(instruction, details, cwd) !== undefined,
+  );
+}
+
 function instructionResults(details: ApplyPatchDetails, cwd: string): string[] {
   const instructions = details.instructions ?? [];
-  if (instructions.length === 0) return [];
+  if (!applyPatchNeedsInstructionResults(details, cwd)) return [];
   return [
     "Patch instruction results:",
     ...instructions.map((instruction) =>

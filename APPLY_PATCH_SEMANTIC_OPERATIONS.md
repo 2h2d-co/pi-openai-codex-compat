@@ -1104,11 +1104,13 @@ states:
 Success. No files were changed.
 ```
 
-The aggregate summary is followed by `Patch instruction results:` and every
-instruction in source order. There is no model or TUI instruction limit.
-Visible rows use `N. [STATUS] operation`, with statuses `APPLIED`, `NO CHANGE`,
+When any instruction is not applied or an applied instruction has feedback,
+the aggregate summary is followed by `Patch instruction results:` and every
+instruction in source order. The ledger is omitted when every instruction is
+applied without feedback. There is no model or TUI instruction limit. Visible
+rows use `N. [STATUS] operation`, with statuses `APPLIED`, `NO CHANGE`,
 `SKIPPED`, `FAILED`, and `NOT RUN`. Ordinary applied instructions need only
-their status and operation.
+their status and operation when the ledger is present.
 Reasons, non-obvious effects, deterministic final states, concise matcher
 evidence, and errors remain on the relevant instruction.
 

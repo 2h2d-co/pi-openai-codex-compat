@@ -671,11 +671,23 @@ void test("follows symlinks for updates but replaces them for adds", async (t) =
   assert.equal(await readFile(join(cwd, "alias.txt"), "utf8"), "done\n");
   await assert.rejects(readlink(join(cwd, "alias.txt")), { code: "EINVAL" });
   const feedback = formatApplyPatchSummary(details, cwd);
+  assert.match(feedback, /Patch instruction results:/u);
   assert.match(feedback, /1\. \[APPLIED\] Update alias\.txt - Updated the link target/u);
+  assert.match(feedback, /2\. \[APPLIED\] Update target\.txt$/mu);
   assert.match(
     feedback,
     /3\. \[APPLIED\] Add alias\.txt - Replaced alias\.txt; Link target for alias\.txt was unchanged\./u,
   );
+  assert.match(feedback, /4\. \[APPLIED\] Update alias\.txt$/mu);
+
+  const theme = {
+    fg: (_color: string, text: string) => text,
+    bold: (text: string) => text,
+  } as unknown as Theme;
+  const rendered = new ApplyPatchDiffComponent(details, theme, cwd, false).render(120).join("\n");
+  assert.match(rendered, /Patch instruction results:/u);
+  assert.match(rendered, /1\. \[APPLIED\] Update alias\.txt — Updated the link target/u);
+  assert.match(rendered, /2\. \[APPLIED\] Update target\.txt$/mu);
 });
 
 void test("replaces live and dangling symlinks on add without touching their targets", async (t) => {

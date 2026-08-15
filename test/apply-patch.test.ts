@@ -624,7 +624,7 @@ void test("registers the Codex freeform tool with model, UI, and failed-history 
   const resultText = result.content[0]?.type === "text" ? result.content[0].text : "";
   assert.match(
     resultText,
-    /^Exit code: 0\nWall time: \d+(?:\.\d+)? seconds\nOutput:\nSuccess\. Updated the following files:\nA rendered\.txt\n\nPatch instruction results:\n1\. \[APPLIED\] Add rendered\.txt\n$/,
+    /^Exit code: 0\nWall time: \d+(?:\.\d+)? seconds\nOutput:\nSuccess\. Updated the following files:\nA rendered\.txt\n$/,
   );
   assert.equal((result.details as ApplyPatchDetails).changes[0]?.kind, "add");
 
@@ -689,10 +689,7 @@ void test("registers the Codex freeform tool with model, UI, and failed-history 
   );
   const renderedResult = component.render(120).join("\n");
   assert.match(renderedResult, /• Added rendered\.txt \(\+1 -0\)/);
-  assert.match(
-    stripAnsi(renderedResult),
-    /Patch instruction results:\s+1\. \[APPLIED\] Add rendered\.txt/,
-  );
+  assert.doesNotMatch(stripAnsi(renderedResult), /Patch instruction results:/);
   assert.ok(!renderedResult.includes("\u001b[48;2;33;58;43m"));
   assert.ok(renderedResult.includes("\u001b[48;2;26;26;33m"));
   assert.doesNotMatch(stripAnsi(renderedResult), /1 \+hello/);
@@ -723,7 +720,7 @@ void test("registers the Codex freeform tool with model, UI, and failed-history 
   const debugShellText = stripAnsi(shellComponent.render(120).join("\n"));
   assert.match(debugShellText, /apply_patch \(debug\)\s+Exit code: 0/u);
   assert.doesNotMatch(debugShellText, /Model feedback:/u);
-  assert.match(debugShellText, /Patch instruction results:\s+1\. \[APPLIED\] Add rendered\.txt/u);
+  assert.doesNotMatch(debugShellText, /Patch instruction results:/u);
   assert.doesNotMatch(debugShellText, /• Added rendered\.txt/u);
 
   shellComponent.setExpanded(true);
