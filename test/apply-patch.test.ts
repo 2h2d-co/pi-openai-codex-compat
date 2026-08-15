@@ -718,13 +718,15 @@ void test("registers the Codex freeform tool with model, UI, and failed-history 
 
   applyPatchDebug = true;
   const debugShellText = stripAnsi(shellComponent.render(120).join("\n"));
-  assert.match(debugShellText, /Model feedback:\s+Exit code: 0/u);
+  assert.match(debugShellText, /apply_patch \(debug\)\s+Exit code: 0/u);
+  assert.doesNotMatch(debugShellText, /Model feedback:/u);
   assert.match(debugShellText, /Instruction results:\s+1\. APPLIED - Add rendered\.txt/u);
   assert.doesNotMatch(debugShellText, /• Added rendered\.txt/u);
 
   shellComponent.setExpanded(true);
   const expandedShellRender = shellComponent.render(120).join("\n");
   const expandedShellText = stripAnsi(expandedShellRender);
+  assert.match(expandedShellText, /apply_patch \(debug\)/u);
   assert.doesNotMatch(expandedShellText, /Model feedback:/u);
   assert.match(expandedShellText, /• Added rendered\.txt/u);
   assert.match(expandedShellText, /1 \+hello/);
@@ -978,7 +980,8 @@ void test("registers the Codex freeform tool with model, UI, and failed-history 
     },
   );
   const failedDebugText = stripAnsi(failedDebugComponent.render(240).join("\n"));
-  assert.match(failedDebugText, /Model feedback:\s+Exit code: 1/u);
+  assert.match(failedDebugText, /^\s*Exit code: 1/u);
+  assert.doesNotMatch(failedDebugText, /Model feedback:/u);
   assert.match(failedDebugText, /Patch failed at instruction 2 of 2\./u);
   assert.match(failedDebugText, /1\. APPLIED - Update partial-first\.txt/u);
   assert.match(failedDebugText, /2\. FAILED - Update partial-second\.txt/u);
@@ -1231,6 +1234,7 @@ void test("registers the Codex freeform tool with model, UI, and failed-history 
     },
   );
   const genericDebugText = stripAnsi(genericDebugComponent.render(120).join("\n"));
-  assert.match(genericDebugText, /Model feedback:\s+Unexpected apply_patch failure\./u);
+  assert.match(genericDebugText, /^\s*Unexpected apply_patch failure\./u);
+  assert.doesNotMatch(genericDebugText, /Model feedback:/u);
   assert.doesNotMatch(genericDebugText, /✘ Failed to apply patch/u);
 });

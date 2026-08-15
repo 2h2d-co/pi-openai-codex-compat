@@ -161,7 +161,7 @@ export default function registerApplyPatch(
       }
     },
     renderCall(args, theme, context) {
-      return renderApplyPatchCall(args, theme, context, resolveToolBackground);
+      return renderApplyPatchCall(args, theme, context, resolveToolBackground, resolveDebug);
     },
     renderResult(result, options, theme, context) {
       return renderApplyPatchResult(

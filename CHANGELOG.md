@@ -4,7 +4,7 @@
 
 ### Added
 
-- Add a default-off `applyPatchDebug` setting, environment override, and `/codex-settings` control that shows exact model-facing `apply_patch` feedback in collapsed completed results while preserving normal diffs when expanded.
+- Add a default-off `applyPatchDebug` setting, environment override, and `/codex-settings` control that labels calls `apply_patch (debug)` and shows exact model-facing feedback without a redundant renderer-only heading in collapsed completed results while preserving normal diffs when expanded.
 
 ### Changed
 
