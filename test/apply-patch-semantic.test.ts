@@ -28,6 +28,7 @@ import {
   parsePatch,
   previewPatch,
 } from "../extensions/openai-codex-compat/apply-patch-engine.ts";
+import { ApplyPatchDiffComponent } from "../extensions/openai-codex-compat/apply-patch-diff-render.ts";
 import { formatApplyPatchRenderText } from "../extensions/openai-codex-compat/apply-patch-render.ts";
 
 async function workspace(t: TestContext): Promise<string> {
@@ -75,10 +76,141 @@ void test("accepts grammar-valid empty and identity updates as no-ops", async (t
   );
 
   assert.deepEqual(details.changes, []);
-  assert.equal(formatApplyPatchSummary(details), "Success. No files were changed.\n");
+  assert.equal(
+    formatApplyPatchSummary(details),
+    [
+      "Success. No files were changed.",
+      "Instructions with no filesystem effect:",
+      "NO-OP 1. Update missing.txt - empty update has no effect",
+      "NO-OP 2. Update also-missing.txt - old and new sides are identical",
+      "NO-OP 3. Update same.txt - old and new sides are identical",
+      "NO-OP 4. Add same.txt - requested bytes are already present",
+      "NO-OP 5. Delete absent.txt - path is already absent",
+      "",
+    ].join("\n"),
+  );
+  assert.deepEqual(
+    details.instructions?.map((instruction) => instruction.reason?.code),
+    [
+      "empty-update",
+      "identity-update",
+      "identity-update",
+      "content-already-present",
+      "path-already-absent",
+    ],
+  );
   const after = await stat(join(cwd, "same.txt"));
   assert.equal(after.ino, before.ino);
   assert.equal(after.mtimeMs, before.mtimeMs);
+});
+
+void test("explains every no-op and dead operation to the model and TUI", async (t) => {
+  const cwd = await workspace(t);
+  await writeFile(join(cwd, "same-content.txt"), "value\n");
+  await writeFile(join(cwd, "move-source.txt"), "move\n");
+  await writeFile(join(cwd, "dead-delete.txt"), "delete\n");
+  await writeFile(join(cwd, "dead-add.txt"), "old\n");
+
+  const details = await applyPatch(
+    cwd,
+    patch(
+      "*** Update File: same-content.txt\n@@\n- value\n+value\n",
+      "*** Update File: same-content.txt\n*** Move to: same-content.txt\n",
+      "*** Update File: move-source.txt\n*** Move to: move-destination.txt\n",
+      "*** Update File: move-source.txt\n*** Move to: move-destination.txt\n",
+      "*** Update File: dead-delete.txt\n@@\n-missing\n+ignored\n",
+      "*** Delete File: dead-delete.txt\n",
+      "*** Update File: dead-add.txt\n@@\n-missing\n+ignored\n",
+      "*** Add File: dead-add.txt\n+replacement\n",
+    ),
+  );
+
+  assert.deepEqual(
+    details.instructions?.map(({ status, reason }) => [status, reason?.code]),
+    [
+      ["no-op", "content-already-present"],
+      ["no-op", "same-entry-move"],
+      ["applied", undefined],
+      ["no-op", "move-already-fulfilled"],
+      ["dead", "dead-dominated"],
+      ["applied", undefined],
+      ["dead", "dead-dominated"],
+      ["applied", undefined],
+    ],
+  );
+  assert.deepEqual(details.instructions?.[4]?.reason?.dominatingInstructions, [6]);
+  assert.deepEqual(details.instructions?.[6]?.reason?.dominatingInstructions, [8]);
+
+  const model = formatApplyPatchSummary(details);
+  assert.match(model, /NO-OP 1\. Update same-content\.txt - requested bytes are already present/u);
+  assert.match(
+    model,
+    /NO-OP 4\. Move move-source\.txt -> move-destination\.txt - an earlier move already established this destination/u,
+  );
+  assert.match(
+    model,
+    /DEAD 5\. Update dead-delete\.txt - later instruction 6 makes this operation unobservable/u,
+  );
+  assert.doesNotMatch(model, /[○↷→—]/u);
+
+  const theme = {
+    fg: (_color: string, text: string) => text,
+    bold: (text: string) => text,
+  } as unknown as Theme;
+  const collapsed = new ApplyPatchDiffComponent(details, theme, cwd, false).render(140).join("\n");
+  assert.match(collapsed, /○ 1\. Update same-content\.txt — requested bytes are already present/u);
+  assert.match(collapsed, /↷ 5\. Update dead-delete\.txt — later instruction 6/u);
+  assert.doesNotMatch(collapsed, /Proof:/u);
+  const expanded = new ApplyPatchDiffComponent(details, theme, cwd, true).render(140).join("\n");
+  assert.match(expanded, /Proof: filesystem effects are fully dominated by instruction 6/u);
+  assert.match(expanded, /Proof: filesystem effects are fully dominated by instruction 8/u);
+});
+
+void test("bounds collapsed and model no-op explanations while expanded TUI shows all", async (t) => {
+  const cwd = await workspace(t);
+  const operations = Array.from(
+    { length: 11 },
+    (_, index) => `*** Delete File: absent-${index + 1}.txt\n`,
+  );
+  const details = await applyPatch(cwd, patch(...operations));
+  const model = formatApplyPatchSummary(details);
+  assert.equal((model.match(/^NO-OP /gmu) ?? []).length, 8);
+  assert.match(model, /3 more instruction explanations omitted\./u);
+
+  const theme = {
+    fg: (_color: string, text: string) => text,
+    bold: (text: string) => text,
+  } as unknown as Theme;
+  const collapsed = new ApplyPatchDiffComponent(details, theme, cwd, false).render(120).join("\n");
+  assert.equal((collapsed.match(/○ \d+\. Delete/gmu) ?? []).length, 8);
+  assert.match(collapsed, /… 3 more instruction explanations/u);
+  const expanded = new ApplyPatchDiffComponent(details, theme, cwd, true).render(120).join("\n");
+  assert.equal((expanded.match(/○ \d+\. Delete/gmu) ?? []).length, 11);
+  assert.doesNotMatch(expanded, /more instruction explanations/u);
+
+  const allDead: ApplyPatchDetails = {
+    status: "completed",
+    exact: true,
+    changes: [],
+    added: [],
+    modified: [],
+    deleted: [],
+    instructions: [1, 2].map((index) => ({
+      index,
+      kind: "update" as const,
+      path: `dead-${index}.txt`,
+      status: "dead" as const,
+      reason: {
+        code: "dead-dominated" as const,
+        message: `later instruction ${index + 2} makes this operation unobservable`,
+        dominatingInstructions: [index + 2],
+      },
+    })),
+  };
+  assert.match(
+    formatApplyPatchSummary(allDead),
+    /DEAD 1\. Update dead-1\.txt - later instruction 3 makes this operation unobservable/u,
+  );
 });
 
 void test("moves opaque regular files without decoding or changing bytes", async (t) => {

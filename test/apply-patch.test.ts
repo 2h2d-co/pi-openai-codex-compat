@@ -877,7 +877,24 @@ void test("registers the Codex freeform tool with model, UI, and failed-history 
       },
       { cwd } as never,
     ),
-    /^Error: Exit code: 1/,
+    (error: unknown) => {
+      assert.ok(error instanceof Error);
+      assert.match(error.message, /^Exit code: 1/u);
+      assert.match(
+        error.message,
+        /Execution failed; instruction 2 of 2: Update partial-second\.txt\./u,
+      );
+      assert.match(error.message, /1 earlier change was applied before the failure\./u);
+      assert.match(error.message, /Committed prefix: exact\./u);
+      assert.match(error.message, /APPLIED 1\. Update partial-first\.txt/u);
+      assert.match(error.message, /FAILED 2\. Update partial-second\.txt/u);
+      assert.doesNotMatch(error.message, /[✓✘○↷→—]/u);
+      assert.equal(
+        error.message.match(/Filesystem changed after apply_patch preflight/gmu)?.length,
+        1,
+      );
+      return true;
+    },
   );
   const patchedResult = toolResultHandler?.({
     toolName: "apply_patch",

@@ -319,7 +319,7 @@ the original `nlink` and does not subtract the earlier planned deletion.
 
 ## Workstream 6: Explain successful no-op/dead patches
 
-**Status:** Agreed; implementation required.
+**Status:** Complete.
 
 ### Current behavior
 
@@ -407,7 +407,8 @@ boolean so rendering can identify the dominating instruction.
 
 ## Workstream 7: Add structured context to execution failure model output
 
-**Status:** Agreed; implementation required.
+**Status:** Structured model context implemented; injected partial-failure and
+cancellation coverage remains.
 
 ### Current behavior
 

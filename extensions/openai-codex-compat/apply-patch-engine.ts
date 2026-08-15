@@ -141,12 +141,28 @@ export type ApplyPatchInstructionStatus =
   | "failed"
   | "not-run";
 
+export type ApplyPatchInstructionReasonCode =
+  | "empty-update"
+  | "identity-update"
+  | "content-already-present"
+  | "path-already-absent"
+  | "same-entry-move"
+  | "move-already-fulfilled"
+  | "dead-dominated";
+
+export type ApplyPatchInstructionReason = {
+  code: ApplyPatchInstructionReasonCode;
+  message: string;
+  dominatingInstructions?: number[];
+};
+
 export type ApplyPatchInstructionDetails = {
   index: number;
   kind: "add" | "delete" | "update" | "move";
   path: string;
   moveTo?: string;
   status: ApplyPatchInstructionStatus;
+  reason?: ApplyPatchInstructionReason;
   error?: string;
 };
 
@@ -653,7 +669,23 @@ export function cloneApplyPatchDetails(details: ApplyPatchDetails): ApplyPatchDe
     modified: [...details.modified],
     deleted: [...details.deleted],
     ...(details.instructions
-      ? { instructions: details.instructions.map((instruction) => ({ ...instruction })) }
+      ? {
+          instructions: details.instructions.map((instruction) => ({
+            ...instruction,
+            ...(instruction.reason
+              ? {
+                  reason: {
+                    ...instruction.reason,
+                    ...(instruction.reason.dominatingInstructions
+                      ? {
+                          dominatingInstructions: [...instruction.reason.dominatingInstructions],
+                        }
+                      : {}),
+                  },
+                }
+              : {}),
+          })),
+        }
       : {}),
     ...(details.failure
       ? {
@@ -1091,6 +1123,41 @@ function updateHasSemanticMove(operation: Extract<ResolvedOperation, { kind: "up
   );
 }
 
+type DeadOperationProof = {
+  dominatingInstructions: number[];
+};
+
+function instructionReason(
+  code: ApplyPatchInstructionReasonCode,
+  dominatingInstructions: readonly number[] = [],
+): ApplyPatchInstructionReason {
+  switch (code) {
+    case "empty-update":
+      return { code, message: "empty update has no effect" };
+    case "identity-update":
+      return { code, message: "old and new sides are identical" };
+    case "content-already-present":
+      return { code, message: "requested bytes are already present" };
+    case "path-already-absent":
+      return { code, message: "path is already absent" };
+    case "same-entry-move":
+      return { code, message: "source and destination already identify the same entry" };
+    case "move-already-fulfilled":
+      return { code, message: "an earlier move already established this destination" };
+    case "dead-dominated": {
+      const instructions = [...new Set(dominatingInstructions)].toSorted(
+        (left, right) => left - right,
+      );
+      const noun = instructions.length === 1 ? "instruction" : "instructions";
+      return {
+        code,
+        message: `later ${noun} ${instructions.join(", ")} ${instructions.length === 1 ? "makes" : "make"} this operation unobservable`,
+        dominatingInstructions: instructions,
+      };
+    }
+  }
+}
+
 function instructionForOperation(
   operation: ResolvedOperation,
   index: number,
@@ -1151,21 +1218,25 @@ class SemanticPlanner {
         } else {
           await this.planUpdate(operation, index);
         }
-        instruction.status = this.mutations.length > mutationCount ? "planned" : "no-op";
+        if (this.mutations.length > mutationCount) {
+          instruction.status = "planned";
+        } else {
+          if (!instruction.reason) {
+            throw new Error(`Instruction ${instruction.index} has no recorded no-op reason`);
+          }
+          instruction.status = "no-op";
+        }
       } catch (error) {
         if (operation.kind === "update") {
-          if (
-            !updateHasSemanticMove(operation) &&
-            (await this.isDeadUpdate(index, operation.absolutePath))
-          ) {
+          const deadProof = !updateHasSemanticMove(operation)
+            ? await this.deadUpdateProof(index, operation.absolutePath)
+            : await this.deadMoveProof(index, operation.absolutePath, operation.moveAbsolutePath!);
+          if (deadProof) {
             instruction.status = "dead";
-            continue;
-          }
-          if (
-            updateHasSemanticMove(operation) &&
-            (await this.isDeadMove(index, operation.absolutePath, operation.moveAbsolutePath!))
-          ) {
-            instruction.status = "dead";
+            instruction.reason = instructionReason(
+              "dead-dominated",
+              deadProof.dominatingInstructions,
+            );
             continue;
           }
         }
@@ -1206,6 +1277,13 @@ class SemanticPlanner {
     if (entry.kind === "regular" && entry.physical && entry.physical.linkCount > 0) {
       entry.physical.linkCount -= 1;
     }
+  }
+
+  private markNoOp(
+    instructionIndex: number,
+    code: Exclude<ApplyPatchInstructionReasonCode, "dead-dominated">,
+  ): void {
+    this.instructions[instructionIndex]!.reason = instructionReason(code);
   }
 
   private async directoryIsCaseInsensitive(directory: string): Promise<boolean> {
@@ -1521,18 +1599,22 @@ class SemanticPlanner {
     return false;
   }
 
-  private async isDeadUpdate(index: number, targetPath: string): Promise<boolean> {
+  private async deadUpdateProof(
+    index: number,
+    targetPath: string,
+  ): Promise<DeadOperationProof | undefined> {
     const target = await this.resolvedTextTarget(targetPath);
-    if (!target) return false;
+    if (!target) return undefined;
 
     const targetKey = await this.pathKey(targetPath);
     if (target.entry.kind === "absent") {
-      for (const operation of this.operations.slice(index + 1)) {
+      for (let futureIndex = index + 1; futureIndex < this.operations.length; futureIndex += 1) {
+        const operation = this.operations[futureIndex]!;
         if (
           (operation.kind === "add" || operation.kind === "delete") &&
           (await this.pathKey(operation.absolutePath)) === targetKey
         ) {
-          return true;
+          return { dominatingInstructions: [futureIndex + 1] };
         }
         if (
           operation.kind === "update" &&
@@ -1550,20 +1632,34 @@ class SemanticPlanner {
             )
           ).some(Boolean)
         ) {
-          return false;
+          return undefined;
         }
       }
-      return false;
+      return undefined;
     }
 
-    if (target.entry.kind !== "regular") return false;
+    if (target.entry.kind !== "regular") return undefined;
     const affectedFingerprint = target.entry.fingerprint;
     const affectedPhysical = target.entry.physical;
-    if (!affectedFingerprint && !affectedPhysical) return false;
+    if (!affectedFingerprint && !affectedPhysical) return undefined;
     const effectiveLinkCount = affectedPhysical?.linkCount ?? affectedFingerprint!.linkCount;
     const affectedKey = await this.pathKey(target.path);
-    const deletedEntryKeys = new Set<string>();
-    for (const operation of this.operations.slice(index + 1)) {
+    const removedEntryInstructions = new Map<string, number>();
+    const samePhysicalFile = (
+      entry: VirtualEntry,
+    ): entry is Extract<VirtualEntry, { kind: "regular" }> => {
+      if (entry.kind !== "regular") return false;
+      if (affectedPhysical && entry.physical && affectedPhysical.id === entry.physical.id) {
+        return true;
+      }
+      return (
+        affectedFingerprint !== undefined &&
+        entry.fingerprint !== undefined &&
+        samePhysicalEntry(entry.fingerprint, affectedFingerprint)
+      );
+    };
+    for (let futureIndex = index + 1; futureIndex < this.operations.length; futureIndex += 1) {
+      const operation = this.operations[futureIndex]!;
       if (
         operation.kind === "update" &&
         !updateHasSemanticMove(operation) &&
@@ -1571,22 +1667,32 @@ class SemanticPlanner {
       ) {
         continue;
       }
-      if (operation.kind === "delete") {
-        const deleted = await this.stateAt(operation.absolutePath);
-        if (
-          deleted.kind === "regular" &&
-          ((affectedPhysical && deleted.physical && affectedPhysical.id === deleted.physical.id) ||
-            (affectedFingerprint &&
-              deleted.fingerprint !== undefined &&
-              samePhysicalEntry(deleted.fingerprint, affectedFingerprint)))
-        ) {
-          deletedEntryKeys.add(await this.pathKey(operation.absolutePath));
-          if (deletedEntryKeys.size >= effectiveLinkCount) return true;
-          continue;
+      if (operation.kind === "delete" || operation.kind === "add") {
+        const replaced = await this.stateAt(operation.absolutePath);
+        if (samePhysicalFile(replaced)) {
+          const addIsNoOp =
+            operation.kind === "add" &&
+            buffersEqual(
+              await this.readBytes(replaced, operation.absolutePath),
+              Buffer.from(operation.content, "utf8"),
+            ) &&
+            this.virtualSpellingSatisfied(replaced.entryPath, operation.absolutePath);
+          if (!addIsNoOp) {
+            removedEntryInstructions.set(
+              await this.pathKey(operation.absolutePath),
+              futureIndex + 1,
+            );
+            if (removedEntryInstructions.size >= effectiveLinkCount) {
+              return {
+                dominatingInstructions: [...removedEntryInstructions.values()],
+              };
+            }
+            continue;
+          }
         }
       }
       if (await this.operationObservesPhysicalEntry(operation, target.entry)) {
-        return false;
+        return undefined;
       }
       if (
         (
@@ -1597,26 +1703,27 @@ class SemanticPlanner {
           )
         ).some(Boolean)
       ) {
-        return false;
+        return undefined;
       }
     }
-    return false;
+    return undefined;
   }
 
-  private async isDeadMove(
+  private async deadMoveProof(
     index: number,
     sourcePath: string,
     destinationPath: string,
-  ): Promise<boolean> {
+  ): Promise<DeadOperationProof | undefined> {
     const source = await this.stateAt(sourcePath);
     if (source.kind !== "absent" && source.kind !== "regular" && source.kind !== "symlink") {
-      return false;
+      return undefined;
     }
     const sourceKey = await this.pathKey(sourcePath);
     const destinationKey = await this.pathKey(destinationPath);
     let sourceDominated = source.kind === "absent";
     let destinationDominated = false;
     let destinationParentsReproduced = false;
+    const dominatingInstructions = new Set<number>();
     const defaultFileMode = 0o666 & ~process.umask();
     const materializedMode =
       source.kind === "regular" && source.fingerprint
@@ -1656,11 +1763,13 @@ class SemanticPlanner {
       try {
         destinationParentsReproduced = (await stat(destinationParent.entryPath)).isDirectory();
       } catch {
-        return false;
+        return undefined;
       }
     }
 
-    for (const operation of this.operations.slice(index + 1)) {
+    for (let futureIndex = index + 1; futureIndex < this.operations.length; futureIndex += 1) {
+      const operation = this.operations[futureIndex]!;
+      const instructionNumber = futureIndex + 1;
       const operationPaths = this.operationRelatedPaths(operation);
       const operationKeys = await Promise.all(operationPaths.map((path) => this.pathKey(path)));
       const targetKey = operationKeys[0]!;
@@ -1670,6 +1779,7 @@ class SemanticPlanner {
           (operation.kind === "delete" || (await addDominates(source, operation, defaultFileMode)))
         ) {
           sourceDominated = true;
+          dominatingInstructions.add(instructionNumber);
         }
         if (targetKey === destinationKey) {
           if (
@@ -1677,10 +1787,16 @@ class SemanticPlanner {
             (await addDominates(destination, operation, materializedMode))
           ) {
             destinationDominated = true;
+            dominatingInstructions.add(instructionNumber);
           }
-          if (operation.kind === "add") destinationParentsReproduced = true;
+          if (operation.kind === "add") {
+            destinationParentsReproduced = true;
+            dominatingInstructions.add(instructionNumber);
+          }
         }
-        if (sourceDominated && destinationDominated && destinationParentsReproduced) return true;
+        if (sourceDominated && destinationDominated && destinationParentsReproduced) {
+          return { dominatingInstructions: [...dominatingInstructions] };
+        }
         continue;
       }
       if (
@@ -1700,10 +1816,12 @@ class SemanticPlanner {
           );
         })
       ) {
-        return false;
+        return undefined;
       }
     }
-    return sourceDominated && destinationDominated && destinationParentsReproduced;
+    return sourceDominated && destinationDominated && destinationParentsReproduced
+      ? { dominatingInstructions: [...dominatingInstructions] }
+      : undefined;
   }
 
   private async planAdd(
@@ -1723,6 +1841,7 @@ class SemanticPlanner {
           buffersEqual(await this.readBytes(target, operation.absolutePath), content) &&
           (await requestedSpellingExists(operation.absolutePath))
         ) {
+          this.markNoOp(instructionIndex, "content-already-present");
           return;
         }
       } catch {
@@ -1788,7 +1907,10 @@ class SemanticPlanner {
     index: number,
   ): Promise<void> {
     const target = await this.stateAt(operation.absolutePath);
-    if (target.kind === "absent") return;
+    if (target.kind === "absent") {
+      this.markNoOp(index, "path-already-absent");
+      return;
+    }
     if (target.kind === "directory" || target.kind === "unsupported") {
       throw new Error(
         `Cannot delete ${operation.absolutePath}: path is ${target.kind === "directory" ? "a directory" : `a ${target.entryType}`}`,
@@ -1856,8 +1978,17 @@ class SemanticPlanner {
   ): Promise<void> {
     const identity = chunksAreIdentity(operation.chunks);
     if (identity) {
-      if (updateHasSemanticMove(operation)) {
-        await this.planPureMove(operation, instructionIndex);
+      if (operation.moveAbsolutePath !== undefined) {
+        if (updateHasSemanticMove(operation)) {
+          await this.planPureMove(operation, instructionIndex);
+        } else {
+          this.markNoOp(instructionIndex, "same-entry-move");
+        }
+      } else {
+        this.markNoOp(
+          instructionIndex,
+          operation.chunks.length === 0 ? "empty-update" : "identity-update",
+        );
       }
       return;
     }
@@ -1883,7 +2014,10 @@ class SemanticPlanner {
     const content = Buffer.from(newContent, "utf8");
     const semanticMove = updateHasSemanticMove(operation);
     const sourceKey = await this.pathKey(operation.absolutePath);
-    if (!semanticMove && buffersEqual(source.content.value!.bytes, content)) return;
+    if (!semanticMove && buffersEqual(source.content.value!.bytes, content)) {
+      this.markNoOp(instructionIndex, "content-already-present");
+      return;
+    }
 
     if (!semanticMove) {
       const expectedSource = this.snapshot(source) as Extract<
@@ -2094,12 +2228,16 @@ class SemanticPlanner {
     const sourceKey = await this.pathKey(operation.absolutePath);
     const destinationKey = await this.pathKey(destinationPath);
     if (sourceKey === destinationKey) {
-      if (operation.absolutePath === destinationPath) return;
+      if (operation.absolutePath === destinationPath) {
+        this.markNoOp(instructionIndex, "same-entry-move");
+        return;
+      }
       const source = await this.stateAt(operation.absolutePath);
       if (
         (source.kind === "regular" || source.kind === "symlink") &&
         this.virtualSpellingSatisfied(source.entryPath, destinationPath)
       ) {
+        this.markNoOp(instructionIndex, "same-entry-move");
         return;
       }
       if ((await this.sameEntryMoveEffect(operation.absolutePath, destinationPath)) === "rename") {
@@ -2145,6 +2283,7 @@ class SemanticPlanner {
         await this.setState(destinationPath, { ...source, entryPath: destinationPath });
         return;
       }
+      this.markNoOp(instructionIndex, "same-entry-move");
       return;
     }
 
@@ -2157,6 +2296,7 @@ class SemanticPlanner {
         (destination.kind === "regular" || destination.kind === "symlink") &&
         fulfilled.destinationEntryId === destination.id
       ) {
+        this.markNoOp(instructionIndex, "move-already-fulfilled");
         return;
       }
       throw new Error(
@@ -3116,14 +3256,48 @@ export async function applyPatch(
   }
 }
 
+export function formatApplyPatchInstructionLabel(
+  instruction: ApplyPatchInstructionDetails,
+): string {
+  const verb =
+    instruction.kind === "add"
+      ? "Add"
+      : instruction.kind === "delete"
+        ? "Delete"
+        : instruction.kind === "move"
+          ? "Move"
+          : "Update";
+  return instruction.moveTo
+    ? `${verb} ${instruction.path} -> ${instruction.moveTo}`
+    : `${verb} ${instruction.path}`;
+}
+
 export function formatApplyPatchSummary(details: ApplyPatchDetails): string {
+  const lines: string[] = [];
   if (details.added.length === 0 && details.modified.length === 0 && details.deleted.length === 0) {
-    return "Success. No files were changed.\n";
+    lines.push("Success. No files were changed.");
+  } else {
+    lines.push("Success. Updated the following files:");
+    for (const path of details.added) lines.push(`A ${path}`);
+    for (const path of details.modified) lines.push(`M ${path}`);
+    for (const path of details.deleted) lines.push(`D ${path}`);
   }
-  const lines = ["Success. Updated the following files:"];
-  for (const path of details.added) lines.push(`A ${path}`);
-  for (const path of details.modified) lines.push(`M ${path}`);
-  for (const path of details.deleted) lines.push(`D ${path}`);
+
+  const effectless = (details.instructions ?? []).filter(
+    (instruction) => instruction.status === "no-op" || instruction.status === "dead",
+  );
+  if (effectless.length > 0) {
+    lines.push("Instructions with no filesystem effect:");
+    for (const instruction of effectless.slice(0, 8)) {
+      const status = instruction.status === "no-op" ? "NO-OP" : "DEAD";
+      lines.push(
+        `${status} ${instruction.index}. ${formatApplyPatchInstructionLabel(instruction)} - ${instruction.reason?.message ?? instruction.status}`,
+      );
+    }
+    if (effectless.length > 8) {
+      lines.push(`${effectless.length - 8} more instruction explanations omitted.`);
+    }
+  }
   return `${lines.join("\n")}\n`;
 }
 

@@ -12,6 +12,7 @@ import {
   type ApplyPatchDetails,
   type ApplyPatchFailureDetails,
   type ApplyPatchInstructionDetails,
+  type ApplyPatchInstructionReason,
   type ApplyPatchInstructionStatus,
   coalesceAppliedPatchChangesForRendering,
 } from "./apply-patch-engine.ts";
@@ -181,6 +182,33 @@ const INSTRUCTION_STATUSES = new Set<ApplyPatchInstructionStatus>([
   "not-run",
 ]);
 
+const INSTRUCTION_REASON_CODES = new Set<ApplyPatchInstructionReason["code"]>([
+  "empty-update",
+  "identity-update",
+  "content-already-present",
+  "path-already-absent",
+  "same-entry-move",
+  "move-already-fulfilled",
+  "dead-dominated",
+]);
+
+function isApplyPatchInstructionReason(value: unknown): value is ApplyPatchInstructionReason {
+  if (typeof value !== "object" || value === null) return false;
+  const reason = value as {
+    code?: unknown;
+    message?: unknown;
+    dominatingInstructions?: unknown;
+  };
+  return (
+    typeof reason.code === "string" &&
+    INSTRUCTION_REASON_CODES.has(reason.code as ApplyPatchInstructionReason["code"]) &&
+    typeof reason.message === "string" &&
+    (reason.dominatingInstructions === undefined ||
+      (Array.isArray(reason.dominatingInstructions) &&
+        reason.dominatingInstructions.every((index) => typeof index === "number")))
+  );
+}
+
 function isApplyPatchInstruction(value: unknown): value is ApplyPatchInstructionDetails {
   if (typeof value !== "object" || value === null) return false;
   const instruction = value as {
@@ -189,6 +217,7 @@ function isApplyPatchInstruction(value: unknown): value is ApplyPatchInstruction
     path?: unknown;
     moveTo?: unknown;
     status?: unknown;
+    reason?: unknown;
     error?: unknown;
   };
   return (
@@ -201,6 +230,7 @@ function isApplyPatchInstruction(value: unknown): value is ApplyPatchInstruction
     (instruction.moveTo === undefined || typeof instruction.moveTo === "string") &&
     typeof instruction.status === "string" &&
     INSTRUCTION_STATUSES.has(instruction.status as ApplyPatchInstructionStatus) &&
+    (instruction.reason === undefined || isApplyPatchInstructionReason(instruction.reason)) &&
     (instruction.error === undefined || typeof instruction.error === "string")
   );
 }
@@ -575,6 +605,55 @@ function instructionLabel(instruction: ApplyPatchInstructionDetails, cwd: string
     : `${verb} ${path}`;
 }
 
+const MAX_COLLAPSED_INSTRUCTION_EXPLANATIONS = 8;
+
+function effectlessInstructions(details: ApplyPatchDetails): ApplyPatchInstructionDetails[] {
+  return (details.instructions ?? []).filter(
+    (instruction) => instruction.status === "no-op" || instruction.status === "dead",
+  );
+}
+
+function renderEffectlessInstructions(
+  details: ApplyPatchDetails,
+  theme: Theme,
+  cwd: string,
+  expanded: boolean,
+): string[] {
+  const instructions = effectlessInstructions(details);
+  if (instructions.length === 0) return [];
+  const lines = [
+    details.changes.length === 0
+      ? theme.bold("No files were changed.")
+      : theme.bold("Instructions with no filesystem effect:"),
+  ];
+  const visible = expanded
+    ? instructions
+    : instructions.slice(0, MAX_COLLAPSED_INSTRUCTION_EXPLANATIONS);
+  for (const instruction of visible) {
+    const reason = instruction.reason?.message ?? statusDescription(instruction.status);
+    lines.push(
+      `  ${statusSymbol(instruction.status, theme)} ${instruction.index}. ${instructionLabel(instruction, cwd)} ${theme.fg("dim", `— ${reason}`)}`,
+    );
+    if (
+      expanded &&
+      instruction.reason?.code === "dead-dominated" &&
+      instruction.reason.dominatingInstructions?.length
+    ) {
+      const noun =
+        instruction.reason.dominatingInstructions.length === 1 ? "instruction" : "instructions";
+      lines.push(
+        `    ${theme.fg("dim", `Proof: filesystem effects are fully dominated by ${noun} ${instruction.reason.dominatingInstructions.join(", ")}`)}`,
+      );
+    }
+  }
+  if (visible.length < instructions.length) {
+    lines.push(
+      theme.fg("dim", `  … ${instructions.length - visible.length} more instruction explanations`),
+    );
+  }
+  return lines;
+}
+
 function failureSummary(details: ApplyPatchDetails, theme: Theme): string {
   const instructions = details.instructions ?? [];
   const noun = instructions.length === 1 ? "instruction" : "instructions";
@@ -659,8 +738,9 @@ function renderFailure(
     ? instructions
     : instructions.filter((instruction) => instruction.status === "failed");
   for (const instruction of visibleInstructions) {
+    const description = instruction.reason?.message ?? statusDescription(instruction.status);
     lines.push(
-      `  ${statusSymbol(instruction.status, theme)} ${instruction.index}. ${instructionLabel(instruction, cwd)} ${theme.fg("dim", `— ${statusDescription(instruction.status)}`)}`,
+      `  ${statusSymbol(instruction.status, theme)} ${instruction.index}. ${instructionLabel(instruction, cwd)} ${theme.fg("dim", `— ${description}`)}`,
     );
   }
 
@@ -710,6 +790,9 @@ export function formatApplyPatchRenderText(
   if (details?.status === "failed") {
     if (lines.length > 0) lines.push("");
     lines.push(...renderFailure(details, theme, cwd, true));
+  } else {
+    if (lines.length > 0 && effectlessInstructions(details).length > 0) lines.push("");
+    lines.push(...renderEffectlessInstructions(details, theme, cwd, true));
   }
   return lines.join("\n");
 }
@@ -756,6 +839,17 @@ export class ApplyPatchDiffComponent implements Component {
     if (this.details?.status === "failed") {
       if (lines.length > 0) lines.push("");
       for (const line of renderFailure(this.details, this.theme, this.cwd, this.expanded)) {
+        lines.push(...wrapTextWithAnsi(line, effectiveWidth));
+      }
+    } else {
+      const effectless = renderEffectlessInstructions(
+        this.details,
+        this.theme,
+        this.cwd,
+        this.expanded,
+      );
+      if (lines.length > 0 && effectless.length > 0) lines.push("");
+      for (const line of effectless) {
         lines.push(...wrapTextWithAnsi(line, effectiveWidth));
       }
     }

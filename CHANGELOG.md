@@ -16,6 +16,8 @@
 - Model native renames and cross-filesystem copy-and-unlink moves with distinct hard-link topology, and account for earlier planned unlinks when proving later edits dead.
 - Record symbolic-link deletion as a path-only entry operation so history and rendering never claim that the link target's bytes were deleted.
 - Serialize same-process `apply_patch` calls across case, Unicode, symlink-parent, and hard-link aliases while retaining Pi's ordinary path queues.
+- Explain every successful no-op and provably dead instruction in model output and the TUI, with bounded collapsed output and expanded domination evidence.
+- Include failed instruction labels, committed-prefix exactness, and every instruction status in model-facing execution-failure context.
 
 ### Security
 
