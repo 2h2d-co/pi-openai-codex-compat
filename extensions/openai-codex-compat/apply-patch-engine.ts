@@ -4188,7 +4188,9 @@ function finalStateFeedback(state: ApplyPatchFinalPathState, cwd: string): strin
   }
 }
 
-function instructionStatusLabel(status: ApplyPatchInstructionStatus): string {
+export function formatApplyPatchInstructionStatusLabel(
+  status: ApplyPatchInstructionStatus,
+): string {
   switch (status) {
     case "applied":
       return "APPLIED";
@@ -4268,7 +4270,7 @@ export function formatApplyPatchInstructionResult(
   details: ApplyPatchDetails,
   cwd = process.cwd(),
 ): string {
-  const result = `${instruction.index}. ${instructionStatusLabel(instruction.status)} - ${formatApplyPatchInstructionLabel(instruction)}`;
+  const result = `${instruction.index}. [${formatApplyPatchInstructionStatusLabel(instruction.status)}] ${formatApplyPatchInstructionLabel(instruction)}`;
   const feedback = formatApplyPatchInstructionFeedback(instruction, details, cwd);
   return feedback ? `${result} - ${feedback}` : result;
 }
@@ -4359,7 +4361,7 @@ function instructionResults(details: ApplyPatchDetails, cwd: string): string[] {
   const instructions = details.instructions ?? [];
   if (instructions.length === 0) return [];
   return [
-    "Instruction results:",
+    "Patch instruction results:",
     ...instructions.map((instruction) =>
       formatApplyPatchInstructionResult(instruction, details, cwd),
     ),

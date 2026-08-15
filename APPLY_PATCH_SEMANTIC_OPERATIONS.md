@@ -1104,15 +1104,16 @@ states:
 Success. No files were changed.
 ```
 
-The aggregate summary is followed by `Instruction results:` and every
+The aggregate summary is followed by `Patch instruction results:` and every
 instruction in source order. There is no model or TUI instruction limit.
-Visible statuses use `APPLIED`, `NO CHANGE`, `SKIPPED`, `FAILED`, and
-`NOT RUN`. Ordinary applied instructions need only their status and operation.
+Visible rows use `N. [STATUS] operation`, with statuses `APPLIED`, `NO CHANGE`,
+`SKIPPED`, `FAILED`, and `NOT RUN`. Ordinary applied instructions need only
+their status and operation.
 Reasons, non-obvious effects, deterministic final states, concise matcher
 evidence, and errors remain on the relevant instruction.
 
 Model-facing status labels and separators are ASCII, while the TUI may use
-Unicode symbols. Failed matcher feedback does not repeat old or replacement
+Unicode separators. Failed matcher feedback does not repeat old or replacement
 patch blocks. Model feedback does not discuss diff availability or unreadable
 previous content.
 

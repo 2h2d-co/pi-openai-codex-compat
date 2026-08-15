@@ -512,10 +512,10 @@ invalid update line
   } as unknown as Theme;
   const rendered = formatApplyPatchRenderText(preflightDetails, theme, cwd);
   assert.match(rendered, /Patch failed at instruction 2 of 3\./);
-  assert.match(rendered, /Instruction results:/);
-  assert.match(rendered, /✘ 2\. Update missing\.txt — Read failed: path does not exist\./);
-  assert.match(rendered, /– 1\. Add created\.txt — Instruction 2 failed\./);
-  assert.match(rendered, /– 3\. Delete existing\.txt — Instruction 2 failed\./);
+  assert.match(rendered, /Patch instruction results:/);
+  assert.match(rendered, /2\. \[FAILED\] Update missing\.txt — Read failed: path does not exist\./);
+  assert.match(rendered, /1\. \[NOT RUN\] Add created\.txt — Instruction 2 failed\./);
+  assert.match(rendered, /3\. \[NOT RUN\] Delete existing\.txt — Instruction 2 failed\./);
   await assert.rejects(readFile(join(cwd, "created.txt")), { code: "ENOENT" });
   assert.equal(await readFile(join(cwd, "existing.txt"), "utf8"), "keep\n");
 });
@@ -624,7 +624,7 @@ void test("registers the Codex freeform tool with model, UI, and failed-history 
   const resultText = result.content[0]?.type === "text" ? result.content[0].text : "";
   assert.match(
     resultText,
-    /^Exit code: 0\nWall time: \d+(?:\.\d+)? seconds\nOutput:\nSuccess\. Updated the following files:\nA rendered\.txt\n\nInstruction results:\n1\. APPLIED - Add rendered\.txt\n$/,
+    /^Exit code: 0\nWall time: \d+(?:\.\d+)? seconds\nOutput:\nSuccess\. Updated the following files:\nA rendered\.txt\n\nPatch instruction results:\n1\. \[APPLIED\] Add rendered\.txt\n$/,
   );
   assert.equal((result.details as ApplyPatchDetails).changes[0]?.kind, "add");
 
@@ -689,7 +689,10 @@ void test("registers the Codex freeform tool with model, UI, and failed-history 
   );
   const renderedResult = component.render(120).join("\n");
   assert.match(renderedResult, /• Added rendered\.txt \(\+1 -0\)/);
-  assert.match(stripAnsi(renderedResult), /Instruction results:\s+✓ 1\. Add rendered\.txt/);
+  assert.match(
+    stripAnsi(renderedResult),
+    /Patch instruction results:\s+1\. \[APPLIED\] Add rendered\.txt/,
+  );
   assert.ok(!renderedResult.includes("\u001b[48;2;33;58;43m"));
   assert.ok(renderedResult.includes("\u001b[48;2;26;26;33m"));
   assert.doesNotMatch(stripAnsi(renderedResult), /1 \+hello/);
@@ -720,7 +723,7 @@ void test("registers the Codex freeform tool with model, UI, and failed-history 
   const debugShellText = stripAnsi(shellComponent.render(120).join("\n"));
   assert.match(debugShellText, /apply_patch \(debug\)\s+Exit code: 0/u);
   assert.doesNotMatch(debugShellText, /Model feedback:/u);
-  assert.match(debugShellText, /Instruction results:\s+1\. APPLIED - Add rendered\.txt/u);
+  assert.match(debugShellText, /Patch instruction results:\s+1\. \[APPLIED\] Add rendered\.txt/u);
   assert.doesNotMatch(debugShellText, /• Added rendered\.txt/u);
 
   shellComponent.setExpanded(true);
@@ -903,8 +906,8 @@ void test("registers the Codex freeform tool with model, UI, and failed-history 
       assert.match(error.message, /^Exit code: 1/u);
       assert.match(error.message, /Patch failed at instruction 2 of 2\./u);
       assert.match(error.message, /Files changed:\nM partial-first\.txt/u);
-      assert.match(error.message, /1\. APPLIED - Update partial-first\.txt/u);
-      assert.match(error.message, /2\. FAILED - Update partial-second\.txt/u);
+      assert.match(error.message, /1\. \[APPLIED\] Update partial-first\.txt/u);
+      assert.match(error.message, /2\. \[FAILED\] Update partial-second\.txt/u);
       assert.match(error.message, /Filesystem changed after validation/u);
       assert.match(error.message, /partial-second\.txt contains unexpected content/u);
       assert.doesNotMatch(error.message, /Committed prefix|exact|inexact|earlier change/u);
@@ -952,7 +955,7 @@ void test("registers the Codex freeform tool with model, UI, and failed-history 
   assert.match(failedText, /Patch failed at instruction 2 of 2\./);
   assert.match(
     failedText,
-    /✘ 2\. Update partial-second\.txt — Filesystem changed after validation/,
+    /2\. \[FAILED\] Update partial-second\.txt — Filesystem changed after validation/,
   );
   assert.doesNotMatch(failedText, /Committed prefix|exact|inexact|Preflight/);
 
@@ -983,8 +986,8 @@ void test("registers the Codex freeform tool with model, UI, and failed-history 
   assert.match(failedDebugText, /^\s*Exit code: 1/u);
   assert.doesNotMatch(failedDebugText, /Model feedback:/u);
   assert.match(failedDebugText, /Patch failed at instruction 2 of 2\./u);
-  assert.match(failedDebugText, /1\. APPLIED - Update partial-first\.txt/u);
-  assert.match(failedDebugText, /2\. FAILED - Update partial-second\.txt/u);
+  assert.match(failedDebugText, /1\. \[APPLIED\] Update partial-first\.txt/u);
+  assert.match(failedDebugText, /2\. \[FAILED\] Update partial-second\.txt/u);
   assert.doesNotMatch(failedDebugText, /✘ Failed to apply patch/u);
   applyPatchDebug = false;
 
@@ -1017,10 +1020,10 @@ void test("registers the Codex freeform tool with model, UI, and failed-history 
       assert.ok(error instanceof Error);
       assert.match(error.message, /Patch failed at instruction 2 of 2/u);
       assert.match(error.message, /Files changed:\nM cancel-first\.txt/u);
-      assert.match(error.message, /1\. APPLIED - Update cancel-first\.txt/u);
+      assert.match(error.message, /1\. \[APPLIED\] Update cancel-first\.txt/u);
       assert.match(
         error.message,
-        /2\. FAILED - Update cancel-second\.txt - Patch stopped; cancel-second\.txt is unchanged\./u,
+        /2\. \[FAILED\] Update cancel-second\.txt - Patch stopped; cancel-second\.txt is unchanged\./u,
       );
       return true;
     },
@@ -1084,12 +1087,15 @@ void test("registers the Codex freeform tool with model, UI, and failed-history 
   assert.match(verificationText, /Patch failed at instruction 2 of 3\./);
   assert.match(
     verificationText,
-    /✘ 2\. Update verification-missing\.txt — Read failed: path does not exist\./,
+    /2\. \[FAILED\] Update verification-missing\.txt — Read failed: path does not exist\./,
   );
-  assert.match(verificationText, /– 1\. Add verification-created\.txt — Instruction 2 failed\./);
   assert.match(
     verificationText,
-    /– 3\. Delete verification-existing\.txt — Instruction 2 failed\./,
+    /1\. \[NOT RUN\] Add verification-created\.txt — Instruction 2 failed\./,
+  );
+  assert.match(
+    verificationText,
+    /3\. \[NOT RUN\] Delete verification-existing\.txt — Instruction 2 failed\./,
   );
 
   const expandedVerificationComponent = registered!.renderResult!(
@@ -1114,11 +1120,11 @@ void test("registers the Codex freeform tool with model, UI, and failed-history 
   const expandedVerificationText = stripAnsi(expandedVerificationComponent.render(120).join("\n"));
   assert.match(
     expandedVerificationText,
-    /– 1\. Add verification-created\.txt — Instruction 2 failed\./,
+    /1\. \[NOT RUN\] Add verification-created\.txt — Instruction 2 failed\./,
   );
   assert.match(
     expandedVerificationText,
-    /– 3\. Delete verification-existing\.txt — Instruction 2 failed\./,
+    /3\. \[NOT RUN\] Delete verification-existing\.txt — Instruction 2 failed\./,
   );
   await assert.rejects(readFile(join(cwd, "verification-created.txt")), { code: "ENOENT" });
   assert.equal(await readFile(join(cwd, "verification-existing.txt"), "utf8"), "keep\n");
@@ -1148,7 +1154,7 @@ void test("registers the Codex freeform tool with model, UI, and failed-history 
       assert.match(error.message, /No files were changed\./u);
       assert.match(
         error.message,
-        /1\. FAILED - Update ordered\.md - Edit group 2 matches before edit group 1; matches at line 4 and line 8\./u,
+        /1\. \[FAILED\] Update ordered\.md - Edit group 2 matches before edit group 1; matches at line 4 and line 8\./u,
       );
       assert.doesNotMatch(error.message, /Later anchor|Earlier anchor|Matcher diagnostics/u);
       return true;
@@ -1181,7 +1187,7 @@ void test("registers the Codex freeform tool with model, UI, and failed-history 
   const matcherText = stripAnsi(matcherComponent.render(120).join("\n"));
   assert.match(
     matcherText,
-    /✘ 1\. Update ordered\.md — Edit group 2 matches before edit group 1; matches at line 4 and line 8\./u,
+    /1\. \[FAILED\] Update ordered\.md — Edit group 2 matches before edit group 1; matches at line 4 and line 8\./u,
   );
   assert.doesNotMatch(
     matcherText,

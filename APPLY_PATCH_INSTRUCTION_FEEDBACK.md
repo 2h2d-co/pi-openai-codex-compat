@@ -72,12 +72,12 @@ the unverified state on its instruction.
 Keep the existing exit-code and wall-time envelope where the tool currently
 uses it.
 
-## Instruction results
+## Patch instruction results
 
 The aggregate summary is followed by this exact heading:
 
 ```text
-Instruction results:
+Patch instruction results:
 ```
 
 Every instruction is listed in source order. Model feedback has no instruction
@@ -97,25 +97,25 @@ the statuses above.
 Example:
 
 ```text
-Instruction results:
-1. APPLIED - Update a.txt
-2. NO CHANGE - Delete missing.txt - Path already absent.
-3. FAILED - Move source.txt -> destination.txt - Created destination.txt; source.txt remains; source removal failed: permission denied.
-4. NOT RUN - Update other.txt - Instruction 3 failed.
+Patch instruction results:
+1. [APPLIED] Update a.txt
+2. [NO CHANGE] Delete missing.txt - Path already absent.
+3. [FAILED] Move source.txt -> destination.txt - Created destination.txt; source.txt remains; source removal failed: permission denied.
+4. [NOT RUN] Update other.txt - Instruction 3 failed.
 ```
 
 Model-facing separators and move arrows are ASCII. The TUI may use styled
-Unicode symbols and arrows.
+status labels and Unicode arrows.
 
 ## Concision rules
 
 An ordinary applied instruction needs only its status and operation:
 
 ```text
-1. APPLIED - Add a.txt
-2. APPLIED - Update b.txt
-3. APPLIED - Move c.txt -> d.txt
-4. APPLIED - Delete e.txt
+1. [APPLIED] Add a.txt
+2. [APPLIED] Update b.txt
+3. [APPLIED] Move c.txt -> d.txt
+4. [APPLIED] Delete e.txt
 ```
 
 Add a short clause only for:
@@ -177,12 +177,12 @@ Final state not verified for a.txt.
 Render semantic no-ops as `NO CHANGE`:
 
 ```text
-1. NO CHANGE - Update a.txt - The instruction contains no changes.
-2. NO CHANGE - Update b.txt - Old and replacement content are identical.
-3. NO CHANGE - Add c.txt - Requested content already present.
-4. NO CHANGE - Delete d.txt - Path already absent.
-5. NO CHANGE - Move e.txt -> e.txt - Source and destination identify the same entry.
-6. NO CHANGE - Move a.txt -> b.txt - Instruction 2 already moved this entry.
+1. [NO CHANGE] Update a.txt - The instruction contains no changes.
+2. [NO CHANGE] Update b.txt - Old and replacement content are identical.
+3. [NO CHANGE] Add c.txt - Requested content already present.
+4. [NO CHANGE] Delete d.txt - Path already absent.
+5. [NO CHANGE] Move e.txt -> e.txt - Source and destination identify the same entry.
+6. [NO CHANGE] Move a.txt -> b.txt - Instruction 2 already moved this entry.
 ```
 
 The fulfilled-move result records and references the earlier instruction that
@@ -193,13 +193,13 @@ performed the move.
 Render a semantically eliminated operation as `SKIPPED`, not `DEAD`.
 
 ```text
-2. SKIPPED - Update a.txt - Instruction 4 deletes a.txt before another instruction reads it.
+2. [SKIPPED] Update a.txt - Instruction 4 deletes a.txt before another instruction reads it.
 ```
 
 For a shared hard-linked file:
 
 ```text
-2. SKIPPED - Update a.txt - Instructions 4 and 6 delete every link before another instruction reads the file.
+2. [SKIPPED] Update a.txt - Instructions 4 and 6 delete every link before another instruction reads the file.
 ```
 
 The concise reason and related instruction numbers remain on the skipped
@@ -235,19 +235,19 @@ must not be called earlier changes.
 Examples:
 
 ```text
-3. FAILED - Move a.txt -> b.txt - Created b.txt; a.txt remains; source removal failed: permission denied.
+3. [FAILED] Move a.txt -> b.txt - Created b.txt; a.txt remains; source removal failed: permission denied.
 ```
 
 ```text
-3. FAILED - Move a.txt -> b.txt - Replaced b.txt; a.txt remains; source removal failed: permission denied.
+3. [FAILED] Move a.txt -> b.txt - Replaced b.txt; a.txt remains; source removal failed: permission denied.
 ```
 
 ```text
-3. FAILED - Move a.txt -> b.txt - Deleted the previous b.txt; b.txt is absent; replacement failed: permission denied.
+3. [FAILED] Move a.txt -> b.txt - Deleted the previous b.txt; b.txt is absent; replacement failed: permission denied.
 ```
 
 ```text
-3. FAILED - Move a.txt -> dir/b.txt - Created directory dir; move failed: permission denied.
+3. [FAILED] Move a.txt -> dir/b.txt - Created directory dir; move failed: permission denied.
 ```
 
 ## Post-failure inspection
@@ -271,15 +271,15 @@ Path-state feedback uses only deterministic states:
 Examples:
 
 ```text
-3. FAILED - Update a.txt - Write failed: permission denied; a.txt is unchanged.
+3. [FAILED] Update a.txt - Write failed: permission denied; a.txt is unchanged.
 ```
 
 ```text
-3. FAILED - Update a.txt - Write reported an error; a.txt contains the requested content.
+3. [FAILED] Update a.txt - Write reported an error; a.txt contains the requested content.
 ```
 
 ```text
-3. FAILED - Update a.txt - Write failed: input/output error; final state not verified for a.txt.
+3. [FAILED] Update a.txt - Write failed: input/output error; final state not verified for a.txt.
 ```
 
 An empty recorded-change list is not proof that no file changed.
@@ -293,8 +293,8 @@ success feedback:
 Success. Updated the following files:
 A file.txt
 
-Instruction results:
-1. APPLIED - Add file.txt
+Patch instruction results:
+1. [APPLIED] Add file.txt
 ```
 
 Do not tell the model that previous content was unreadable, a diff is
@@ -309,23 +309,23 @@ detached `Matcher diagnostics:` section or repeat old/replacement patch text.
 Examples:
 
 ```text
-3. FAILED - Update file.ts - Old content was not found.
+3. [FAILED] Update file.ts - Old content was not found.
 ```
 
 ```text
-3. FAILED - Update file.ts - Edit group 2 matches before edit group 1; matches at lines 10-12 and 30-32.
+3. [FAILED] Update file.ts - Edit group 2 matches before edit group 1; matches at lines 10-12 and 30-32.
 ```
 
 ```text
-3. FAILED - Update file.ts - Matching locations at lines 10-12 and 40-42 produce different results.
+3. [FAILED] Update file.ts - Matching locations at lines 10-12 and 40-42 produce different results.
 ```
 
 ```text
-3. FAILED - Update file.ts - Matching stopped after 256 complete mappings.
+3. [FAILED] Update file.ts - Matching stopped after 256 complete mappings.
 ```
 
 ```text
-3. FAILED - Update file.ts - Requested replacement found at lines 40-44, but old content was not found.
+3. [FAILED] Update file.ts - Requested replacement found at lines 40-44, but old content was not found.
 ```
 
 ## Not-run results
@@ -333,17 +333,17 @@ Examples:
 Every not-run instruction identifies why it did not run:
 
 ```text
-4. NOT RUN - Update other.txt - Instruction 3 failed.
+4. [NOT RUN] Update other.txt - Instruction 3 failed.
 ```
 
 For errors not owned by an instruction:
 
 ```text
-1. NOT RUN - Update a.txt - Patch format error.
+1. [NOT RUN] Update a.txt - Patch format error.
 ```
 
 ```text
-1. NOT RUN - Update a.txt - Filesystem setup failed.
+1. [NOT RUN] Update a.txt - Filesystem setup failed.
 ```
 
 ## Patch-level failures
@@ -353,15 +353,15 @@ Use a patch-level statement only when no instruction owns the error.
 ```text
 Patch format error at line 1: the patch must begin with "*** Begin Patch".
 
-Instruction results:
-1. NOT RUN - Update a.txt - Patch format error.
+Patch instruction results:
+1. [NOT RUN] Update a.txt - Patch format error.
 ```
 
 ```text
 Patch setup failed: filesystem access failed for path.
 
-Instruction results:
-1. NOT RUN - Update a.txt - Filesystem setup failed.
+Patch instruction results:
+1. [NOT RUN] Update a.txt - Filesystem setup failed.
 ```
 
 If cancellation or an integration callback stops the patch after an
@@ -376,18 +376,18 @@ Completed instruction effects remain listed normally.
 ## TUI
 
 The TUI retains its aggregate visual summary, followed by
-`Instruction results:` and every instruction row.
+`Patch instruction results:` and every instruction row.
 
 Collapsed rendering keeps each row concise:
 
 ```text
 • Edited 2 files (+3 -1)
 
-Instruction results:
-✓ 1. Update a.txt
-○ 2. Delete missing.txt — Path already absent.
-✘ 3. Move source.txt → destination.txt — Created destination.txt; source.txt remains; source removal failed.
-– 4. Update other.txt — Instruction 3 failed.
+Patch instruction results:
+1. [APPLIED] Update a.txt
+2. [NO CHANGE] Delete missing.txt — Path already absent.
+3. [FAILED] Move source.txt → destination.txt — Created destination.txt; source.txt remains; source removal failed.
+4. [NOT RUN] Update other.txt — Instruction 3 failed.
 ```
 
 Expanded rendering nests these details beneath the relevant instruction:
@@ -401,12 +401,12 @@ Expanded rendering nests these details beneath the relevant instruction:
 Partial effects are not rendered as detached successful operations. Failed
 matching feedback does not repeat old or replacement patch blocks.
 
-When the default-off `applyPatchDebug` setting is enabled, a completed
-collapsed result instead renders the exact text content returned to the model
-under `Model feedback:`. Expanding the same result continues to render the
-normal aggregate visual summary, instruction rows, and complete diffs. Partial
-tool-call previews are unchanged because they do not yet have final
-model-facing feedback.
+When the default-off `applyPatchDebug` setting is enabled, the title becomes
+`apply_patch (debug)` and a completed collapsed result renders the exact text
+content returned to the model without an extra renderer-only heading. Expanding
+the same result continues to render the normal aggregate visual summary,
+instruction rows, and complete diffs. Partial tool-call previews are unchanged
+because they do not yet have final model-facing feedback.
 
 ## Canonical data
 
@@ -477,7 +477,7 @@ Generated model and TUI feedback does not contain:
 - `Matcher diagnostics`
 - the heading `Instructions:`
 
-The heading is `Instruction results:`.
+The heading is `Patch instruction results:`.
 
 ### Deterministic failures
 

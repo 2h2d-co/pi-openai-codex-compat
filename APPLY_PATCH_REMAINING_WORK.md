@@ -364,10 +364,10 @@ Success. No files were changed.
 It is followed by every source-ordered result:
 
 ```text
-Instruction results:
-1. NO CHANGE - Update missing.txt - The instruction contains no changes.
-2. NO CHANGE - Update same.txt - Old and replacement content are identical.
-3. SKIPPED - Update old.txt - Instruction 4 determines the final filesystem state before another instruction reads it.
+Patch instruction results:
+1. [NO CHANGE] Update missing.txt - The instruction contains no changes.
+2. [NO CHANGE] Update same.txt - Old and replacement content are identical.
+3. [SKIPPED] Update old.txt - Instruction 4 determines the final filesystem state before another instruction reads it.
 ```
 
 Model and TUI feedback have no instruction limit. Concise reasons remain on
@@ -408,7 +408,7 @@ Semantic elimination returns related instruction numbers so the concise
 ### Current behavior
 
 Model and TUI feedback now share an aggregate changed-file summary and an
-unlimited source-ordered `Instruction results:` ledger.
+unlimited source-ordered `Patch instruction results:` ledger.
 
 ### Required implementation
 

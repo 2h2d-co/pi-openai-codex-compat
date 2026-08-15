@@ -301,11 +301,11 @@ Compatibility behavior:
 - Markdown recovery is limited to exact-cell tables and supported code inside typed fences. Plain prose reflow, optional punctuation differences, single-token structural recovery, and partial-line structural recovery reject.
 - The parser accepts Codex's lenient marker whitespace, blank update-context lines, and direct heredoc wrappers.
 - Empty and identity updates, identical adds, absent deletes, self-moves, and same-patch fulfilled moves succeed with concise `NO CHANGE` results. Inapplicable operations are `SKIPPED` only when later operations deterministically make every effect unobservable.
-- Model-facing results retain the aggregate A/M/D summary and then list every source-ordered instruction under `Instruction results:` without an instruction limit.
+- Model-facing results retain the aggregate A/M/D summary and then list every source-ordered instruction under `Patch instruction results:` as `N. [STATUS] operation`, without an instruction limit.
 - Tool-result history stores per-file old/new content, display diffs, move destinations, overwrite information, per-instruction filesystem effects, and deterministic final-path inspection after runtime failures.
 - Opaque moves and symbolic-link deletions use path-only history, so binary bytes and link-target bytes are not serialized as textual deletions.
 - The TUI retains Codex-style changed-file summaries and renders every concise instruction result; `Ctrl+O` nests complete diffs beneath the instruction that produced them.
-- With `applyPatchDebug` enabled, a completed collapsed result shows the exact text returned to the model under `Model feedback:`; expanding it with `Ctrl+O` still shows the normal visual summary and complete diffs.
+- With `applyPatchDebug` enabled, the tool title becomes `apply_patch (debug)` and a completed collapsed result shows the exact text returned to the model without an extra renderer-only heading; expanding it with `Ctrl+O` still shows the normal visual summary and complete diffs.
 - Failed instruction feedback colocates its error, completed effects, final path states, and concise matcher evidence without repeating patch text or using speculative language.
 
 Filesystem behavior:

@@ -101,12 +101,12 @@ void test("accepts grammar-valid empty and identity updates as no-ops", async (t
     [
       "Success. No files were changed.",
       "",
-      "Instruction results:",
-      "1. NO CHANGE - Update missing.txt - The instruction contains no changes.",
-      "2. NO CHANGE - Update also-missing.txt - Old and replacement content are identical.",
-      "3. NO CHANGE - Update same.txt - Old and replacement content are identical.",
-      "4. NO CHANGE - Add same.txt - Requested content already present.",
-      "5. NO CHANGE - Delete absent.txt - Path already absent.",
+      "Patch instruction results:",
+      "1. [NO CHANGE] Update missing.txt - The instruction contains no changes.",
+      "2. [NO CHANGE] Update also-missing.txt - Old and replacement content are identical.",
+      "3. [NO CHANGE] Update same.txt - Old and replacement content are identical.",
+      "4. [NO CHANGE] Add same.txt - Requested content already present.",
+      "5. [NO CHANGE] Delete absent.txt - Path already absent.",
       "",
     ].join("\n"),
   );
@@ -133,7 +133,7 @@ void test("reports patch-level input and format failures once", async (t) => {
     const feedback = formatApplyPatchFailureSummary(error.details, cwd);
     const reason = "The first line of the patch must be '*** Begin Patch'";
     assert.equal(feedback.split(reason).length - 1, 1);
-    assert.doesNotMatch(feedback, /Instruction results:/u);
+    assert.doesNotMatch(feedback, /Patch instruction results:/u);
     return true;
   });
 
@@ -149,7 +149,7 @@ void test("reports patch-level input and format failures once", async (t) => {
         feedback,
         /^Patch input error: apply_patch environment selection is unavailable for this turn$/mu,
       );
-      assert.match(feedback, /^1\. NOT RUN - Add not-run\.txt - Patch input error\.$/mu);
+      assert.match(feedback, /^1\. \[NOT RUN\] Add not-run\.txt - Patch input error\.$/mu);
       return true;
     },
   );
@@ -162,7 +162,7 @@ void test("reports patch-level input and format failures once", async (t) => {
       assert.ok(error instanceof ApplyPatchInputError);
       const feedback = formatApplyPatchFailureSummary(error.details!, cwd);
       assert.match(feedback, /^Patch stopped before execution\.$/mu);
-      assert.match(feedback, /^1\. NOT RUN - Add cancelled\.txt - Patch stopped\.$/mu);
+      assert.match(feedback, /^1\. \[NOT RUN\] Add cancelled\.txt - Patch stopped\.$/mu);
       assert.doesNotMatch(feedback, /Filesystem setup failed|Patch input error/u);
       return true;
     },
@@ -209,15 +209,15 @@ void test("explains every no-op and dead operation to the model and TUI", async 
   const model = formatApplyPatchSummary(details);
   assert.match(
     model,
-    /1\. NO CHANGE - Update same-content\.txt - Requested content already present\./u,
+    /1\. \[NO CHANGE\] Update same-content\.txt - Requested content already present\./u,
   );
   assert.match(
     model,
-    /4\. NO CHANGE - Move move-source\.txt -> move-destination\.txt - Instruction 3 already moved this entry\./u,
+    /4\. \[NO CHANGE\] Move move-source\.txt -> move-destination\.txt - Instruction 3 already moved this entry\./u,
   );
   assert.match(
     model,
-    /5\. SKIPPED - Update dead-delete\.txt - Instruction 6 determines the final filesystem state before another instruction reads it\./u,
+    /5\. \[SKIPPED\] Update dead-delete\.txt - Instruction 6 determines the final filesystem state before another instruction reads it\./u,
   );
   assert.doesNotMatch(model, /[○↷→—]/u);
 
@@ -226,13 +226,16 @@ void test("explains every no-op and dead operation to the model and TUI", async 
     bold: (text: string) => text,
   } as unknown as Theme;
   const collapsed = new ApplyPatchDiffComponent(details, theme, cwd, false).render(140).join("\n");
-  assert.match(collapsed, /Instruction results:/u);
-  assert.match(collapsed, /○ 1\. Update same-content\.txt — Requested content already present\./u);
-  assert.match(collapsed, /↷ 5\. Update dead-delete\.txt — Instruction 6 determines/u);
+  assert.match(collapsed, /Patch instruction results:/u);
+  assert.match(
+    collapsed,
+    /1\. \[NO CHANGE\] Update same-content\.txt — Requested content already present\./u,
+  );
+  assert.match(collapsed, /5\. \[SKIPPED\] Update dead-delete\.txt — Instruction 6 determines/u);
   assert.doesNotMatch(collapsed, /Proof:/u);
   const expanded = new ApplyPatchDiffComponent(details, theme, cwd, true).render(140).join("\n");
-  assert.match(expanded, /↷ 5\. Update dead-delete\.txt — Instruction 6 determines/u);
-  assert.match(expanded, /↷ 7\. Update dead-add\.txt — Instruction 8 determines/u);
+  assert.match(expanded, /5\. \[SKIPPED\] Update dead-delete\.txt — Instruction 6 determines/u);
+  assert.match(expanded, /7\. \[SKIPPED\] Update dead-add\.txt — Instruction 8 determines/u);
   assert.doesNotMatch(expanded, /Proof:/u);
 });
 
@@ -244,7 +247,7 @@ void test("reports every instruction to the model and TUI without a limit", asyn
   );
   const details = await applyPatch(cwd, patch(...operations));
   const model = formatApplyPatchSummary(details);
-  assert.equal((model.match(/^\d+\. NO CHANGE - Delete/gmu) ?? []).length, 11);
+  assert.equal((model.match(/^\d+\. \[NO CHANGE\] Delete/gmu) ?? []).length, 11);
   assert.doesNotMatch(model, /omitted|more instruction explanations/u);
 
   const theme = {
@@ -252,10 +255,10 @@ void test("reports every instruction to the model and TUI without a limit", asyn
     bold: (text: string) => text,
   } as unknown as Theme;
   const collapsed = new ApplyPatchDiffComponent(details, theme, cwd, false).render(120).join("\n");
-  assert.equal((collapsed.match(/○ \d+\. Delete/gmu) ?? []).length, 11);
+  assert.equal((collapsed.match(/^\s*\d+\. \[NO CHANGE\] Delete/gmu) ?? []).length, 11);
   assert.doesNotMatch(collapsed, /more instruction explanations/u);
   const expanded = new ApplyPatchDiffComponent(details, theme, cwd, true).render(120).join("\n");
-  assert.equal((expanded.match(/○ \d+\. Delete/gmu) ?? []).length, 11);
+  assert.equal((expanded.match(/^\s*\d+\. \[NO CHANGE\] Delete/gmu) ?? []).length, 11);
   assert.doesNotMatch(expanded, /more instruction explanations/u);
 
   const allDead: ApplyPatchDetails = {
@@ -279,7 +282,7 @@ void test("reports every instruction to the model and TUI without a limit", asyn
   };
   assert.match(
     formatApplyPatchSummary(allDead),
-    /1\. SKIPPED - Update dead-1\.txt - Instruction 3 determines the final filesystem state before another instruction reads it\./u,
+    /1\. \[SKIPPED\] Update dead-1\.txt - Instruction 3 determines the final filesystem state before another instruction reads it\./u,
   );
 
   for (const count of [1, 8, 9, 100, 500]) {
@@ -302,7 +305,7 @@ void test("reports every instruction to the model and TUI without a limit", asyn
       })),
     };
     assert.equal(
-      (formatApplyPatchSummary(complete).match(/^\d+\. NO CHANGE - Delete/gmu) ?? []).length,
+      (formatApplyPatchSummary(complete).match(/^\d+\. \[NO CHANGE\] Delete/gmu) ?? []).length,
       count,
     );
     assert.equal(
@@ -310,7 +313,7 @@ void test("reports every instruction to the model and TUI without a limit", asyn
         new ApplyPatchDiffComponent(complete, theme, cwd, false)
           .render(120)
           .join("\n")
-          .match(/○ \d+\. Delete/gmu) ?? []
+          .match(/^\s*\d+\. \[NO CHANGE\] Delete/gmu) ?? []
       ).length,
       count,
     );
@@ -339,12 +342,12 @@ void test("reports every instruction to the model and TUI without a limit", asyn
     error: "injected failure",
   };
   const failedModel = formatApplyPatchFailureSummary(failedLarge, cwd);
-  assert.equal((failedModel.match(/^\d+\. (?:FAILED|NOT RUN) - Delete/gmu) ?? []).length, 500);
+  assert.equal((failedModel.match(/^\d+\. \[(?:FAILED|NOT RUN)\] Delete/gmu) ?? []).length, 500);
   assert.doesNotMatch(failedModel, /omitted/u);
   const failedTui = new ApplyPatchDiffComponent(failedLarge, theme, cwd, false)
     .render(120)
     .join("\n");
-  assert.equal((failedTui.match(/[–✘] \d+\. Delete/gmu) ?? []).length, 500);
+  assert.equal((failedTui.match(/^\s*\d+\. \[(?:FAILED|NOT RUN)\] Delete/gmu) ?? []).length, 500);
   assert.doesNotMatch(failedTui, /omitted/u);
 });
 
@@ -668,10 +671,10 @@ void test("follows symlinks for updates but replaces them for adds", async (t) =
   assert.equal(await readFile(join(cwd, "alias.txt"), "utf8"), "done\n");
   await assert.rejects(readlink(join(cwd, "alias.txt")), { code: "EINVAL" });
   const feedback = formatApplyPatchSummary(details, cwd);
-  assert.match(feedback, /1\. APPLIED - Update alias\.txt - Updated the link target/u);
+  assert.match(feedback, /1\. \[APPLIED\] Update alias\.txt - Updated the link target/u);
   assert.match(
     feedback,
-    /3\. APPLIED - Add alias\.txt - Replaced alias\.txt; Link target for alias\.txt was unchanged\./u,
+    /3\. \[APPLIED\] Add alias\.txt - Replaced alias\.txt; Link target for alias\.txt was unchanged\./u,
   );
 });
 
@@ -1174,7 +1177,7 @@ void test("executes planned move strategies and reports every injected failure p
       assert.match(feedback, /Files changed:\nA installed-destination\.txt/u);
       assert.match(
         feedback,
-        /1\. FAILED - Move installed-source\.txt -> installed-destination\.txt - Created installed-destination\.txt; installed-source\.txt remains; Move failed: injected source removal failure\./u,
+        /1\. \[FAILED\] Move installed-source\.txt -> installed-destination\.txt - Created installed-destination\.txt; installed-source\.txt remains; Move failed: injected source removal failure\./u,
       );
       const theme = {
         fg: (_color: string, text: string) => text,
@@ -1294,7 +1297,7 @@ void test("executes planned move strategies and reports every injected failure p
       assert.match(error.message, /Failed to remove original/u);
       assert.match(
         formatApplyPatchFailureSummary(error.details, cwd),
-        /1\. FAILED - Update text-move-source\.txt -> text-move-destination\.txt - Created text-move-destination\.txt; text-move-source\.txt remains; Source removal failed: injected text-move source removal failure\./u,
+        /1\. \[FAILED\] Update text-move-source\.txt -> text-move-destination\.txt - Created text-move-destination\.txt; text-move-source\.txt remains; Source removal failed: injected text-move source removal failure\./u,
       );
       return true;
     },
@@ -1350,9 +1353,9 @@ void test("executes planned move strategies and reports every injected failure p
       );
       assert.match(
         feedback,
-        /2\. FAILED - Move removed-source\.txt -> removed-destination\.txt - Deleted removed-destination\.txt; removed-source\.txt remains; Move failed: injected destination replacement failure\./u,
+        /2\. \[FAILED\] Move removed-source\.txt -> removed-destination\.txt - Deleted removed-destination\.txt; removed-source\.txt remains; Move failed: injected destination replacement failure\./u,
       );
-      assert.match(feedback, /3\. NOT RUN - Add not-run\.txt - Instruction 2 failed\./u);
+      assert.match(feedback, /3\. \[NOT RUN\] Add not-run\.txt - Instruction 2 failed\./u);
       return true;
     },
   );
@@ -1656,7 +1659,7 @@ void test("reports parent, temporary, and post-operation failure effects", async
       assert.match(feedback, /Files changed:\nA planned-delete\.txt/u);
       assert.match(
         feedback,
-        /2\. FAILED - Delete planned-delete\.txt - Delete failed: injected planned delete failure; planned-delete\.txt is unchanged\./u,
+        /2\. \[FAILED\] Delete planned-delete\.txt - Delete failed: injected planned delete failure; planned-delete\.txt is unchanged\./u,
       );
       assert.doesNotMatch(feedback, /Replaced planned-delete\.txt/u);
       return true;
@@ -1714,7 +1717,7 @@ void test("does not expose missing previous-content history to the model", async
   await chmod(target, 0o600);
   assert.equal(await readFile(target, "utf8"), "replacement\n");
   assert.match(feedback, /A unreadable\.txt/u);
-  assert.match(feedback, /1\. APPLIED - Add unreadable\.txt/u);
+  assert.match(feedback, /1\. \[APPLIED\] Add unreadable\.txt/u);
   assert.doesNotMatch(feedback, /previous content|diff|history|Committed prefix|exact|inexact/u);
 });
 

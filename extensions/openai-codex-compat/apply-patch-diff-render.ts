@@ -21,6 +21,7 @@ import {
   coalesceAppliedPatchChangesForRendering,
   formatApplyPatchFailureHeading,
   formatApplyPatchInstructionFeedback,
+  formatApplyPatchInstructionStatusLabel,
 } from "./apply-patch-engine.ts";
 import type {
   FormatterMatchCandidateRange,
@@ -653,20 +654,18 @@ function renderChange(
   return lines.flatMap((line) => renderDiffLine(line, width, lineNumberWidth, theme, palette));
 }
 
-function statusSymbol(status: ApplyPatchInstructionStatus, theme: Theme): string {
+function instructionStatusLabel(status: ApplyPatchInstructionStatus, theme: Theme): string {
+  const label = `[${formatApplyPatchInstructionStatusLabel(status)}]`;
   switch (status) {
     case "applied":
-      return theme.fg("success", "✓");
+      return theme.fg("success", label);
     case "failed":
-      return theme.fg("error", "✘");
+      return theme.fg("error", label);
     case "dead":
-      return theme.fg("dim", "↷");
     case "no-op":
-      return theme.fg("dim", "○");
     case "not-run":
-      return theme.fg("dim", "–");
     case "planned":
-      return theme.fg("dim", "•");
+      return theme.fg("dim", label);
   }
 }
 
@@ -710,12 +709,12 @@ function renderInstructionResults(
   const lines: string[] = [];
   const instructions = details.instructions ?? [];
   if (instructions.length === 0) return lines;
-  lines.push(theme.bold("Instruction results:"));
+  lines.push(theme.bold("Patch instruction results:"));
   const palette = diffPalette(theme);
   for (const instruction of instructions) {
     const feedback = formatApplyPatchInstructionFeedback(instruction, details, cwd);
     lines.push(
-      `  ${statusSymbol(instruction.status, theme)} ${instruction.index}. ${instructionLabel(instruction, cwd)}${feedback ? ` ${theme.fg("dim", `— ${feedback}`)}` : ""}`,
+      `  ${instruction.index}. ${instructionStatusLabel(instruction.status, theme)} ${instructionLabel(instruction, cwd)}${feedback ? ` ${theme.fg("dim", `— ${feedback}`)}` : ""}`,
     );
     if (expanded && width !== undefined) {
       const changes = instructionChanges(details, instruction.index);
