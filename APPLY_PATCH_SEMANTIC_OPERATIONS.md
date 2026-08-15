@@ -760,6 +760,12 @@ visible through another name. A dead-update proof MUST account for the resolved
 target and every surviving link to the affected inode. When all aliases cannot
 be identified and dominated safely, the update remains a conflict.
 
+Dead-update analysis replays later unconditional adds and deletes in source
+order. A delete followed by an add is evaluated against the virtually absent
+entry, not against the filesystem state that existed before both operations.
+This replay preserves effective hard-link counts and prevents an add that only
+looked like a no-op in the old state from blocking an otherwise exact proof.
+
 ### General elimination condition
 
 An inapplicable operation may be marked dead only when:
@@ -845,6 +851,11 @@ Pure moves operate on links themselves:
 - moving a source symlink moves the link entry;
 - overwriting a destination symlink replaces the link entry; and
 - a pure move does not modify either link target.
+
+The link's stored target text remains byte-for-byte unchanged. A relative
+target is resolved from the destination directory after the move, so later
+same-patch text operations through the moved link observe the destination-side
+target. Cross-filesystem symlink moves receive fresh entry identity.
 
 Text updates retain the existing text-operation behavior and are not silently
 converted into link-entry moves. Specifically:
@@ -982,6 +993,12 @@ symbolic-link-parent, and physical hard-link aliases. Distinct hard-link
 directory entries retain distinct entry keys while sharing a physical inode
 key. Queue acquisition order MUST be deterministic to avoid deadlocks.
 
+Queue identity is operation-aware. Entry-only adds, deletes, identity updates,
+and pure moves MUST NOT dereference a symbolic-link target merely to choose a
+queue key. State-changing text updates do acquire the physical identity of a
+live regular-file target. Cyclic, dangling, or inaccessible targets are left
+for semantic preflight so entry-only operations and no-ops remain valid.
+
 Both queues are in-memory and process-local. They coordinate concurrent
 `apply_patch` calls sharing one Pi process and module instance. They do not
 coordinate separately launched Pi sessions, other processes, or unrelated Pi
@@ -1009,6 +1026,9 @@ read/write/unlink. This preserves opaque bytes and normally preserves metadata
 and atomicity.
 
 Destination type and self-alias checks happen before rename.
+The source filesystem is taken from the existing source entry's `lstat`
+fingerprint. The destination filesystem is taken from its existing parent or
+nearest existing ancestor.
 
 ### Partial failures
 
@@ -1029,7 +1049,9 @@ designed and verified transactional mechanism exists.
 
 Cancellation is checked before preflight, after queue acquisition, and between
 operations. It must not interrupt a native rename halfway, but may stop before
-the next operation and report the committed prefix.
+the next operation and report the committed prefix. Cancellation observed
+during Tree-sitter initialization or parsing remains cancellation; it MUST NOT
+be converted into a generic formatter-candidate failure.
 
 ## Result history and rendering
 

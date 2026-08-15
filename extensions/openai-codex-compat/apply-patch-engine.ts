@@ -899,14 +899,50 @@ async function logicalEntryQueueKey(
   return `entry:${join(parent, entryName)}`;
 }
 
-async function logicalMutationQueueKeys(paths: readonly string[]): Promise<string[]> {
+type MutationQueueTarget = {
+  path: string;
+  followSymbolicLink: boolean;
+};
+
+function mutationQueueTargets(operations: readonly ResolvedOperation[]): MutationQueueTarget[] {
+  return operations.flatMap((operation) => {
+    if (operation.kind !== "update") {
+      return [{ path: operation.absolutePath, followSymbolicLink: false }];
+    }
+    const targets: MutationQueueTarget[] = [
+      {
+        path: operation.absolutePath,
+        followSymbolicLink: !chunksAreIdentity(operation.chunks),
+      },
+    ];
+    if (operation.moveAbsolutePath) {
+      targets.push({ path: operation.moveAbsolutePath, followSymbolicLink: false });
+    }
+    return targets;
+  });
+}
+
+async function logicalMutationQueueKeys(
+  targets: readonly MutationQueueTarget[],
+): Promise<string[]> {
   const caseInsensitiveDirectories = new Map<string, Promise<boolean>>();
   const keys = new Set<string>();
-  for (const path of paths) {
+  for (const { path, followSymbolicLink } of targets) {
     keys.add(await logicalEntryQueueKey(path, caseInsensitiveDirectories));
     try {
-      const metadata = await stat(path);
-      if (metadata.isFile()) keys.add(`physical:${metadata.dev}:${metadata.ino}`);
+      const entryMetadata = await lstat(path);
+      if (entryMetadata.isFile()) {
+        keys.add(`physical:${entryMetadata.dev}:${entryMetadata.ino}`);
+      } else if (entryMetadata.isSymbolicLink() && followSymbolicLink) {
+        try {
+          const targetMetadata = await stat(path);
+          if (targetMetadata.isFile()) {
+            keys.add(`physical:${targetMetadata.dev}:${targetMetadata.ino}`);
+          }
+        } catch {
+          // The semantic planner reports inaccessible, dangling, or cyclic targets.
+        }
+      }
     } catch (error) {
       if (!isNotFound(error) && !hasErrorCode(error, "ENOTDIR")) throw error;
     }
@@ -914,15 +950,35 @@ async function logicalMutationQueueKeys(paths: readonly string[]): Promise<strin
   return [...keys].sort();
 }
 
-async function canonicalMutationQueuePaths(paths: readonly string[]): Promise<string[]> {
+async function symbolicLinkEntryQueuePath(path: string): Promise<string> {
+  const parent = await realpathWithMissingTail(dirname(path));
+  return join(parent, ".apply-patch-entry-locks", normalizedAliasName(basename(path)));
+}
+
+async function canonicalMutationQueuePaths(
+  targets: readonly MutationQueueTarget[],
+): Promise<string[]> {
   const canonicalPaths = await Promise.all(
-    paths.map(async (path) => {
+    targets.map(async ({ path, followSymbolicLink }) => {
+      try {
+        const metadata = await lstat(path);
+        if (metadata.isSymbolicLink() && !followSymbolicLink) {
+          return symbolicLinkEntryQueuePath(path);
+        }
+      } catch (error) {
+        if (!isNotFound(error) && !hasErrorCode(error, "ENOTDIR")) throw error;
+      }
       try {
         return await realpath(path);
       } catch (error) {
         if (isNotFound(error) || hasErrorCode(error, "ENOTDIR")) {
           return realpathWithMissingTail(path);
         }
+        try {
+          if ((await lstat(path)).isSymbolicLink()) {
+            return symbolicLinkEntryQueuePath(path);
+          }
+        } catch {}
         throw error;
       }
     }),
@@ -1698,6 +1754,27 @@ class SemanticPlanner {
         samePhysicalEntry(entry.fingerprint, affectedFingerprint)
       );
     };
+    type ProofEntryState = "absent" | "affected" | "other";
+    const proofEntryStates = new Map<string, ProofEntryState>();
+    const proofEntryAt = async (
+      path: string,
+    ): Promise<{
+      key: string;
+      state: ProofEntryState;
+      entry?: Extract<VirtualEntry, { kind: "regular" }>;
+    }> => {
+      const key = await this.pathKey(path);
+      const known = proofEntryStates.get(key);
+      if (known) return { key, state: known };
+      const entry = await this.stateAt(path);
+      if (samePhysicalFile(entry)) return { key, state: "affected", entry };
+      return { key, state: entry.kind === "absent" ? "absent" : "other" };
+    };
+    const completedProof = (): DeadOperationProof | undefined => {
+      return removedEntryInstructions.size >= effectiveLinkCount
+        ? { dominatingInstructions: [...removedEntryInstructions.values()] }
+        : undefined;
+    };
     for (let futureIndex = index + 1; futureIndex < this.operations.length; futureIndex += 1) {
       const operation = this.operations[futureIndex]!;
       if (
@@ -1707,29 +1784,35 @@ class SemanticPlanner {
       ) {
         continue;
       }
-      if (operation.kind === "delete" || operation.kind === "add") {
-        const replaced = await this.stateAt(operation.absolutePath);
-        if (samePhysicalFile(replaced)) {
-          const addIsNoOp =
-            operation.kind === "add" &&
-            buffersEqual(
-              await this.readBytes(replaced, operation.absolutePath),
-              Buffer.from(operation.content, "utf8"),
-            ) &&
-            this.virtualSpellingSatisfied(replaced.entryPath, operation.absolutePath);
-          if (!addIsNoOp) {
-            removedEntryInstructions.set(
-              await this.pathKey(operation.absolutePath),
-              futureIndex + 1,
-            );
-            if (removedEntryInstructions.size >= effectiveLinkCount) {
-              return {
-                dominatingInstructions: [...removedEntryInstructions.values()],
-              };
-            }
-            continue;
-          }
+      if (operation.kind === "delete") {
+        const deleted = await proofEntryAt(operation.absolutePath);
+        if (deleted.state === "affected") {
+          removedEntryInstructions.set(deleted.key, futureIndex + 1);
+          const proof = completedProof();
+          if (proof) return proof;
         }
+        proofEntryStates.set(deleted.key, "absent");
+        continue;
+      }
+      if (operation.kind === "add") {
+        const replaced = await proofEntryAt(operation.absolutePath);
+        if (replaced.state === "affected") {
+          const entry = replaced.entry!;
+          const addIsNoOp =
+            buffersEqual(
+              await this.readBytes(entry, operation.absolutePath),
+              Buffer.from(operation.content, "utf8"),
+            ) && this.virtualSpellingSatisfied(entry.entryPath, operation.absolutePath);
+          if (addIsNoOp) {
+            // Whether this add replaces the entry would depend on the unknown update.
+            return undefined;
+          }
+          removedEntryInstructions.set(replaced.key, futureIndex + 1);
+        }
+        proofEntryStates.set(replaced.key, "other");
+        const proof = completedProof();
+        if (proof) return proof;
+        continue;
       }
       if (await this.operationObservesPhysicalEntry(operation, target.entry)) {
         return undefined;
@@ -2360,7 +2443,7 @@ class SemanticPlanner {
         ? await this.ensureParents(destinationPath)
         : { createdPaths: [], expectations: [] };
     const [sourceDevice, destinationDevice] = await Promise.all([
-      this.entryFilesystemDevice(operation.absolutePath),
+      source.fingerprint?.device ?? this.entryFilesystemDevice(operation.absolutePath),
       this.entryFilesystemDevice(destinationPath),
     ]);
     const detectedMoveStrategy = sourceDevice === destinationDevice ? "rename" : "copy-unlink";
@@ -2430,12 +2513,24 @@ class SemanticPlanner {
         content,
         physical: this.newPhysicalFile(),
       };
-    } else if (moveStrategy === "copy-unlink") {
+    } else if (moveStrategy === "copy-unlink" && source.kind === "symlink") {
       resultingEntry = {
-        ...source,
+        kind: "symlink",
         id: this.newEntryId(),
         entryPath: destinationPath,
-        sourcePath: source.sourcePath ?? source.entryPath,
+        target: source.target,
+        targetPath: resolve(dirname(destinationPath), source.target),
+        content: { planned: false },
+      };
+    } else if (source.kind === "symlink") {
+      resultingEntry = {
+        kind: "symlink",
+        id: source.id,
+        entryPath: destinationPath,
+        ...(source.fingerprint ? { fingerprint: source.fingerprint } : {}),
+        target: source.target,
+        targetPath: resolve(dirname(destinationPath), source.target),
+        content: { planned: false },
       };
     } else {
       resultingEntry = { ...source, entryPath: destinationPath };
@@ -3292,14 +3387,9 @@ export async function applyPatch(
   }
 
   try {
-    const mutationPaths = operations.flatMap((operation) => [
-      operation.absolutePath,
-      ...(operation.kind === "update" && operation.moveAbsolutePath
-        ? [operation.moveAbsolutePath]
-        : []),
-    ]);
-    const logicalKeys = await logicalMutationQueueKeys(mutationPaths);
-    const queuePaths = await canonicalMutationQueuePaths(mutationPaths);
+    const queueTargets = mutationQueueTargets(operations);
+    const logicalKeys = await logicalMutationQueueKeys(queueTargets);
+    const queuePaths = await canonicalMutationQueuePaths(queueTargets);
     const filesystem: ApplyPatchExecutionFilesystem = {
       ...DEFAULT_EXECUTION_FILESYSTEM,
       ...hooks.filesystem,

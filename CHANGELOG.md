@@ -21,6 +21,10 @@
 - Execute the move strategy proven during preflight, with an injectable filesystem boundary covering native rename, cross-filesystem replacement, Windows overwrite fallback, and exact or inexact failure prefixes.
 - Retry Tree-sitter parser and grammar initialization after transient failures, and cover cancellation across queue, matching, pre-mutation, and committed-prefix phases.
 - Reject FIFOs, Unix sockets, directories, and available character or block devices during side-effect-free preflight.
+- Avoid dereferencing symbolic-link targets while queuing entry-only operations and no-op updates, including cyclic links.
+- Replay later add/delete entry state when proving stale hard-link updates dead.
+- Preserve cancellation raised during Tree-sitter work and classify pure-move filesystems from the source entry rather than its parent.
+- Re-resolve relative symbolic-link targets from their destination after native or cross-filesystem pure moves.
 
 ### Security
 

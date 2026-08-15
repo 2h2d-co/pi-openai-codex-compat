@@ -880,6 +880,7 @@ async function parseStructuralDocument(
       parser.delete();
     }
   } catch {
+    if (signal?.aborted) throw new Error("apply_patch was cancelled.");
     return null;
   }
 }

@@ -286,6 +286,57 @@ void test("moves symbolic-link entries and replaces destination links", async (t
       ["regular-file", true],
     ],
   );
+
+  await mkdir(join(cwd, "relative-source"));
+  await mkdir(join(cwd, "relative-destination"));
+  await writeFile(join(cwd, "relative-source", "target.txt"), "source target\n");
+  await writeFile(join(cwd, "relative-destination", "target.txt"), "destination target\n");
+  await symlink("target.txt", join(cwd, "relative-source", "link.txt"));
+  await applyPatch(
+    cwd,
+    patch(
+      "*** Update File: relative-source/link.txt\n",
+      "*** Move to: relative-destination/link.txt\n",
+      "*** Update File: relative-destination/link.txt\n",
+      "@@\n-destination target\n+updated destination\n",
+    ),
+  );
+  assert.equal(
+    await readFile(join(cwd, "relative-source", "target.txt"), "utf8"),
+    "source target\n",
+  );
+  assert.equal(
+    await readFile(join(cwd, "relative-destination", "target.txt"), "utf8"),
+    "updated destination\n",
+  );
+
+  await mkdir(join(cwd, "cross-relative-source"));
+  await mkdir(join(cwd, "cross-relative-destination"));
+  await writeFile(join(cwd, "cross-relative-source", "target.txt"), "cross source\n");
+  await writeFile(join(cwd, "cross-relative-destination", "target.txt"), "cross destination\n");
+  await symlink("target.txt", join(cwd, "cross-relative-source", "link.txt"));
+  await applyPatch(
+    cwd,
+    patch(
+      "*** Update File: cross-relative-source/link.txt\n",
+      "*** Move to: cross-relative-destination/link.txt\n",
+      "*** Update File: cross-relative-destination/link.txt\n",
+      "@@\n-cross destination\n+updated cross destination\n",
+    ),
+    undefined,
+    {
+      selectMoveStrategy: (sourcePath) =>
+        sourcePath.includes("cross-relative-source") ? "copy-unlink" : "rename",
+    },
+  );
+  assert.equal(
+    await readFile(join(cwd, "cross-relative-source", "target.txt"), "utf8"),
+    "cross source\n",
+  );
+  assert.equal(
+    await readFile(join(cwd, "cross-relative-destination", "target.txt"), "utf8"),
+    "updated cross destination\n",
+  );
 });
 
 void test("evaluates repeated paths against sequential virtual state", async (t) => {
@@ -638,6 +689,26 @@ void test("proves dead updates across symlink, hard-link, and path aliases", asy
   );
   assert.equal(await readFile(join(cwd, "replaced-hard-a.txt"), "utf8"), "independent\n");
   await assertMissing(join(cwd, "replaced-hard-b.txt"));
+
+  await writeFile(join(cwd, "replayed-hard-a.txt"), "old\n");
+  await link(join(cwd, "replayed-hard-a.txt"), join(cwd, "replayed-hard-b.txt"));
+  const replayedFutureState = await applyPatch(
+    cwd,
+    patch(
+      "*** Update File: replayed-hard-a.txt\n@@\n-missing\n+ignored\n",
+      "*** Delete File: replayed-hard-a.txt\n",
+      "*** Add File: replayed-hard-a.txt\n+old\n",
+      "*** Delete File: replayed-hard-b.txt\n",
+    ),
+  );
+  assert.deepEqual(
+    replayedFutureState.instructions?.map(({ status }) => status),
+    ["dead", "applied", "applied", "applied"],
+  );
+  assert.deepEqual(replayedFutureState.instructions?.[0]?.reason?.dominatingInstructions, [2, 4]);
+  assert.equal(await readFile(join(cwd, "replayed-hard-a.txt"), "utf8"), "old\n");
+  assert.equal((await stat(join(cwd, "replayed-hard-a.txt"))).nlink, 1);
+  await assertMissing(join(cwd, "replayed-hard-b.txt"));
 
   const plannedEntryDominated = await applyPatch(
     cwd,
@@ -1366,7 +1437,7 @@ void test("honors cancellation before, during, and between apply_patch phases", 
   const matcherSignal = {
     get aborted() {
       signalReads += 1;
-      return signalReads >= 5;
+      return signalReads >= 6;
     },
   } as AbortSignal;
   await assert.rejects(
@@ -1393,7 +1464,7 @@ void test("honors cancellation before, during, and between apply_patch phases", 
     /apply_patch was cancelled/u,
   );
   assert.equal(matcherExecutionStarted, false);
-  assert.ok(signalReads >= 5);
+  assert.ok(signalReads >= 6);
   assert.equal(
     await readFile(join(cwd, "matcher-cancel.js"), "utf8"),
     "const result = combine(alpha, beta);\n",
@@ -1607,6 +1678,56 @@ void test("deletes symbolic-link entries without deleting their targets", async 
   const rendered = formatApplyPatchRenderText(followed, theme, cwd);
   assert.match(rendered, /followed-link\.txt \(deleted symbolic link\)/u);
   assert.doesNotMatch(JSON.stringify(followed.changes[1]), /old target|new target/u);
+});
+
+void test("does not dereference cyclic symlinks for entry-only operations or no-ops", async (t) => {
+  const cwd = await workspace(t);
+  const createCycle = async (prefix: string): Promise<void> => {
+    await symlink(`${prefix}-b`, join(cwd, `${prefix}-a`));
+    await symlink(`${prefix}-a`, join(cwd, `${prefix}-b`));
+  };
+
+  await createCycle("empty");
+  const empty = await applyPatch(cwd, patch("*** Update File: empty-a\n"));
+  assert.equal(empty.instructions?.[0]?.reason?.code, "empty-update");
+  assert.equal(await readlink(join(cwd, "empty-a")), "empty-b");
+
+  await createCycle("identity");
+  const identity = await applyPatch(cwd, patch("*** Update File: identity-a\n@@\n-same\n+same\n"));
+  assert.equal(identity.instructions?.[0]?.reason?.code, "identity-update");
+  assert.equal(await readlink(join(cwd, "identity-a")), "identity-b");
+
+  await createCycle("text");
+  await assert.rejects(
+    applyPatch(cwd, patch("*** Update File: text-a\n@@\n-old\n+new\n")),
+    /symbolic link cycle/u,
+  );
+
+  await createCycle("add");
+  await applyPatch(cwd, patch("*** Add File: add-a\n+replacement\n"));
+  assert.equal(await readFile(join(cwd, "add-a"), "utf8"), "replacement\n");
+  assert.equal(await readlink(join(cwd, "add-b")), "add-a");
+
+  await createCycle("delete");
+  await applyPatch(cwd, patch("*** Delete File: delete-a\n"));
+  await assertMissing(join(cwd, "delete-a"));
+  assert.equal(await readlink(join(cwd, "delete-b")), "delete-a");
+
+  await createCycle("move");
+  await applyPatch(cwd, patch("*** Update File: move-a\n*** Move to: moved-link\n"));
+  await assertMissing(join(cwd, "move-a"));
+  assert.equal(await readlink(join(cwd, "moved-link")), "move-b");
+  assert.equal(await readlink(join(cwd, "move-b")), "move-a");
+
+  await writeFile(join(cwd, "destination-source.txt"), "source\n");
+  await createCycle("destination");
+  await applyPatch(
+    cwd,
+    patch("*** Update File: destination-source.txt\n", "*** Move to: destination-a\n"),
+  );
+  await assertMissing(join(cwd, "destination-source.txt"));
+  assert.equal(await readFile(join(cwd, "destination-a"), "utf8"), "source\n");
+  assert.equal(await readlink(join(cwd, "destination-b")), "destination-a");
 });
 
 void test("shares virtual state through a symlinked parent without moving the entry twice", async (t) => {

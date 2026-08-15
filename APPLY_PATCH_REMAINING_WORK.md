@@ -18,8 +18,18 @@ Official Codex was compared at:
 
 Final validation baseline:
 
-- `npm test`: 273 passed, 2 skipped
+- `npm test`: 274 passed, 2 skipped
 - `npm run check`: passed
+
+The final fresh-review pass additionally closed:
+
+- operation-aware queue keys for cyclic or inaccessible symbolic links;
+- sequential future add/delete replay in hard-link dead-update proofs;
+- cancellation preservation inside Tree-sitter parsing; and
+- source-entry device selection for pure-move strategy planning.
+
+The implementation pass also corrected destination-relative target resolution
+and fresh identity for moved symbolic links.
 
 ## Dictionary
 

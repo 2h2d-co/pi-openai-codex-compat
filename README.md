@@ -308,6 +308,7 @@ Filesystem behavior:
 - Relative paths resolve from Pi's current working directory; absolute paths and `..` traversal are honored.
 - `.git` paths are unrestricted.
 - Text updates follow live symbolic links; adds replace live or dangling link entries; deletes remove only the link entry; pure moves move a source link entry and replace a destination link entry; state-changing moves materialize a regular destination without modifying either former link target.
+- Entry-only operations and no-op updates do not dereference cyclic or inaccessible symbolic-link targets during mutation-queue acquisition.
 - Same-filesystem pure moves use native rename topology. Cross-filesystem moves use copy-to-temporary, destination installation, and source removal, producing an inode independent from remaining source hard links.
 - Strict and formatter-recovered edits preserve the matched region's local CRLF or mixed line endings.
 - The extension does not add path filtering, sandboxing, or approval prompts.
