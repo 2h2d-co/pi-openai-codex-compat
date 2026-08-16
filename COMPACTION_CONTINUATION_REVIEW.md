@@ -96,6 +96,21 @@ The excluded tool-result-boundary near-match was compaction `134df48f` on August
 
 All four assistant messages reported exactly `371,566` total tokens. Each contained the call ID named by OpenAI's missing-output error, and no preceding `toolResult` existed for that new call.
 
+### Context-window percentages
+
+The active `gpt-5.6-sol` model override set Pi's `contextWindow` to `372,000` tokens before these incidents. Pi and the extension calculate operational context percentages against that configured value, not the model's nominal `400,000`-token total capacity.
+
+The pre-request values below reconstruct the context percentage available to provider-boundary compaction from each failed response's parent branch using Pi's `buildSessionContext()` and `estimateContextTokens()`. The post-error values are the later compaction entry's `tokensBefore` estimate and are included separately because they were not the value checked before the failed request.
+
+| Assistant error | Pre-request Pi estimate | Failed response usage | Post-error compaction estimate |
+| --------------- | ----------------------: | --------------------: | -----------------------------: |
+| `cb0f2bda`      |    `370,524` — `99.60%` |  `371,566` — `99.88%` |           `370,954` — `99.72%` |
+| `cf51a8a5`      |    `371,194` — `99.78%` |  `371,566` — `99.88%` |           `371,372` — `99.83%` |
+| `6a141ac1`      |    `369,919` — `99.44%` |  `371,566` — `99.88%` |           `371,849` — `99.96%` |
+| `27371470`      |    `371,069` — `99.75%` |  `371,566` — `99.88%` |           `371,433` — `99.85%` |
+
+The previously reported approximately `92.9%` figure divided the response usage by the nominal `400,000`-token capacity. That figure is descriptive of nominal capacity but is not the percentage used by Pi or `autoCompactAtPercent`.
+
 ### Incident 1: August 10 function call
 
 The original entries are in:
@@ -201,7 +216,7 @@ This disables the extension's provider-boundary percentage compaction and leaves
 
 Pi 0.84.2 checks proactive threshold compaction after `agent_end`, not between every tool-calling turn in the same agent run. A long run can therefore be below the threshold when it starts, accumulate tool results over several turns, and exceed the safe request budget before `agent_end`.
 
-That is what the token evidence indicates here: all four failed assistant messages reached the same effective total-token ceiling.
+That is what the token evidence indicates here: all four failed assistant messages reached `99.88%` of the configured context window and the reconstructed pre-request branches were already between `99.44%` and `99.78%`.
 
 ### 2. The extension continued a response after it contained a tool call
 
@@ -311,7 +326,7 @@ The active global configuration sets `autoCompactAtPercent` to 95.
 
 This uses the existing `maybeCompactPercentage()` path before each provider request, including requests inside a long tool-calling run. It directly covers the gap in Pi's post-`agent_end` threshold timing.
 
-The reviewed incidents failed around 92.9% of the nominal window, so 95% would not have prevented them. It is an operational guard near the nominal limit; the implemented unresolved-tool-call invariant remains the incident fix.
+All four reviewed requests were above 95% of Pi's configured `372,000`-token context window before they began, and all four branches satisfied the extension's requirement that a new assistant message exist after the latest checkpoint. The 95% provider-boundary threshold therefore would have triggered before each failed request. The implemented unresolved-tool-call invariant remains necessary because malformed continuation across a tool call is a protocol defect regardless of context pressure.
 
 Trade-offs:
 
