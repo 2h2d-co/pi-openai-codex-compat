@@ -1167,7 +1167,7 @@ void test("ignores terminal-only calls while retrying failed responses", async (
   );
 });
 
-void test("executes done calls before retrying unsuccessful responses with linked outputs", async () => {
+void test("preserves retryable post-tool handling without session affinity or agent hooks", async () => {
   const user = userEntry("user-1", "inspect");
   const harness = createHarness([user], DEFAULT_CONFIG, "session-done-call-retry", {
     maxRetries: 1,
@@ -1208,11 +1208,9 @@ void test("executes done calls before retrying unsuccessful responses with linke
   };
   const options = {
     apiKey: accessToken(),
-    sessionId: "session-done-call-retry",
     transport: "sse" as const,
   };
 
-  harness.runtime.beginAgentTurn(harness.extensionContext);
   const callMessage = await harness.runtime
     .streamSimple(codexModel(), initialContext, options)
     .result();
@@ -1227,7 +1225,6 @@ void test("executes done calls before retrying unsuccessful responses with linke
       options,
     )
     .result();
-  harness.runtime.endAgentTurn(harness.extensionContext);
 
   assert.equal(callMessage.stopReason, "toolUse");
   assert.equal(responseDecisions(callMessage)[0]?.["postToolDisposition"], "retry");
@@ -1275,11 +1272,9 @@ void test("preserves response retry budgets across linked tool execution", async
   };
   const options = {
     apiKey: accessToken(),
-    sessionId: "session-done-call-budget",
     transport: "sse" as const,
   };
 
-  harness.runtime.beginAgentTurn(harness.extensionContext);
   const callMessage = await harness.runtime
     .streamSimple(codexModel(), initialContext, options)
     .result();
@@ -1294,7 +1289,6 @@ void test("preserves response retry budgets across linked tool execution", async
       options,
     )
     .result();
-  harness.runtime.endAgentTurn(harness.extensionContext);
 
   assert.equal(callMessage.stopReason, "toolUse");
   assert.equal(errorMessage.stopReason, "error");
@@ -1338,11 +1332,9 @@ void test("does not retry an unsuccessful response before linked tool output exi
   };
   const options = {
     apiKey: accessToken(),
-    sessionId: "session-missing-linked-output",
     transport: "sse" as const,
   };
 
-  harness.runtime.beginAgentTurn(harness.extensionContext);
   const callMessage = await harness.runtime
     .streamSimple(codexModel(), initialContext, options)
     .result();
@@ -1356,7 +1348,6 @@ void test("does not retry an unsuccessful response before linked tool output exi
       options,
     )
     .result();
-  harness.runtime.endAgentTurn(harness.extensionContext);
 
   assert.equal(callMessage.stopReason, "toolUse");
   assert.equal(errorMessage.stopReason, "error");
@@ -1364,7 +1355,84 @@ void test("does not retry an unsuccessful response before linked tool output exi
   assert.equal(requests, 1);
 });
 
-void test("executes done calls before surfacing non-retryable failures", async () => {
+void test("clears abandoned post-tool handling at lifecycle boundaries", async (t) => {
+  for (const cleanup of ["agent-end", "session-clear"] as const) {
+    await t.test(cleanup, async () => {
+      const sessionId = `session-abandoned-${cleanup}`;
+      const user = userEntry("user-1", "inspect");
+      const harness = createHarness([user], DEFAULT_CONFIG, sessionId, {
+        maxRetries: 0,
+        baseDelayMs: 0,
+      });
+      let requests = 0;
+      harness.runtime.transport.request = async function* () {
+        requests += 1;
+        if (requests === 2) {
+          yield* textEvents("new turn", "resp_new_turn");
+          return;
+        }
+        yield {
+          type: "response.output_item.done",
+          output_index: 0,
+          item: {
+            type: "function_call",
+            id: `fc_abandoned_${cleanup}`,
+            call_id: `call_abandoned_${cleanup}`,
+            name: "report",
+            arguments: '{"value":"old turn"}',
+          },
+        };
+        yield {
+          type: "response.incomplete",
+          response: {
+            id: `resp_abandoned_${cleanup}`,
+            status: "incomplete",
+            incomplete_details: { reason: "max_output_tokens" },
+            output: [],
+          },
+        };
+      };
+      const initialContext: Context = {
+        messages: [user.message as Context["messages"][number]],
+        tools: [REPORT_TOOL],
+      };
+      const options = {
+        apiKey: accessToken(),
+        sessionId,
+        transport: "sse" as const,
+      };
+
+      if (cleanup === "agent-end") {
+        harness.runtime.beginAgentTurn(harness.extensionContext);
+      }
+      const callMessage = await harness.runtime
+        .streamSimple(codexModel(), initialContext, options)
+        .result();
+      if (cleanup === "agent-end") {
+        harness.runtime.endAgentTurn(harness.extensionContext);
+      } else {
+        harness.runtime.clearSession(sessionId);
+      }
+      const toolResult = appendToolExchange(harness, callMessage);
+      const nextMessage = await harness.runtime
+        .streamSimple(
+          codexModel(),
+          {
+            messages: [...initialContext.messages, callMessage, toolResult],
+            tools: [REPORT_TOOL],
+          },
+          options,
+        )
+        .result();
+
+      assert.equal(callMessage.stopReason, "toolUse");
+      assert.equal(nextMessage.stopReason, "stop");
+      assert.equal(requests, 2);
+    });
+  }
+});
+
+void test("preserves fatal post-tool handling without session affinity or agent hooks", async () => {
   const user = userEntry("user-1", "invalid request");
   const harness = createHarness([user], DEFAULT_CONFIG, "session-done-call-fatal", {
     maxRetries: 1,
@@ -1400,11 +1468,9 @@ void test("executes done calls before surfacing non-retryable failures", async (
   };
   const options = {
     apiKey: accessToken(),
-    sessionId: "session-done-call-fatal",
     transport: "sse" as const,
   };
 
-  harness.runtime.beginAgentTurn(harness.extensionContext);
   const callMessage = await harness.runtime
     .streamSimple(codexModel(), initialContext, options)
     .result();
@@ -1419,7 +1485,6 @@ void test("executes done calls before surfacing non-retryable failures", async (
       options,
     )
     .result();
-  harness.runtime.endAgentTurn(harness.extensionContext);
 
   assert.equal(callMessage.stopReason, "toolUse");
   assert.equal(responseDecisions(callMessage)[0]?.["postToolDisposition"], "error");

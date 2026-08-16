@@ -115,7 +115,6 @@ type ActiveAgentTurn = {
   turnId: string;
   startedAtUnixMs: number;
   turnState: CodexTurnState;
-  pendingPostToolDisposition?: CodexPostToolDisposition;
 };
 
 type CodexCompat = {
@@ -145,7 +144,9 @@ type CodexPostToolDisposition = {
   callIds: string[];
   response?: JsonRecord;
   retryAttempt: number;
+  sessionId?: string;
   terminalType: "response.incomplete" | "response.failed";
+  turnId: string;
   type: "error" | "retry";
 };
 
@@ -590,6 +591,7 @@ export class CodexProviderRuntime {
   private readonly prewarmedTemplates = new Set<string>();
   private readonly requestTails = new Map<string, Promise<void>>();
   private readonly activeAgentTurns = new Map<string, ActiveAgentTurn>();
+  private readonly postToolDispositions = new Map<string, CodexPostToolDisposition>();
   private readonly windowNumbers = new Map<string, number>();
   private readonly activeThreadIds = new Map<string, string>();
   private readonly pi: ExtensionAPI;
@@ -638,7 +640,9 @@ export class CodexProviderRuntime {
   }
 
   beginAgentTurn(ctx: ExtensionContext): void {
-    this.activeAgentTurns.set(ctx.sessionManager.getSessionId(), {
+    const sessionId = ctx.sessionManager.getSessionId();
+    this.clearPostToolDispositions((disposition) => disposition.sessionId === sessionId);
+    this.activeAgentTurns.set(sessionId, {
       turnId: uuidv7(),
       startedAtUnixMs: Date.now(),
       turnState: new CodexTurnState(),
@@ -646,7 +650,12 @@ export class CodexProviderRuntime {
   }
 
   endAgentTurn(ctx: ExtensionContext): void {
-    this.activeAgentTurns.delete(ctx.sessionManager.getSessionId());
+    const sessionId = ctx.sessionManager.getSessionId();
+    const agentTurn = this.activeAgentTurns.get(sessionId);
+    if (agentTurn) {
+      this.clearPostToolDispositions((disposition) => disposition.turnId === agentTurn.turnId);
+    }
+    this.activeAgentTurns.delete(sessionId);
   }
 
   updateSessionConfig(sessionId: string, config: CodexCompatConfig): void {
@@ -669,6 +678,46 @@ export class CodexProviderRuntime {
         turnState: new CodexTurnState(),
       }
     );
+  }
+
+  private rememberPostToolDisposition(disposition: CodexPostToolDisposition): void {
+    const callIds = new Set(disposition.callIds);
+    if ([...callIds].some((callId) => this.postToolDispositions.has(callId))) {
+      throw new Error("Codex returned a tool call that already has a pending disposition.");
+    }
+    for (const callId of callIds) this.postToolDispositions.set(callId, disposition);
+  }
+
+  private findPostToolDisposition(context: Context): CodexPostToolDisposition | undefined {
+    const matches = new Set<CodexPostToolDisposition>();
+    for (const message of context.messages) {
+      if (message.role !== "assistant") continue;
+      for (const block of message.content) {
+        if (block.type !== "toolCall") continue;
+        const disposition = this.postToolDispositions.get(block.id);
+        if (disposition) matches.add(disposition);
+      }
+    }
+    if (matches.size > 1) {
+      throw new Error("Codex context contains multiple pending post-tool dispositions.");
+    }
+    return matches.values().next().value;
+  }
+
+  private forgetPostToolDisposition(disposition: CodexPostToolDisposition): void {
+    for (const callId of disposition.callIds) {
+      if (this.postToolDispositions.get(callId) === disposition) {
+        this.postToolDispositions.delete(callId);
+      }
+    }
+  }
+
+  private clearPostToolDispositions(
+    shouldClear: (disposition: CodexPostToolDisposition) => boolean,
+  ): void {
+    for (const [callId, disposition] of this.postToolDispositions) {
+      if (shouldClear(disposition)) this.postToolDispositions.delete(callId);
+    }
   }
 
   private metadataIdentity(
@@ -729,6 +778,7 @@ export class CodexProviderRuntime {
     this.clearPrewarmState(sessionId);
     this.requestTails.delete(sessionId);
     this.activeAgentTurns.delete(sessionId);
+    this.clearPostToolDispositions((disposition) => disposition.sessionId === sessionId);
     for (const key of this.windowNumbers.keys()) {
       if (key.startsWith(`${sessionId}\0`)) this.windowNumbers.delete(key);
     }
@@ -1153,6 +1203,7 @@ export class CodexProviderRuntime {
       };
       const runtimeSessionId = requestOptions.sessionId;
       let releaseRequest = () => {};
+      let registeredPostToolDisposition: CodexPostToolDisposition | undefined;
       try {
         const accountId = validateCodexAuthentication(model, requestOptions.apiKey);
         releaseRequest = await this.acquireRequest(runtimeSessionId, requestOptions.signal);
@@ -1162,10 +1213,10 @@ export class CodexProviderRuntime {
         const agentTurn = this.agentTurn(runtimeSessionId);
         const responsesLiteEnabled = this.responsesLiteEnabled(runtimeSessionId);
         let carriedResponseRetries = 0;
-        const pendingPostToolDisposition = agentTurn.pendingPostToolDisposition;
+        const pendingPostToolDisposition = this.findPostToolDisposition(context);
         if (pendingPostToolDisposition) {
           assertLinkedToolOutputs(context, pendingPostToolDisposition);
-          delete agentTurn.pendingPostToolDisposition;
+          this.forgetPostToolDisposition(pendingPostToolDisposition);
           if (
             pendingPostToolDisposition.type === "error" ||
             pendingPostToolDisposition.retryAttempt > this.responseRetryPolicy.maxRetries
@@ -1356,15 +1407,18 @@ export class CodexProviderRuntime {
                 terminalState.type === "response.incomplete" ||
                 retryableResponseFailure(terminalState.response);
               postToolDisposition = retryable ? "retry" : "error";
-              agentTurn.pendingPostToolDisposition = {
+              registeredPostToolDisposition = {
                 callIds,
                 ...(terminalState.response
                   ? { response: structuredClone(terminalState.response) }
                   : {}),
                 retryAttempt: retryable ? responseRetries + 1 : responseRetries,
+                ...(runtimeSessionId ? { sessionId: runtimeSessionId } : {}),
                 terminalType: terminalState.type,
+                turnId: agentTurn.turnId,
                 type: postToolDisposition,
               };
+              this.rememberPostToolDisposition(registeredPostToolDisposition);
             }
             discardIncompleteAttemptContent(output, attemptState);
             rawItems.push(...attemptItems.map((item) => structuredClone(item)));
@@ -1481,6 +1535,9 @@ export class CodexProviderRuntime {
         stream.push({ type: "done", reason: output.stopReason, message: output });
         stream.end();
       } catch (error) {
+        if (registeredPostToolDisposition) {
+          this.forgetPostToolDisposition(registeredPostToolDisposition);
+        }
         clearStreamingScratchState(output);
         output.stopReason = requestOptions.signal?.aborted ? "aborted" : "error";
         output.errorMessage = formatProviderError(error);
