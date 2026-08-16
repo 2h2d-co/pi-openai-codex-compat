@@ -58,12 +58,12 @@ Terminal `response.output` snapshots do not commit regular response items.
 
 ## Decision Register
 
-| Topic                                                               | Decision                                                              |
-| ------------------------------------------------------------------- | --------------------------------------------------------------------- |
-| Output-limit hidden-continuation chain limit                        | Leave unchanged; do not add a chain-wide bound                        |
-| Context overflow after a committed prefix `B1`                      | Preserve validated `B1`, compact immediately, and retry automatically |
-| Percentage compaction before internal `end_turn:false` continuation | Under review                                                          |
-| Successful compaction-to-hidden-continuation host regression        | Pending review                                                        |
+| Topic                                                               | Decision                                                                      |
+| ------------------------------------------------------------------- | ----------------------------------------------------------------------------- |
+| Output-limit hidden-continuation chain limit                        | Leave unchanged; do not add a chain-wide bound                                |
+| Context overflow after a committed prefix `B1`                      | Preserve validated `B1`, compact immediately, and retry automatically         |
+| Percentage compaction before internal `end_turn:false` continuation | Implement Option B: proactive compaction with an explicit Pi history boundary |
+| Successful compaction-to-hidden-continuation host regression        | Pending review                                                                |
 
 No implementation should begin until the remaining decisions are complete.
 
@@ -368,35 +368,54 @@ Request 2:
 
 ### Implementation complication
 
-If `B1` is compacted into `K` and the continued provider response later produces `B2`, future provider history must be:
+Three different layouts must remain distinct.
+
+The complete persisted session and TUI transcript should show the chronological audit trail:
 
 ```text
-[K, B2]
+[H0, B1, K, B2]
 ```
 
-Pi may display one aggregate assistant containing:
+Here, `K` is rendered as Pi's compaction marker rather than as its encrypted provider payload.
+
+Because `K` supersedes the model-visible history before it, the active provider context for a later request should be:
 
 ```text
-[B1, B2]
+[retained recent items, K, B2]
 ```
 
-A naive replay after persisting the compaction would produce:
+It must not replay the pre-compaction prefix separately:
 
 ```text
-Invalid duplication:
-[K(B1), B1, B2]
+Invalid provider duplication:
+[retained recent items, K(B1), B1, B2]
 ```
 
-An exact implementation must partition provider history into:
+The current provider API produces one aggregate Pi assistant for all internal subrequests. If `K` is appended while that assistant is still in progress and the final assistant contains both batches, a naive persisted transcript could instead become:
 
 ```text
-pre-compaction prefix: B1
-post-compaction suffix: B2
+[H0, K, Assistant(B1, B2)]
 ```
 
-while preserving the complete visible Pi assistant.
+That is not the selected TUI/session layout. Option B therefore requires a real Pi history boundary:
 
-### Options under review
+```text
+assistant before compaction: B1
+compaction entry: K
+assistant after compaction: B2
+```
+
+The implementation must preserve both views:
+
+```text
+TUI/session transcript:
+[H0, B1, K, B2]
+
+Active provider context:
+[retained recent items, K, B2]
+```
+
+### Options considered
 
 #### Option A: Reactive overflow recovery
 
@@ -422,7 +441,9 @@ while preserving the complete visible Pi assistant.
 
 - Matches official mid-turn compaction more closely.
 - Avoids the context-overflow request.
-- Requires provider-usage accounting and exact native-history partitioning.
+- Requires provider-usage accounting, exact native-history partitioning, and an explicit Pi assistant/compaction boundary.
+
+Decision: selected.
 
 #### Option C: Delegate `end_turn:false` to Pi
 
@@ -489,6 +510,8 @@ The former integration test for that exact path was replaced when provider-owned
 - [x] Leave output-limit hidden-continuation chaining unchanged.
 - [ ] Preserve a validated committed prefix `B1` during immediate overflow compaction.
 - [ ] Retry automatically from the installed checkpoint after preserving `B1`.
-- [ ] Decide whether `end_turn:false` uses reactive overflow recovery or proactive internal compaction.
+- [x] Use proactive internal compaction for `end_turn:false`.
+- [ ] Preserve TUI/session order as `[H0, B1, K, B2]`.
+- [ ] Preserve active provider context as `[retained recent items, K, B2]`.
 - [ ] Decide whether to restore host-level coverage for successful compaction followed by hidden continuation.
 - [ ] Implement all selected changes only after the review is complete.
