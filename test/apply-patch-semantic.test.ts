@@ -1505,7 +1505,7 @@ void test("executes planned move strategies and reports every injected failure p
       assert.match(feedback, /Files changed:\nM replaced-destination\.txt/u);
       assert.match(
         feedback,
-        /replaced-destination\.txt, previously a regular file, is now a regular file; replaced-source\.txt remains/u,
+        /replaced-destination\.txt is still a regular file; replaced-source\.txt remains/u,
       );
       return true;
     },

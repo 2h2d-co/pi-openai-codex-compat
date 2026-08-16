@@ -282,7 +282,7 @@ Failure examples:
 ```
 
 ```text
-3. [FAILED] Move a.txt -> b.txt - b.txt, previously a regular file, is now a regular file; a.txt remains; Move failed: permission denied.
+3. [FAILED] Move a.txt -> b.txt - b.txt is still a regular file; a.txt remains; Move failed: permission denied.
 ```
 
 ```text

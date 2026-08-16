@@ -4324,6 +4324,12 @@ function instructionEffectFeedback(
     case "created":
       return `Created ${path}.`;
     case "replaced":
+      if (
+        effect.previousEntry.entryType === "regular-file" &&
+        effect.replacementEntry.entryType === "regular-file"
+      ) {
+        return `${path} is still a regular file.`;
+      }
       return `${path}, previously ${fileEntryFeedback(effect.previousEntry)}, is now ${fileEntryFeedback(effect.replacementEntry)}.`;
     case "updated":
       return `Updated ${path}.`;
