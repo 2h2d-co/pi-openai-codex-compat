@@ -1,7 +1,7 @@
 # Compaction Continuation Incident Review
 
 - Date: 2026-08-15
-- Status: Review only; no runtime or test fixes implemented
+- Status: Root provider-continuation fix implemented after review; other proposed fixes remain pending
 
 ## Dictionary
 
@@ -277,19 +277,20 @@ The upstream change is still useful infrastructure. Once Pi implements #7689, th
 
 ## Potential Fixes for Review
 
-### P0: Prevent provider continuation across unresolved tool calls
+### P0 implemented: Prevent provider continuation across unresolved tool calls
 
-Change all internal response continuation/retry decisions to inspect authoritative response items, not only streamed content indexes.
+Internal response continuation/retry decisions now inspect authoritative terminal response items, with streamed items retained as a fallback and consistency check.
 
 Required invariant:
 
 > Never append a `function_call` or `custom_tool_call` to a new provider subrequest until its required output item exists.
 
-Cases to define:
+Implemented policy:
 
 - `response.completed`, `end_turn: false`, tool call present: return control to Pi as tool use; Pi executes the tool and naturally performs the next model turn.
-- `response.incomplete`, complete tool call present: do not internally replay it without output. Decide whether a fully completed call is safe to execute or should follow Pi's truncated-tool-call failure path.
-- `response.failed`, tool call present: preserve the original provider failure and do not replay a dangling call.
+- `response.incomplete` with `max_output_tokens` and a fully complete call batch: return the calls to Pi as tool use.
+- A completed or max-output call batch containing an incomplete, malformed, or terminal-omitted call: execute none and return a recoverable length result without persisting the partial calls; preserve other incomplete-response errors.
+- `response.failed`, tool call present: retry the pre-attempt input without the failed response items when retryable; otherwise preserve the original provider failure.
 
 Regression coverage should include:
 

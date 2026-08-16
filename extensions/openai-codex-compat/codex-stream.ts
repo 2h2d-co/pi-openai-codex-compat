@@ -209,6 +209,7 @@ export async function processCodexStream(
 ): Promise<void> {
   let terminal = false;
   const slots = new Map<number, OutputSlot>();
+  const completedOutputItems = new Set<string>();
   const reasoningById = new Map<string, ThinkingContent>();
   const applyMessagePhaseStopReason = (item: JsonRecord): void => {
     if (item.type === "message" && item["phase"] === "final_answer") {
@@ -318,6 +319,79 @@ export async function processCodexStream(
   const slotFor = (index: number, item: JsonRecord): OutputSlot | undefined =>
     slots.get(index) ?? createSlot(index, item);
 
+  const outputItemKey = (index: number, item: JsonRecord): string => {
+    if (typeof item.id === "string") return `id:${item.id}`;
+    if (typeof item["call_id"] === "string") {
+      return `call:${String(item.type)}:${item["call_id"]}`;
+    }
+    return `index:${String(index)}:${String(item.type)}`;
+  };
+
+  const completeOutputItem = (index: number, item: JsonRecord): void => {
+    const key = outputItemKey(index, item);
+    if (completedOutputItems.has(key)) return;
+    completedOutputItems.add(key);
+    applyMessagePhaseStopReason(item);
+    const slot = slotFor(index, item);
+    if (item.type === "reasoning" && slot?.type === "thinking") {
+      slot.block.thinking = reasoningText(item) || slot.block.thinking;
+      slot.block.thinkingSignature = JSON.stringify(item);
+      if (typeof item.id === "string") reasoningById.set(item.id, slot.block);
+      stream.push({
+        type: "thinking_end",
+        contentIndex: slot.contentIndex,
+        content: slot.block.thinking,
+        partial: output,
+      });
+      trackCompleted(slot);
+      slots.delete(index);
+    } else if (item.type === "message" && slot?.type === "text") {
+      slot.block.text = itemContentText(item);
+      if (typeof item.id === "string") {
+        slot.block.textSignature = encodeTextSignature(item.id, item["phase"]);
+      }
+      stream.push({
+        type: "text_end",
+        contentIndex: slot.contentIndex,
+        content: slot.block.text,
+        partial: output,
+      });
+      trackCompleted(slot);
+      slots.delete(index);
+    } else if (
+      item.type === "function_call" &&
+      slot?.type === "toolCall" &&
+      slot.block.partialJson !== undefined
+    ) {
+      slot.block.name = piToolCallName(item);
+      const argumentsJson =
+        typeof item.arguments === "string" ? item.arguments : slot.block.partialJson || "{}";
+      slot.block.arguments = parseStreamingJson(argumentsJson);
+      delete slot.block.partialJson;
+      stream.push({
+        type: "toolcall_end",
+        contentIndex: slot.contentIndex,
+        toolCall: slot.block,
+        partial: output,
+      });
+      trackCompleted(slot);
+      slots.delete(index);
+    } else if (item.type === "custom_tool_call" && slot?.type === "toolCall") {
+      slot.block.name = piToolCallName(item);
+      const input = typeof item["input"] === "string" ? item["input"] : customInput(slot.block);
+      pushToolDelta(slot, appendCustomInput(slot.block, input, true));
+      delete slot.block.customInput;
+      stream.push({
+        type: "toolcall_end",
+        contentIndex: slot.contentIndex,
+        toolCall: slot.block,
+        partial: output,
+      });
+      trackCompleted(slot);
+      slots.delete(index);
+    }
+  };
+
   const finalize = (response: JsonRecord): void => {
     terminal = true;
     if (typeof response.id === "string") output.responseId = response.id;
@@ -350,7 +424,9 @@ export async function processCodexStream(
       output.usage,
       typeof response.service_tier === "string" ? response.service_tier : undefined,
     );
-    for (const item of responseItems(response["output"])) {
+    const terminalItems = responseItems(response["output"]);
+    terminalItems.forEach((item, index) => completeOutputItem(index, item));
+    for (const item of terminalItems) {
       if (item.type !== "reasoning" || typeof item.id !== "string") continue;
       const block = reasoningById.get(item.id);
       if (!block?.thinkingSignature || typeof item.encrypted_content !== "string") continue;
@@ -455,66 +531,7 @@ export async function processCodexStream(
       if (!slot || typeof event["input"] !== "string") continue;
       pushToolDelta(slot, appendCustomInput(slot.block, event["input"], true));
     } else if (event.type === "response.output_item.done" && isObject(event.item)) {
-      const item = event.item;
-      applyMessagePhaseStopReason(item);
-      const slot = slotFor(index, item);
-      if (item.type === "reasoning" && slot?.type === "thinking") {
-        slot.block.thinking = reasoningText(item) || slot.block.thinking;
-        slot.block.thinkingSignature = JSON.stringify(item);
-        if (typeof item.id === "string") reasoningById.set(item.id, slot.block);
-        stream.push({
-          type: "thinking_end",
-          contentIndex: slot.contentIndex,
-          content: slot.block.thinking,
-          partial: output,
-        });
-        trackCompleted(slot);
-        slots.delete(index);
-      } else if (item.type === "message" && slot?.type === "text") {
-        slot.block.text = itemContentText(item);
-        if (typeof item.id === "string") {
-          slot.block.textSignature = encodeTextSignature(item.id, item["phase"]);
-        }
-        stream.push({
-          type: "text_end",
-          contentIndex: slot.contentIndex,
-          content: slot.block.text,
-          partial: output,
-        });
-        trackCompleted(slot);
-        slots.delete(index);
-      } else if (
-        item.type === "function_call" &&
-        slot?.type === "toolCall" &&
-        slot.block.partialJson !== undefined
-      ) {
-        slot.block.name = piToolCallName(item);
-        const argumentsJson =
-          typeof item.arguments === "string" ? item.arguments : slot.block.partialJson || "{}";
-        slot.block.arguments = parseStreamingJson(argumentsJson);
-        delete slot.block.partialJson;
-        stream.push({
-          type: "toolcall_end",
-          contentIndex: slot.contentIndex,
-          toolCall: slot.block,
-          partial: output,
-        });
-        trackCompleted(slot);
-        slots.delete(index);
-      } else if (item.type === "custom_tool_call" && slot?.type === "toolCall") {
-        slot.block.name = piToolCallName(item);
-        const input = typeof item["input"] === "string" ? item["input"] : customInput(slot.block);
-        pushToolDelta(slot, appendCustomInput(slot.block, input, true));
-        delete slot.block.customInput;
-        stream.push({
-          type: "toolcall_end",
-          contentIndex: slot.contentIndex,
-          toolCall: slot.block,
-          partial: output,
-        });
-        trackCompleted(slot);
-        slots.delete(index);
-      }
+      completeOutputItem(index, event.item);
     } else if (
       (event.type === "response.completed" || event.type === "response.incomplete") &&
       isObject(event.response)

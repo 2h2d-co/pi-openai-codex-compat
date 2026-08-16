@@ -18,6 +18,7 @@
 
 ### Fixed
 
+- Return complete function and custom tool calls to Pi before provider-owned continuation, recover incomplete call batches without execution, and retry failed call-bearing responses without replaying calls that have no tool output.
 - Preserve each matched source region's local line endings when strict `apply_patch` matching edits CRLF or mixed-line-ending files.
 - Model native renames and cross-filesystem copy-and-unlink moves with distinct hard-link topology, and account for earlier planned unlinks when proving later edits dead.
 - Record symlink deletion as a path-only entry operation so history and rendering never claim that the link target's bytes were deleted.

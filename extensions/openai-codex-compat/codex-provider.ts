@@ -126,6 +126,13 @@ type CodexTerminalState = {
   response?: JsonRecord;
 };
 
+type CodexAttemptCapture = {
+  streamedItems: ResponsesItem[];
+  streamedToolCallKeys: Set<string>;
+  streamedCompletedToolCallKeys: Set<string>;
+  terminalItems?: ResponsesItem[];
+};
+
 export type CodexResponseRetryPolicy = {
   maxRetries: number;
   baseDelayMs: number;
@@ -187,16 +194,89 @@ function nativeOverrideRequired(
   );
 }
 
+function isToolCallItem(item: ResponsesItem): boolean {
+  return item.type === "function_call" || item.type === "custom_tool_call";
+}
+
+function toolCallKey(item: ResponsesItem): string {
+  const callId = typeof item["call_id"] === "string" ? item["call_id"] : undefined;
+  const itemId = typeof item.id === "string" ? item.id : undefined;
+  return `${String(item.type)}:${itemId ? `item:${itemId}` : `call:${callId ?? "missing"}`}`;
+}
+
+function hasValidToolCallPayload(item: ResponsesItem): boolean {
+  if (
+    typeof item.id !== "string" ||
+    typeof item["call_id"] !== "string" ||
+    typeof item.name !== "string"
+  ) {
+    return false;
+  }
+  if (item.type === "custom_tool_call") return typeof item.input === "string";
+  if (item.type !== "function_call" || typeof item.arguments !== "string") return false;
+  try {
+    return isObject(JSON.parse(item.arguments));
+  } catch {
+    return false;
+  }
+}
+
+function toolCallIsComplete(
+  item: ResponsesItem,
+  capture: CodexAttemptCapture,
+  terminalType: CodexTerminalState["type"],
+): boolean {
+  if (!hasValidToolCallPayload(item)) return false;
+  const status = typeof item["status"] === "string" ? item["status"] : undefined;
+  if (status !== undefined) return status === "completed";
+  if (capture.streamedCompletedToolCallKeys.has(toolCallKey(item))) return true;
+  return terminalType === "response.completed";
+}
+
+function assessAttemptToolCalls(
+  items: readonly ResponsesItem[],
+  capture: CodexAttemptCapture,
+  terminalType: CodexTerminalState["type"],
+): { allComplete: boolean; hasToolCalls: boolean } {
+  const calls = items.filter(isToolCallItem);
+  const authoritativeKeys = new Set(calls.map(toolCallKey));
+  const omittedStreamedCall = [...capture.streamedToolCallKeys].some(
+    (key) => !authoritativeKeys.has(key),
+  );
+  const hasToolCalls = calls.length > 0 || capture.streamedToolCallKeys.size > 0;
+  return {
+    hasToolCalls,
+    allComplete:
+      hasToolCalls &&
+      !omittedStreamedCall &&
+      calls.length > 0 &&
+      calls.every((item) => toolCallIsComplete(item, capture, terminalType)),
+  };
+}
+
 function captureRawEvents(
   events: AsyncIterable<JsonRecord>,
-  items: ResponsesItem[],
+  capture: CodexAttemptCapture,
   terminalState?: CodexTerminalState,
 ): AsyncIterable<JsonRecord> {
   return {
     async *[Symbol.asyncIterator]() {
       for await (const event of events) {
+        if (
+          event.type === "response.output_item.added" &&
+          isResponsesItem(event.item) &&
+          isToolCallItem(event.item)
+        ) {
+          capture.streamedToolCallKeys.add(toolCallKey(event.item));
+        }
         if (event.type === "response.output_item.done" && isResponsesItem(event.item)) {
-          items.push(structuredClone(event.item));
+          const item = structuredClone(event.item);
+          capture.streamedItems.push(item);
+          if (isToolCallItem(item)) {
+            const key = toolCallKey(item);
+            capture.streamedToolCallKeys.add(key);
+            capture.streamedCompletedToolCallKeys.add(key);
+          }
         }
         if (
           (event.type === "response.completed" ||
@@ -205,10 +285,9 @@ function captureRawEvents(
           isObject(event.response) &&
           Array.isArray(event.response["output"])
         ) {
-          const terminalItems = event.response["output"].filter(isResponsesItem);
-          if (terminalItems.length > 0) {
-            items.splice(0, items.length, ...terminalItems.map((item) => structuredClone(item)));
-          }
+          capture.terminalItems = event.response["output"]
+            .filter(isResponsesItem)
+            .map((item) => structuredClone(item));
         }
         if (
           terminalState &&
@@ -1103,12 +1182,17 @@ export class CodexProviderRuntime {
         let responseRetries = 0;
         while (true) {
           responseRequests += 1;
-          const attemptItems: ResponsesItem[] = [];
+          const attemptCapture: CodexAttemptCapture = {
+            streamedItems: [],
+            streamedToolCallKeys: new Set(),
+            streamedCompletedToolCallKeys: new Set(),
+          };
           const terminalState: CodexTerminalState = {};
           const attemptState: CodexStreamAttemptState = {
             startedContentIndexes: new Set(),
             completedContentIndexes: new Set(),
           };
+          const contentLengthBeforeAttempt = output.content.length;
           const usageBeforeAttempt = structuredClone(output.usage);
           output.usage = emptyUsage();
           try {
@@ -1116,7 +1200,7 @@ export class CodexProviderRuntime {
               startOnFirstEvent(
                 captureRawEvents(
                   this.transport.request(model, body, transportRequestOptions),
-                  attemptItems,
+                  attemptCapture,
                   terminalState,
                 ),
                 emitStart,
@@ -1140,12 +1224,66 @@ export class CodexProviderRuntime {
             throw error;
           }
           output.usage = accumulateUsage(usageBeforeAttempt, output.usage);
-          rawItems.push(...attemptItems.map((item) => structuredClone(item)));
+          // A terminal response.output is the complete provider snapshot when present.
+          // Stream-completed items are the fallback for transports that omit that field.
+          const attemptItems = attemptCapture.terminalItems ?? attemptCapture.streamedItems;
+          const toolCalls = assessAttemptToolCalls(
+            attemptItems,
+            attemptCapture,
+            terminalState.type,
+          );
+          const incompleteDetails = isObject(terminalState.response?.["incomplete_details"])
+            ? terminalState.response["incomplete_details"]
+            : undefined;
+          const incompleteReason =
+            typeof incompleteDetails?.["reason"] === "string"
+              ? incompleteDetails["reason"]
+              : undefined;
+          const maxOutputIncomplete =
+            terminalState.type === "response.incomplete" &&
+            incompleteReason === "max_output_tokens";
+
+          // Tool calls create a client-execution boundary. Never append them to an
+          // internal provider continuation before Pi can return the linked outputs.
+          if (toolCalls.hasToolCalls) {
+            if (
+              toolCalls.allComplete &&
+              ((terminalState.type === "response.completed" && output.stopReason === "toolUse") ||
+                maxOutputIncomplete)
+            ) {
+              discardIncompleteAttemptContent(output, attemptState);
+              rawItems.push(...attemptItems.map((item) => structuredClone(item)));
+              output.stopReason = "toolUse";
+              delete output.errorMessage;
+              break;
+            }
+
+            output.content.splice(contentLengthBeforeAttempt);
+            if (
+              terminalState.type === "response.failed" &&
+              retryableResponseFailure(terminalState.response) &&
+              responseRetries < this.responseRetryPolicy.maxRetries
+            ) {
+              responseRetries += 1;
+              output.stopReason = "pending";
+              delete output.errorMessage;
+              delete output.rawStopReason;
+              await waitForResponseRetry(
+                responseRetryDelayMs(this.responseRetryPolicy.baseDelayMs, responseRetries),
+                requestOptions.signal,
+              );
+              continue;
+            }
+            if (terminalState.type === "response.completed" && output.stopReason !== "error") {
+              output.stopReason = "length";
+              output.rawStopReason = "incomplete.tool_call";
+              delete output.errorMessage;
+            }
+            break;
+          }
 
           const nextBody = continueResponseBody(body, attemptItems);
-          const attemptHasToolCall = [...attemptState.completedContentIndexes].some(
-            (index) => output.content[index]?.type === "toolCall",
-          );
+          rawItems.push(...attemptItems.map((item) => structuredClone(item)));
           discardIncompleteAttemptContent(output, attemptState);
           const retryableTerminal =
             terminalState.type === "response.incomplete" ||
@@ -1170,8 +1308,7 @@ export class CodexProviderRuntime {
 
           if (
             terminalState.type === "response.completed" &&
-            terminalState.response?.["end_turn"] === false &&
-            !attemptHasToolCall
+            terminalState.response?.["end_turn"] === false
           ) {
             if (!nextBody) {
               throw new Error(
