@@ -16,8 +16,8 @@ zizmor = "1.29.0"
 _.path = ["{{config_root}}/node_modules/.bin"]
 
 [shell_alias]
-"pi:local" = "command pi --no-extensions -e {{config_root}}"
-"pi:npm" = "command pi --no-extensions -e npm:pi-openai-codex-compat"
+"pi:local" = "pi --no-extensions -e {{config_root}}"
+"pi:npm" = "pi --no-extensions -e npm:pi-openai-codex-compat"
 
 [tasks."test:live:codex"]
 description = "Run live Pi/Codex continuation tests with gpt-5.6-luna"
