@@ -537,6 +537,7 @@ void test("executes an output-limit tool call before the next provider request",
   const server = await startCodexServer(t, (requestNumber) =>
     requestNumber === 1
       ? [
+          { type: "response.output_item.done", output_index: 0, item: call },
           {
             type: "response.incomplete",
             response: {

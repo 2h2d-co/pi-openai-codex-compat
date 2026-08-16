@@ -1910,16 +1910,6 @@ async function* requestWebSocket(
           responseCompleted = true;
         }
         if (typeof event.response.id === "string") responseId = event.response.id;
-        if (Array.isArray(event.response["output"])) {
-          const terminalItems = event.response["output"].filter(isObject);
-          if (terminalItems.length > 0) {
-            responseItems.splice(
-              0,
-              responseItems.length,
-              ...terminalItems.map((item) => structuredClone(item)),
-            );
-          }
-        }
       }
       const normalized = normalizeEvent(event);
       if (!normalized) continue;

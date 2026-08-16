@@ -2191,6 +2191,108 @@ void test("sends full context when a payload hook supplies string input", async 
   transport.close("string-input-session");
 });
 
+void test("builds WebSocket continuation state only from output_item.done items", async (t) => {
+  const previousWebSocket = globalThis.WebSocket;
+  const sentBodies: JsonRecord[] = [];
+  const streamedItem = rawMessageItem("message-streamed", "streamed");
+  const terminalItem = rawMessageItem("message-terminal", "terminal");
+
+  class DoneItemWebSocket {
+    readonly readyState = 1;
+    private readonly listeners = new Map<string, Set<(event: unknown) => void>>();
+
+    constructor() {
+      queueMicrotask(() => this.dispatch("open", {}));
+    }
+
+    addEventListener(type: string, listener: (event: unknown) => void): void {
+      const listeners = this.listeners.get(type) ?? new Set();
+      listeners.add(listener);
+      this.listeners.set(type, listeners);
+    }
+
+    removeEventListener(type: string, listener: (event: unknown) => void): void {
+      this.listeners.get(type)?.delete(listener);
+    }
+
+    send(data: string): void {
+      sentBodies.push(JSON.parse(data) as JsonRecord);
+      const turn = sentBodies.length;
+      const responseEvents =
+        turn === 1
+          ? [
+              { type: "response.output_item.done", item: streamedItem },
+              {
+                type: "response.completed",
+                response: {
+                  id: "response-streamed",
+                  status: "completed",
+                  output: [terminalItem],
+                },
+              },
+            ]
+          : [
+              {
+                type: "response.completed",
+                response: { id: "response-second", status: "completed" },
+              },
+            ];
+      queueMicrotask(() => {
+        for (const event of responseEvents) {
+          this.dispatch("message", { data: JSON.stringify(event) });
+        }
+      });
+    }
+
+    close(): void {}
+
+    private dispatch(type: string, event: unknown): void {
+      for (const listener of this.listeners.get(type) ?? []) listener(event);
+    }
+  }
+
+  Object.defineProperty(globalThis, "WebSocket", {
+    configurable: true,
+    writable: true,
+    value: DoneItemWebSocket,
+  });
+  t.after(() => {
+    Object.defineProperty(globalThis, "WebSocket", {
+      configurable: true,
+      writable: true,
+      value: previousWebSocket,
+    });
+  });
+
+  const firstUser = { role: "user", content: "first" };
+  const secondUser = { role: "user", content: "second" };
+  const options = {
+    apiKey: accessToken(),
+    sessionId: "done-item-continuation-session",
+    transport: "websocket-cached" as const,
+  };
+  const transport = new CodexTransport();
+  for await (const _event of transport.request(
+    codexModel(),
+    { model: "gpt-test", input: [firstUser] },
+    options,
+  )) {
+    // Establish the continuation from the streamed done item.
+  }
+  for await (const _event of transport.request(
+    codexModel(),
+    { model: "gpt-test", input: [firstUser, streamedItem, secondUser] },
+    options,
+  )) {
+    // Consume the delta continuation response.
+  }
+
+  assert.equal(sentBodies.length, 2);
+  assert.equal(sentBodies[1]?.previous_response_id, "response-streamed");
+  assert.deepEqual(sentBodies[1]?.input, [secondUser]);
+  transport.close("done-item-continuation-session");
+});
+
 void test("continues a multi-step conversation with canonical and native replay items", async (t) => {
   resetOpenAICodexWebSocketDebugStats();
   const previousWebSocket = globalThis.WebSocket;

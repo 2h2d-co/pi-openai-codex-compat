@@ -131,7 +131,7 @@ void test("parses reasoning and grammar tool calls into canonical Pi content", a
   assert.equal(toolCall?.id, "call_1|ctc_1");
 });
 
-void test("hydrates terminal-only output without duplicating streamed items", async () => {
+void test("ignores terminal output and commits only output_item.done items", async () => {
   const message = output();
   const stream = createAssistantMessageEventStream();
   const reasoning = {
@@ -190,8 +190,7 @@ void test("hydrates terminal-only output without duplicating streamed items", as
     new Map([["apply_patch", "patch"]]),
   );
 
-  assert.equal(message.stopReason, "toolUse");
-  assert.equal(message.content.filter((block) => block.type === "thinking").length, 1);
+  assert.equal(message.stopReason, "stop");
   assert.deepEqual(
     message.content.map((block) =>
       block.type === "thinking"
@@ -200,16 +199,7 @@ void test("hydrates terminal-only output without duplicating streamed items", as
           ? { type: block.type, text: block.text }
           : { type: block.type, name: block.name, arguments: block.arguments },
     ),
-    [
-      { type: "thinking", text: "Plan" },
-      { type: "text", text: "Ready" },
-      { type: "toolCall", name: "report", arguments: { value: "terminal" } },
-      {
-        type: "toolCall",
-        name: "apply_patch",
-        arguments: { patch: "*** Begin Patch\n*** End Patch" },
-      },
-    ],
+    [{ type: "thinking", text: "Plan" }],
   );
 });
 

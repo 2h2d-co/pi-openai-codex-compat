@@ -28,6 +28,7 @@ import {
 } from "../extensions/openai-codex-compat/codex-thread-lineage.ts";
 
 type MessageEntry = Extract<SessionEntry, { type: "message" }>;
+type ToolResultMessage = Extract<Context["messages"][number], { role: "toolResult" }>;
 
 const MANUAL_COMPACTION_METADATA = responsesCompactionV2Metadata(
   "manual",
@@ -257,6 +258,39 @@ function createHarness(
     compactions,
     statuses,
   };
+}
+
+function appendToolExchange(
+  harness: ReturnType<typeof createHarness>,
+  assistant: AssistantMessage,
+): ToolResultMessage {
+  const toolCall = assistant.content.find((block) => block.type === "toolCall");
+  assert.ok(toolCall);
+  const assistantId = `assistant-${String(harness.branch().length)}`;
+  harness.branch().push({
+    type: "message",
+    id: assistantId,
+    parentId: harness.branch().at(-1)?.id ?? null,
+    timestamp: new Date().toISOString(),
+    message: assistant,
+  } as MessageEntry);
+  const result: ToolResultMessage = {
+    role: "toolResult",
+    toolCallId: toolCall.id,
+    toolName: toolCall.name,
+    content: [{ type: "text", text: "completed" }],
+    isError: false,
+    timestamp: Date.now(),
+  };
+  harness.branch().push({
+    type: "message",
+    id: `result-${String(harness.branch().length)}`,
+    parentId: assistantId,
+    timestamp: new Date().toISOString(),
+    message: result,
+  } as MessageEntry);
+  harness.runtime.captureScope(harness.extensionContext);
+  return result;
 }
 
 void test("streams ordinary responses without persisting redundant native data", async () => {
@@ -713,7 +747,7 @@ void test("resamples retryable failed and incomplete responses from completed ou
   }
 });
 
-void test("uses completed streamed calls when the terminal snapshot is empty", async () => {
+void test("uses done calls and ignores conflicting terminal output", async () => {
   const user = userEntry("user-1", "inspect");
   const harness = createHarness([user], DEFAULT_CONFIG, "session-empty-completed-output", {
     maxRetries: 5,
@@ -736,7 +770,16 @@ void test("uses completed streamed calls when the terminal snapshot is empty", a
       response: {
         id: "resp_empty_completed_output",
         status: "completed",
-        output: [],
+        output: [
+          {
+            type: "function_call",
+            id: "fc_terminal",
+            call_id: "call_terminal",
+            name: "report",
+            status: "completed",
+            arguments: '{"value":"terminal"}',
+          },
+        ],
         usage: { input_tokens: 10, output_tokens: 5, total_tokens: 15 },
       },
     };
@@ -765,14 +808,12 @@ void test("uses completed streamed calls when the terminal snapshot is empty", a
     {
       attempt: 1,
       terminalType: "response.completed",
-      itemSource: "stream-fallback",
       outputItemTypes: { function_call: 1 },
       streamedCallsStarted: 1,
-      streamedCallsCompleted: 1,
-      terminalCalls: 0,
-      authoritativeCalls: 1,
-      terminalOmittedStreamedCalls: 0,
-      allCallsComplete: true,
+      streamedCallsDone: 1,
+      returnedCalls: 1,
+      discardedPartialCalls: 0,
+      postToolDisposition: "continue",
       decision: "return_tool_use",
     },
   ]);
@@ -845,29 +886,31 @@ void test("returns complete function call batches at the output limit without pr
       attempt: 1,
       terminalType: "response.incomplete",
       incompleteReason: "max_output_tokens",
-      itemSource: "terminal",
       outputItemTypes: { function_call: 2 },
       streamedCallsStarted: 2,
-      streamedCallsCompleted: 2,
-      terminalCalls: 2,
-      authoritativeCalls: 2,
-      terminalOmittedStreamedCalls: 0,
-      allCallsComplete: true,
+      streamedCallsDone: 2,
+      returnedCalls: 2,
+      discardedPartialCalls: 0,
+      postToolDisposition: "retry",
       decision: "return_tool_use",
     },
   ]);
   assert.doesNotMatch(JSON.stringify(responseDecisions(message)), /call_one|call_two|report/);
 });
 
-void test("hydrates a complete terminal-only custom call without provider continuation", async () => {
+void test("ignores terminal-only calls while retrying the original input", async () => {
   const user = userEntry("user-1", "apply the custom operation");
   const harness = createHarness([user], DEFAULT_CONFIG, "session-terminal-custom", {
-    maxRetries: 5,
+    maxRetries: 1,
     baseDelayMs: 0,
   });
-  let requests = 0;
-  harness.runtime.transport.request = async function* () {
-    requests += 1;
+  const requests: JsonRecord[] = [];
+  harness.runtime.transport.request = async function* (_model, body) {
+    requests.push(structuredClone(body));
+    if (requests.length === 2) {
+      yield* textEvents("recovered", "resp_terminal_custom_recovered");
+      return;
+    }
     yield {
       type: "response.incomplete",
       response: {
@@ -903,16 +946,21 @@ void test("hydrates a complete terminal-only custom call without provider contin
     )
     .result();
 
-  assert.equal(requests, 1);
-  assert.equal(message.stopReason, "toolUse");
-  const toolCall = message.content.find((block) => block.type === "toolCall");
-  assert.deepEqual(toolCall?.arguments, { input: "complete input" });
-  assert.equal(responseDecisions(message)[0]?.["decision"], "return_tool_use");
-  assert.equal(responseDecisions(message)[0]?.["itemSource"], "terminal");
-  assert.equal(responseDecisions(message)[0]?.["streamedCallsStarted"], 0);
+  assert.equal(requests.length, 2);
+  assert.deepEqual(requests[1]?.input, requests[0]?.input);
+  assert.equal(message.stopReason, "stop");
+  assert.equal(
+    message.content.some((block) => block.type === "toolCall"),
+    false,
+  );
+  assert.deepEqual(
+    responseDecisions(message).map((decision) => decision["decision"]),
+    ["retry_original_input", "return_terminal"],
+  );
+  assert.doesNotMatch(JSON.stringify(requests), /call_custom|complete input/);
 });
 
-void test("executes none of a mixed complete and partial call batch", async () => {
+void test("returns the completed subset of a mixed done and partial call batch", async () => {
   const user = userEntry("user-1", "inspect both");
   const harness = createHarness([user], DEFAULT_CONFIG, "session-partial-batch", {
     maxRetries: 5,
@@ -921,6 +969,32 @@ void test("executes none of a mixed complete and partial call batch", async () =
   let requests = 0;
   harness.runtime.transport.request = async function* () {
     requests += 1;
+    const completeCall = {
+      type: "function_call",
+      id: "fc_complete",
+      call_id: "call_complete",
+      name: "report",
+      status: "incomplete",
+      arguments: '{"value":"complete"}',
+    };
+    yield {
+      type: "response.output_item.added",
+      output_index: 0,
+      item: { ...completeCall, arguments: "" },
+    };
+    yield { type: "response.output_item.done", output_index: 0, item: completeCall };
+    yield {
+      type: "response.output_item.added",
+      output_index: 1,
+      item: {
+        type: "function_call",
+        id: "fc_partial",
+        call_id: "call_partial",
+        name: "report",
+        status: "in_progress",
+        arguments: '{"value":',
+      },
+    };
     yield {
       type: "response.incomplete",
       response: {
@@ -928,21 +1002,14 @@ void test("executes none of a mixed complete and partial call batch", async () =
         status: "incomplete",
         incomplete_details: { reason: "max_output_tokens" },
         output: [
+          completeCall,
           {
             type: "function_call",
-            id: "fc_complete",
-            call_id: "call_complete",
+            id: "fc_terminal_only",
+            call_id: "call_terminal_only",
             name: "report",
             status: "completed",
-            arguments: '{"value":"complete"}',
-          },
-          {
-            type: "function_call",
-            id: "fc_partial",
-            call_id: "call_partial",
-            name: "report",
-            status: "incomplete",
-            arguments: '{"value":',
+            arguments: '{"value":"terminal"}',
           },
         ],
         usage: { input_tokens: 90_000, output_tokens: 10_000, total_tokens: 100_000 },
@@ -965,17 +1032,26 @@ void test("executes none of a mixed complete and partial call batch", async () =
     .result();
 
   assert.equal(requests, 1);
-  assert.equal(message.stopReason, "length");
-  assert.equal(
-    message.content.some((block) => block.type === "toolCall"),
-    false,
+  assert.equal(message.stopReason, "toolUse");
+  assert.deepEqual(
+    message.content.filter((block) => block.type === "toolCall"),
+    [
+      {
+        type: "toolCall",
+        id: "call_complete|fc_complete",
+        name: "report",
+        arguments: { value: "complete" },
+      },
+    ],
   );
-  assert.equal(harness.customEntries.length, 0);
-  assert.equal(responseDecisions(message)[0]?.["decision"], "return_length_incomplete_call");
-  assert.equal(responseDecisions(message)[0]?.["allCallsComplete"], false);
+  assert.equal(responseDecisions(message)[0]?.["streamedCallsDone"], 1);
+  assert.equal(responseDecisions(message)[0]?.["returnedCalls"], 1);
+  assert.equal(responseDecisions(message)[0]?.["discardedPartialCalls"], 1);
+  assert.equal(responseDecisions(message)[0]?.["postToolDisposition"], "retry");
+  assert.doesNotMatch(JSON.stringify(message), /call_partial|call_terminal_only/);
 });
 
-void test("rejects a streamed call omitted from incomplete terminal output", async () => {
+void test("returns done calls omitted from incomplete terminal output", async () => {
   const user = userEntry("user-1", "inspect");
   const harness = createHarness([user], DEFAULT_CONFIG, "session-omitted-call", {
     maxRetries: 5,
@@ -1021,16 +1097,15 @@ void test("rejects a streamed call omitted from incomplete terminal output", asy
     .result();
 
   assert.equal(requests, 1);
-  assert.equal(message.stopReason, "length");
-  assert.equal(
-    message.content.some((block) => block.type === "toolCall"),
-    false,
-  );
-  assert.equal(responseDecisions(message)[0]?.["decision"], "reject_terminal_stream_mismatch");
-  assert.equal(responseDecisions(message)[0]?.["terminalOmittedStreamedCalls"], 1);
+  assert.equal(message.stopReason, "toolUse");
+  const toolCall = message.content.find((block) => block.type === "toolCall");
+  assert.deepEqual(toolCall?.arguments, { value: "omitted" });
+  assert.equal(responseDecisions(message)[0]?.["decision"], "return_tool_use");
+  assert.equal(responseDecisions(message)[0]?.["returnedCalls"], 1);
+  assert.equal(responseDecisions(message)[0]?.["postToolDisposition"], "retry");
 });
 
-void test("retries failed call-bearing responses from pre-attempt input", async () => {
+void test("ignores terminal-only calls while retrying failed responses", async () => {
   const user = userEntry("user-1", "inspect");
   const harness = createHarness([user], DEFAULT_CONFIG, "session-failed-call-retry", {
     maxRetries: 1,
@@ -1092,7 +1167,268 @@ void test("retries failed call-bearing responses from pre-attempt input", async 
   );
 });
 
-void test("preserves non-retryable failed call-bearing responses", async () => {
+void test("executes done calls before retrying unsuccessful responses with linked outputs", async () => {
+  const user = userEntry("user-1", "inspect");
+  const harness = createHarness([user], DEFAULT_CONFIG, "session-done-call-retry", {
+    maxRetries: 1,
+    baseDelayMs: 0,
+  });
+  const requests: JsonRecord[] = [];
+  harness.runtime.transport.request = async function* (_model, body) {
+    requests.push(structuredClone(body));
+    if (requests.length === 2) {
+      yield* textEvents("recovered", "resp_done_call_recovered");
+      return;
+    }
+    yield {
+      type: "response.output_item.done",
+      output_index: 0,
+      item: {
+        type: "function_call",
+        id: "fc_failed_done",
+        call_id: "call_failed_done",
+        name: "report",
+        arguments: '{"value":"execute me"}',
+      },
+    };
+    yield {
+      type: "response.failed",
+      response: {
+        id: "resp_failed_done_call",
+        status: "failed",
+        error: { code: "rate_limit_exceeded", message: "retry after tools" },
+        output: [],
+        usage: { input_tokens: 10, output_tokens: 5, total_tokens: 15 },
+      },
+    };
+  };
+  const initialContext: Context = {
+    messages: [user.message as Context["messages"][number]],
+    tools: [REPORT_TOOL],
+  };
+  const options = {
+    apiKey: accessToken(),
+    sessionId: "session-done-call-retry",
+    transport: "sse" as const,
+  };
+
+  harness.runtime.beginAgentTurn(harness.extensionContext);
+  const callMessage = await harness.runtime
+    .streamSimple(codexModel(), initialContext, options)
+    .result();
+  const toolResult = appendToolExchange(harness, callMessage);
+  const finalMessage = await harness.runtime
+    .streamSimple(
+      codexModel(),
+      {
+        messages: [...initialContext.messages, callMessage, toolResult],
+        tools: [REPORT_TOOL],
+      },
+      options,
+    )
+    .result();
+  harness.runtime.endAgentTurn(harness.extensionContext);
+
+  assert.equal(callMessage.stopReason, "toolUse");
+  assert.equal(responseDecisions(callMessage)[0]?.["postToolDisposition"], "retry");
+  assert.equal(finalMessage.stopReason, "stop");
+  assert.equal(requests.length, 2);
+  const retryInput = requests[1]?.input as JsonRecord[];
+  assert.equal(retryInput.filter((item) => item.type === "function_call").length, 1);
+  assert.equal(retryInput.filter((item) => item.type === "function_call_output").length, 1);
+  assert.match(JSON.stringify(retryInput), /call_failed_done|completed/);
+});
+
+void test("preserves response retry budgets across linked tool execution", async () => {
+  const user = userEntry("user-1", "inspect");
+  const harness = createHarness([user], DEFAULT_CONFIG, "session-done-call-budget", {
+    maxRetries: 0,
+    baseDelayMs: 0,
+  });
+  let requests = 0;
+  harness.runtime.transport.request = async function* () {
+    requests += 1;
+    yield {
+      type: "response.output_item.done",
+      output_index: 0,
+      item: {
+        type: "function_call",
+        id: "fc_budget",
+        call_id: "call_budget",
+        name: "report",
+        arguments: '{"value":"execute once"}',
+      },
+    };
+    yield {
+      type: "response.incomplete",
+      response: {
+        id: "resp_budget",
+        status: "incomplete",
+        incomplete_details: { reason: "max_output_tokens" },
+        output: [],
+      },
+    };
+  };
+  const initialContext: Context = {
+    messages: [user.message as Context["messages"][number]],
+    tools: [REPORT_TOOL],
+  };
+  const options = {
+    apiKey: accessToken(),
+    sessionId: "session-done-call-budget",
+    transport: "sse" as const,
+  };
+
+  harness.runtime.beginAgentTurn(harness.extensionContext);
+  const callMessage = await harness.runtime
+    .streamSimple(codexModel(), initialContext, options)
+    .result();
+  const toolResult = appendToolExchange(harness, callMessage);
+  const errorMessage = await harness.runtime
+    .streamSimple(
+      codexModel(),
+      {
+        messages: [...initialContext.messages, callMessage, toolResult],
+        tools: [REPORT_TOOL],
+      },
+      options,
+    )
+    .result();
+  harness.runtime.endAgentTurn(harness.extensionContext);
+
+  assert.equal(callMessage.stopReason, "toolUse");
+  assert.equal(errorMessage.stopReason, "error");
+  assert.equal(errorMessage.errorMessage, "Response incomplete: max_output_tokens");
+  assert.equal(requests, 1);
+});
+
+void test("does not retry an unsuccessful response before linked tool output exists", async () => {
+  const user = userEntry("user-1", "inspect");
+  const harness = createHarness([user], DEFAULT_CONFIG, "session-missing-linked-output", {
+    maxRetries: 1,
+    baseDelayMs: 0,
+  });
+  let requests = 0;
+  harness.runtime.transport.request = async function* () {
+    requests += 1;
+    yield {
+      type: "response.output_item.done",
+      output_index: 0,
+      item: {
+        type: "function_call",
+        id: "fc_waiting",
+        call_id: "call_waiting",
+        name: "report",
+        arguments: '{"value":"waiting"}',
+      },
+    };
+    yield {
+      type: "response.incomplete",
+      response: {
+        id: "resp_waiting",
+        status: "incomplete",
+        incomplete_details: { reason: "max_output_tokens" },
+        output: [],
+      },
+    };
+  };
+  const initialContext: Context = {
+    messages: [user.message as Context["messages"][number]],
+    tools: [REPORT_TOOL],
+  };
+  const options = {
+    apiKey: accessToken(),
+    sessionId: "session-missing-linked-output",
+    transport: "sse" as const,
+  };
+
+  harness.runtime.beginAgentTurn(harness.extensionContext);
+  const callMessage = await harness.runtime
+    .streamSimple(codexModel(), initialContext, options)
+    .result();
+  const errorMessage = await harness.runtime
+    .streamSimple(
+      codexModel(),
+      {
+        messages: [...initialContext.messages, callMessage],
+        tools: [REPORT_TOOL],
+      },
+      options,
+    )
+    .result();
+  harness.runtime.endAgentTurn(harness.extensionContext);
+
+  assert.equal(callMessage.stopReason, "toolUse");
+  assert.equal(errorMessage.stopReason, "error");
+  assert.match(errorMessage.errorMessage ?? "", /until Pi records tool output.*call_waiting/);
+  assert.equal(requests, 1);
+});
+
+void test("executes done calls before surfacing non-retryable failures", async () => {
+  const user = userEntry("user-1", "invalid request");
+  const harness = createHarness([user], DEFAULT_CONFIG, "session-done-call-fatal", {
+    maxRetries: 1,
+    baseDelayMs: 0,
+  });
+  let requests = 0;
+  harness.runtime.transport.request = async function* () {
+    requests += 1;
+    yield {
+      type: "response.output_item.done",
+      output_index: 0,
+      item: {
+        type: "function_call",
+        id: "fc_fatal_done",
+        call_id: "call_fatal_done",
+        name: "report",
+        arguments: '{"value":"execute before error"}',
+      },
+    };
+    yield {
+      type: "response.failed",
+      response: {
+        id: "resp_fatal_done_call",
+        status: "failed",
+        error: { code: "invalid_prompt", message: "Invalid after tool completion." },
+        output: [],
+      },
+    };
+  };
+  const initialContext: Context = {
+    messages: [user.message as Context["messages"][number]],
+    tools: [REPORT_TOOL],
+  };
+  const options = {
+    apiKey: accessToken(),
+    sessionId: "session-done-call-fatal",
+    transport: "sse" as const,
+  };
+
+  harness.runtime.beginAgentTurn(harness.extensionContext);
+  const callMessage = await harness.runtime
+    .streamSimple(codexModel(), initialContext, options)
+    .result();
+  const toolResult = appendToolExchange(harness, callMessage);
+  const errorMessage = await harness.runtime
+    .streamSimple(
+      codexModel(),
+      {
+        messages: [...initialContext.messages, callMessage, toolResult],
+        tools: [REPORT_TOOL],
+      },
+      options,
+    )
+    .result();
+  harness.runtime.endAgentTurn(harness.extensionContext);
+
+  assert.equal(callMessage.stopReason, "toolUse");
+  assert.equal(responseDecisions(callMessage)[0]?.["postToolDisposition"], "error");
+  assert.equal(errorMessage.stopReason, "error");
+  assert.equal(errorMessage.errorMessage, "Invalid after tool completion.");
+  assert.equal(requests, 1);
+});
+
+void test("ignores terminal-only calls in non-retryable failed responses", async () => {
   const user = userEntry("user-1", "invalid request");
   const harness = createHarness([user], DEFAULT_CONFIG, "session-failed-call-fatal", {
     maxRetries: 1,
@@ -1142,7 +1478,7 @@ void test("preserves non-retryable failed call-bearing responses", async () => {
     message.content.some((block) => block.type === "toolCall"),
     false,
   );
-  assert.equal(responseDecisions(message)[0]?.["decision"], "preserve_terminal_error");
+  assert.equal(responseDecisions(message)[0]?.["decision"], "return_terminal");
 });
 
 void test("does not resample official fatal response.failed codes", async () => {

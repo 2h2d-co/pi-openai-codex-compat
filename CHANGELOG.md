@@ -4,7 +4,7 @@
 
 ### Fixed
 
-- Accept completed streamed tool calls when Codex sends an empty terminal output snapshot, while retaining fail-closed handling for empty failed or incomplete responses.
+- Match Codex tool-call commit semantics by trusting only `response.output_item.done`, ignoring terminal output snapshots and terminal-only calls, executing the completed subset of mixed batches, and preserving completed calls across incomplete or failed response handling.
 
 ## 0.0.7 - 2026-08-16
 

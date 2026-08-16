@@ -292,31 +292,35 @@ The upstream change is still useful infrastructure. Once Pi implements #7689, th
 
 ## Potential Fixes for Review
 
-### P0 implemented: Prevent provider continuation across unresolved tool calls
+### P0 implemented: Match Codex item commit and tool execution semantics
 
-Internal response continuation/retry decisions now inspect authoritative terminal response items, with streamed items retained as a fallback and consistency check.
+Internal response handling now uses the same item commit point as Codex:
 
-Required invariant:
+> Only `response.output_item.done` commits a provider item. Terminal `response.output` snapshots are ignored.
 
-> Never append a `function_call` or `custom_tool_call` to a new provider subrequest until its required output item exists.
+The linked-output invariant remains:
+
+> Never append a `function_call` or `custom_tool_call` to a new provider request until its required output item exists.
 
 Implemented policy:
 
-- `response.completed`, `end_turn: false`, tool call present: return control to Pi as tool use; Pi executes the tool and naturally performs the next model turn.
-- `response.incomplete` with `max_output_tokens` and a fully complete call batch: return the calls to Pi as tool use.
-- A completed or max-output call batch containing an incomplete, malformed, or terminal-omitted call: execute none and return a recoverable length result without persisting the partial calls; preserve other incomplete-response errors.
-- `response.failed`, tool call present: retry the pre-attempt input without the failed response items when retryable; otherwise preserve the original provider failure.
+- A done tool call returns control to Pi as tool use regardless of whether the response later completes, becomes incomplete, or fails.
+- Calls seen only through `response.output_item.added` or deltas are provisional, are removed from the final assistant message, and are never persisted as provider history.
+- A mixed batch returns its done subset while discarding started-only siblings.
+- Terminal-only calls are ignored, including non-empty terminal snapshots that disagree with streamed done items.
+- An unsuccessful response after done calls is deferred until Pi records every linked tool output. Retryable failures then resample with the linked outputs; non-retryable failures surface without another provider request.
+- WebSocket continuation state is built from done items rather than terminal output.
 
 Regression coverage now includes:
 
 - function and custom tool calls;
-- streamed `response.output_item.done` items;
-- terminal-response-only output items;
+- streamed `response.output_item.done` items without completed status markers;
+- terminal-only output items and conflicting terminal snapshots;
 - terminal output that omits a streamed call;
-- all-or-nothing handling for mixed complete and partial call batches;
+- item-by-item handling for mixed done and partial call batches;
 - `end_turn: false`;
 - `response.incomplete` with `max_output_tokens`;
-- retryable and non-retryable `response.failed`;
+- retryable and non-retryable `response.failed` after linked tool execution;
 - proof that a second provider request is not sent before tool output;
 - a host-level Pi tool execution and linked-output round trip.
 

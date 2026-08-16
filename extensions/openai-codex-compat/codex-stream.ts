@@ -141,11 +141,6 @@ function appendCustomInput(
   return delta;
 }
 
-function responseItems(value: unknown): JsonRecord[] {
-  if (!Array.isArray(value)) return [];
-  return value.filter(isObject);
-}
-
 function itemContentText(item: JsonRecord): string {
   if (!Array.isArray(item.content)) return "";
   return item.content
@@ -210,7 +205,7 @@ export async function processCodexStream(
   let terminal = false;
   const slots = new Map<number, OutputSlot>();
   const completedOutputItems = new Set<string>();
-  const reasoningById = new Map<string, ThinkingContent>();
+  const completedToolCallContentIndexes = new Set<number>();
   const applyMessagePhaseStopReason = (item: JsonRecord): void => {
     if (item.type === "message" && item["phase"] === "final_answer") {
       output.stopReason = "stop";
@@ -336,7 +331,6 @@ export async function processCodexStream(
     if (item.type === "reasoning" && slot?.type === "thinking") {
       slot.block.thinking = reasoningText(item) || slot.block.thinking;
       slot.block.thinkingSignature = JSON.stringify(item);
-      if (typeof item.id === "string") reasoningById.set(item.id, slot.block);
       stream.push({
         type: "thinking_end",
         contentIndex: slot.contentIndex,
@@ -375,6 +369,7 @@ export async function processCodexStream(
         partial: output,
       });
       trackCompleted(slot);
+      completedToolCallContentIndexes.add(slot.contentIndex);
       slots.delete(index);
     } else if (item.type === "custom_tool_call" && slot?.type === "toolCall") {
       slot.block.name = piToolCallName(item);
@@ -388,6 +383,7 @@ export async function processCodexStream(
         partial: output,
       });
       trackCompleted(slot);
+      completedToolCallContentIndexes.add(slot.contentIndex);
       slots.delete(index);
     }
   };
@@ -424,20 +420,6 @@ export async function processCodexStream(
       output.usage,
       typeof response.service_tier === "string" ? response.service_tier : undefined,
     );
-    const terminalItems = responseItems(response["output"]);
-    terminalItems.forEach((item, index) => completeOutputItem(index, item));
-    for (const item of terminalItems) {
-      if (item.type !== "reasoning" || typeof item.id !== "string") continue;
-      const block = reasoningById.get(item.id);
-      if (!block?.thinkingSignature || typeof item.encrypted_content !== "string") continue;
-      const stored = JSON.parse(block.thinkingSignature) as JsonRecord;
-      if (typeof stored.encrypted_content !== "string") {
-        block.thinkingSignature = JSON.stringify({
-          ...stored,
-          encrypted_content: item.encrypted_content,
-        });
-      }
-    }
     const status = normalizeCodexStatus(response["status"]);
     const incompleteDetails = isObject(response["incomplete_details"])
       ? response["incomplete_details"]
@@ -452,7 +434,12 @@ export async function processCodexStream(
     output.stopReason = mappedStop.stopReason;
     if (mappedStop.errorMessage === undefined) delete output.errorMessage;
     else output.errorMessage = mappedStop.errorMessage;
-    if (output.stopReason === "stop" && output.content.some((block) => block.type === "toolCall")) {
+    if (
+      output.stopReason === "stop" &&
+      [...completedToolCallContentIndexes].some(
+        (contentIndex) => output.content[contentIndex]?.type === "toolCall",
+      )
+    ) {
       output.stopReason = "toolUse";
     }
   };
