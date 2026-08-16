@@ -19,6 +19,7 @@ import {
 } from "@earendil-works/pi-coding-agent";
 import type { AssistantMessage, Credential, Model } from "@earendil-works/pi-ai";
 import { getBuiltinModels } from "@earendil-works/pi-ai/providers/all";
+import { CONFIG_FILE } from "../extensions/openai-codex-compat/config.ts";
 import {
   OUTPUT_LIMIT_CONTINUATION_PROMPT,
   OUTPUT_LIMIT_CONTINUATION_TYPE,
@@ -236,6 +237,31 @@ void test("deduplicates recovery and suppresses cancelled or failed compaction",
   assert.deepEqual(failed.sent, []);
 });
 
+void test("continues after successful compaction completes", async () => {
+  const harness = continuationHarness();
+  await harness.emit("agent_end", { messages: [assistant("length")] });
+  await harness.emit("session_before_compact", {
+    signal: new AbortController().signal,
+  });
+  await harness.emit("session_compact");
+  await harness.emit("agent_settled");
+
+  assert.deepEqual(harness.sent, [
+    {
+      message: {
+        customType: OUTPUT_LIMIT_CONTINUATION_TYPE,
+        content: OUTPUT_LIMIT_CONTINUATION_PROMPT,
+        display: false,
+        details: {
+          reason: "max_output_tokens",
+          responseIdHash: outputLimitResponseIdHash(),
+        },
+      },
+      options: { triggerTurn: true },
+    },
+  ]);
+});
+
 function sse(events: JsonRecord[]): string {
   return `${events.map((event) => `data: ${JSON.stringify(event)}\n\n`).join("")}data: [DONE]\n\n`;
 }
@@ -265,6 +291,43 @@ function incompleteEvents(): JsonRecord[] {
         status: "incomplete",
         incomplete_details: { reason: "max_output_tokens" },
         usage: { input_tokens: 260_000, output_tokens: 5, total_tokens: 260_005 },
+      },
+    },
+  ];
+}
+
+function exhaustedOutputLimitEvents(attempt: number): JsonRecord[] {
+  const responseId = `resp_exhausted_${String(attempt)}`;
+  const itemId = `msg_exhausted_${String(attempt)}`;
+  const text = `committed output ${String(attempt)}`;
+  return [
+    { type: "response.created", response: { id: responseId } },
+    {
+      type: "response.output_item.added",
+      item: { id: itemId, type: "message", role: "assistant", content: [] },
+    },
+    { type: "response.output_text.delta", delta: text },
+    {
+      type: "response.output_item.done",
+      item: {
+        id: itemId,
+        type: "message",
+        role: "assistant",
+        status: "incomplete",
+        content: [{ type: "output_text", text, annotations: [] }],
+      },
+    },
+    {
+      type: "response.incomplete",
+      response: {
+        id: responseId,
+        status: "incomplete",
+        incomplete_details: { reason: "max_output_tokens" },
+        usage: {
+          input_tokens: 260_000,
+          output_tokens: 128_000,
+          total_tokens: 388_000,
+        },
       },
     },
   ];
@@ -332,6 +395,14 @@ function textEvents(text: string): JsonRecord[] {
       },
     },
   ];
+}
+
+function followUpEvents(text: string): JsonRecord[] {
+  const events = textEvents(text);
+  const terminal = events.at(-1);
+  assert.ok(terminal && typeof terminal["response"] === "object" && terminal["response"] !== null);
+  (terminal["response"] as JsonRecord)["end_turn"] = false;
+  return events;
 }
 
 async function startCodexServer(
@@ -411,7 +482,11 @@ async function pointBuiltInCodexAt(baseUrl: string, t: TestContext): Promise<voi
   });
 }
 
-async function createTestSession(t: TestContext, baseUrl: string, options?: { tools?: boolean }) {
+async function createTestSession(
+  t: TestContext,
+  baseUrl: string,
+  options?: { tools?: boolean; autoCompactAtPercent?: number },
+) {
   await pointBuiltInCodexAt(baseUrl, t);
 
   const tempRoot = await mkdtemp(join(tmpdir(), "pi-codex-output-limit-"));
@@ -423,6 +498,12 @@ async function createTestSession(t: TestContext, baseUrl: string, options?: { to
     join(agentDir, "auth.json"),
     JSON.stringify({ [CODEX_PROVIDER]: codexCredential() }),
   );
+  if (options?.autoCompactAtPercent !== undefined) {
+    await writeFile(
+      join(agentDir, CONFIG_FILE),
+      JSON.stringify({ autoCompactAtPercent: options.autoCompactAtPercent }),
+    );
+  }
 
   const previousAgentDir = process.env["PI_CODING_AGENT_DIR"];
   process.env["PI_CODING_AGENT_DIR"] = agentDir;
@@ -598,6 +679,119 @@ void test("preserves committed progress across overflow compaction and automatic
         : [],
     ),
     /finished after overflow recovery/,
+  );
+  assert.equal(session.isIdle, true);
+});
+
+void test("compacts between successful provider follow-ups with an explicit Pi boundary", async (t) => {
+  const server = await startCodexServer(t, (requestNumber, body) => {
+    const input = body["input"] as JsonRecord[];
+    if (input.some((item) => item["type"] === "compaction_trigger")) return compactionEvents();
+    if (requestNumber === 1) return followUpEvents("first phase");
+    return textEvents("second phase");
+  });
+  const { session } = await createTestSession(t, server.baseUrl, {
+    autoCompactAtPercent: 0.002,
+  });
+
+  await session.prompt("finish this task", { expandPromptTemplates: false });
+  await session.waitForIdle();
+
+  assert.equal(server.requests.length, 3);
+  const [initial, compaction, continued] = server.requests;
+  assert.ok(initial);
+  assert.ok(compaction);
+  assert.ok(continued);
+  assert.match(JSON.stringify(compaction["input"]), /finish this task.*first phase/);
+  assert.deepEqual((compaction["input"] as JsonRecord[]).at(-1), {
+    type: "compaction_trigger",
+  });
+  assert.match(JSON.stringify(continued["input"]), /opaque-state/);
+  assert.doesNotMatch(JSON.stringify(continued["input"]), /first phase/);
+  assert.doesNotMatch(
+    JSON.stringify(continued["input"]),
+    new RegExp(OUTPUT_LIMIT_CONTINUATION_PROMPT),
+  );
+
+  const branch = session.sessionManager.getBranch();
+  const chronology = branch.flatMap((entry) => {
+    if (entry.type === "compaction") return ["K"];
+    if (entry.type === "custom_message" && entry.customType === OUTPUT_LIMIT_CONTINUATION_TYPE) {
+      return ["H"];
+    }
+    if (entry.type !== "message") return [];
+    if (entry.message.role === "user") return ["U"];
+    if (entry.message.role !== "assistant") return [];
+    if (entry.message.rawStopReason === "completed.end_turn_false.context_limit") return ["B1"];
+    return ["B2"];
+  });
+  assert.deepEqual(chronology, ["U", "B1", "K", "B2"]);
+
+  const assistants = branch.filter(
+    (entry) => entry.type === "message" && entry.message.role === "assistant",
+  );
+  assert.equal(assistants.length, 2);
+  assert.match(JSON.stringify(assistants[0]), /first phase/);
+  assert.match(JSON.stringify(assistants[1]), /second phase/);
+  assert.equal(session.isIdle, true);
+});
+
+void test("continues a fully exhausted output limit after successful threshold compaction", async (t) => {
+  const server = await startCodexServer(t, (requestNumber, body) => {
+    const input = body["input"] as JsonRecord[];
+    if (input.some((item) => item["type"] === "compaction_trigger")) return compactionEvents();
+    if (requestNumber <= 6) return exhaustedOutputLimitEvents(requestNumber);
+    return textEvents("finished after hidden continuation");
+  });
+  const { session } = await createTestSession(t, server.baseUrl);
+
+  await session.prompt("finish this long task", { expandPromptTemplates: false });
+  await session.waitForIdle();
+
+  assert.equal(server.requests.length, 8);
+  const compaction = server.requests[6];
+  const continued = server.requests[7];
+  assert.ok(compaction);
+  assert.ok(continued);
+  assert.match(
+    JSON.stringify(compaction["input"]),
+    /finish this long task.*committed output 1.*committed output 6/,
+  );
+  assert.deepEqual((compaction["input"] as JsonRecord[]).at(-1), {
+    type: "compaction_trigger",
+  });
+  assert.match(JSON.stringify(continued["input"]), /opaque-state/);
+  assert.match(JSON.stringify(continued["input"]), new RegExp(OUTPUT_LIMIT_CONTINUATION_PROMPT));
+  assert.doesNotMatch(JSON.stringify(continued["input"]), /committed output [1-6]/);
+
+  const branch = session.sessionManager.getBranch();
+  const chronology = branch.flatMap((entry) => {
+    if (entry.type === "compaction") return ["K"];
+    if (entry.type === "custom_message" && entry.customType === OUTPUT_LIMIT_CONTINUATION_TYPE) {
+      return ["H"];
+    }
+    if (entry.type !== "message") return [];
+    if (entry.message.role === "user") return ["U"];
+    if (entry.message.role !== "assistant") return [];
+    return entry.message.stopReason === "length" ? ["L"] : ["F"];
+  });
+  assert.deepEqual(chronology, ["U", "L", "K", "H", "F"]);
+
+  const hiddenContinuations = branch.filter(
+    (entry) =>
+      entry.type === "custom_message" && entry.customType === OUTPUT_LIMIT_CONTINUATION_TYPE,
+  );
+  assert.equal(hiddenContinuations.length, 1);
+  assert.equal(hiddenContinuations[0]?.type, "custom_message");
+  assert.equal(
+    hiddenContinuations[0]?.type === "custom_message" ? hiddenContinuations[0].display : undefined,
+    false,
+  );
+  assert.match(
+    JSON.stringify(
+      branch.findLast((entry) => entry.type === "message" && entry.message.role === "assistant"),
+    ),
+    /finished after hidden continuation/,
   );
   assert.equal(session.isIdle, true);
 });

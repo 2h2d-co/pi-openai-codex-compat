@@ -6,6 +6,7 @@
 
 - Preserve deferred incomplete and failed Codex response handling across linked tool execution without requiring session affinity or Pi agent-turn hooks.
 - Preserve provider items committed before a later context-overflow subrequest, compact the validated prefix, and retry automatically from the native checkpoint.
+- Split successful Codex follow-up sampling at percentage-compaction boundaries so Pi records the committed prefix, native checkpoint, and continued response in chronological order without synthetic model input.
 
 ## 0.0.8 - 2026-08-16
 

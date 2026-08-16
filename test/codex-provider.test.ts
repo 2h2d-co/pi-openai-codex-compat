@@ -678,6 +678,50 @@ void test("continues response.completed end_turn false without synthetic input",
   assert.match(JSON.stringify(harness.customEntries[0]?.data), /first phase.*second phase/);
 });
 
+void test("returns a Pi compaction boundary when end_turn false crosses the threshold", async () => {
+  const user = userEntry("user-1", "finish the task");
+  const harness = createHarness([user], {
+    ...DEFAULT_CONFIG,
+    autoCompactAtPercent: 90,
+  });
+  const requests: JsonRecord[] = [];
+  harness.runtime.transport.request = async function* (_model, body) {
+    requests.push(structuredClone(body));
+    const responseEvents = textEvents("first phase", "resp_boundary");
+    const terminal = responseEvents.at(-1);
+    assert.ok(terminal && isObject(terminal.response));
+    terminal.response["end_turn"] = false;
+    terminal.response["usage"] = {
+      input_tokens: 94_995,
+      output_tokens: 5,
+      total_tokens: 95_000,
+    };
+    yield* responseEvents;
+  };
+
+  const message = await harness.runtime
+    .streamSimple(
+      codexModel(),
+      { messages: [user.message as Context["messages"][number]] },
+      {
+        apiKey: accessToken(),
+        sessionId: "session-1",
+        transport: "sse",
+      },
+    )
+    .result();
+
+  assert.equal(requests.length, 1);
+  assert.equal(message.stopReason, "length", message.errorMessage);
+  assert.equal(message.rawStopReason, "completed.end_turn_false.context_limit");
+  assert.deepEqual(
+    message.content.filter((block) => block.type === "text").map((block) => block.text),
+    ["first phase"],
+  );
+  assert.match(JSON.stringify(responseDecisions(message)), /return_compaction_boundary/);
+  assert.equal(harness.compactions.length, 0);
+});
+
 void test("resamples retryable failed and incomplete responses from completed output history", async () => {
   for (const firstTerminal of ["response.failed", "response.incomplete"] as const) {
     const user = userEntry("user-1", `test ${firstTerminal}`);

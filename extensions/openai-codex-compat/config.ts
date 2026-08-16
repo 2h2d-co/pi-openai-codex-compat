@@ -31,9 +31,9 @@ export interface CodexCompatConfig {
   /** Expose the standalone Codex web-search namespace tool. */
   webRun: boolean;
   /**
-   * Compact at a provider request boundary when context usage reaches this
-   * percentage. Omit it to rely only on Pi's compaction lifecycle (`/compact`,
-   * threshold compaction, and overflow recovery).
+   * Compact at provider request boundaries when context usage reaches this
+   * percentage. Mid-response boundaries use Pi's bounded compact-and-continue
+   * lifecycle, so Pi auto-compaction must remain enabled.
    */
   autoCompactAtPercent?: number;
   webSearch: WebSearchMode;

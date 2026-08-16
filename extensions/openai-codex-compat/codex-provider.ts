@@ -82,6 +82,7 @@ import { formatProviderError } from "./provider-error.ts";
 const CODEX_PROVIDER = "openai-codex";
 const CODEX_API = "openai-codex-responses";
 const CODEX_TOOL_CALL_PROVIDERS = new Set(["openai", "openai-codex", "opencode"]);
+const PROVIDER_COMPACTION_BOUNDARY_STOP_REASON = "completed.end_turn_false.context_limit";
 
 type ConfigResolver = (ctx: ExtensionContext) => CodexCompatConfig;
 
@@ -157,6 +158,7 @@ type CodexPostToolDisposition = {
 type CodexResponseDecision =
   | "continue_no_tools"
   | "retry_original_input"
+  | "return_compaction_boundary"
   | "return_terminal"
   | "return_tool_use";
 
@@ -402,6 +404,22 @@ function accumulateUsage(previous: Usage, current: Usage): Usage {
       total: previous.cost.total + current.cost.total,
     },
   };
+}
+
+function reachedProviderCompactionThreshold(
+  scope: RuntimeScope | undefined,
+  usage: Usage,
+  model: Model<any>,
+): boolean {
+  const threshold = scope?.config.autoCompactAtPercent;
+  if (threshold === undefined || model.contextWindow <= 0 || usage.output >= model.maxTokens) {
+    return false;
+  }
+  const contextTokens =
+    usage.totalTokens > 0
+      ? usage.totalTokens
+      : usage.input + usage.output + usage.cacheRead + usage.cacheWrite;
+  return contextTokens > 0 && (contextTokens / model.contextWindow) * 100 >= threshold;
 }
 
 function retryableResponseFailure(response: JsonRecord | undefined): boolean {
@@ -1488,6 +1506,18 @@ export class CodexProviderRuntime {
             terminalState.type === "response.completed" &&
             terminalState.response?.["end_turn"] === false
           ) {
+            const scope = runtimeSessionId ? this.scopes.get(runtimeSessionId) : undefined;
+            if (reachedProviderCompactionThreshold(scope, output.usage, model)) {
+              // Pi 0.84 has no provider event that can split one stream into two
+              // assistant messages. Return the committed prefix as a recoverable
+              // length boundary so Pi persists B1, runs native overflow compaction,
+              // and continues from K without adding model-visible input.
+              output.stopReason = "length";
+              output.rawStopReason = PROVIDER_COMPACTION_BOUNDARY_STOP_REASON;
+              delete output.errorMessage;
+              recordDecision("return_compaction_boundary");
+              break;
+            }
             if (!nextBody) {
               throw new Error(
                 "Codex requested a follow-up response, but its completed output could not be appended to request history.",

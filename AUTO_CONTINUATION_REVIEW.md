@@ -1,6 +1,6 @@
 # Auto-Continuation and Overflow Recovery Review
 
-- Status: Decisions complete; implementation pending
+- Status: Implemented and verified
 - Scope: Output-limit continuation, committed-prefix overflow recovery, provider-subrequest compaction, and host-level regression coverage
 
 ## Dictionary
@@ -445,6 +445,43 @@ Active provider context:
 
 Decision: selected.
 
+### Implemented Pi 0.84 boundary
+
+Pi 0.84 cannot turn one provider event stream directly into two assistant messages. The extension
+therefore returns `B1` through Pi's bounded recoverable-length path with a private raw reason:
+
+```text
+stopReason = length
+rawStopReason = completed.end_turn_false.context_limit
+```
+
+This is not an output-limit result:
+
+```text
+rawStopReason != incomplete.max_output_tokens
+```
+
+The output-limit continuation hook therefore does not create `H`. Pi instead performs its one
+compact-and-continue recovery:
+
+```text
+persist B1
+→ compact [H0, B1, T]
+→ install K
+→ continue [retained recent items, K]
+→ persist B2
+```
+
+This creates the selected chronological boundary:
+
+```text
+[H0, B1, K, B2]
+```
+
+Pi auto-compaction must be enabled for the bounded recovery lifecycle. If the latest usage cannot
+be represented as a recoverable Pi boundary, the provider conservatively keeps the existing
+internal continuation rather than falsifying usage.
+
 #### Option C: Delegate `end_turn:false` to Pi
 
 Architecturally:
@@ -530,9 +567,9 @@ Active provider context for F:
 
 `H` is persisted for deterministic replay but has `display: false`.
 
-### Existing coverage
+### Prior coverage
 
-The current unit coverage verifies:
+Before this review, unit coverage verified:
 
 - exact output-limit classification;
 - no-compaction continuation;
@@ -541,9 +578,9 @@ The current unit coverage verifies:
 - failed compaction;
 - pending work and idle-state checks.
 
-The current host integration recovers through provider resampling and then performs threshold compaction after successful completion. It asserts that no hidden continuation was required.
+The host integration recovered through provider resampling and then performed threshold compaction after successful completion. It asserted that no hidden continuation was required.
 
-The missing host-level scenario is:
+The missing host-level scenario was:
 
 ```text
 exact output-limit length result
@@ -553,11 +590,11 @@ exact output-limit length result
 → next provider request contains [K, H]
 ```
 
-The former integration test for that exact path was replaced when provider-owned resampling was introduced.
+The former integration test for that exact path had been replaced when provider-owned resampling was introduced.
 
-### Missing focused unit case
+### Implemented focused unit case
 
-The event harness does not directly exercise the successful state transition:
+The event harness now directly exercises the successful state transition:
 
 ```text
 agent_end(L)
@@ -567,7 +604,7 @@ agent_end(L)
 → H is sent
 ```
 
-It covers no compaction, cancellation, and a compaction that starts but never emits `session_compact`; it does not cover:
+It verifies:
 
 ```text
 compaction = started
@@ -575,9 +612,9 @@ compaction = started
 → continue
 ```
 
-### Missing host case
+### Implemented host case
 
-The host regression must drive the complete integration:
+The host regression drives the complete integration:
 
 ```text
 provider retry budget is exhausted
@@ -591,7 +628,7 @@ provider retry budget is exhausted
 → provider returns F
 ```
 
-It must assert:
+It asserts:
 
 1. The compaction request contains `T`.
 2. The hidden continuation request contains `K` and `H`.
@@ -600,7 +637,8 @@ It must assert:
 5. The visible continuation remains hidden through `display: false`.
 6. Exactly one hidden continuation is recorded for the exhausted response.
 
-The provider's default five-retry policy may require six incomplete mock responses before `L`. Test infrastructure may inject a zero delay, but production retry policy must not be weakened for test convenience.
+The fixture returns six incomplete responses to exhaust the provider's default five-retry policy.
+Production retry limits and delays remain unchanged.
 
 ### Options considered
 
@@ -627,15 +665,15 @@ Decision: selected.
 - Avoids a more involved fixture.
 - Leaves the primary compaction-to-continuation behavior unverified end to end.
 
-## Deferred Implementation Checklist
+## Implementation Checklist
 
 - [x] Leave output-limit hidden-continuation chaining unchanged.
 - [x] Preserve a validated committed prefix `B1` during immediate overflow compaction.
 - [x] Retry automatically from the installed checkpoint after preserving `B1`.
 - [x] Use proactive internal compaction for `end_turn:false`.
-- [ ] Preserve TUI/session order as `[H0, B1, K, B2]`.
-- [ ] Preserve active provider context as `[retained recent items, K, B2]`.
+- [x] Preserve TUI/session order as `[H0, B1, K, B2]`.
+- [x] Preserve active provider context as `[retained recent items, K, B2]`.
 - [x] Add both focused unit and full host coverage for successful compaction followed by hidden continuation.
-- [ ] Verify hidden continuation persistence as `[U, L, K, H, F]`.
-- [ ] Verify hidden continuation provider context as `[retained U, K, H]`.
-- [ ] Implement all selected changes.
+- [x] Verify hidden continuation persistence as `[U, L, K, H, F]`.
+- [x] Verify hidden continuation provider context as `[retained U, K, H]`.
+- [x] Implement all selected changes.
