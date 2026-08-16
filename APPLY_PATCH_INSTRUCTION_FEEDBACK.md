@@ -97,8 +97,10 @@ Visible statuses are:
 - `FAILED`
 - `NOT RUN`
 
-Patch previews may additionally use `PLANNED`; executed tool results use only
-the statuses above.
+The TUI may additionally use `PLANNED` while an `apply_patch` call is still in
+progress. Pi renders this read-only preview after the arguments are complete
+and before execution begins. `PLANNED` is not sent to the model and does not
+appear in completed tool results.
 
 Example:
 
@@ -106,7 +108,7 @@ Example:
 Patch instruction results:
 1. [APPLIED] Update a.txt
 2. [NO CHANGE] Delete missing.txt - Path already absent.
-3. [FAILED] Move source.txt -> destination.txt - Created destination.txt; source.txt remains; source removal failed: permission denied.
+3. [FAILED] Update & Move source.txt -> destination.txt - Created destination.txt; source.txt remains; The updated content was written to the destination, but removing the source failed: permission denied; The file at destination.txt contains the requested content byte-for-byte despite the reported error.
 4. [NOT RUN] Update other.txt - Instruction 3 failed.
 ```
 
@@ -121,8 +123,9 @@ ordinary applied instruction needs only its status and operation:
 ```text
 1. [APPLIED] Add a.txt
 2. [APPLIED] Update b.txt
-3. [APPLIED] Move c.txt -> d.txt
-4. [APPLIED] Delete e.txt
+3. [APPLIED] Update & Move c.txt -> d.txt
+4. [APPLIED] Move e.txt -> f.txt
+5. [APPLIED] Delete g.txt
 ```
 
 Add a short clause only for:
@@ -170,6 +173,7 @@ Prefer:
 - `not verified`
 - `validation`
 - `patch format`
+- `symlink`
 
 Generated explanatory text must not speculate with words such as `may`,
 `might`, `possibly`, `probably`, or `likely`. When inspection cannot determine
@@ -186,14 +190,16 @@ Render semantic no-ops as `NO CHANGE`:
 ```text
 1. [NO CHANGE] Update a.txt - The instruction contains no changes.
 2. [NO CHANGE] Update b.txt - Old and replacement content are identical.
-3. [NO CHANGE] Add c.txt - Requested content already present.
-4. [NO CHANGE] Delete d.txt - Path already absent.
-5. [NO CHANGE] Move e.txt -> e.txt - Source and destination identify the same entry.
-6. [NO CHANGE] Move a.txt -> b.txt - Instruction 2 already moved this entry.
+3. [NO CHANGE] Update c.txt - Applying the update would not change the file.
+4. [NO CHANGE] Add d.txt - The file already contains the requested content byte-for-byte.
+5. [NO CHANGE] Delete e.txt - Path already absent.
+6. [NO CHANGE] Move f.txt -> f.txt - Source and destination identify the same entry.
+7. [NO CHANGE] Move a.txt -> b.txt - Instruction 2 already moved this entry.
 ```
 
 The fulfilled-move result records and references the earlier instruction that
-performed the move.
+performed the move. A missing related instruction number is an internal
+invariant failure; there is no generic earlier-instruction fallback.
 
 ## Skipped results
 
@@ -229,7 +235,8 @@ effects are required for:
 
 - a partial effect from a failed instruction;
 - destination replacement;
-- symbolic-link entry versus target behavior;
+- symlink entry versus target behavior, including the raw target pathname
+  stored in the symlink;
 - a parent directory that remains after failure;
 - deletion of a destination before replacement failure;
 - a temporary entry remaining after cleanup failure;
@@ -239,14 +246,36 @@ effects are required for:
 Effects from a failed instruction remain attached to that instruction. They
 must not be called earlier changes.
 
+Use only `symlink` terminology. Symlink feedback records the raw target
+pathname returned by `readlink`; it does not substitute a resolved absolute
+path.
+
 Examples:
 
 ```text
-3. [FAILED] Move a.txt -> b.txt - Created b.txt; a.txt remains; source removal failed: permission denied.
+1. [APPLIED] Add alias.txt - Replaced the symlink at alias.txt (original target: target.txt); the original target was not modified.
 ```
 
 ```text
-3. [FAILED] Move a.txt -> b.txt - Replaced b.txt; a.txt remains; source removal failed: permission denied.
+1. [APPLIED] Update alias.txt - Modified file content through the symlink at alias.txt (target: target.txt); the symlink was not modified.
+```
+
+```text
+1. [APPLIED] Move alias.txt -> moved/alias.txt - The moved symlink from alias.txt retains target target.txt.
+```
+
+Deletion and move differ only because deletion removes the symlink while a
+move preserves it and its stored target pathname. Neither operation modifies
+the target.
+
+Failure examples:
+
+```text
+3. [FAILED] Update & Move a.txt -> b.txt - Created b.txt; a.txt remains; The updated content was written to the destination, but removing the source failed: permission denied; The file at b.txt contains the requested content byte-for-byte despite the reported error.
+```
+
+```text
+3. [FAILED] Move a.txt -> b.txt - Replaced the regular file at b.txt; a.txt remains; Move failed: permission denied.
 ```
 
 ```text
@@ -266,11 +295,13 @@ feedback.
 Path-state feedback uses only deterministic states:
 
 - present as a regular file;
-- present as a symbolic link;
+- present as a symlink;
 - absent;
 - unchanged;
-- contains the requested content;
-- contains unexpected content;
+- contains the requested content byte-for-byte;
+- differs from the requested content;
+- differs from the previously observed content;
+- differs from both the requested and previously observed content;
 - is a different filesystem entry;
 - entry type changed; or
 - not verified.
@@ -282,7 +313,7 @@ Examples:
 ```
 
 ```text
-3. [FAILED] Update a.txt - Write reported an error; a.txt contains the requested content.
+3. [FAILED] Update a.txt - Write reported an error; The file at a.txt contains the requested content byte-for-byte despite the reported error.
 ```
 
 ```text
@@ -394,7 +425,7 @@ Collapsed rendering keeps each row concise:
 Patch instruction results:
 1. [APPLIED] Update a.txt
 2. [NO CHANGE] Delete missing.txt — Path already absent.
-3. [FAILED] Move source.txt → destination.txt — Created destination.txt; source.txt remains; source removal failed.
+3. [FAILED] Update & Move source.txt → destination.txt — Created destination.txt; source.txt remains; The updated content was written to the destination, but removing the source failed; The file at destination.txt contains the requested content byte-for-byte despite the reported error.
 4. [NOT RUN] Update other.txt — Instruction 3 failed.
 ```
 

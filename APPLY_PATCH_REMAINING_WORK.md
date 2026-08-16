@@ -23,13 +23,13 @@ Final validation baseline:
 
 The final fresh-review pass additionally closed:
 
-- operation-aware queue keys for cyclic or inaccessible symbolic links;
+- operation-aware queue keys for cyclic or inaccessible symlinks;
 - sequential future add/delete replay in hard-link dead-update proofs;
 - cancellation preservation inside Tree-sitter parsing; and
 - source-entry device selection for pure-move strategy planning.
 
 The implementation pass also corrected destination-relative target resolution
-and fresh identity for moved symbolic links.
+and fresh identity for moved symlinks.
 
 The final feedback pass:
 
@@ -77,7 +77,7 @@ The following decisions are implemented and are not reopened by this tracker:
 - inapplicable operations are skipped only through a semantic dead-operation
   proof;
 - pure moves preserve opaque bytes and use native rename when possible;
-- the agreed case, Unicode, hard-link, and symbolic-link semantics are
+- the agreed case, Unicode, hard-link, and symlink semantics are
   implemented for the covered same-filesystem paths;
 - official Codex strict matching priority and first-match behavior remain
   first;
@@ -173,7 +173,8 @@ The following was reproduced:
 
 ```text
 1. Preflight observes inode A containing "old".
-2. An external actor atomically installs inode B containing the same "old".
+2. An external actor atomically replaces the directory entry with inode B,
+   which contains the same "old".
 3. apply_patch accepts inode B and writes "new" into it.
 ```
 
@@ -186,7 +187,7 @@ identity difference becomes material when the replacement changed:
 - hard-link topology, causing the edit to propagate to unexpected aliases or
   stop propagating to intended aliases;
 - file mode, ownership, ACLs, extended attributes, or other metadata;
-- the identity of a symbolic-link target while retaining the same bytes; or
+- the identity of a symlink target while retaining the same bytes; or
 - another actor's deliberate atomic replacement or safe-save result.
 
 The vulnerable interval is narrow: after preflight and before the relevant
@@ -256,7 +257,7 @@ it must not retain the source inode or hard-link identity in virtual state.
 - update remaining source hard link after cross-filesystem move;
 - delete or move destination after cross-filesystem move;
 - destination overwrite;
-- destination creation or replacement followed by failed source removal;
+- destination creation or replacement followed by failure to unlink the source;
 - destination removal followed by failed replacement;
 - per-instruction effect and deterministic final-state reporting; and
 - same-filesystem native hard-link behavior remains unchanged.
@@ -264,13 +265,13 @@ it must not retain the source inode or hard-link identity in virtual state.
 Tests should use an injectable filesystem-operation boundary or deterministic
 EXDEV simulation rather than depending exclusively on host mount layout.
 
-## Workstream 4: Represent symbolic-link deletion as an entry operation
+## Workstream 4: Represent symlink deletion as an entry operation
 
 **Status:** Complete.
 
 ### Defect
 
-After a text update follows a symbolic link, the symlink's virtual content cell
+After a text update follows a symlink, the symlink's virtual content cell
 can share the target's loaded text. Deleting the symlink later then records the
 target bytes as deleted content.
 
@@ -282,15 +283,15 @@ history and coalesced rendering can imply that the target text was deleted.
 - Extend delete history with entry type, at least:
 
   ```text
-  regular-file | symbolic-link
+  regular-file | symlink
   ```
 
-- A symbolic-link deletion must be path-only:
+- A symlink deletion must be path-only:
   - no target bytes;
   - no textual deletion diff;
   - `+0 -0`; and
-  - optionally render as `Deleted symbolic link <path>`.
-- Never obtain symbolic-link delete content from the target's content cell.
+  - optionally render as `Deleted symlink <path>`.
+- Never obtain symlink delete content from the target's content cell.
 - Keep an earlier update-through-link and the later link-entry deletion as
   separate rendered changes.
 
@@ -336,7 +337,7 @@ the original `nlink` and does not subtract the earlier planned deletion.
   - no-op add and same-entry operations remain neutral.
 - Dead-update analysis must compare future dominating removals with the
   effective count at the failed update, not the original filesystem count.
-- Case, Unicode, and symbolic-link-parent aliases must not be double-counted as
+- Case, Unicode, and symlink-parent aliases must not be double-counted as
   distinct hard links.
 
 ### Required tests
@@ -381,6 +382,7 @@ strings, for example:
 empty-update
 identity-update
 content-already-present
+update-result-unchanged
 path-already-absent
 same-entry-move
 move-already-fulfilled
@@ -564,7 +566,7 @@ injectable filesystem operations rather than silently remaining uncovered.
 1. Fix strict-path CRLF preservation.
 2. Implement effective hard-link count tracking.
 3. Implement planned same-filesystem versus cross-filesystem move topology.
-4. Correct symbolic-link deletion history.
+4. Correct symlink deletion history.
 5. Implement the extension-local logical-key queue.
 6. Improve no-op/dead model and TUI explanations.
 7. Improve execution-failure model output through the shared explanation

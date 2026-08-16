@@ -104,7 +104,7 @@ export type AppliedPatchChange =
   | {
       kind: "delete";
       path: string;
-      entryType: "regular-file" | "symbolic-link";
+      entryType: "regular-file" | "symlink";
       content?: string;
       displayDiff: string;
       additions: number;
@@ -126,7 +126,7 @@ export type AppliedPatchChange =
       sourcePath: string;
       destinationPath: string;
       replacedDestination: boolean;
-      entryType: "regular-file" | "symbolic-link";
+      entryType: "regular-file" | "symlink";
       exact: boolean;
       displayDiff: "";
       additions: 0;
@@ -145,6 +145,7 @@ export type ApplyPatchInstructionReasonCode =
   | "empty-update"
   | "identity-update"
   | "content-already-present"
+  | "update-result-unchanged"
   | "path-already-absent"
   | "same-entry-move"
   | "move-already-fulfilled"
@@ -159,30 +160,38 @@ export type ApplyPatchInstructionReason = {
 
 export type ApplyPatchInstructionEffect =
   | {
-      kind:
-        | "created"
-        | "replaced"
-        | "updated"
-        | "deleted"
-        | "directory-created"
-        | "temporary-entry-remains";
+      kind: "created" | "updated" | "deleted" | "directory-created" | "temporary-entry-remains";
       path: string;
     }
+  | { kind: "replaced"; path: string; previousEntryType: "regular-file" }
+  | {
+      kind: "replaced";
+      path: string;
+      previousEntryType: "symlink";
+      originalTarget: string;
+    }
   | { kind: "source-remains"; path: string }
-  | { kind: "symbolic-link-target-unchanged"; path: string }
-  | { kind: "symbolic-link-target-updated"; path: string };
+  | {
+      kind: "symlink-target-not-modified";
+      path: string;
+      target: string;
+      symlinkAction: "removed" | "moved";
+    }
+  | { kind: "symlink-target-modified"; path: string; target: string };
 
 export type ApplyPatchFinalPathState = {
   path: string;
   state:
     | "absent"
     | "regular-file"
-    | "symbolic-link"
+    | "symlink"
     | "directory"
     | "other-entry"
     | "unchanged"
     | "requested-content"
-    | "different-content"
+    | "different-from-requested-content"
+    | "different-from-requested-and-previous-content"
+    | "different-from-previous-content"
     | "different-entry"
     | "different-entry-type"
     | "not-verified";
@@ -939,22 +948,22 @@ async function logicalEntryQueueKey(
 
 type MutationQueueTarget = {
   path: string;
-  followSymbolicLink: boolean;
+  followSymlink: boolean;
 };
 
 function mutationQueueTargets(operations: readonly ResolvedOperation[]): MutationQueueTarget[] {
   return operations.flatMap((operation) => {
     if (operation.kind !== "update") {
-      return [{ path: operation.absolutePath, followSymbolicLink: false }];
+      return [{ path: operation.absolutePath, followSymlink: false }];
     }
     const targets: MutationQueueTarget[] = [
       {
         path: operation.absolutePath,
-        followSymbolicLink: !chunksAreIdentity(operation.chunks),
+        followSymlink: !chunksAreIdentity(operation.chunks),
       },
     ];
     if (operation.moveAbsolutePath) {
-      targets.push({ path: operation.moveAbsolutePath, followSymbolicLink: false });
+      targets.push({ path: operation.moveAbsolutePath, followSymlink: false });
     }
     return targets;
   });
@@ -965,13 +974,13 @@ async function logicalMutationQueueKeys(
 ): Promise<string[]> {
   const caseInsensitiveDirectories = new Map<string, Promise<boolean>>();
   const keys = new Set<string>();
-  for (const { path, followSymbolicLink } of targets) {
+  for (const { path, followSymlink } of targets) {
     keys.add(await logicalEntryQueueKey(path, caseInsensitiveDirectories));
     try {
       const entryMetadata = await lstat(path);
       if (entryMetadata.isFile()) {
         keys.add(`physical:${entryMetadata.dev}:${entryMetadata.ino}`);
-      } else if (entryMetadata.isSymbolicLink() && followSymbolicLink) {
+      } else if (entryMetadata.isSymbolicLink() && followSymlink) {
         try {
           const targetMetadata = await stat(path);
           if (targetMetadata.isFile()) {
@@ -988,7 +997,7 @@ async function logicalMutationQueueKeys(
   return [...keys].sort();
 }
 
-async function symbolicLinkEntryQueuePath(path: string): Promise<string> {
+async function symlinkEntryQueuePath(path: string): Promise<string> {
   const parent = await realpathWithMissingTail(dirname(path));
   return join(parent, ".apply-patch-entry-locks", normalizedAliasName(basename(path)));
 }
@@ -997,11 +1006,11 @@ async function canonicalMutationQueuePaths(
   targets: readonly MutationQueueTarget[],
 ): Promise<string[]> {
   const canonicalPaths = await Promise.all(
-    targets.map(async ({ path, followSymbolicLink }) => {
+    targets.map(async ({ path, followSymlink }) => {
       try {
         const metadata = await lstat(path);
-        if (metadata.isSymbolicLink() && !followSymbolicLink) {
-          return symbolicLinkEntryQueuePath(path);
+        if (metadata.isSymbolicLink() && !followSymlink) {
+          return symlinkEntryQueuePath(path);
         }
       } catch (error) {
         if (!isNotFound(error) && !hasErrorCode(error, "ENOTDIR")) throw error;
@@ -1014,7 +1023,7 @@ async function canonicalMutationQueuePaths(
         }
         try {
           if ((await lstat(path)).isSymbolicLink()) {
-            return symbolicLinkEntryQueuePath(path);
+            return symlinkEntryQueuePath(path);
           }
         } catch {}
         throw error;
@@ -1099,6 +1108,9 @@ type VirtualEntry =
       content: ContentCell;
     };
 
+type ExistingFileEntry = Extract<VirtualEntry, { kind: "regular" | "symlink" }>;
+type ReplaceableFileEntry = Extract<VirtualEntry, { kind: "absent" | "regular" | "symlink" }>;
+
 type ParentPlan = {
   createdPaths: string[];
   expectations: Array<{ path: string; kind: "absent" | "directory" | "directory-symlink" }>;
@@ -1108,7 +1120,7 @@ type PlannedMutation = (
   | {
       kind: "add";
       operation: Extract<ResolvedOperation, { kind: "add" }>;
-      expectedTarget: VirtualEntry;
+      expectedTarget: ReplaceableFileEntry;
       parents: ParentPlan;
       content: Buffer;
       replacementMode?: number;
@@ -1119,7 +1131,7 @@ type PlannedMutation = (
   | {
       kind: "delete";
       operation: Extract<ResolvedOperation, { kind: "delete" }>;
-      expectedTarget: VirtualEntry;
+      expectedTarget: ExistingFileEntry;
       targetKey: string;
       entryMutations: PlannedEntryMutation[];
       change: Extract<AppliedPatchChange, { kind: "delete" }>;
@@ -1127,8 +1139,8 @@ type PlannedMutation = (
   | {
       kind: "text-update";
       operation: Extract<ResolvedOperation, { kind: "update" }>;
-      expectedSource: VirtualEntry;
-      expectedDestination?: VirtualEntry;
+      expectedSource: ExistingFileEntry;
+      expectedDestination?: ReplaceableFileEntry;
       parents: ParentPlan;
       content: Buffer;
       replacementMode?: number;
@@ -1142,8 +1154,8 @@ type PlannedMutation = (
   | {
       kind: "move";
       operation: Extract<ResolvedOperation, { kind: "update" }>;
-      expectedSource: Extract<VirtualEntry, { kind: "regular" | "symlink" }>;
-      expectedDestination: VirtualEntry;
+      expectedSource: ExistingFileEntry;
+      expectedDestination: ReplaceableFileEntry;
       parents: ParentPlan;
       sourceKey: string;
       destinationKey: string;
@@ -1256,7 +1268,7 @@ type DeadOperationProof = {
 };
 
 function instructionReason(
-  code: ApplyPatchInstructionReasonCode,
+  code: Exclude<ApplyPatchInstructionReasonCode, "move-already-fulfilled">,
   relatedInstructions: readonly number[] = [],
 ): ApplyPatchInstructionReason {
   switch (code) {
@@ -1265,22 +1277,13 @@ function instructionReason(
     case "identity-update":
       return { code, message: "Old and replacement content are identical." };
     case "content-already-present":
-      return { code, message: "Requested content already present." };
+      return { code, message: "The file already contains the requested content byte-for-byte." };
+    case "update-result-unchanged":
+      return { code, message: "Applying the update would not change the file." };
     case "path-already-absent":
       return { code, message: "Path already absent." };
     case "same-entry-move":
       return { code, message: "Source and destination identify the same entry." };
-    case "move-already-fulfilled": {
-      const instruction = relatedInstructions[0];
-      return {
-        code,
-        message:
-          instruction === undefined
-            ? "An earlier instruction already moved this entry."
-            : `Instruction ${instruction} already moved this entry.`,
-        ...(instruction === undefined ? {} : { relatedInstructions: [instruction] }),
-      };
-    }
     case "dead-dominated": {
       const instructions = [...new Set(relatedInstructions)].toSorted(
         (left, right) => left - right,
@@ -1294,6 +1297,14 @@ function instructionReason(
       };
     }
   }
+}
+
+function moveAlreadyFulfilledReason(instruction: number): ApplyPatchInstructionReason {
+  return {
+    code: "move-already-fulfilled",
+    message: `Instruction ${instruction} already moved this entry.`,
+    relatedInstructions: [instruction],
+  };
 }
 
 function instructionForOperation(
@@ -1426,7 +1437,7 @@ class SemanticPlanner {
 
   private markNoOp(
     instructionIndex: number,
-    code: Exclude<ApplyPatchInstructionReasonCode, "dead-dominated">,
+    code: Exclude<ApplyPatchInstructionReasonCode, "dead-dominated" | "move-already-fulfilled">,
   ): void {
     this.instructions[instructionIndex]!.reason = instructionReason(code);
   }
@@ -1563,7 +1574,7 @@ class SemanticPlanner {
     return basename(entryPath) === basename(requestedPath);
   }
 
-  private snapshot(entry: VirtualEntry): VirtualEntry {
+  private snapshot<T extends VirtualEntry>(entry: T): T {
     if (entry.kind !== "regular" && entry.kind !== "symlink") return { ...entry };
     return {
       ...entry,
@@ -1583,16 +1594,16 @@ class SemanticPlanner {
     try {
       if (entry.kind === "symlink") {
         const key = await this.pathKey(entry.entryPath);
-        if (visitedSymlinks.has(key)) throw new Error("symbolic link cycle");
+        if (visitedSymlinks.has(key)) throw new Error("symlink cycle");
         visitedSymlinks.add(key);
         const target = await this.stateAt(entry.targetPath);
         if (target.kind !== "regular" && target.kind !== "symlink") {
           throw new Error(
             target.kind === "absent"
-              ? "symbolic link target does not exist"
+              ? "symlink target does not exist"
               : target.kind === "directory"
-                ? "symbolic link target is a directory"
-                : `symbolic link target is a ${target.entryType}`,
+                ? "symlink target is a directory"
+                : `symlink target is a ${target.entryType}`,
           );
         }
         const bytes = await this.readBytes(target, entry.targetPath, visitedSymlinks);
@@ -2100,7 +2111,7 @@ class SemanticPlanner {
     const change: Extract<AppliedPatchChange, { kind: "delete" }> = {
       kind: "delete",
       path: operation.path,
-      entryType: target.kind === "regular" ? "regular-file" : "symbolic-link",
+      entryType: target.kind === "regular" ? "regular-file" : "symlink",
       ...(content !== undefined ? { content } : {}),
       ...(content === undefined
         ? { displayDiff: "", additions: 0, deletions: 0 }
@@ -2187,7 +2198,7 @@ class SemanticPlanner {
     const semanticMove = updateHasSemanticMove(operation);
     const sourceKey = await this.pathKey(operation.absolutePath);
     if (!semanticMove && buffersEqual(source.content.value!.bytes, content)) {
-      this.markNoOp(instructionIndex, "content-already-present");
+      this.markNoOp(instructionIndex, "update-result-unchanged");
       return;
     }
 
@@ -2429,7 +2440,7 @@ class SemanticPlanner {
           sourcePath: operation.path,
           destinationPath: operation.moveTo!,
           replacedDestination: false,
-          entryType: expectedSource.kind === "regular" ? "regular-file" : "symbolic-link",
+          entryType: expectedSource.kind === "regular" ? "regular-file" : "symlink",
           exact: true,
           displayDiff: "",
           additions: 0,
@@ -2470,13 +2481,13 @@ class SemanticPlanner {
         (destination.kind === "regular" || destination.kind === "symlink") &&
         fulfilled.destinationEntryId === destination.id
       ) {
-        this.instructions[instructionIndex]!.reason = instructionReason("move-already-fulfilled", [
+        this.instructions[instructionIndex]!.reason = moveAlreadyFulfilledReason(
           fulfilled.instruction,
-        ]);
+        );
         return;
       }
       throw new Error(
-        `Failed to move ${operation.absolutePath}: source path does not exist and destination provenance is unproven`,
+        `Failed to move ${operation.absolutePath}: source does not exist, and no earlier instruction moved it to ${destinationPath}`,
       );
     }
     if (source.kind !== "regular" && source.kind !== "symlink") {
@@ -2514,7 +2525,7 @@ class SemanticPlanner {
       sourcePath: operation.path,
       destinationPath: operation.moveTo!,
       replacedDestination,
-      entryType: expectedSource.kind === "regular" ? "regular-file" : "symbolic-link",
+      entryType: expectedSource.kind === "regular" ? "regular-file" : "symlink",
       exact: true,
       displayDiff: "",
       additions: 0,
@@ -2968,7 +2979,7 @@ async function finishSameInodeRename(
     exactSpellingExists(destinationPath, filesystem),
   ]);
   if (!destinationNameExists) {
-    throw new Error(`rename did not install destination ${destinationPath}`);
+    throw new Error(`rename completed without creating destination entry ${destinationPath}`);
   }
   if (sourceNameExists) await filesystem.unlink(sourcePath);
 }
@@ -2988,7 +2999,7 @@ class PureMoveExecutionError extends Error {
   }
 }
 
-async function installCrossDeviceMove(
+async function executeCrossDeviceMove(
   mutation: Extract<PlannedMutation, { kind: "move" }>,
   filesystem: ApplyPatchExecutionFilesystem,
 ): Promise<void> {
@@ -3069,7 +3080,7 @@ async function executePureMove(
   const sourcePath = mutation.operation.absolutePath;
   const destinationPath = mutation.operation.moveAbsolutePath!;
   if (mutation.moveStrategy === "copy-unlink") {
-    await installCrossDeviceMove(mutation, filesystem);
+    await executeCrossDeviceMove(mutation, filesystem);
     return;
   }
   try {
@@ -3113,6 +3124,23 @@ function addInstructionEffect(
   }
 }
 
+function replacedInstructionEffect(
+  path: string,
+  previousEntry: ReplaceableFileEntry,
+): ApplyPatchInstructionEffect {
+  if (previousEntry.kind === "absent") {
+    throw new Error(`replacement effect for ${path} requires an existing entry`);
+  }
+  return previousEntry.kind === "regular"
+    ? { kind: "replaced", path, previousEntryType: "regular-file" }
+    : {
+        kind: "replaced",
+        path,
+        previousEntryType: "symlink",
+        originalTarget: previousEntry.target,
+      };
+}
+
 function addInstructionFinalState(
   instruction: ApplyPatchInstructionDetails,
   state: ApplyPatchFinalPathState,
@@ -3130,7 +3158,7 @@ function currentEntryFinalState(entry: VirtualEntry): ApplyPatchFinalPathState["
     case "regular":
       return "regular-file";
     case "symlink":
-      return "symbolic-link";
+      return "symlink";
     case "directory":
       return "directory";
     case "unsupported":
@@ -3231,8 +3259,14 @@ async function inspectFinalPath(
           if (expectedBytes && buffersEqual(bytes, expectedBytes)) {
             return { path: displayPath, state: "unchanged" };
           }
+          if (expectedBytes) {
+            return {
+              path: displayPath,
+              state: "different-from-requested-and-previous-content",
+            };
+          }
         }
-        return { path: displayPath, state: "different-content" };
+        return { path: displayPath, state: "different-from-requested-content" };
       } catch {
         return {
           path: displayPath,
@@ -3254,7 +3288,7 @@ async function inspectFinalPath(
           path: displayPath,
           state: buffersEqual(bytes, expected.content.value.bytes)
             ? "unchanged"
-            : "different-content",
+            : "different-from-previous-content",
         };
       } catch {
         return { path: displayPath, state: "not-verified" };
@@ -3288,12 +3322,14 @@ function finalStateHasChangedPresentEntry(
   if (!state) return false;
   switch (state.state) {
     case "requested-content":
-    case "different-content":
+    case "different-from-requested-content":
+    case "different-from-requested-and-previous-content":
+    case "different-from-previous-content":
     case "different-entry":
     case "different-entry-type":
       return true;
     case "regular-file":
-    case "symbolic-link":
+    case "symlink":
     case "directory":
     case "other-entry":
       return expected.kind === "absent";
@@ -3385,16 +3421,21 @@ async function recordFailureInspection(
 
   if (mutation.kind === "add") {
     if (finalStateHasChangedPresentEntry(sourceState, mutation.expectedTarget)) {
-      addInstructionEffect(instruction, {
-        kind: mutation.expectedTarget.kind === "absent" ? "created" : "replaced",
-        path: mutation.operation.path,
-      });
+      addInstructionEffect(
+        instruction,
+        mutation.expectedTarget.kind === "absent"
+          ? { kind: "created", path: mutation.operation.path }
+          : replacedInstructionEffect(mutation.operation.path, mutation.expectedTarget),
+      );
     }
   } else if (mutation.kind === "delete") {
     if (sourceState?.state === "absent") {
       addInstructionEffect(instruction, { kind: "deleted", path: mutation.operation.path });
     } else if (finalStateHasChangedPresentEntry(sourceState, mutation.expectedTarget)) {
-      addInstructionEffect(instruction, { kind: "replaced", path: mutation.operation.path });
+      addInstructionEffect(
+        instruction,
+        replacedInstructionEffect(mutation.operation.path, mutation.expectedTarget),
+      );
     }
   } else if (mutation.kind === "text-update") {
     if (mutation.operation.moveTo) {
@@ -3403,10 +3444,12 @@ async function recordFailureInspection(
         mutation.expectedDestination &&
         finalStateHasChangedPresentEntry(destinationState, mutation.expectedDestination)
       ) {
-        addInstructionEffect(instruction, {
-          kind: mutation.expectedDestination?.kind === "absent" ? "created" : "replaced",
-          path: mutation.operation.moveTo,
-        });
+        addInstructionEffect(
+          instruction,
+          mutation.expectedDestination.kind === "absent"
+            ? { kind: "created", path: mutation.operation.moveTo }
+            : replacedInstructionEffect(mutation.operation.moveTo, mutation.expectedDestination),
+        );
       } else if (
         destinationState?.state === "absent" &&
         mutation.expectedDestination?.kind !== "absent"
@@ -3421,7 +3464,10 @@ async function recordFailureInspection(
       } else if (sourceState?.state === "absent") {
         addInstructionEffect(instruction, { kind: "deleted", path: mutation.operation.path });
       } else if (finalStateHasChangedPresentEntry(sourceState, mutation.expectedSource)) {
-        addInstructionEffect(instruction, { kind: "replaced", path: mutation.operation.path });
+        addInstructionEffect(
+          instruction,
+          replacedInstructionEffect(mutation.operation.path, mutation.expectedSource),
+        );
       }
     } else if (sourceState?.state === "absent") {
       addInstructionEffect(instruction, { kind: "deleted", path: mutation.operation.path });
@@ -3433,10 +3479,12 @@ async function recordFailureInspection(
       destinationState &&
       finalStateHasChangedPresentEntry(destinationState, mutation.expectedDestination)
     ) {
-      addInstructionEffect(instruction, {
-        kind: mutation.expectedDestination.kind === "absent" ? "created" : "replaced",
-        path: mutation.operation.moveTo!,
-      });
+      addInstructionEffect(
+        instruction,
+        mutation.expectedDestination.kind === "absent"
+          ? { kind: "created", path: mutation.operation.moveTo! }
+          : replacedInstructionEffect(mutation.operation.moveTo!, mutation.expectedDestination),
+      );
     } else if (
       destinationState?.state === "absent" &&
       mutation.expectedDestination.kind !== "absent"
@@ -3454,7 +3502,10 @@ async function recordFailureInspection(
     } else if (sourceState?.state === "absent") {
       addInstructionEffect(instruction, { kind: "deleted", path: mutation.operation.path });
     } else if (finalStateHasChangedPresentEntry(sourceState, mutation.expectedSource)) {
-      addInstructionEffect(instruction, { kind: "replaced", path: mutation.operation.path });
+      addInstructionEffect(
+        instruction,
+        replacedInstructionEffect(mutation.operation.path, mutation.expectedSource),
+      );
     }
   }
 
@@ -3485,23 +3536,19 @@ function recordAppliedInstructionEffects(
   switch (mutation.kind) {
     case "add":
       if (mutation.expectedTarget.kind !== "absent") {
-        addInstructionEffect(instruction, {
-          kind: "replaced",
-          path: mutation.operation.path,
-        });
-      }
-      if (mutation.expectedTarget.kind === "symlink") {
-        addInstructionEffect(instruction, {
-          kind: "symbolic-link-target-unchanged",
-          path: mutation.operation.path,
-        });
+        addInstructionEffect(
+          instruction,
+          replacedInstructionEffect(mutation.operation.path, mutation.expectedTarget),
+        );
       }
       return;
     case "delete":
       if (mutation.expectedTarget.kind === "symlink") {
         addInstructionEffect(instruction, {
-          kind: "symbolic-link-target-unchanged",
+          kind: "symlink-target-not-modified",
           path: mutation.operation.path,
+          target: mutation.expectedTarget.target,
+          symlinkAction: "removed",
         });
       }
       return;
@@ -3510,8 +3557,17 @@ function recordAppliedInstructionEffects(
         addInstructionEffect(
           instruction,
           mutation.operation.moveTo
-            ? { kind: "symbolic-link-target-unchanged", path: mutation.operation.path }
-            : { kind: "symbolic-link-target-updated", path: mutation.operation.path },
+            ? {
+                kind: "symlink-target-not-modified",
+                path: mutation.operation.path,
+                target: mutation.expectedSource.target,
+                symlinkAction: "removed",
+              }
+            : {
+                kind: "symlink-target-modified",
+                path: mutation.operation.path,
+                target: mutation.expectedSource.target,
+              },
         );
       }
       if (
@@ -3519,24 +3575,26 @@ function recordAppliedInstructionEffects(
         mutation.expectedDestination &&
         mutation.expectedDestination.kind !== "absent"
       ) {
-        addInstructionEffect(instruction, {
-          kind: "replaced",
-          path: mutation.operation.moveTo,
-        });
+        addInstructionEffect(
+          instruction,
+          replacedInstructionEffect(mutation.operation.moveTo, mutation.expectedDestination),
+        );
       }
       return;
     case "move":
       if (mutation.expectedSource.kind === "symlink") {
         addInstructionEffect(instruction, {
-          kind: "symbolic-link-target-unchanged",
+          kind: "symlink-target-not-modified",
           path: mutation.operation.path,
+          target: mutation.expectedSource.target,
+          symlinkAction: "moved",
         });
       }
       if (mutation.expectedDestination.kind !== "absent") {
-        addInstructionEffect(instruction, {
-          kind: "replaced",
-          path: mutation.operation.moveTo!,
-        });
+        addInstructionEffect(
+          instruction,
+          replacedInstructionEffect(mutation.operation.moveTo!, mutation.expectedDestination),
+        );
       }
       return;
   }
@@ -3587,10 +3645,12 @@ async function executePlan(
             if (error.destinationChanged) {
               appendChange(details, mutation.change, mutation.instructionIndex);
               if (activeInstruction) {
-                addInstructionEffect(activeInstruction, {
-                  kind: mutation.expectedTarget.kind === "absent" ? "created" : "replaced",
-                  path: mutation.operation.path,
-                });
+                addInstructionEffect(
+                  activeInstruction,
+                  mutation.expectedTarget.kind === "absent"
+                    ? { kind: "created", path: mutation.operation.path }
+                    : replacedInstructionEffect(mutation.operation.path, mutation.expectedTarget),
+                );
               }
             }
           }
@@ -3694,10 +3754,15 @@ async function executePlan(
               if (error.destinationChanged) {
                 appendChange(details, mutation.provisionalChange!, mutation.instructionIndex);
                 if (activeInstruction) {
-                  addInstructionEffect(activeInstruction, {
-                    kind: mutation.expectedDestination.kind === "absent" ? "created" : "replaced",
-                    path: mutation.operation.moveTo!,
-                  });
+                  addInstructionEffect(
+                    activeInstruction,
+                    mutation.expectedDestination.kind === "absent"
+                      ? { kind: "created", path: mutation.operation.moveTo! }
+                      : replacedInstructionEffect(
+                          mutation.operation.moveTo!,
+                          mutation.expectedDestination,
+                        ),
+                  );
                 }
               }
             }
@@ -3759,10 +3824,15 @@ async function executePlan(
             const inexactMove = { ...mutation.change, exact: false };
             appendChange(details, inexactMove, mutation.instructionIndex);
             if (activeInstruction) {
-              addInstructionEffect(activeInstruction, {
-                kind: error.destinationState,
-                path: mutation.operation.moveTo!,
-              });
+              addInstructionEffect(
+                activeInstruction,
+                error.destinationState === "created"
+                  ? { kind: "created", path: mutation.operation.moveTo! }
+                  : replacedInstructionEffect(
+                      mutation.operation.moveTo!,
+                      mutation.expectedDestination,
+                    ),
+              );
             }
             details.exact = false;
           }
@@ -4043,9 +4113,10 @@ export function formatApplyPatchInstructionLabel(
         : instruction.kind === "move"
           ? "Move"
           : "Update";
-  return instruction.moveTo
-    ? `${verb} ${instruction.path} -> ${instruction.moveTo}`
-    : `${verb} ${instruction.path}`;
+  if (!instruction.moveTo) return `${verb} ${instruction.path}`;
+  return instruction.kind === "update"
+    ? `Update & Move ${instruction.path} -> ${instruction.moveTo}`
+    : `${verb} ${instruction.path} -> ${instruction.moveTo}`;
 }
 
 function feedbackPath(path: string, cwd: string): string {
@@ -4102,18 +4173,21 @@ function conciseInstructionError(error: string): string {
     .replace(/^invalid hunk at line \d+,\s*/u, "")
     .replace(/^Failed to write file .*?:\s*/u, "Write failed: ")
     .replace(/^Failed to delete file .*?:\s*/u, "Delete failed: ")
-    .replace(/^Failed to remove original .*?:\s*/u, "Source removal failed: ")
+    .replace(
+      /^Failed to remove original .*?:\s*/u,
+      "The updated content was written to the destination, but removing the source failed: ",
+    )
     .replace(/^Failed to establish move from .*?:\s*/u, "Rename failed: ")
     .replace(/^Failed to read file to update .*?:\s*/u, "Read failed: ")
-    .replace(/^Failed to inspect .*?:\s*/u, "Filesystem inspection failed: ")
+    .replace(/^Failed to inspect /u, "Failed to read filesystem metadata for ")
     .replace(/^Cannot add .*?: path is\s*/u, "Validation failed: Path is ")
     .replace(/^Cannot delete .*?: path is\s*/u, "Validation failed: Path is ")
     .replace(/^Cannot move update to .*?: destination is\s*/u, "Validation failed: Destination is ")
     .replace(/^Failed to move to .*?: destination is\s*/u, "Validation failed: Destination is ")
     .replace(/^Failed to move .*?: source is\s*/u, "Validation failed: Source is ")
     .replace(
-      /^Failed to move .*?: source path does not exist and destination provenance is unproven$/u,
-      "Validation failed: Source path does not exist and the destination is not from an earlier instruction.",
+      /^Failed to move .*?: source does not exist, and no earlier instruction moved it to .*$/u,
+      "Validation failed: The move source does not exist, and no earlier instruction moved it to the destination.",
     )
     .replace(
       /^Cannot create .*?: parent path .*? is not a directory$/u,
@@ -4142,7 +4216,9 @@ function instructionEffectFeedback(effect: ApplyPatchInstructionEffect, cwd: str
     case "created":
       return `Created ${path}.`;
     case "replaced":
-      return `Replaced ${path}.`;
+      return effect.previousEntryType === "regular-file"
+        ? `Replaced the regular file at ${path}.`
+        : `Replaced the symlink at ${path} (original target: ${effect.originalTarget}); the original target was not modified.`;
     case "updated":
       return `Updated ${path}.`;
     case "deleted":
@@ -4153,10 +4229,12 @@ function instructionEffectFeedback(effect: ApplyPatchInstructionEffect, cwd: str
       return `Temporary entry remains at ${path}.`;
     case "source-remains":
       return `${path} remains.`;
-    case "symbolic-link-target-unchanged":
-      return `Link target for ${path} was unchanged.`;
-    case "symbolic-link-target-updated":
-      return `Updated the link target for ${path}.`;
+    case "symlink-target-not-modified":
+      return effect.symlinkAction === "moved"
+        ? `The moved symlink from ${path} retains target ${effect.target}.`
+        : `Removed the symlink at ${path} (original target: ${effect.target}); the original target was not modified.`;
+    case "symlink-target-modified":
+      return `Modified file content through the symlink at ${path} (target: ${effect.target}); the symlink was not modified.`;
   }
 }
 
@@ -4167,8 +4245,8 @@ function finalStateFeedback(state: ApplyPatchFinalPathState, cwd: string): strin
       return `${path} is absent.`;
     case "regular-file":
       return `${path} is present as a regular file.`;
-    case "symbolic-link":
-      return `${path} is present as a symbolic link.`;
+    case "symlink":
+      return `${path} is present as a symlink.`;
     case "directory":
       return `${path} is present as a directory.`;
     case "other-entry":
@@ -4176,9 +4254,13 @@ function finalStateFeedback(state: ApplyPatchFinalPathState, cwd: string): strin
     case "unchanged":
       return `${path} is unchanged.`;
     case "requested-content":
-      return `${path} contains the requested content.`;
-    case "different-content":
-      return `${path} contains unexpected content.`;
+      return `The file at ${path} contains the requested content byte-for-byte despite the reported error.`;
+    case "different-from-requested-content":
+      return `The content at ${path} does not match the requested content byte-for-byte.`;
+    case "different-from-requested-and-previous-content":
+      return `The content at ${path} matches neither the requested content nor the previously observed content.`;
+    case "different-from-previous-content":
+      return `The content at ${path} does not match the previously observed content.`;
     case "different-entry":
       return `${path} is a different filesystem entry.`;
     case "different-entry-type":
@@ -4229,16 +4311,14 @@ export function formatApplyPatchInstructionFeedback(
     else if (instruction.error) clauses.push(conciseInstructionError(instruction.error));
     const effectPaths = new Set((instruction.effects ?? []).map((effect) => effect.path));
     for (const state of instruction.finalStates ?? []) {
-      const pathEffects = (instruction.effects ?? []).filter(
-        (effect) => effect.path === state.path,
-      );
       if (
         state.state === "not-verified" ||
-        state.state === "different-content" ||
+        state.state === "requested-content" ||
+        state.state === "different-from-requested-content" ||
+        state.state === "different-from-requested-and-previous-content" ||
+        state.state === "different-from-previous-content" ||
         state.state === "different-entry" ||
         state.state === "different-entry-type" ||
-        (state.state === "requested-content" &&
-          (pathEffects.length === 0 || pathEffects.some((effect) => effect.kind === "updated"))) ||
         !effectPaths.has(state.path)
       ) {
         clauses.push(finalStateFeedback(state, cwd));

@@ -21,7 +21,7 @@ The objective is semantic correctness, not pedantic tool-call validation:
 ## Dictionary
 
 - **Directory entry:** A named filesystem entry such as a regular file or
-  symbolic link. A pure move operates on this entry, not on decoded text.
+  symlink. A pure move operates on this entry, not on decoded text.
 - **Dominating operation:** A later operation that unconditionally determines
   a path's state, making an earlier result at that path irrelevant.
 - **Edit group:** One contiguous run of added and deleted hunk lines, bounded
@@ -39,7 +39,7 @@ The objective is semantic correctness, not pedantic tool-call validation:
   valid UTF-8, binary data, or an empty byte sequence.
 - **Path alias:** A different path spelling that identifies the same directory
   entry because of filesystem case or Unicode normalization behavior, or
-  because a parent directory is reached through a symbolic link.
+  because a parent directory is reached through a symlink.
 - **Pure move:** An `Update File` hunk with a `Move to` destination and no
   state-changing content chunks.
 - **Virtual filesystem:** The ordered, in-memory model used during preflight to
@@ -147,7 +147,7 @@ The proof MUST account for:
 - every source and destination path written by the candidate operation;
 - path existence and entry type, not only content;
 - parent directories that would be created;
-- move source removal;
+- unlinking a move source;
 - destination overwrite behavior; and
 - relevant metadata or directory-entry effects.
 
@@ -220,8 +220,8 @@ spelling.
   directory entry is replaced by an independent regular file. Other hard links
   retain their original inode and contents. The replacement preserves the
   replaced regular file's permission bits.
-- If `P` is a symbolic link, including a dangling link, the link entry is
-  replaced by a regular file. Its target is not followed, created, or modified.
+- If `P` is a symlink, including a dangling link, the link entry is
+  replaced by a regular file. Its original target is not modified.
 - If a case- or Unicode-normalized alias of `P` exists, that entry is replaced
   and the exact spelling requested by the add is established.
 - If `P` is a directory or another unsupported special entry, reject.
@@ -236,8 +236,8 @@ its target path.
 `Delete File: P` has the postcondition that the directory entry `P` is absent.
 
 - If `P` is already absent, succeed as a no-op.
-- If `P` is a regular file or symbolic link, remove that entry.
-- A symbolic-link deletion is recorded as a path-only entry deletion. History
+- If `P` is a regular file or symlink, remove that entry.
+- A symlink deletion is recorded as a path-only entry deletion. History
   and rendering MUST NOT serialize or claim deletion of the target bytes.
 - If `P` is a directory, reject; never reinterpret the operation as recursive
   deletion.
@@ -277,15 +277,21 @@ requested replacement text in the current file does not prove that this update
 was previously applied and MUST NOT make the operation a no-op. Replacement
 locations MAY be reported only as diagnostic evidence.
 
+After a valid strict or formatter-tolerant mapping is found, derive the
+complete requested output. If those derived bytes already equal the current
+file byte-for-byte, the update is a verified no-op. This does not claim that
+the patch's old text previously existed verbatim; it states only that applying
+the valid mapping would not change the file.
+
 Pure insertion chunks require particular care: existing matching text does
 not by itself prove that another insertion would be a no-op because duplicate
 insertion may be intentional.
 
-An ordinary text update follows a symbolic link and edits its target. It also
+An ordinary text update follows a symlink and edits its target. It also
 edits the shared inode reached through a hard link, so every hard-linked entry
 observes the new content and the hard-link relationship remains intact.
 
-A state-changing update through a dangling symbolic link rejects during
+A state-changing update through a dangling symlink rejects during
 preflight. This applies whether the link was initially dangling or an earlier
 operation in the same patch deleted or moved away its target. The update MUST
 NOT recreate the old target or redirect itself to a move destination. Empty
@@ -477,9 +483,9 @@ Pure moves:
 - SHOULD use a native filesystem rename when source and destination are on the
   same filesystem;
 - SHOULD preserve file metadata through the native rename;
-- MUST move a source symbolic link as a directory entry rather than
+- MUST move a source symlink as a directory entry rather than
   dereferencing and rewriting its target;
-- MUST replace a destination symbolic link as an entry rather than writing
+- MUST replace a destination symlink as an entry rather than writing
   through it;
 - MUST reject source directories and unsupported special files; and
 - MUST create missing destination parent directories consistently with
@@ -501,7 +507,7 @@ The fallback MUST:
 4. remove the source only after destination creation or replacement succeeds;
    and
 5. attach every completed effect and inspected final path state to the failed
-   instruction if source removal or cleanup fails.
+   instruction if unlinking the source or cleanup fails.
 
 Metadata SHOULD be preserved where the platform permits it. Byte preservation
 is mandatory.
@@ -527,33 +533,33 @@ operation:
 
 1. read and decode the source as UTF-8;
 2. derive the new text;
-3. materialize an independent regular file at the destination; and
-4. remove only the named source entry.
+3. create an independent regular file at the destination; and
+4. unlink only the named source entry.
 
-The independently materialized destination:
+The independent destination:
 
 - replaces only the named destination directory entry;
-- replaces a destination symbolic link without modifying its target;
+- replaces a destination symlink without modifying its original target;
 - detaches the named destination from any former hard-link set without
   modifying the other links;
 - preserves the source regular file's permission bits;
 - receives normal new-file ownership, ACL, extended-attribute, and timestamp
   behavior; and
-- is created with normal new-file permissions when the source is a symbolic
-  link rather than a regular file.
+- is created with normal new-file permissions when the source is a symlink
+  rather than a regular file.
 
-If the source is a symbolic link, its target supplies the text to edit, the
-updated result is materialized as a regular destination file, the source link
-entry is removed, and its former target remains unchanged. A dangling source
-link rejects because its old text cannot be verified.
+If the source is a symlink, its target supplies the text to edit, the
+updated result is created as a regular destination file, the source symlink is
+unlinked, and its original target is not modified. A dangling source symlink
+rejects because its old text cannot be verified.
 
 If another hard link refers to the source inode, that other entry retains the
 original inode and content. The state-changing move does not mutate the shared
-source inode before materializing the result.
+source inode before creating the result.
 
 For case- or Unicode-only moves, update the content and establish the requested
 destination spelling with a native rename strategy. If source and destination
-reach the same entry through a symbolic-link parent, update in place and treat
+reach the same entry through a symlink parent, update in place and treat
 the move effect as already satisfied.
 
 Partial-failure tracking remains in force.
@@ -603,7 +609,7 @@ and runtime hunks are applied sequentially. This extension makes the
 sequential semantics explicit and keeps preview, preflight, and execution
 coherent across aliases.
 
-Case-, Unicode-, and symbolic-link-parent aliases share one virtual directory
+Case-, Unicode-, and symlink-parent aliases share one virtual directory
 entry. Later operations observe earlier changes regardless of which equivalent
 spelling they use. Hard-linked paths do not: they are distinct directory
 entries whose content state is shared until an operation deliberately replaces
@@ -749,14 +755,14 @@ an otherwise unconditional add, delete, or pure move.
 
 The write set of an ordinary text update follows filesystem identity:
 
-- an update through a symbolic link writes the resolved target, not the link
+- an update through a symlink writes the resolved target, not the link
   entry;
 - an update through one hard-link name writes the shared inode and is visible
   through every surviving hard link; and
-- case, Unicode, and symbolic-link-parent aliases of one entry share the same
+- case, Unicode, and symlink-parent aliases of one entry share the same
   effect.
 
-Deleting or replacing only a symbolic link does not dominate an update of its
+Deleting or replacing only a symlink does not dominate an update of its
 target. Deleting only one hard-link name does not dominate content still
 visible through another name. A dead-update proof MUST account for the resolved
 target and every surviving link to the affected inode. When all aliases cannot
@@ -825,9 +831,9 @@ Distinct hard-linked paths are distinct directory entries even though they
 share an inode.
 
 Ordinary text updates mutate the shared inode and are visible through every
-hard link. `Add File` and state-changing moves instead replace or materialize
-only the named entry, leaving other hard links unchanged. A pure same-filesystem
-move preserves the source inode and its remaining hard-link relationship;
+hard link. `Add File` and state-changing moves instead replace or create only
+the named entry, leaving other hard links unchanged. A pure same-filesystem move
+preserves the source inode and its remaining hard-link relationship;
 cross-filesystem copy-and-remove necessarily creates an independent destination
 inode.
 
@@ -846,7 +852,7 @@ Replacing a destination that has other hard links replaces only the named
 destination entry. The other hard links retain their original inode and
 content for both pure and state-changing moves.
 
-### Symbolic links
+### Symlinks
 
 Pure moves operate on links themselves:
 
@@ -868,8 +874,8 @@ converted into link-entry moves. Specifically:
 - pure moves move a source link entry without dereferencing it, including when
   dangling;
 - pure moves replace destination link entries without modifying their targets;
-- state-changing moves materialize a regular destination and leave the former
-  source-link target unchanged; and
+- state-changing moves create a regular destination and do not modify the
+  original source symlink target; and
 - state-changing moves replace destination link entries without modifying
   their targets.
 
@@ -904,9 +910,9 @@ The implementation MUST address these confirmed defect classes:
    long matcher loops. No additional source-size or token-count limit is
    required.
 4. **Entry identity:** prevent write-then-unlink data loss for case, Unicode,
-   symbolic-link-parent, and destination-link aliases; keep hard-link entries
+   symlink-parent, and destination-link aliases; keep hard-link entries
    distinct; and make sequential virtual state coherent across equivalent path
-   spellings and symbolic-link targets.
+   spellings and symlink targets.
 5. **Execution continuity:** account for link-count changes caused by the plan
    itself and for fresh destination identity after cross-filesystem moves, so
    valid later operations do not fail as apparent external drift.
@@ -941,7 +947,7 @@ The implementation MUST NOT:
 - infer that fixture minimization or operation count caused an observed
   production failure without evidence; or
 - preserve ownership, ACLs, extended attributes, or timestamps for
-  independently materialized text results.
+  independently created text results.
 
 The following review claims were disproved or narrowed and MUST NOT drive
 implementation:
@@ -969,7 +975,7 @@ The virtual filesystem should distinguish at least:
 Absent
 Directory
 RegularFile(KnownTextBytes | OpaqueBytesReference)
-SymbolicLink(LinkTarget)
+Symlink(LinkTarget)
 UnsupportedEntry
 ```
 
@@ -991,12 +997,12 @@ Text decoding is lazy:
 All source and destination paths, including move destinations, MUST
 participate in Pi's file mutation queue. They also participate in an
 extension-local logical-key queue that collapses proven case, Unicode,
-symbolic-link-parent, and physical hard-link aliases. Distinct hard-link
+symlink-parent, and physical hard-link aliases. Distinct hard-link
 directory entries retain distinct entry keys while sharing a physical inode
 key. Queue acquisition order MUST be deterministic to avoid deadlocks.
 
 Queue identity is operation-aware. Entry-only adds, deletes, identity updates,
-and pure moves MUST NOT dereference a symbolic-link target merely to choose a
+and pure moves MUST NOT dereference a symlink target merely to choose a
 queue key. State-changing text updates do acquire the physical identity of a
 live regular-file target. Cyclic, dangling, or inaccessible targets are left
 for semantic preflight so entry-only operations and no-ops remain valid.
@@ -1037,7 +1043,7 @@ nearest existing ancestor.
 Low-level failures can still complete part of an instruction, especially for:
 
 - cross-filesystem copy-and-unlink fallback;
-- destination creation or replacement followed by failed source removal;
+- destination creation or replacement followed by failure to unlink the source;
 - permission changes between preflight and execution; or
 - external filesystem races.
 
@@ -1111,8 +1117,17 @@ applied without feedback. There is no model or TUI instruction limit. Visible
 rows use `N. [STATUS] operation`, with statuses `APPLIED`, `NO CHANGE`,
 `SKIPPED`, `FAILED`, and `NOT RUN`. Ordinary applied instructions need only
 their status and operation when the ledger is present.
+An update hunk that also has a move destination is labeled
+`Update & Move source -> destination`; a move-only hunk remains
+`Move source -> destination`.
 Reasons, non-obvious effects, deterministic final states, concise matcher
 evidence, and errors remain on the relevant instruction.
+
+Symlink effects retain the raw target pathname returned by `readlink`.
+Replacement feedback identifies whether the original entry was a regular file
+or symlink. If the original entry type or post-failure state cannot be
+verified, feedback reports that state as not verified rather than inventing a
+generic replacement description.
 
 Model-facing status labels and separators are ASCII, while the TUI may use
 Unicode separators. Failed matcher feedback does not repeat old or replacement
@@ -1141,7 +1156,7 @@ This extension intentionally differs from official Codex in these areas:
 1. A grammar-valid empty update without a move succeeds as a no-op.
 2. Identity-only updates succeed without requiring or rewriting a target.
 3. A grammar-valid move-only update is accepted.
-4. Pure moves support arbitrary opaque binary files and move symbolic-link
+4. Pure moves support arbitrary opaque binary files and move symlink
    entries without dereferencing them.
 5. Adding already-present bytes, deleting an absent path, self-moves, and
    same-patch fulfilled moves succeed as verified no-ops.
@@ -1291,17 +1306,17 @@ Every case must preserve source bytes exactly.
 - self-move with text changes becomes in-place update;
 - case-only rename on case-insensitive filesystems;
 - Unicode-normalization-only rename where the filesystem aliases spellings;
-- equivalent case, Unicode, and symbolic-link-parent spellings share virtual
+- equivalent case, Unicode, and symlink-parent spellings share virtual
   sequential state;
 - distinct hard links;
 - source and destination hard links to the same inode;
 - ordinary updates remain visible through all hard links;
 - add and state-changing moves detach only the named hard-link entry;
-- pure move through a symbolic-link-parent self-alias preserves the entry;
+- pure move through a symlink-parent self-alias preserves the entry;
 - ordinary text update follows a live source symlink;
 - ordinary text update through an initially or virtually dangling symlink
   rejects before writes;
-- state-changing move from a live source symlink materializes a regular
+- state-changing move from a live source symlink creates a regular
   destination and leaves the target unchanged;
 - state-changing move from a dangling source symlink rejects;
 - pure move of a live or dangling source symlink moves the link entry;
@@ -1313,7 +1328,7 @@ Every case must preserve source bytes exactly.
 
 - any conflict prevents all writes;
 - all involved paths participate in mutation queues;
-- missing-tail paths below symbolic-link parents use the same in-process queue;
+- missing-tail paths below symlink parents use the same in-process queue;
 - external drift after preflight is detected;
 - link-count changes caused by earlier planned operations do not masquerade as
   external drift;

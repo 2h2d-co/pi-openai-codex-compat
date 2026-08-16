@@ -11,14 +11,15 @@
 - Omit Pi's auto-compaction state from the compatibility footer until extensions can observe its live value.
 - Evaluate grammar-valid `apply_patch` operations against a sequential virtual filesystem, accepting harmless no-ops and provably dead updates while rejecting conflicts before writes.
 - Recover uniquely determined `apply_patch` edits after whitespace-only formatter line reflow using the official `web-tree-sitter` runtime and packaged `@2h2d/tree-sitter-wasms` grammars for JavaScript, JSX, TypeScript, TSX, Python, Go, Java, and Scala, including typed Markdown code fences and formatter-aligned tables; require exact old-side punctuation and apply requested replacement lines without reinterpretation.
-- Move regular files and symbolic-link entries opaquely for move-only `apply_patch` hunks, preserving arbitrary binary bytes and rendering path-only move history.
+- Move regular files and symlink entries opaquely for move-only `apply_patch` hunks, preserving arbitrary binary bytes and rendering path-only move history.
 - Preserve the aggregate `apply_patch` changed-file summary and, when any instruction is not applied or an applied instruction has feedback, list every concise source-ordered result under `Patch instruction results:` as `N. [STATUS] operation` in model and TUI feedback while omitting the redundant ledger for ordinary all-applied patches.
+- Label combined operations `Update & Move`, report verified regular-file and symlink replacement details with raw symlink targets, distinguish byte-identical update outcomes from identical adds, and use explicit metadata, partial-move, and post-failure content wording.
 
 ### Fixed
 
 - Preserve each matched source region's local line endings when strict `apply_patch` matching edits CRLF or mixed-line-ending files.
 - Model native renames and cross-filesystem copy-and-unlink moves with distinct hard-link topology, and account for earlier planned unlinks when proving later edits dead.
-- Record symbolic-link deletion as a path-only entry operation so history and rendering never claim that the link target's bytes were deleted.
+- Record symlink deletion as a path-only entry operation so history and rendering never claim that the link target's bytes were deleted.
 - Serialize same-process `apply_patch` calls across case, Unicode, symlink-parent, and hard-link aliases while retaining Pi's ordinary path queues.
 - Render semantic no-change and skipped results in simplified technical English, without instruction limits, detached proof sections, or repeated patch text.
 - Attribute completed filesystem effects, deterministic post-failure path states, matcher evidence, and errors to the instruction that produced them.
@@ -29,10 +30,10 @@
 - Execute the move strategy proven during validation, with an injectable filesystem boundary covering native rename, cross-filesystem replacement, Windows overwrite fallback, and partial-failure inspection.
 - Retry Tree-sitter parser and grammar initialization after transient failures, and cover cancellation across queue, matching, pre-mutation, and committed-prefix phases.
 - Reject FIFOs, Unix sockets, directories, and available character or block devices during side-effect-free preflight.
-- Avoid dereferencing symbolic-link targets while queuing entry-only operations and no-op updates, including cyclic links.
+- Avoid dereferencing symlink targets while queuing entry-only operations and no-op updates, including cyclic links.
 - Replay later add/delete entry state when proving stale hard-link updates dead.
 - Preserve cancellation raised during Tree-sitter work and classify pure-move filesystems from the source entry rather than its parent.
-- Re-resolve relative symbolic-link targets from their destination after native or cross-filesystem pure moves.
+- Re-resolve relative symlink targets from their destination after native or cross-filesystem pure moves.
 - Deduplicate byte-identical line and structural matcher candidates before applying candidate and mapping limits.
 
 ### Security

@@ -105,7 +105,7 @@ void test("accepts grammar-valid empty and identity updates as no-ops", async (t
       "1. [NO CHANGE] Update missing.txt - The instruction contains no changes.",
       "2. [NO CHANGE] Update also-missing.txt - Old and replacement content are identical.",
       "3. [NO CHANGE] Update same.txt - Old and replacement content are identical.",
-      "4. [NO CHANGE] Add same.txt - Requested content already present.",
+      "4. [NO CHANGE] Add same.txt - The file already contains the requested content byte-for-byte.",
       "5. [NO CHANGE] Delete absent.txt - Path already absent.",
       "",
     ].join("\n"),
@@ -193,7 +193,7 @@ void test("explains every no-op and dead operation to the model and TUI", async 
   assert.deepEqual(
     details.instructions?.map(({ status, reason }) => [status, reason?.code]),
     [
-      ["no-op", "content-already-present"],
+      ["no-op", "update-result-unchanged"],
       ["no-op", "same-entry-move"],
       ["applied", undefined],
       ["no-op", "move-already-fulfilled"],
@@ -209,12 +209,13 @@ void test("explains every no-op and dead operation to the model and TUI", async 
   const model = formatApplyPatchSummary(details);
   assert.match(
     model,
-    /1\. \[NO CHANGE\] Update same-content\.txt - Requested content already present\./u,
+    /1\. \[NO CHANGE\] Update same-content\.txt - Applying the update would not change the file\./u,
   );
   assert.match(
     model,
     /4\. \[NO CHANGE\] Move move-source\.txt -> move-destination\.txt - Instruction 3 already moved this entry\./u,
   );
+  assert.doesNotMatch(model, /An earlier instruction already moved this entry/u);
   assert.match(
     model,
     /5\. \[SKIPPED\] Update dead-delete\.txt - Instruction 6 determines the final filesystem state before another instruction reads it\./u,
@@ -229,7 +230,7 @@ void test("explains every no-op and dead operation to the model and TUI", async 
   assert.match(collapsed, /Patch instruction results:/u);
   assert.match(
     collapsed,
-    /1\. \[NO CHANGE\] Update same-content\.txt — Requested content already present\./u,
+    /1\. \[NO CHANGE\] Update same-content\.txt — Applying the update would not change the file\./u,
   );
   assert.match(collapsed, /5\. \[SKIPPED\] Update dead-delete\.txt — Instruction 6 determines/u);
   assert.doesNotMatch(collapsed, /Proof:/u);
@@ -237,6 +238,37 @@ void test("explains every no-op and dead operation to the model and TUI", async 
   assert.match(expanded, /5\. \[SKIPPED\] Update dead-delete\.txt — Instruction 6 determines/u);
   assert.match(expanded, /7\. \[SKIPPED\] Update dead-add\.txt — Instruction 8 determines/u);
   assert.doesNotMatch(expanded, /Proof:/u);
+});
+
+void test("uses explicit filesystem metadata failure terminology", () => {
+  const cwd = "/workspace";
+  const details: ApplyPatchDetails = {
+    status: "failed",
+    exact: true,
+    changes: [],
+    added: [],
+    modified: [],
+    deleted: [],
+    instructions: [
+      {
+        index: 1,
+        kind: "update",
+        path: "metadata.txt",
+        status: "failed",
+        error: "Failed to inspect /workspace/metadata.txt: permission denied",
+      },
+    ],
+    failure: {
+      phase: "preflight",
+      message: "Failed to inspect /workspace/metadata.txt: permission denied",
+      failedInstruction: 1,
+    },
+  };
+
+  assert.match(
+    formatApplyPatchFailureSummary(details, cwd),
+    /1\. \[FAILED\] Update metadata\.txt - Failed to read filesystem metadata for \/workspace\/metadata\.txt: permission denied\./u,
+  );
 });
 
 void test("reports every instruction to the model and TUI without a limit", async (t) => {
@@ -384,7 +416,7 @@ void test("moves opaque regular files without decoding or changing bytes", async
   assert.equal((await stat(join(cwd, "moved", "invalid.bin"))).mode & 0o777, 0o755);
 });
 
-void test("moves symbolic-link entries and replaces destination links", async (t) => {
+void test("moves symlink entries and replaces destination symlinks", async (t) => {
   const cwd = await workspace(t);
   await writeFile(join(cwd, "target.txt"), "target stays unchanged\n");
   await symlink("target.txt", join(cwd, "source-link"));
@@ -409,9 +441,18 @@ void test("moves symbolic-link entries and replaces destination links", async (t
         : [change.kind, false],
     ),
     [
-      ["symbolic-link", false],
+      ["symlink", false],
       ["regular-file", true],
     ],
+  );
+  const feedback = formatApplyPatchSummary(details, cwd);
+  assert.match(
+    feedback,
+    /1\. \[APPLIED\] Move source-link -> nested\/moved-link - The moved symlink from source-link retains target target\.txt\./u,
+  );
+  assert.match(
+    feedback,
+    /2\. \[APPLIED\] Move source\.bin -> destination-link - Replaced the symlink at destination-link \(original target: target\.txt\); the original target was not modified\./u,
   );
 
   await mkdir(join(cwd, "relative-source"));
@@ -672,11 +713,14 @@ void test("follows symlinks for updates but replaces them for adds", async (t) =
   await assert.rejects(readlink(join(cwd, "alias.txt")), { code: "EINVAL" });
   const feedback = formatApplyPatchSummary(details, cwd);
   assert.match(feedback, /Patch instruction results:/u);
-  assert.match(feedback, /1\. \[APPLIED\] Update alias\.txt - Updated the link target/u);
+  assert.match(
+    feedback,
+    /1\. \[APPLIED\] Update alias\.txt - Modified file content through the symlink at alias\.txt \(target: target\.txt\); the symlink was not modified\./u,
+  );
   assert.match(feedback, /2\. \[APPLIED\] Update target\.txt$/mu);
   assert.match(
     feedback,
-    /3\. \[APPLIED\] Add alias\.txt - Replaced alias\.txt; Link target for alias\.txt was unchanged\./u,
+    /3\. \[APPLIED\] Add alias\.txt - Replaced the symlink at alias\.txt \(original target: target\.txt\); the original target was not modified\./u,
   );
   assert.match(feedback, /4\. \[APPLIED\] Update alias\.txt$/mu);
 
@@ -686,7 +730,10 @@ void test("follows symlinks for updates but replaces them for adds", async (t) =
   } as unknown as Theme;
   const rendered = new ApplyPatchDiffComponent(details, theme, cwd, false).render(120).join("\n");
   assert.match(rendered, /Patch instruction results:/u);
-  assert.match(rendered, /1\. \[APPLIED\] Update alias\.txt — Updated the link target/u);
+  assert.match(
+    rendered,
+    /1\. \[APPLIED\] Update alias\.txt — Modified file content through the symlink at alias\.txt \(target: target\.txt\); the\s+symlink was not modified\./u,
+  );
   assert.match(rendered, /2\. \[APPLIED\] Update target\.txt$/mu);
 });
 
@@ -708,6 +755,15 @@ void test("replaces live and dangling symlinks on add without touching their tar
   await assertMissing(join(cwd, "missing.txt"));
   await assert.rejects(readlink(join(cwd, "live.txt")), { code: "EINVAL" });
   await assert.rejects(readlink(join(cwd, "dangling.txt")), { code: "EINVAL" });
+  const feedback = formatApplyPatchSummary(details, cwd);
+  assert.match(
+    feedback,
+    /1\. \[APPLIED\] Add live\.txt - Replaced the symlink at live\.txt \(original target: target\.txt\); the original target was not modified\./u,
+  );
+  assert.match(
+    feedback,
+    /2\. \[APPLIED\] Add dangling\.txt - Replaced the symlink at dangling\.txt \(original target: missing\.txt\); the original target was not modified\./u,
+  );
 });
 
 void test("tracks symlink chains and rejects links made dangling earlier in the patch", async (t) => {
@@ -733,7 +789,7 @@ void test("tracks symlink chains and rejects links made dangling earlier in the 
         "*** Update File: outer.txt\n@@\n-final\n+should not happen\n",
       ),
     ),
-    /symbolic link target does not exist/,
+    /symlink target does not exist/,
   );
   assert.equal(await readFile(join(cwd, "target.txt"), "utf8"), "final\n");
 });
@@ -1156,18 +1212,18 @@ void test("executes planned move strategies and reports every injected failure p
   assert.equal(await readFile(join(cwd, "native-source.txt"), "utf8"), "native\n");
   await assertMissing(join(cwd, "native-destination.txt"));
 
-  await writeFile(join(cwd, "installed-source.txt"), "installed\n");
+  await writeFile(join(cwd, "copied-source.txt"), "copied\n");
   await assert.rejects(
     applyPatch(
       cwd,
-      patch("*** Update File: installed-source.txt\n*** Move to: installed-destination.txt\n"),
+      patch("*** Update File: copied-source.txt\n*** Move to: copied-destination.txt\n"),
       undefined,
       {
         selectMoveStrategy: () => "copy-unlink",
         filesystem: {
           async unlink(path) {
-            if (path === join(cwd, "installed-source.txt")) {
-              throw filesystemError("EACCES", "injected source removal failure");
+            if (path === join(cwd, "copied-source.txt")) {
+              throw filesystemError("EACCES", "injected source unlink failure");
             }
             await unlink(path);
           },
@@ -1186,10 +1242,10 @@ void test("executes planned move strategies and reports every injected failure p
       assert.equal(error.details.failure?.failedInstruction, 1);
       const feedback = formatApplyPatchFailureSummary(error.details, cwd);
       assert.match(feedback, /Patch failed at instruction 1 of 1\./u);
-      assert.match(feedback, /Files changed:\nA installed-destination\.txt/u);
+      assert.match(feedback, /Files changed:\nA copied-destination\.txt/u);
       assert.match(
         feedback,
-        /1\. \[FAILED\] Move installed-source\.txt -> installed-destination\.txt - Created installed-destination\.txt; installed-source\.txt remains; Move failed: injected source removal failure\./u,
+        /1\. \[FAILED\] Move copied-source\.txt -> copied-destination\.txt - Created copied-destination\.txt; copied-source\.txt remains; Move failed: injected source unlink failure\./u,
       );
       const theme = {
         fg: (_color: string, text: string) => text,
@@ -1198,14 +1254,14 @@ void test("executes planned move strategies and reports every injected failure p
       const tui = new ApplyPatchDiffComponent(error.details, theme, cwd, true)
         .render(120)
         .join("\n");
-      assert.match(tui, /A installed-destination\.txt/u);
-      assert.match(tui, /Created installed-destination\.txt/u);
-      assert.doesNotMatch(tui, /Moved installed-source\.txt/u);
+      assert.match(tui, /A copied-destination\.txt/u);
+      assert.match(tui, /Created copied-destination\.txt/u);
+      assert.doesNotMatch(tui, /Moved copied-source\.txt/u);
       return true;
     },
   );
-  assert.equal(await readFile(join(cwd, "installed-source.txt"), "utf8"), "installed\n");
-  assert.equal(await readFile(join(cwd, "installed-destination.txt"), "utf8"), "installed\n");
+  assert.equal(await readFile(join(cwd, "copied-source.txt"), "utf8"), "copied\n");
+  assert.equal(await readFile(join(cwd, "copied-destination.txt"), "utf8"), "copied\n");
 
   await writeFile(join(cwd, "replaced-source.txt"), "replacement\n");
   await writeFile(join(cwd, "replaced-destination.txt"), "old destination\n");
@@ -1219,7 +1275,7 @@ void test("executes planned move strategies and reports every injected failure p
         filesystem: {
           async unlink(path) {
             if (path === join(cwd, "replaced-source.txt")) {
-              throw filesystemError("EACCES", "injected replacement source removal failure");
+              throw filesystemError("EACCES", "injected replacement source unlink failure");
             }
             await unlink(path);
           },
@@ -1230,7 +1286,10 @@ void test("executes planned move strategies and reports every injected failure p
       assert.ok(error instanceof ApplyPatchExecutionError);
       const feedback = formatApplyPatchFailureSummary(error.details, cwd);
       assert.match(feedback, /Files changed:\nM replaced-destination\.txt/u);
-      assert.match(feedback, /Replaced replaced-destination\.txt; replaced-source\.txt remains/u);
+      assert.match(
+        feedback,
+        /Replaced the regular file at replaced-destination\.txt; replaced-source\.txt remains/u,
+      );
       return true;
     },
   );
@@ -1251,7 +1310,7 @@ void test("executes planned move strategies and reports every injected failure p
         filesystem: {
           async unlink(path) {
             if (path === join(cwd, "unverified-move-source.txt")) {
-              throw filesystemError("EACCES", "injected source removal failure");
+              throw filesystemError("EACCES", "injected source unlink failure");
             }
             await unlink(path);
           },
@@ -1293,7 +1352,7 @@ void test("executes planned move strategies and reports every injected failure p
         filesystem: {
           async unlink(path) {
             if (path === join(cwd, "text-move-source.txt")) {
-              throw filesystemError("EACCES", "injected text-move source removal failure");
+              throw filesystemError("EACCES", "injected text-move source unlink failure");
             }
             await unlink(path);
           },
@@ -1309,7 +1368,7 @@ void test("executes planned move strategies and reports every injected failure p
       assert.match(error.message, /Failed to remove original/u);
       assert.match(
         formatApplyPatchFailureSummary(error.details, cwd),
-        /1\. \[FAILED\] Update text-move-source\.txt -> text-move-destination\.txt - Created text-move-destination\.txt; text-move-source\.txt remains; Source removal failed: injected text-move source removal failure\./u,
+        /1\. \[FAILED\] Update & Move text-move-source\.txt -> text-move-destination\.txt - Created text-move-destination\.txt; text-move-source\.txt remains; The updated content was written to the destination, but removing the source failed: injected text-move source unlink failure; The file at text-move-destination\.txt contains the requested content byte-for-byte despite the reported error\./u,
       );
       return true;
     },
@@ -1319,7 +1378,7 @@ void test("executes planned move strategies and reports every injected failure p
 
   await writeFile(join(cwd, "removed-source.txt"), "source\n");
   await writeFile(join(cwd, "removed-destination.txt"), "destination\n");
-  let failedInstallAttempts = 0;
+  let failedReplacementAttempts = 0;
   await assert.rejects(
     applyPatch(
       cwd,
@@ -1337,8 +1396,8 @@ void test("executes planned move strategies and reports every injected failure p
               destination === join(cwd, "removed-destination.txt") &&
               basename(String(source)).includes(".apply-patch-")
             ) {
-              failedInstallAttempts += 1;
-              if (failedInstallAttempts === 1) {
+              failedReplacementAttempts += 1;
+              if (failedReplacementAttempts === 1) {
                 throw filesystemError("EEXIST", "injected Windows replacement conflict");
               }
               throw filesystemError("EIO", "injected destination replacement failure");
@@ -1378,7 +1437,7 @@ void test("executes planned move strategies and reports every injected failure p
 
   await writeFile(join(cwd, "windows-source.txt"), "source\n");
   await writeFile(join(cwd, "windows-destination.txt"), "old destination\n");
-  let windowsInstallAttempts = 0;
+  let windowsReplacementAttempts = 0;
   const windowsReplacement = await applyPatch(
     cwd,
     patch("*** Update File: windows-source.txt\n*** Move to: windows-destination.txt\n"),
@@ -1391,8 +1450,8 @@ void test("executes planned move strategies and reports every injected failure p
             destination === join(cwd, "windows-destination.txt") &&
             basename(String(source)).includes(".apply-patch-")
           ) {
-            windowsInstallAttempts += 1;
-            if (windowsInstallAttempts === 1) {
+            windowsReplacementAttempts += 1;
+            if (windowsReplacementAttempts === 1) {
               throw filesystemError("EPERM", "injected Windows rename-over-existing behavior");
             }
           }
@@ -1402,7 +1461,7 @@ void test("executes planned move strategies and reports every injected failure p
     },
   );
   assert.equal(windowsReplacement.exact, true);
-  assert.equal(windowsInstallAttempts, 2);
+  assert.equal(windowsReplacementAttempts, 2);
   await assertMissing(join(cwd, "windows-source.txt"));
   assert.equal(await readFile(join(cwd, "windows-destination.txt"), "utf8"), "source\n");
 });
@@ -1429,7 +1488,7 @@ void test("reports deterministic file states after write failures", async (t) =>
       mutation: "requested\n",
       summary: /Files changed:\nM requested\.txt/u,
       result:
-        /Write failed: injected requested write failure; requested\.txt contains the requested content\./u,
+        /Write failed: injected requested write failure; The file at requested\.txt contains the requested content byte-for-byte despite the reported error\./u,
     },
     {
       name: "different",
@@ -1438,7 +1497,7 @@ void test("reports deterministic file states after write failures", async (t) =>
       mutation: "different\n",
       summary: /Files changed:\nM different\.txt/u,
       result:
-        /Write failed: injected different write failure; different\.txt contains unexpected content\./u,
+        /Write failed: injected different write failure; The content at different\.txt matches neither the requested content nor the previously observed content\./u,
     },
   ] as const;
 
@@ -2198,7 +2257,7 @@ void test(
   },
 );
 
-void test("deletes symbolic-link entries without deleting their targets", async (t) => {
+void test("deletes symlink entries without deleting their targets", async (t) => {
   const cwd = await workspace(t);
   await writeFile(join(cwd, "target.txt"), "preserved\n");
   await symlink("target.txt", join(cwd, "alias.txt"));
@@ -2211,7 +2270,7 @@ void test("deletes symbolic-link entries without deleting their targets", async 
     {
       kind: "delete",
       path: "alias.txt",
-      entryType: "symbolic-link",
+      entryType: "symlink",
       displayDiff: "",
       additions: 0,
       deletions: 0,
@@ -2222,7 +2281,7 @@ void test("deletes symbolic-link entries without deleting their targets", async 
   const dangling = await applyPatch(cwd, patch("*** Delete File: dangling.txt\n"));
   assert.equal(
     dangling.changes[0]?.kind === "delete" ? dangling.changes[0].entryType : undefined,
-    "symbolic-link",
+    "symlink",
   );
   await assertMissing(join(cwd, "dangling.txt"));
 
@@ -2240,7 +2299,7 @@ void test("deletes symbolic-link entries without deleting their targets", async 
   assert.deepEqual(followed.changes[1], {
     kind: "delete",
     path: "followed-link.txt",
-    entryType: "symbolic-link",
+    entryType: "symlink",
     displayDiff: "",
     additions: 0,
     deletions: 0,
@@ -2250,7 +2309,11 @@ void test("deletes symbolic-link entries without deleting their targets", async 
     bold: (text: string) => text,
   } as unknown as Theme;
   const rendered = formatApplyPatchRenderText(followed, theme, cwd);
-  assert.match(rendered, /followed-link\.txt \(deleted symbolic link\)/u);
+  assert.match(rendered, /followed-link\.txt \(deleted symlink\)/u);
+  assert.match(
+    formatApplyPatchSummary(followed, cwd),
+    /2\. \[APPLIED\] Delete followed-link\.txt - Removed the symlink at followed-link\.txt \(original target: followed-target\.txt\); the original target was not modified\./u,
+  );
   assert.doesNotMatch(JSON.stringify(followed.changes[1]), /old target|new target/u);
 });
 
@@ -2274,7 +2337,7 @@ void test("does not dereference cyclic symlinks for entry-only operations or no-
   await createCycle("text");
   await assert.rejects(
     applyPatch(cwd, patch("*** Update File: text-a\n@@\n-old\n+new\n")),
-    /symbolic link cycle/u,
+    /symlink cycle/u,
   );
 
   await createCycle("add");
@@ -2458,7 +2521,15 @@ void test("rejects directories and unproven missing-source moves", async (t) => 
   );
   await assert.rejects(
     applyPatch(cwd, patch("*** Update File: missing.txt\n*** Move to: destination.txt\n")),
-    /destination provenance is unproven/,
+    (error: unknown) => {
+      assert.ok(error instanceof ApplyPatchVerificationError);
+      assert.match(error.message, /source does not exist, and no earlier instruction moved it to/u);
+      assert.match(
+        formatApplyPatchFailureSummary(error.details, cwd),
+        /1\. \[FAILED\] Move missing\.txt -> destination\.txt - Validation failed: The move source does not exist, and no earlier instruction moved it to the destination\./u,
+      );
+      return true;
+    },
   );
   await assert.rejects(
     applyPatch(cwd, patch("*** Add File: directory\n+blocked\n")),

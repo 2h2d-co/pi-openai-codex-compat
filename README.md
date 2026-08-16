@@ -287,8 +287,8 @@ Supported operations:
 - add files;
 - update files with ordered context chunks;
 - delete files;
-- move an updated file;
-- move regular files or symbolic-link entries without content changes;
+- update and move a file in one instruction;
+- move regular files or symlink entries without content changes;
 - evaluate repeated and aliased paths sequentially;
 - anchor updates at the end of a file.
 
@@ -302,8 +302,10 @@ Compatibility behavior:
 - The parser accepts Codex's lenient marker whitespace, blank update-context lines, and direct heredoc wrappers.
 - Empty and identity updates, identical adds, absent deletes, self-moves, and same-patch fulfilled moves succeed with concise `NO CHANGE` results. Inapplicable operations are `SKIPPED` only when later operations deterministically make every effect unobservable.
 - Model-facing results retain the aggregate A/M/D summary. When any instruction is not applied or an applied instruction has feedback, they list every source-ordered instruction under `Patch instruction results:` as `N. [STATUS] operation`, without an instruction limit; ordinary all-applied results omit the ledger.
+- Combined text updates and moves are labeled `Update & Move`; move-only operations remain `Move`.
+- Symlink feedback uses the raw target pathname stored in the symlink and identifies the verified original entry type when a path is replaced.
 - Tool-result history stores per-file old/new content, display diffs, move destinations, overwrite information, per-instruction filesystem effects, and deterministic final-path inspection after runtime failures.
-- Opaque moves and symbolic-link deletions use path-only history, so binary bytes and link-target bytes are not serialized as textual deletions.
+- Opaque moves and symlink deletions use path-only history, so binary bytes and link-target bytes are not serialized as textual deletions.
 - The TUI retains Codex-style changed-file summaries and uses the same conditional instruction ledger; when present, `Ctrl+O` nests complete diffs beneath the instruction that produced them.
 - With `applyPatchDebug` enabled, the tool title becomes `apply_patch (debug)` and a completed collapsed result shows the exact text returned to the model without an extra renderer-only heading; expanding it with `Ctrl+O` still shows the normal visual summary and complete diffs.
 - Failed instruction feedback colocates its error, completed effects, final path states, and concise matcher evidence without repeating patch text or using speculative language.
@@ -312,13 +314,13 @@ Filesystem behavior:
 
 - Relative paths resolve from Pi's current working directory; absolute paths and `..` traversal are honored.
 - `.git` paths are unrestricted.
-- Text updates follow live symbolic links; adds replace live or dangling link entries; deletes remove only the link entry; pure moves move a source link entry and replace a destination link entry; state-changing moves materialize a regular destination without modifying either former link target.
-- Entry-only operations and no-op updates do not dereference cyclic or inaccessible symbolic-link targets during mutation-queue acquisition.
-- Same-filesystem pure moves use native rename topology. Cross-filesystem moves use copy-to-temporary, destination creation or replacement, and source removal, producing an inode independent from remaining source hard links.
+- Text updates follow live symlinks; adds replace live or dangling link entries; deletes remove only the link entry; pure moves move a source link entry and replace a destination link entry; state-changing moves create a regular file at the destination without modifying either original link target.
+- Entry-only operations and no-op updates do not dereference cyclic or inaccessible symlink targets during mutation-queue acquisition.
+- Same-filesystem pure moves use native rename topology. Cross-filesystem moves copy through a temporary entry, create or replace the destination, and then unlink the source, producing an inode independent from remaining source hard links.
 - Strict and formatter-recovered edits preserve the matched region's local CRLF or mixed line endings.
 - The extension does not add path filtering, sandboxing, or approval prompts.
 - Every hunk is parsed and validated before filesystem writes begin.
-- Mutations participate in Pi's per-file mutation queue and an extension-local logical queue for case, Unicode, symbolic-link-parent, and hard-link aliases. Both queues coordinate only concurrent `apply_patch` calls in the same Pi process and module instance; they do not coordinate separate Pi sessions, other processes, or unrelated edit/write tools.
+- Mutations participate in Pi's per-file mutation queue and an extension-local logical queue for case, Unicode, symlink-parent, and hard-link aliases. Both queues coordinate only concurrent `apply_patch` calls in the same Pi process and module instance; they do not coordinate separate Pi sessions, other processes, or unrelated edit/write tools.
 
 A low-level I/O failure can still complete part of an instruction. The failed
 instruction reports every confirmed effect and final path state; when a path

@@ -104,7 +104,7 @@ function changeVerb(change: AppliedPatchChange): string {
     case "add":
       return "Added";
     case "delete":
-      return change.entryType === "symbolic-link" ? "Deleted symbolic link" : "Deleted";
+      return change.entryType === "symlink" ? "Deleted symlink" : "Deleted";
     case "move":
       return "Moved";
     case "update":
@@ -114,8 +114,8 @@ function changeVerb(change: AppliedPatchChange): string {
 
 function changeListPath(change: AppliedPatchChange, cwd: string): string {
   const path = changePath(change, cwd);
-  return change.kind === "delete" && change.entryType === "symbolic-link"
-    ? `${path} (deleted symbolic link)`
+  return change.kind === "delete" && change.entryType === "symlink"
+    ? `${path} (deleted symlink)`
     : path;
 }
 
@@ -162,14 +162,14 @@ function isAppliedPatchChange(value: unknown): value is AppliedPatchChange {
       typeof change.sourcePath === "string" &&
       typeof change.destinationPath === "string" &&
       typeof change.replacedDestination === "boolean" &&
-      (change.entryType === "regular-file" || change.entryType === "symbolic-link") &&
+      (change.entryType === "regular-file" || change.entryType === "symlink") &&
       typeof change.exact === "boolean"
     );
   }
   if (typeof change.path !== "string") return false;
   if (change.kind === "add" || change.kind === "delete") {
     return change.kind === "delete"
-      ? (change.entryType === "regular-file" || change.entryType === "symbolic-link") &&
+      ? (change.entryType === "regular-file" || change.entryType === "symlink") &&
           (change.content === undefined || typeof change.content === "string")
       : typeof change.content === "string";
   }
@@ -194,6 +194,7 @@ const INSTRUCTION_REASON_CODES = new Set<ApplyPatchInstructionReason["code"]>([
   "empty-update",
   "identity-update",
   "content-already-present",
+  "update-result-unchanged",
   "path-already-absent",
   "same-entry-move",
   "move-already-fulfilled",
@@ -217,7 +218,9 @@ function isApplyPatchInstructionReason(value: unknown): value is ApplyPatchInstr
         reason.dominatingInstructions.every((index) => typeof index === "number"))) &&
     (reason.relatedInstructions === undefined ||
       (Array.isArray(reason.relatedInstructions) &&
-        reason.relatedInstructions.every((index) => typeof index === "number")))
+        reason.relatedInstructions.every((index) => typeof index === "number"))) &&
+    (reason.code !== "move-already-fulfilled" ||
+      (Array.isArray(reason.relatedInstructions) && reason.relatedInstructions.length === 1))
   );
 }
 
@@ -229,29 +232,56 @@ const INSTRUCTION_EFFECT_KINDS = new Set<ApplyPatchInstructionEffect["kind"]>([
   "directory-created",
   "temporary-entry-remains",
   "source-remains",
-  "symbolic-link-target-unchanged",
-  "symbolic-link-target-updated",
+  "symlink-target-not-modified",
+  "symlink-target-modified",
 ]);
 
 function isApplyPatchInstructionEffect(value: unknown): value is ApplyPatchInstructionEffect {
   if (typeof value !== "object" || value === null) return false;
-  const effect = value as { kind?: unknown; path?: unknown };
-  return (
-    typeof effect.kind === "string" &&
-    INSTRUCTION_EFFECT_KINDS.has(effect.kind as ApplyPatchInstructionEffect["kind"]) &&
-    typeof effect.path === "string"
-  );
+  const effect = value as {
+    kind?: unknown;
+    path?: unknown;
+    previousEntryType?: unknown;
+    originalTarget?: unknown;
+    target?: unknown;
+    symlinkAction?: unknown;
+  };
+  if (
+    typeof effect.kind !== "string" ||
+    !INSTRUCTION_EFFECT_KINDS.has(effect.kind as ApplyPatchInstructionEffect["kind"]) ||
+    typeof effect.path !== "string"
+  ) {
+    return false;
+  }
+  if (effect.kind === "replaced") {
+    return (
+      effect.previousEntryType === "regular-file" ||
+      (effect.previousEntryType === "symlink" && typeof effect.originalTarget === "string")
+    );
+  }
+  if (effect.kind === "symlink-target-not-modified") {
+    return (
+      typeof effect.target === "string" &&
+      (effect.symlinkAction === "removed" || effect.symlinkAction === "moved")
+    );
+  }
+  if (effect.kind === "symlink-target-modified") {
+    return typeof effect.target === "string";
+  }
+  return true;
 }
 
 const FINAL_PATH_STATES = new Set<ApplyPatchFinalPathState["state"]>([
   "absent",
   "regular-file",
-  "symbolic-link",
+  "symlink",
   "directory",
   "other-entry",
   "unchanged",
   "requested-content",
-  "different-content",
+  "different-from-requested-content",
+  "different-from-requested-and-previous-content",
+  "different-from-previous-content",
   "different-entry",
   "different-entry-type",
   "not-verified",
@@ -680,9 +710,10 @@ function instructionLabel(instruction: ApplyPatchInstructionDetails, cwd: string
           ? "Move"
           : "Update";
   const path = displayPath(instruction.path, cwd);
-  return instruction.moveTo
-    ? `${verb} ${path} → ${displayPath(instruction.moveTo, cwd)}`
-    : `${verb} ${path}`;
+  if (!instruction.moveTo) return `${verb} ${path}`;
+  return instruction.kind === "update"
+    ? `Update & Move ${path} → ${displayPath(instruction.moveTo, cwd)}`
+    : `${verb} ${path} → ${displayPath(instruction.moveTo, cwd)}`;
 }
 
 function instructionChanges(

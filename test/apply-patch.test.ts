@@ -906,7 +906,10 @@ void test("registers the Codex freeform tool with model, UI, and failed-history 
       assert.match(error.message, /1\. \[APPLIED\] Update partial-first\.txt/u);
       assert.match(error.message, /2\. \[FAILED\] Update partial-second\.txt/u);
       assert.match(error.message, /Filesystem changed after validation/u);
-      assert.match(error.message, /partial-second\.txt contains unexpected content/u);
+      assert.match(
+        error.message,
+        /The content at partial-second\.txt matches neither the requested content nor the previously observed content/u,
+      );
       assert.doesNotMatch(error.message, /Committed prefix|exact|inexact|earlier change/u);
       assert.doesNotMatch(error.message, /[✓✘○↷→—]/u);
       return true;
