@@ -3,11 +3,14 @@ CHANGELOG.md
 LICENSE
 LICENSES/Apache-2.0.txt
 LICENSES/pi-ai-MIT.txt
+LICENSES/tree-sitter-wasms-MIT.txt
+LICENSES/web-tree-sitter-MIT.txt
 README.md
 THIRD_PARTY_NOTICES.md
 extensions/index.ts
 extensions/openai-codex-compat/apply-patch-diff-render.ts
 extensions/openai-codex-compat/apply-patch-engine.ts
+extensions/openai-codex-compat/apply-patch-matcher.ts
 extensions/openai-codex-compat/apply-patch-render.ts
 extensions/openai-codex-compat/apply-patch.ts
 extensions/openai-codex-compat/codex-cache-diagnostics.ts
