@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Fixed
+
+- Accept completed streamed tool calls when Codex sends an empty terminal output snapshot, while retaining fail-closed handling for empty failed or incomplete responses.
+
 ## 0.0.7 - 2026-08-16
 
 ### Added

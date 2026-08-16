@@ -358,9 +358,16 @@ function captureRawEvents(
           isObject(event.response) &&
           Array.isArray(event.response["output"])
         ) {
-          capture.terminalItems = event.response["output"]
+          const terminalItems = event.response["output"]
             .filter(isResponsesItem)
             .map((item) => structuredClone(item));
+          // Codex completed terminals can carry `output: []` after emitting the
+          // complete items through `response.output_item.done`. Treat that as an
+          // omitted snapshot, but keep empty failed/incomplete output authoritative
+          // so streamed calls from unsuccessful responses still fail closed.
+          if (terminalItems.length > 0 || event.type !== "response.completed") {
+            capture.terminalItems = terminalItems;
+          }
         }
         if (
           terminalState &&

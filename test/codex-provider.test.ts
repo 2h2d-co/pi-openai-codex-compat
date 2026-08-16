@@ -713,6 +713,71 @@ void test("resamples retryable failed and incomplete responses from completed ou
   }
 });
 
+void test("uses completed streamed calls when the terminal snapshot is empty", async () => {
+  const user = userEntry("user-1", "inspect");
+  const harness = createHarness([user], DEFAULT_CONFIG, "session-empty-completed-output", {
+    maxRetries: 5,
+    baseDelayMs: 0,
+  });
+  const call = {
+    type: "function_call",
+    id: "fc_streamed",
+    call_id: "call_streamed",
+    name: "report",
+    status: "completed",
+    arguments: '{"value":"streamed"}',
+  };
+  let requests = 0;
+  harness.runtime.transport.request = async function* () {
+    requests += 1;
+    yield { type: "response.output_item.done", output_index: 0, item: call };
+    yield {
+      type: "response.completed",
+      response: {
+        id: "resp_empty_completed_output",
+        status: "completed",
+        output: [],
+        usage: { input_tokens: 10, output_tokens: 5, total_tokens: 15 },
+      },
+    };
+  };
+
+  const message = await harness.runtime
+    .streamSimple(
+      codexModel(),
+      {
+        messages: [user.message as Context["messages"][number]],
+        tools: [REPORT_TOOL],
+      },
+      {
+        apiKey: accessToken(),
+        sessionId: "session-empty-completed-output",
+        transport: "sse",
+      },
+    )
+    .result();
+
+  assert.equal(requests, 1);
+  assert.equal(message.stopReason, "toolUse");
+  const toolCall = message.content.find((block) => block.type === "toolCall");
+  assert.deepEqual(toolCall?.arguments, { value: "streamed" });
+  assert.deepEqual(responseDecisions(message), [
+    {
+      attempt: 1,
+      terminalType: "response.completed",
+      itemSource: "stream-fallback",
+      outputItemTypes: { function_call: 1 },
+      streamedCallsStarted: 1,
+      streamedCallsCompleted: 1,
+      terminalCalls: 0,
+      authoritativeCalls: 1,
+      terminalOmittedStreamedCalls: 0,
+      allCallsComplete: true,
+      decision: "return_tool_use",
+    },
+  ]);
+});
+
 void test("returns complete function call batches at the output limit without provider continuation", async () => {
   const user = userEntry("user-1", "inspect both");
   const harness = createHarness([user], DEFAULT_CONFIG, "session-function-limit", {
@@ -910,7 +975,7 @@ void test("executes none of a mixed complete and partial call batch", async () =
   assert.equal(responseDecisions(message)[0]?.["allCallsComplete"], false);
 });
 
-void test("rejects a streamed call omitted from terminal output", async () => {
+void test("rejects a streamed call omitted from incomplete terminal output", async () => {
   const user = userEntry("user-1", "inspect");
   const harness = createHarness([user], DEFAULT_CONFIG, "session-omitted-call", {
     maxRetries: 5,
