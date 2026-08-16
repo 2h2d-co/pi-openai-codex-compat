@@ -1,7 +1,7 @@
 # Compaction Continuation Incident Review
 
 - Date: 2026-08-15
-- Status: Root provider-continuation fix implemented after review; other proposed fixes remain pending
+- Status: Root fix, regression coverage, diagnostics, and a 95% provider-boundary threshold implemented; recovery fallback skipped
 
 ## Dictionary
 
@@ -292,21 +292,26 @@ Implemented policy:
 - A completed or max-output call batch containing an incomplete, malformed, or terminal-omitted call: execute none and return a recoverable length result without persisting the partial calls; preserve other incomplete-response errors.
 - `response.failed`, tool call present: retry the pre-attempt input without the failed response items when retryable; otherwise preserve the original provider failure.
 
-Regression coverage should include:
+Regression coverage now includes:
 
 - function and custom tool calls;
 - streamed `response.output_item.done` items;
 - terminal-response-only output items;
+- terminal output that omits a streamed call;
+- all-or-nothing handling for mixed complete and partial call batches;
 - `end_turn: false`;
 - `response.incomplete` with `max_output_tokens`;
-- retryable `response.failed`;
-- proof that the second request is not sent before tool output.
+- retryable and non-retryable `response.failed`;
+- proof that a second provider request is not sent before tool output;
+- a host-level Pi tool execution and linked-output round trip.
 
-### P0 mitigation: Enable provider-boundary percentage compaction
+### P0 mitigation enabled: Provider-boundary percentage compaction
 
-Set `autoCompactAtPercent` to a reviewed value such as 80 or 85 instead of `null`.
+The active global configuration sets `autoCompactAtPercent` to 95.
 
 This uses the existing `maybeCompactPercentage()` path before each provider request, including requests inside a long tool-calling run. It directly covers the gap in Pi's post-`agent_end` threshold timing.
+
+The reviewed incidents failed around 92.9% of the nominal window, so 95% would not have prevented them. It is an operational guard near the nominal limit; the implemented unresolved-tool-call invariant remains the incident fix.
 
 Trade-offs:
 
@@ -315,7 +320,7 @@ Trade-offs:
 - the configured percentage needs operational validation;
 - this reduces exposure but should not replace the unresolved-tool-call protocol fix.
 
-### P1: Add a narrowly scoped recovery fallback
+### P1 skipped: Add a narrowly scoped recovery fallback
 
 When all of the following hold:
 
@@ -326,21 +331,22 @@ When all of the following hold:
 
 normalize the failure into a bounded overflow-recovery signal so Pi compacts with `willRetry: true`.
 
-This would have recovered all four observed incidents. It must remain narrow because a missing tool output at ordinary context usage usually indicates deterministic history corruption, not transient overflow.
+This would have recovered all four observed incidents, but it was deliberately skipped after the root fix. A recurrence should remain visible as evidence of malformed history or an unrecognized protocol path rather than being automatically compacted away.
 
-### P1: Persist safe continuation diagnostics
+### P1 implemented: Persist safe continuation diagnostics
 
-Record content-free fields needed to distinguish future cases:
+Nontrivial provider decisions now record content-free fields needed to distinguish future cases:
 
 - terminal event type;
 - incomplete reason;
 - `end_turn`;
-- output item types and count;
+- authoritative item source and output item type counts;
+- streamed-started, streamed-completed, terminal, and omitted call counts;
+- whether the complete call batch was executable;
 - chosen continuation/retry branch;
-- whether a call item lacked an output;
-- compaction reason and `willRetry`.
+- provider attempt number.
 
-The current session evidence proves the malformed replay but cannot identify the exact first-terminal branch because that terminal metadata was not persisted.
+Native checkpoint details now also persist compaction reason and `willRetry`, including the distinct `provider-boundary` reason.
 
 ### P2: Follow upstream Pi #7689
 
@@ -364,10 +370,11 @@ An upstream Pi design could check context at the checkpoint between a tool batch
 - Do not classify every missing-tool-output error as transient. Away from the context ceiling it is evidence of malformed history and should fail closed.
 - Do not rely only on Pi 0.84.2's `endTurn` field. It is diagnostic and is not populated by the extension's custom provider.
 
-## Recommended Review Order
+## Implementation Status
 
-1. Approve the unresolved-tool-call invariant and exact handling for incomplete tool-call responses.
-2. Decide whether to enable `autoCompactAtPercent` as an immediate configuration mitigation and choose the threshold.
-3. Decide whether the narrow near-context recovery fallback is worthwhile after the root fix.
-4. Approve the safe diagnostics needed to validate future incidents.
-5. Revisit delegation to Pi after upstream issue #7689 is implemented.
+1. Unresolved-tool-call invariant and incomplete-call handling: implemented.
+2. Provider-boundary percentage compaction: enabled globally at 95%.
+3. Narrow near-context missing-output recovery: skipped.
+4. Permanent provider, stream, compaction, and host-level regression coverage: implemented.
+5. Content-free response-decision and compaction diagnostics: implemented.
+6. Delegation to Pi's agent loop: revisit only after upstream issue #7689 is implemented.

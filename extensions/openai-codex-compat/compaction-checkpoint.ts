@@ -25,11 +25,17 @@ import { convertResponsesMessages } from "./vendor/pi-ai/openai-responses-serial
 export const CHECKPOINT_ENTRY_TYPE = "openai-codex-compat-remote-compaction";
 export const CHECKPOINT_FORMAT_VERSION = 1;
 
+export type CompactionDecision = {
+  reason: "manual" | "threshold" | "overflow" | "provider-boundary";
+  willRetry: boolean;
+};
+
 export type CheckpointData = {
   kind: typeof CHECKPOINT_ENTRY_TYPE;
   version: typeof CHECKPOINT_FORMAT_VERSION;
   modelId: string;
   history: ResponsesItem[];
+  compactionDecision?: CompactionDecision;
 };
 
 export type CheckpointSearch =
@@ -180,11 +186,31 @@ export function parseCheckpoint(value: unknown): CheckpointData | undefined {
     return undefined;
   }
 
+  const rawDecision = value["compactionDecision"];
+  let compactionDecision: CompactionDecision | undefined;
+  if (rawDecision !== undefined) {
+    if (
+      !isObject(rawDecision) ||
+      (rawDecision["reason"] !== "manual" &&
+        rawDecision["reason"] !== "threshold" &&
+        rawDecision["reason"] !== "overflow" &&
+        rawDecision["reason"] !== "provider-boundary") ||
+      typeof rawDecision["willRetry"] !== "boolean"
+    ) {
+      return undefined;
+    }
+    compactionDecision = {
+      reason: rawDecision["reason"],
+      willRetry: rawDecision["willRetry"],
+    };
+  }
+
   return {
     kind: CHECKPOINT_ENTRY_TYPE,
     version: CHECKPOINT_FORMAT_VERSION,
     modelId: value.modelId,
     history,
+    ...(compactionDecision ? { compactionDecision } : {}),
   };
 }
 
@@ -229,6 +255,7 @@ export function checkpointData(
   inputHistory: readonly ResponsesItem[],
   compactionItem: ResponsesItem,
   postCompactionTail: readonly ResponsesItem[] = [],
+  compactionDecision?: CompactionDecision,
 ): CheckpointData {
   return {
     kind: CHECKPOINT_ENTRY_TYPE,
@@ -238,6 +265,7 @@ export function checkpointData(
       ...installCompactionItem(inputHistory, compactionItem),
       ...postCompactionTail.map((item) => structuredClone(item)),
     ],
+    ...(compactionDecision ? { compactionDecision: { ...compactionDecision } } : {}),
   };
 }
 

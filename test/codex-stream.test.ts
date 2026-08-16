@@ -131,6 +131,88 @@ void test("parses reasoning and grammar tool calls into canonical Pi content", a
   assert.equal(toolCall?.id, "call_1|ctc_1");
 });
 
+void test("hydrates terminal-only output without duplicating streamed items", async () => {
+  const message = output();
+  const stream = createAssistantMessageEventStream();
+  const reasoning = {
+    type: "reasoning",
+    id: "rs_terminal",
+    status: "completed",
+    summary: [{ type: "summary_text", text: "Plan" }],
+    encrypted_content: "opaque-terminal-reasoning",
+  };
+
+  await processCodexStream(
+    events([
+      {
+        type: "response.output_item.done",
+        output_index: 0,
+        item: reasoning,
+      },
+      {
+        type: "response.completed",
+        response: {
+          id: "resp_terminal_output",
+          status: "completed",
+          output: [
+            reasoning,
+            {
+              type: "message",
+              id: "msg_terminal",
+              role: "assistant",
+              status: "completed",
+              content: [{ type: "output_text", text: "Ready", annotations: [] }],
+            },
+            {
+              type: "function_call",
+              id: "fc_terminal",
+              call_id: "call_function",
+              name: "report",
+              status: "completed",
+              arguments: '{"value":"terminal"}',
+            },
+            {
+              type: "custom_tool_call",
+              id: "ctc_terminal",
+              call_id: "call_custom",
+              name: "apply_patch",
+              status: "completed",
+              input: "*** Begin Patch\n*** End Patch",
+            },
+          ],
+          usage: { input_tokens: 10, output_tokens: 5, total_tokens: 15 },
+        },
+      },
+    ]),
+    message,
+    stream,
+    model,
+    new Map([["apply_patch", "patch"]]),
+  );
+
+  assert.equal(message.stopReason, "toolUse");
+  assert.equal(message.content.filter((block) => block.type === "thinking").length, 1);
+  assert.deepEqual(
+    message.content.map((block) =>
+      block.type === "thinking"
+        ? { type: block.type, text: block.thinking }
+        : block.type === "text"
+          ? { type: block.type, text: block.text }
+          : { type: block.type, name: block.name, arguments: block.arguments },
+    ),
+    [
+      { type: "thinking", text: "Plan" },
+      { type: "text", text: "Ready" },
+      { type: "toolCall", name: "report", arguments: { value: "terminal" } },
+      {
+        type: "toolCall",
+        name: "apply_patch",
+        arguments: { patch: "*** Begin Patch\n*** End Patch" },
+      },
+    ],
+  );
+});
+
 void test("matches Pi AI's closed grammar-input error wording", async () => {
   await assert.rejects(
     processCodexStream(

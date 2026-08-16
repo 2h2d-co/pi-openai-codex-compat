@@ -5,6 +5,7 @@
 ### Added
 
 - Add a default-off `applyPatchDebug` setting, environment override, and `/codex-settings` control that labels calls `apply_patch (debug)` and shows exact model-facing feedback without a redundant renderer-only heading in collapsed completed results while preserving normal diffs when expanded.
+- Persist content-free provider response decisions for nontrivial continuations and record the compaction reason and retry intent in native checkpoint details.
 
 ### Changed
 

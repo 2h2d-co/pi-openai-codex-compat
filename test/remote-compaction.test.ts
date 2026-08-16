@@ -2,7 +2,10 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import type { ExtensionAPI, ExtensionContext, SessionEntry } from "@earendil-works/pi-coding-agent";
 import type { Model, OpenAICodexResponsesOptions, ProviderHeaders } from "@earendil-works/pi-ai";
-import { CHECKPOINT_ENTRY_TYPE } from "../extensions/openai-codex-compat/compaction-checkpoint.ts";
+import {
+  CHECKPOINT_ENTRY_TYPE,
+  parseCheckpoint,
+} from "../extensions/openai-codex-compat/compaction-checkpoint.ts";
 import { CodexProviderRuntime } from "../extensions/openai-codex-compat/codex-provider.ts";
 import { DEFAULT_CONFIG } from "../extensions/openai-codex-compat/config.ts";
 import type { JsonRecord } from "../extensions/openai-codex-compat/codex-protocol.ts";
@@ -153,6 +156,10 @@ void test("routes manual compaction through the custom provider runtime", async 
     strategy: "memento",
   });
   assert.equal(result.compaction.details.kind, CHECKPOINT_ENTRY_TYPE);
+  assert.deepEqual(result.compaction.details["compactionDecision"], {
+    reason: "manual",
+    willRetry: false,
+  });
   assert.equal(
     (result.compaction.details.history as JsonRecord[]).at(-1)?.encrypted_content,
     "opaque-state",
@@ -203,7 +210,7 @@ void test("classifies every Pi compaction lifecycle in official Codex metadata",
       const harness = createHarness([user]);
       const handler = harness.handlers.get("session_before_compact");
       assert.ok(handler);
-      await handler(
+      const result = (await handler(
         {
           branchEntries: [user],
           preparation: { firstKeptEntryId: "user-1", tokensBefore: 50_000 },
@@ -212,11 +219,15 @@ void test("classifies every Pi compaction lifecycle in official Codex metadata",
           signal: new AbortController().signal,
         },
         harness.context,
-      );
+      )) as { compaction: { details: JsonRecord } };
 
       const metadata = harness.requests[0]?.client_metadata as JsonRecord;
       const turnMetadata = JSON.parse(String(metadata[CODEX_TURN_METADATA_HEADER])) as JsonRecord;
       assert.deepEqual(turnMetadata["compaction"], candidate.expected);
+      assert.deepEqual(result.compaction.details["compactionDecision"], {
+        reason: candidate.reason,
+        willRetry: candidate.willRetry,
+      });
     });
   }
 });
@@ -258,6 +269,28 @@ void test("captures session scope and suppresses Pi's marker summary", () => {
   assert.deepEqual(
     result.messages.map((message) => message.role),
     ["user"],
+  );
+});
+
+void test("preserves validated compaction decisions in checkpoint data", () => {
+  const checkpoint = {
+    kind: CHECKPOINT_ENTRY_TYPE,
+    version: 1,
+    modelId: "gpt-test",
+    history: [{ type: "compaction", encrypted_content: "opaque-state" }],
+    compactionDecision: { reason: "overflow", willRetry: true },
+  };
+
+  assert.deepEqual(parseCheckpoint(checkpoint)?.compactionDecision, {
+    reason: "overflow",
+    willRetry: true,
+  });
+  assert.equal(
+    parseCheckpoint({
+      ...checkpoint,
+      compactionDecision: { reason: "unknown", willRetry: true },
+    }),
+    undefined,
   );
 });
 

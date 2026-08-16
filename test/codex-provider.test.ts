@@ -121,6 +121,28 @@ function textEvents(text: string, responseId = "resp_text"): JsonRecord[] {
   ];
 }
 
+function responseDecisions(message: AssistantMessage): JsonRecord[] {
+  return (message.diagnostics ?? [])
+    .filter((diagnostic) => diagnostic.type === "codex_response_decision")
+    .map((diagnostic) => diagnostic.details ?? {});
+}
+
+const REPORT_TOOL = {
+  name: "report",
+  description: "Report a value",
+  parameters: Type.Object({ value: Type.String() }),
+} as Tool;
+
+const SAMPLE_GRAMMAR_TOOL = {
+  name: "sample_tool",
+  description: "Sample tool",
+  parameters: Type.Object({ input: Type.String() }),
+  constrainedSampling: {
+    type: "grammar" as const,
+    variants: { openai_lark: "start: /.+/" },
+  },
+} as Tool;
+
 function compactionEvents(): JsonRecord[] {
   return [
     {
@@ -495,6 +517,7 @@ void test("switches branch thread metadata while preserving prompt-cache identit
     template: {},
     priority: false,
     compactionMetadata: MANUAL_COMPACTION_METADATA,
+    compactionDecision: { reason: "manual", willRetry: false },
   });
 
   const markerData: CodexThreadMarkerData = {
@@ -688,6 +711,373 @@ void test("resamples retryable failed and incomplete responses from completed ou
     assert.equal(harness.customEntries.length, 1);
     assert.match(JSON.stringify(harness.customEntries[0]?.data), /before retry.*after retry/);
   }
+});
+
+void test("returns complete function call batches at the output limit without provider continuation", async () => {
+  const user = userEntry("user-1", "inspect both");
+  const harness = createHarness([user], DEFAULT_CONFIG, "session-function-limit", {
+    maxRetries: 5,
+    baseDelayMs: 0,
+  });
+  const calls = [
+    {
+      type: "function_call",
+      id: "fc_one",
+      call_id: "call_one",
+      name: "report",
+      status: "completed",
+      arguments: '{"value":"one"}',
+    },
+    {
+      type: "function_call",
+      id: "fc_two",
+      call_id: "call_two",
+      name: "report",
+      status: "completed",
+      arguments: '{"value":"two"}',
+    },
+  ];
+  const requests: JsonRecord[] = [];
+  harness.runtime.transport.request = async function* (_model, body) {
+    requests.push(structuredClone(body));
+    for (const [outputIndex, item] of calls.entries()) {
+      yield { type: "response.output_item.done", output_index: outputIndex, item };
+    }
+    yield {
+      type: "response.incomplete",
+      response: {
+        id: "resp_function_limit",
+        status: "incomplete",
+        incomplete_details: { reason: "max_output_tokens" },
+        output: calls,
+        usage: { input_tokens: 90_000, output_tokens: 10_000, total_tokens: 100_000 },
+      },
+    };
+  };
+  const message = await harness.runtime
+    .streamSimple(
+      codexModel(),
+      {
+        messages: [user.message as Context["messages"][number]],
+        tools: [REPORT_TOOL],
+      },
+      {
+        apiKey: accessToken(),
+        sessionId: "session-function-limit",
+        transport: "sse",
+      },
+    )
+    .result();
+
+  assert.equal(requests.length, 1);
+  assert.equal(message.stopReason, "toolUse");
+  assert.deepEqual(
+    message.content.filter((block) => block.type === "toolCall").map((block) => block.arguments),
+    [{ value: "one" }, { value: "two" }],
+  );
+  assert.deepEqual(responseDecisions(message), [
+    {
+      attempt: 1,
+      terminalType: "response.incomplete",
+      incompleteReason: "max_output_tokens",
+      itemSource: "terminal",
+      outputItemTypes: { function_call: 2 },
+      streamedCallsStarted: 2,
+      streamedCallsCompleted: 2,
+      terminalCalls: 2,
+      authoritativeCalls: 2,
+      terminalOmittedStreamedCalls: 0,
+      allCallsComplete: true,
+      decision: "return_tool_use",
+    },
+  ]);
+  assert.doesNotMatch(JSON.stringify(responseDecisions(message)), /call_one|call_two|report/);
+});
+
+void test("hydrates a complete terminal-only custom call without provider continuation", async () => {
+  const user = userEntry("user-1", "apply the custom operation");
+  const harness = createHarness([user], DEFAULT_CONFIG, "session-terminal-custom", {
+    maxRetries: 5,
+    baseDelayMs: 0,
+  });
+  let requests = 0;
+  harness.runtime.transport.request = async function* () {
+    requests += 1;
+    yield {
+      type: "response.incomplete",
+      response: {
+        id: "resp_terminal_custom",
+        status: "incomplete",
+        incomplete_details: { reason: "max_output_tokens" },
+        output: [
+          {
+            type: "custom_tool_call",
+            id: "ctc_custom",
+            call_id: "call_custom",
+            name: "sample_tool",
+            status: "completed",
+            input: "complete input",
+          },
+        ],
+        usage: { input_tokens: 90_000, output_tokens: 10_000, total_tokens: 100_000 },
+      },
+    };
+  };
+  const message = await harness.runtime
+    .streamSimple(
+      codexModel(),
+      {
+        messages: [user.message as Context["messages"][number]],
+        tools: [SAMPLE_GRAMMAR_TOOL],
+      },
+      {
+        apiKey: accessToken(),
+        sessionId: "session-terminal-custom",
+        transport: "sse",
+      },
+    )
+    .result();
+
+  assert.equal(requests, 1);
+  assert.equal(message.stopReason, "toolUse");
+  const toolCall = message.content.find((block) => block.type === "toolCall");
+  assert.deepEqual(toolCall?.arguments, { input: "complete input" });
+  assert.equal(responseDecisions(message)[0]?.["decision"], "return_tool_use");
+  assert.equal(responseDecisions(message)[0]?.["itemSource"], "terminal");
+  assert.equal(responseDecisions(message)[0]?.["streamedCallsStarted"], 0);
+});
+
+void test("executes none of a mixed complete and partial call batch", async () => {
+  const user = userEntry("user-1", "inspect both");
+  const harness = createHarness([user], DEFAULT_CONFIG, "session-partial-batch", {
+    maxRetries: 5,
+    baseDelayMs: 0,
+  });
+  let requests = 0;
+  harness.runtime.transport.request = async function* () {
+    requests += 1;
+    yield {
+      type: "response.incomplete",
+      response: {
+        id: "resp_partial_batch",
+        status: "incomplete",
+        incomplete_details: { reason: "max_output_tokens" },
+        output: [
+          {
+            type: "function_call",
+            id: "fc_complete",
+            call_id: "call_complete",
+            name: "report",
+            status: "completed",
+            arguments: '{"value":"complete"}',
+          },
+          {
+            type: "function_call",
+            id: "fc_partial",
+            call_id: "call_partial",
+            name: "report",
+            status: "incomplete",
+            arguments: '{"value":',
+          },
+        ],
+        usage: { input_tokens: 90_000, output_tokens: 10_000, total_tokens: 100_000 },
+      },
+    };
+  };
+  const message = await harness.runtime
+    .streamSimple(
+      codexModel(),
+      {
+        messages: [user.message as Context["messages"][number]],
+        tools: [REPORT_TOOL],
+      },
+      {
+        apiKey: accessToken(),
+        sessionId: "session-partial-batch",
+        transport: "sse",
+      },
+    )
+    .result();
+
+  assert.equal(requests, 1);
+  assert.equal(message.stopReason, "length");
+  assert.equal(
+    message.content.some((block) => block.type === "toolCall"),
+    false,
+  );
+  assert.equal(harness.customEntries.length, 0);
+  assert.equal(responseDecisions(message)[0]?.["decision"], "return_length_incomplete_call");
+  assert.equal(responseDecisions(message)[0]?.["allCallsComplete"], false);
+});
+
+void test("rejects a streamed call omitted from terminal output", async () => {
+  const user = userEntry("user-1", "inspect");
+  const harness = createHarness([user], DEFAULT_CONFIG, "session-omitted-call", {
+    maxRetries: 5,
+    baseDelayMs: 0,
+  });
+  const call = {
+    type: "function_call",
+    id: "fc_omitted",
+    call_id: "call_omitted",
+    name: "report",
+    status: "completed",
+    arguments: '{"value":"omitted"}',
+  };
+  let requests = 0;
+  harness.runtime.transport.request = async function* () {
+    requests += 1;
+    yield { type: "response.output_item.added", output_index: 0, item: call };
+    yield { type: "response.output_item.done", output_index: 0, item: call };
+    yield {
+      type: "response.incomplete",
+      response: {
+        id: "resp_omitted_call",
+        status: "incomplete",
+        incomplete_details: { reason: "max_output_tokens" },
+        output: [],
+        usage: { input_tokens: 90_000, output_tokens: 10_000, total_tokens: 100_000 },
+      },
+    };
+  };
+  const message = await harness.runtime
+    .streamSimple(
+      codexModel(),
+      {
+        messages: [user.message as Context["messages"][number]],
+        tools: [REPORT_TOOL],
+      },
+      {
+        apiKey: accessToken(),
+        sessionId: "session-omitted-call",
+        transport: "sse",
+      },
+    )
+    .result();
+
+  assert.equal(requests, 1);
+  assert.equal(message.stopReason, "length");
+  assert.equal(
+    message.content.some((block) => block.type === "toolCall"),
+    false,
+  );
+  assert.equal(responseDecisions(message)[0]?.["decision"], "reject_terminal_stream_mismatch");
+  assert.equal(responseDecisions(message)[0]?.["terminalOmittedStreamedCalls"], 1);
+});
+
+void test("retries failed call-bearing responses from pre-attempt input", async () => {
+  const user = userEntry("user-1", "inspect");
+  const harness = createHarness([user], DEFAULT_CONFIG, "session-failed-call-retry", {
+    maxRetries: 1,
+    baseDelayMs: 0,
+  });
+  const requests: JsonRecord[] = [];
+  harness.runtime.transport.request = async function* (_model, body) {
+    requests.push(structuredClone(body));
+    if (requests.length > 1) {
+      yield* textEvents("recovered", "resp_recovered_call");
+      return;
+    }
+    yield {
+      type: "response.failed",
+      response: {
+        id: "resp_failed_call",
+        status: "failed",
+        error: { code: "rate_limit_exceeded", message: "retry" },
+        output: [
+          {
+            type: "function_call",
+            id: "fc_failed",
+            call_id: "call_failed",
+            name: "report",
+            status: "completed",
+            arguments: '{"value":"failed"}',
+          },
+        ],
+        usage: { input_tokens: 10, output_tokens: 5, total_tokens: 15 },
+      },
+    };
+  };
+  const message = await harness.runtime
+    .streamSimple(
+      codexModel(),
+      {
+        messages: [user.message as Context["messages"][number]],
+        tools: [REPORT_TOOL],
+      },
+      {
+        apiKey: accessToken(),
+        sessionId: "session-failed-call-retry",
+        transport: "sse",
+      },
+    )
+    .result();
+
+  assert.equal(requests.length, 2);
+  assert.deepEqual(requests[1]?.input, requests[0]?.input);
+  assert.doesNotMatch(JSON.stringify(requests[1]?.input), /function_call|call_failed/);
+  assert.equal(message.stopReason, "stop");
+  assert.equal(
+    message.content.some((block) => block.type === "toolCall"),
+    false,
+  );
+  assert.deepEqual(
+    responseDecisions(message).map((decision) => decision["decision"]),
+    ["retry_original_input", "return_terminal"],
+  );
+});
+
+void test("preserves non-retryable failed call-bearing responses", async () => {
+  const user = userEntry("user-1", "invalid request");
+  const harness = createHarness([user], DEFAULT_CONFIG, "session-failed-call-fatal", {
+    maxRetries: 1,
+    baseDelayMs: 0,
+  });
+  let requests = 0;
+  harness.runtime.transport.request = async function* () {
+    requests += 1;
+    yield {
+      type: "response.failed",
+      response: {
+        id: "resp_failed_call_fatal",
+        status: "failed",
+        error: { code: "invalid_prompt", message: "Invalid request." },
+        output: [
+          {
+            type: "function_call",
+            id: "fc_fatal",
+            call_id: "call_fatal",
+            name: "report",
+            status: "completed",
+            arguments: '{"value":"fatal"}',
+          },
+        ],
+      },
+    };
+  };
+  const message = await harness.runtime
+    .streamSimple(
+      codexModel(),
+      {
+        messages: [user.message as Context["messages"][number]],
+        tools: [REPORT_TOOL],
+      },
+      {
+        apiKey: accessToken(),
+        sessionId: "session-failed-call-fatal",
+        transport: "sse",
+      },
+    )
+    .result();
+
+  assert.equal(requests, 1);
+  assert.equal(message.stopReason, "error");
+  assert.equal(message.errorMessage, "Invalid request.");
+  assert.equal(
+    message.content.some((block) => block.type === "toolCall"),
+    false,
+  );
+  assert.equal(responseDecisions(message)[0]?.["decision"], "preserve_terminal_error");
 });
 
 void test("does not resample official fatal response.failed codes", async () => {
@@ -1145,6 +1535,7 @@ void test("validates direct-stream and compaction authentication before payload 
       template: {},
       priority: false,
       compactionMetadata: MANUAL_COMPACTION_METADATA,
+      compactionDecision: { reason: "manual", willRetry: false },
     }),
     /Failed to extract accountId from token/,
   );
@@ -1185,6 +1576,7 @@ void test("discards WebSockets when compaction response validation fails", async
       template: {},
       priority: false,
       compactionMetadata: MANUAL_COMPACTION_METADATA,
+      compactionDecision: { reason: "manual", willRetry: false },
     }),
     /exactly one is required/,
   );
@@ -1215,6 +1607,7 @@ void test("advances Codex window metadata after successful direct compaction", a
     template: {},
     priority: false,
     compactionMetadata: MANUAL_COMPACTION_METADATA,
+    compactionDecision: { reason: "manual", willRetry: false },
   });
   await harness.runtime
     .streamSimple(
@@ -1430,8 +1823,9 @@ void test("discards downstream-failed WebSockets without activating SSE fallback
   assert.equal(terminalFailure.errorMessage, "Response incomplete: content_filter");
   assert.deepEqual(
     terminalFailure.diagnostics?.map((diagnostic) => diagnostic.type),
-    ["codex_transport_request"],
+    ["codex_transport_request", "codex_response_decision"],
   );
+  assert.equal(responseDecisions(terminalFailure)[0]?.["decision"], "return_terminal");
 
   const recovered = await harness.runtime
     .streamSimple(codexModel(), context, requestOptions)
@@ -1731,7 +2125,12 @@ void test("performs percentage compaction before sampling the current user input
   });
   assert.equal(continuedMetadata["x-codex-window-id"], "session-1:1");
   assert.equal(harness.compactions.length, 1);
-  assert.ok(harness.compactions[0]?.usage);
+  const recordedCompaction = harness.compactions[0];
+  assert.ok(recordedCompaction?.usage);
+  assert.deepEqual((recordedCompaction.details as JsonRecord)["compactionDecision"], {
+    reason: "provider-boundary",
+    willRetry: true,
+  });
   assert.deepEqual(harness.statuses, []);
 });
 

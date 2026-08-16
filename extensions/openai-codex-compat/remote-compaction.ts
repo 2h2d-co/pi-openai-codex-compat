@@ -188,6 +188,10 @@ export default function registerRemoteCompaction(
         template,
         priority: config.fastMode,
         compactionMetadata: compactionMetadata(event.reason),
+        compactionDecision: {
+          reason: event.reason,
+          willRetry: event.willRetry,
+        },
       });
 
       return {

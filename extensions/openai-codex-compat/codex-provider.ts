@@ -9,6 +9,7 @@ import {
   clampThinkingLevel,
   createAssistantMessageEventStream,
   type AssistantMessage,
+  type AssistantMessageDiagnostic,
   type AssistantMessageEventStream,
   type Context,
   type Model,
@@ -28,6 +29,7 @@ import {
   providerHistory,
   searchCheckpoint,
   type CheckpointData,
+  type CompactionDecision,
   type GrammarToolInputProperties,
 } from "./compaction-checkpoint.ts";
 import {
@@ -133,6 +135,23 @@ type CodexAttemptCapture = {
   terminalItems?: ResponsesItem[];
 };
 
+type CodexToolCallAssessment = {
+  allComplete: boolean;
+  authoritativeCount: number;
+  hasToolCalls: boolean;
+  omittedStreamedCount: number;
+  terminalCount: number;
+};
+
+type CodexResponseDecision =
+  | "continue_no_tools"
+  | "preserve_terminal_error"
+  | "reject_terminal_stream_mismatch"
+  | "retry_original_input"
+  | "return_length_incomplete_call"
+  | "return_terminal"
+  | "return_tool_use";
+
 export type CodexResponseRetryPolicy = {
   maxRetries: number;
   baseDelayMs: number;
@@ -237,20 +256,74 @@ function assessAttemptToolCalls(
   items: readonly ResponsesItem[],
   capture: CodexAttemptCapture,
   terminalType: CodexTerminalState["type"],
-): { allComplete: boolean; hasToolCalls: boolean } {
+): CodexToolCallAssessment {
   const calls = items.filter(isToolCallItem);
   const authoritativeKeys = new Set(calls.map(toolCallKey));
-  const omittedStreamedCall = [...capture.streamedToolCallKeys].some(
+  const omittedStreamedCount = [...capture.streamedToolCallKeys].filter(
     (key) => !authoritativeKeys.has(key),
-  );
+  ).length;
   const hasToolCalls = calls.length > 0 || capture.streamedToolCallKeys.size > 0;
   return {
     hasToolCalls,
     allComplete:
       hasToolCalls &&
-      !omittedStreamedCall &&
+      omittedStreamedCount === 0 &&
       calls.length > 0 &&
       calls.every((item) => toolCallIsComplete(item, capture, terminalType)),
+    authoritativeCount: calls.length,
+    omittedStreamedCount,
+    terminalCount: capture.terminalItems?.filter(isToolCallItem).length ?? 0,
+  };
+}
+
+function outputItemTypeCounts(items: readonly ResponsesItem[]): Record<string, number> {
+  const counts: Record<string, number> = {};
+  for (const item of items) {
+    const type = item.type ?? "message";
+    counts[type] = (counts[type] ?? 0) + 1;
+  }
+  return counts;
+}
+
+function responseDecisionDiagnostic(options: {
+  attempt: number;
+  attemptItems: readonly ResponsesItem[];
+  capture: CodexAttemptCapture;
+  decision: CodexResponseDecision;
+  incompleteReason?: string;
+  terminalState: CodexTerminalState;
+  toolCalls: CodexToolCallAssessment;
+}): AssistantMessageDiagnostic | undefined {
+  const endTurn =
+    typeof options.terminalState.response?.["end_turn"] === "boolean"
+      ? options.terminalState.response["end_turn"]
+      : undefined;
+  const nontrivial =
+    options.attempt > 1 ||
+    options.terminalState.type !== "response.completed" ||
+    endTurn === false ||
+    options.toolCalls.hasToolCalls ||
+    options.toolCalls.omittedStreamedCount > 0;
+  if (!nontrivial) return undefined;
+
+  return {
+    type: "codex_response_decision",
+    timestamp: Date.now(),
+    details: {
+      attempt: options.attempt,
+      terminalType: options.terminalState.type ?? "missing",
+      ...(options.incompleteReason ? { incompleteReason: options.incompleteReason } : {}),
+      ...(endTurn === undefined ? {} : { endTurn }),
+      itemSource: options.capture.terminalItems ? "terminal" : "stream-fallback",
+      outputItemTypes: outputItemTypeCounts(options.attemptItems),
+      streamedCallsStarted: options.capture.streamedToolCallKeys.size,
+      streamedCallsCompleted: options.capture.streamedCompletedToolCallKeys.size,
+      terminalCalls: options.toolCalls.terminalCount,
+      authoritativeCalls: options.toolCalls.authoritativeCount,
+      terminalOmittedStreamedCalls: options.toolCalls.omittedStreamedCount,
+      allCallsComplete: options.toolCalls.allComplete,
+      decision: options.decision,
+    },
   };
 }
 
@@ -887,6 +960,7 @@ export class CodexProviderRuntime {
     grammarToolInputProperties: GrammarToolInputProperties;
     priority: boolean;
     compactionMetadata: CodexCompactionMetadata;
+    compactionDecision: CompactionDecision;
     agentTurn?: ActiveAgentTurn;
     responsesLiteEnabled?: boolean;
   }): Promise<{ checkpoint: CheckpointData; usage?: Usage }> {
@@ -960,6 +1034,7 @@ export class CodexProviderRuntime {
         options.history,
         compacted.item,
         options.postCompactionTail,
+        options.compactionDecision,
       ),
       ...(compacted.usage ? { usage: compacted.usage } : {}),
     };
@@ -1032,6 +1107,7 @@ export class CodexProviderRuntime {
       grammarToolInputProperties,
       priority: scope.config.fastMode,
       compactionMetadata: responsesCompactionV2Metadata("auto", "context_limit", "pre_turn"),
+      compactionDecision: { reason: "provider-boundary", willRetry: true },
       agentTurn,
       responsesLiteEnabled,
     });
@@ -1242,6 +1318,18 @@ export class CodexProviderRuntime {
           const maxOutputIncomplete =
             terminalState.type === "response.incomplete" &&
             incompleteReason === "max_output_tokens";
+          const recordDecision = (decision: CodexResponseDecision): void => {
+            const diagnostic = responseDecisionDiagnostic({
+              attempt: responseRequests,
+              attemptItems,
+              capture: attemptCapture,
+              decision,
+              ...(incompleteReason ? { incompleteReason } : {}),
+              terminalState,
+              toolCalls,
+            });
+            if (diagnostic) output.diagnostics = [...(output.diagnostics ?? []), diagnostic];
+          };
 
           // Tool calls create a client-execution boundary. Never append them to an
           // internal provider continuation before Pi can return the linked outputs.
@@ -1255,6 +1343,7 @@ export class CodexProviderRuntime {
               rawItems.push(...attemptItems.map((item) => structuredClone(item)));
               output.stopReason = "toolUse";
               delete output.errorMessage;
+              recordDecision("return_tool_use");
               break;
             }
 
@@ -1268,6 +1357,7 @@ export class CodexProviderRuntime {
               output.stopReason = "pending";
               delete output.errorMessage;
               delete output.rawStopReason;
+              recordDecision("retry_original_input");
               await waitForResponseRetry(
                 responseRetryDelayMs(this.responseRetryPolicy.baseDelayMs, responseRetries),
                 requestOptions.signal,
@@ -1279,6 +1369,13 @@ export class CodexProviderRuntime {
               output.rawStopReason = "incomplete.tool_call";
               delete output.errorMessage;
             }
+            recordDecision(
+              toolCalls.omittedStreamedCount > 0
+                ? "reject_terminal_stream_mismatch"
+                : output.stopReason === "length"
+                  ? "return_length_incomplete_call"
+                  : "preserve_terminal_error",
+            );
             break;
           }
 
@@ -1299,6 +1396,7 @@ export class CodexProviderRuntime {
             output.stopReason = "pending";
             delete output.errorMessage;
             delete output.rawStopReason;
+            recordDecision("continue_no_tools");
             await waitForResponseRetry(
               responseRetryDelayMs(this.responseRetryPolicy.baseDelayMs, responseRetries),
               requestOptions.signal,
@@ -1320,8 +1418,10 @@ export class CodexProviderRuntime {
             output.stopReason = "pending";
             delete output.errorMessage;
             delete output.rawStopReason;
+            recordDecision("continue_no_tools");
             continue;
           }
+          recordDecision("return_terminal");
           break;
         }
         if (requestOptions.signal?.aborted) throw new Error("Request was aborted");
@@ -1422,6 +1522,7 @@ export class CodexProviderRuntime {
     template: JsonRecord;
     priority: boolean;
     compactionMetadata: CodexCompactionMetadata;
+    compactionDecision: CompactionDecision;
   }): Promise<{ checkpoint: CheckpointData; usage?: Usage }> {
     validateCodexAuthentication(options.model, options.requestOptions.apiKey);
     const release = await this.acquireRequest(

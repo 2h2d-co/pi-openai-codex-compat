@@ -318,6 +318,7 @@ function textEvents(text: string): JsonRecord[] {
 
 async function startCodexServer(
   t: TestContext,
+  responseEvents?: (requestNumber: number, body: JsonRecord) => JsonRecord[],
 ): Promise<{ baseUrl: string; requests: JsonRecord[] }> {
   const requests: JsonRecord[] = [];
   let ordinaryRequests = 0;
@@ -338,11 +339,13 @@ async function startCodexServer(
 
     const input = Array.isArray(body["input"]) ? (body["input"] as JsonRecord[]) : [];
     const compacting = input.some((item) => item["type"] === "compaction_trigger");
-    const events = compacting
-      ? compactionEvents()
-      : ++ordinaryRequests === 1
-        ? incompleteEvents()
-        : textEvents("continued after resampling");
+    const events = responseEvents
+      ? responseEvents(requests.length, body)
+      : compacting
+        ? compactionEvents()
+        : ++ordinaryRequests === 1
+          ? incompleteEvents()
+          : textEvents("continued after resampling");
     response.writeHead(200, { "content-type": "text/event-stream" });
     response.end(sse(events));
   });
@@ -390,9 +393,8 @@ async function pointBuiltInCodexAt(baseUrl: string, t: TestContext): Promise<voi
   });
 }
 
-void test("resamples a Codex output limit before returning control to Pi", async (t) => {
-  const server = await startCodexServer(t);
-  await pointBuiltInCodexAt(server.baseUrl, t);
+async function createTestSession(t: TestContext, baseUrl: string, options?: { tools?: boolean }) {
+  await pointBuiltInCodexAt(baseUrl, t);
 
   const tempRoot = await mkdtemp(join(tmpdir(), "pi-codex-output-limit-"));
   const cwd = join(tempRoot, "cwd");
@@ -451,13 +453,19 @@ void test("resamples a Codex output limit before returning control to Pi", async
     resourceLoader,
     model,
     thinkingLevel: "low",
-    noTools: "all",
+    ...(options?.tools ? {} : { noTools: "all" as const }),
   });
   t.after(() => result.session.dispose());
   await result.session.bindExtensions({});
+  return { cwd, session: result.session };
+}
 
-  await result.session.prompt("finish this task", { expandPromptTemplates: false });
-  await result.session.waitForIdle();
+void test("resamples a Codex output limit before returning control to Pi", async (t) => {
+  const server = await startCodexServer(t);
+  const { session } = await createTestSession(t, server.baseUrl);
+
+  await session.prompt("finish this task", { expandPromptTemplates: false });
+  await session.waitForIdle();
 
   assert.equal(server.requests.length, 3);
   const [initial, resampled, thresholdCompaction] = server.requests;
@@ -480,7 +488,7 @@ void test("resamples a Codex output limit before returning control to Pi", async
     new RegExp(OUTPUT_LIMIT_CONTINUATION_PROMPT),
   );
 
-  const branch = result.session.sessionManager.getBranch();
+  const branch = session.sessionManager.getBranch();
   const lengthIndex = branch.findIndex(
     (entry) =>
       entry.type === "message" &&
@@ -514,5 +522,72 @@ void test("resamples a Codex output limit before returning control to Pi", async
     ),
     /partial progress.*continued after resampling/,
   );
-  assert.equal(result.session.isIdle, true);
+  assert.equal(session.isIdle, true);
+});
+
+void test("executes an output-limit tool call before the next provider request", async (t) => {
+  const call = {
+    type: "function_call",
+    id: "fc_read",
+    call_id: "call_read",
+    name: "read",
+    status: "completed",
+    arguments: '{"path":"fixture.txt"}',
+  };
+  const server = await startCodexServer(t, (requestNumber) =>
+    requestNumber === 1
+      ? [
+          {
+            type: "response.incomplete",
+            response: {
+              id: "resp_read",
+              status: "incomplete",
+              incomplete_details: { reason: "max_output_tokens" },
+              output: [call],
+              usage: { input_tokens: 100, output_tokens: 10, total_tokens: 110 },
+            },
+          },
+        ]
+      : textEvents("finished after reading"),
+  );
+  const { cwd, session } = await createTestSession(t, server.baseUrl, { tools: true });
+  await writeFile(join(cwd, "fixture.txt"), "fixture-content");
+
+  await session.prompt("read the fixture", { expandPromptTemplates: false });
+  await session.waitForIdle();
+
+  assert.equal(server.requests.length, 2);
+  const followUpInput = server.requests[1]?.["input"] as JsonRecord[];
+  const toolOutput = followUpInput.find(
+    (item) => item["type"] === "function_call_output" && item["call_id"] === "call_read",
+  );
+  assert.ok(toolOutput);
+  assert.match(JSON.stringify(toolOutput), /fixture-content/);
+
+  const branch = session.sessionManager.getBranch();
+  const firstAssistant = branch.find(
+    (entry) =>
+      entry.type === "message" &&
+      entry.message.role === "assistant" &&
+      entry.message.stopReason === "toolUse",
+  );
+  assert.equal(firstAssistant?.type, "message");
+  assert.match(
+    JSON.stringify(
+      firstAssistant?.type === "message" && firstAssistant.message.role === "assistant"
+        ? firstAssistant.message.diagnostics
+        : [],
+    ),
+    /codex_response_decision.*return_tool_use/,
+  );
+  assert.equal(
+    branch.some(
+      (entry) =>
+        entry.type === "message" &&
+        entry.message.role === "toolResult" &&
+        entry.message.toolCallId.startsWith("call_read|"),
+    ),
+    true,
+  );
+  assert.equal(session.isIdle, true);
 });
