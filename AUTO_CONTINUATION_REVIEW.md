@@ -1,6 +1,6 @@
 # Auto-Continuation and Overflow Recovery Review
 
-- Status: In review; implementation is deferred until all decisions are complete
+- Status: Decisions complete; implementation pending
 - Scope: Output-limit continuation, committed-prefix overflow recovery, provider-subrequest compaction, and host-level regression coverage
 
 ## Dictionary
@@ -63,9 +63,9 @@ Terminal `response.output` snapshots do not commit regular response items.
 | Output-limit hidden-continuation chain limit                        | Leave unchanged; do not add a chain-wide bound                                |
 | Context overflow after a committed prefix `B1`                      | Preserve validated `B1`, compact immediately, and retry automatically         |
 | Percentage compaction before internal `end_turn:false` continuation | Implement Option B: proactive compaction with an explicit Pi history boundary |
-| Successful compaction-to-hidden-continuation host regression        | Pending review                                                                |
+| Successful compaction-to-hidden-continuation regression coverage    | Implement Option A: add focused unit and full host-level coverage             |
 
-No implementation should begin until the remaining decisions are complete.
+The selected changes must preserve the context and transcript layouts documented below.
 
 ## 1. Output-Limit Hidden-Continuation Chains
 
@@ -128,7 +128,7 @@ Rationale:
 - Repeated hidden continuations remain useful for genuinely long output where requests continue fitting in the context window.
 - A hard chain cap would trade autonomous completion for a low-probability protection.
 
-## 2. Preserve a Committed Prefix Across Context Overflow
+## Selected Cross-Cutting Improvement: Preserve a Committed Prefix Across Context Overflow
 
 ### Current architecture
 
@@ -243,7 +243,7 @@ Official-style preservation of B1
 + automatic retry of the interrupted turn
 ```
 
-## 3. Percentage Compaction Before Internal Provider Continuations
+## 2. Percentage Compaction Before Internal Provider Continuations
 
 ### Precise case under review
 
@@ -478,9 +478,59 @@ Hidden alternative:
 
 This option is not preferred.
 
-## 4. Successful Compaction-to-Hidden-Continuation Host Coverage
+## 3. Successful Compaction-to-Hidden-Continuation Coverage
 
-Status: Pending review.
+### Behavior under test
+
+The output-limit continuation hook exists for an exact length result that Pi does not automatically retry:
+
+```text
+U    original user request
+L    final Pi assistant with incomplete.max_output_tokens
+T    compaction trigger
+K    successful native compaction checkpoint
+H    hidden continuation message
+F    final successful assistant response
+```
+
+The target lifecycle is:
+
+```text
+[U]
+→ L
+→ compact [U, L, T]
+→ install K
+→ agent settles
+→ add hidden H
+→ sample [retained U, K, H]
+→ F
+```
+
+This is threshold compaction with:
+
+```text
+reason = threshold
+willRetry = false
+```
+
+Pi installs `K` but does not continue by itself. The output-limit hook waits for successful compaction and starts the hidden turn only at `agent_settled`.
+
+The three observable layouts are:
+
+```text
+Persisted Pi session:
+[U, L, K, H, F]
+
+Visible TUI:
+[U, L, K, F]
+
+Active provider context for F:
+[retained U, K, H]
+```
+
+`H` is persisted for deterministic replay but has `display: false`.
+
+### Existing coverage
 
 The current unit coverage verifies:
 
@@ -505,6 +555,78 @@ exact output-limit length result
 
 The former integration test for that exact path was replaced when provider-owned resampling was introduced.
 
+### Missing focused unit case
+
+The event harness does not directly exercise the successful state transition:
+
+```text
+agent_end(L)
+→ session_before_compact
+→ session_compact
+→ agent_settled
+→ H is sent
+```
+
+It covers no compaction, cancellation, and a compaction that starts but never emits `session_compact`; it does not cover:
+
+```text
+compaction = started
+→ compaction = completed
+→ continue
+```
+
+### Missing host case
+
+The host regression must drive the complete integration:
+
+```text
+provider retry budget is exhausted
+→ Pi receives L
+→ Pi starts threshold compaction
+→ native compaction returns K
+→ Pi emits session_compact
+→ Pi emits agent_settled
+→ extension persists hidden H and triggers a turn
+→ next provider request reconstructs [retained U, K, H]
+→ provider returns F
+```
+
+It must assert:
+
+1. The compaction request contains `T`.
+2. The hidden continuation request contains `K` and `H`.
+3. The hidden request does not replay the uncompacted full prefix.
+4. The persisted order is `[U, L, K, H, F]`.
+5. The visible continuation remains hidden through `display: false`.
+6. Exactly one hidden continuation is recorded for the exhausted response.
+
+The provider's default five-retry policy may require six incomplete mock responses before `L`. Test infrastructure may inject a zero delay, but production retry policy must not be weakened for test convenience.
+
+### Options considered
+
+#### Option A: Unit and host coverage
+
+- Isolate the `started → completed → H` state transition.
+- Prove real Pi event ordering and checkpoint reconstruction.
+- Protect the exact user-facing behavior that motivated the hidden continuation.
+
+Decision: selected.
+
+#### Option B: Host coverage only
+
+- Proves the integrated behavior.
+- Makes state-machine failures slower and harder to diagnose.
+
+#### Option C: Unit coverage only
+
+- Fast and focused.
+- Does not prove actual Pi lifecycle ordering or final provider context `[K, H]`.
+
+#### Option D: Leave coverage unchanged
+
+- Avoids a more involved fixture.
+- Leaves the primary compaction-to-continuation behavior unverified end to end.
+
 ## Deferred Implementation Checklist
 
 - [x] Leave output-limit hidden-continuation chaining unchanged.
@@ -513,5 +635,7 @@ The former integration test for that exact path was replaced when provider-owned
 - [x] Use proactive internal compaction for `end_turn:false`.
 - [ ] Preserve TUI/session order as `[H0, B1, K, B2]`.
 - [ ] Preserve active provider context as `[retained recent items, K, B2]`.
-- [ ] Decide whether to restore host-level coverage for successful compaction followed by hidden continuation.
-- [ ] Implement all selected changes only after the review is complete.
+- [x] Add both focused unit and full host coverage for successful compaction followed by hidden continuation.
+- [ ] Verify hidden continuation persistence as `[U, L, K, H, F]`.
+- [ ] Verify hidden continuation provider context as `[retained U, K, H]`.
+- [ ] Implement all selected changes.
