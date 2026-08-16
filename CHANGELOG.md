@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.0.8 - 2026-08-16
+
 ### Fixed
 
 - Match Codex tool-call commit semantics by trusting only `response.output_item.done`, ignoring terminal output snapshots and terminal-only calls, executing the completed subset of mixed batches, and preserving completed calls across incomplete or failed response handling.
