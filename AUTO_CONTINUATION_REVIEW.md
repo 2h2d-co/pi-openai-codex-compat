@@ -630,8 +630,8 @@ Decision: selected.
 ## Deferred Implementation Checklist
 
 - [x] Leave output-limit hidden-continuation chaining unchanged.
-- [ ] Preserve a validated committed prefix `B1` during immediate overflow compaction.
-- [ ] Retry automatically from the installed checkpoint after preserving `B1`.
+- [x] Preserve a validated committed prefix `B1` during immediate overflow compaction.
+- [x] Retry automatically from the installed checkpoint after preserving `B1`.
 - [x] Use proactive internal compaction for `end_turn:false`.
 - [ ] Preserve TUI/session order as `[H0, B1, K, B2]`.
 - [ ] Preserve active provider context as `[retained recent items, K, B2]`.

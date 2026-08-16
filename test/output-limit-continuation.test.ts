@@ -287,6 +287,24 @@ function compactionEvents(): JsonRecord[] {
   ];
 }
 
+function contextOverflowEvents(): JsonRecord[] {
+  return [
+    { type: "response.created", response: { id: "resp_overflow" } },
+    {
+      type: "response.failed",
+      response: {
+        id: "resp_overflow",
+        status: "failed",
+        error: {
+          code: "context_length_exceeded",
+          message: "Your input exceeds the context window of this model.",
+        },
+        usage: { input_tokens: 260_005, output_tokens: 0, total_tokens: 260_005 },
+      },
+    },
+  ];
+}
+
 function textEvents(text: string): JsonRecord[] {
   return [
     { type: "response.created", response: { id: "resp_continued" } },
@@ -521,6 +539,65 @@ void test("resamples a Codex output limit before returning control to Pi", async
         : [],
     ),
     /partial progress.*continued after resampling/,
+  );
+  assert.equal(session.isIdle, true);
+});
+
+void test("preserves committed progress across overflow compaction and automatic retry", async (t) => {
+  const server = await startCodexServer(t, (requestNumber, body) => {
+    const input = body["input"] as JsonRecord[];
+    if (input.some((item) => item["type"] === "compaction_trigger")) return compactionEvents();
+    if (requestNumber === 1) return incompleteEvents();
+    if (requestNumber === 2) return contextOverflowEvents();
+    return textEvents("finished after overflow recovery");
+  });
+  const { session } = await createTestSession(t, server.baseUrl);
+
+  await session.prompt("finish this task", { expandPromptTemplates: false });
+  await session.waitForIdle();
+
+  assert.equal(server.requests.length, 4);
+  const [initial, overflowAttempt, compaction, retry] = server.requests;
+  assert.ok(initial);
+  assert.ok(overflowAttempt);
+  assert.ok(compaction);
+  assert.ok(retry);
+  assert.match(JSON.stringify(overflowAttempt["input"]), /partial progress/);
+  assert.match(JSON.stringify(compaction["input"]), /finish this task.*partial progress/);
+  assert.deepEqual((compaction["input"] as JsonRecord[]).at(-1), {
+    type: "compaction_trigger",
+  });
+  assert.match(JSON.stringify(retry["input"]), /opaque-state/);
+  assert.doesNotMatch(JSON.stringify(retry["input"]), /partial progress/);
+  assert.doesNotMatch(JSON.stringify(retry["input"]), /context_length_exceeded/);
+
+  const branch = session.sessionManager.getBranch();
+  const compactionIndex = branch.findIndex((entry) => entry.type === "compaction");
+  const failedIndex = branch.findIndex(
+    (entry) =>
+      entry.type === "message" &&
+      entry.message.role === "assistant" &&
+      entry.message.stopReason === "error",
+  );
+  const finalAssistant = branch.findLast(
+    (entry) => entry.type === "message" && entry.message.role === "assistant",
+  );
+  assert.ok(failedIndex >= 0);
+  assert.ok(compactionIndex > failedIndex);
+  assert.equal(
+    branch.some(
+      (entry) =>
+        entry.type === "custom_message" && entry.customType === OUTPUT_LIMIT_CONTINUATION_TYPE,
+    ),
+    false,
+  );
+  assert.match(
+    JSON.stringify(
+      finalAssistant?.type === "message" && finalAssistant.message.role === "assistant"
+        ? finalAssistant.message.content
+        : [],
+    ),
+    /finished after overflow recovery/,
   );
   assert.equal(session.isIdle, true);
 });

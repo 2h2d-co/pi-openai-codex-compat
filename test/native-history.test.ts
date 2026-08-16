@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import type { SessionEntry } from "@earendil-works/pi-coding-agent";
 import {
+  nativeCommittedPrefixBeforeOverflow,
   nativeResponseData,
   nativeResponseOverrides,
   NATIVE_RESPONSE_ENTRY_TYPE,
@@ -41,4 +42,82 @@ void test("fails closed on corrupt native response entries", () => {
   ] as SessionEntry[];
 
   assert.throws(() => nativeResponseOverrides(branch, "gpt-test"), /corrupt/);
+});
+
+void test("recovers only done prefixes with linked tool outputs before overflow", () => {
+  const attempts = [
+    {
+      itemCount: 1,
+      terminalType: "response.incomplete" as const,
+      terminalReason: "max_output_tokens",
+    },
+    {
+      itemCount: 0,
+      terminalType: "response.failed" as const,
+      terminalReason: "context_length_exceeded",
+    },
+  ];
+  const committed = {
+    type: "message",
+    id: "msg_1",
+    role: "assistant",
+    content: [{ type: "output_text", text: "progress" }],
+  };
+  const safeBranch = [
+    {
+      type: "custom",
+      id: "native-safe",
+      parentId: null,
+      timestamp: new Date().toISOString(),
+      customType: NATIVE_RESPONSE_ENTRY_TYPE,
+      data: nativeResponseData("gpt-test", "resp_safe", [committed], attempts),
+    },
+  ] as SessionEntry[];
+
+  assert.deepEqual(nativeCommittedPrefixBeforeOverflow(safeBranch, "gpt-test", "resp_safe"), [
+    committed,
+  ]);
+
+  const unresolvedCall = {
+    type: "function_call",
+    id: "call_item",
+    call_id: "call_1",
+    name: "read",
+    arguments: "{}",
+  };
+  const unsafeBranch = [
+    {
+      type: "custom",
+      id: "native-unsafe",
+      parentId: null,
+      timestamp: new Date().toISOString(),
+      customType: NATIVE_RESPONSE_ENTRY_TYPE,
+      data: nativeResponseData("gpt-test", "resp_unsafe", [unresolvedCall], attempts),
+    },
+  ] as SessionEntry[];
+  assert.equal(
+    nativeCommittedPrefixBeforeOverflow(unsafeBranch, "gpt-test", "resp_unsafe"),
+    undefined,
+  );
+
+  const legacyBranch = [
+    {
+      type: "custom",
+      id: "native-legacy",
+      parentId: null,
+      timestamp: new Date().toISOString(),
+      customType: NATIVE_RESPONSE_ENTRY_TYPE,
+      data: {
+        kind: NATIVE_RESPONSE_ENTRY_TYPE,
+        version: 1,
+        modelId: "gpt-test",
+        responseId: "resp_legacy",
+        items: [committed],
+      },
+    },
+  ] as SessionEntry[];
+  assert.equal(
+    nativeCommittedPrefixBeforeOverflow(legacyBranch, "gpt-test", "resp_legacy"),
+    undefined,
+  );
 });

@@ -10,6 +10,10 @@ import { CodexProviderRuntime } from "../extensions/openai-codex-compat/codex-pr
 import { DEFAULT_CONFIG } from "../extensions/openai-codex-compat/config.ts";
 import type { JsonRecord } from "../extensions/openai-codex-compat/codex-protocol.ts";
 import { CODEX_TURN_METADATA_HEADER } from "../extensions/openai-codex-compat/codex-metadata.ts";
+import {
+  nativeResponseData,
+  NATIVE_RESPONSE_ENTRY_TYPE,
+} from "../extensions/openai-codex-compat/native-history.ts";
 import registerRemoteCompaction from "../extensions/openai-codex-compat/remote-compaction.ts";
 
 function codexModel(): Model<any> {
@@ -230,6 +234,91 @@ void test("classifies every Pi compaction lifecycle in official Codex metadata",
       });
     });
   }
+});
+
+void test("preserves a proven committed prefix in overflow compaction", async () => {
+  const user = userEntry("user-1", "finish this task");
+  const committedItem = {
+    type: "message",
+    id: "msg_committed",
+    role: "assistant",
+    status: "completed",
+    content: [{ type: "output_text", text: "committed progress", annotations: [] }],
+  };
+  const native = {
+    type: "custom",
+    id: "native-1",
+    parentId: "user-1",
+    timestamp: new Date().toISOString(),
+    customType: NATIVE_RESPONSE_ENTRY_TYPE,
+    data: nativeResponseData(
+      "gpt-test",
+      "resp_overflow",
+      [committedItem],
+      [
+        {
+          itemCount: 1,
+          terminalType: "response.incomplete",
+          terminalReason: "max_output_tokens",
+        },
+        {
+          itemCount: 0,
+          terminalType: "response.failed",
+          terminalReason: "context_length_exceeded",
+        },
+      ],
+    ),
+  } as SessionEntry;
+  const failed = {
+    type: "message",
+    id: "assistant-error",
+    parentId: "native-1",
+    timestamp: new Date().toISOString(),
+    message: {
+      role: "assistant",
+      content: [{ type: "text", text: "committed progress" }],
+      api: "openai-codex-responses",
+      provider: "openai-codex",
+      model: "gpt-test",
+      responseId: "resp_overflow",
+      usage: {
+        input: 100_000,
+        output: 5,
+        cacheRead: 0,
+        cacheWrite: 0,
+        totalTokens: 100_005,
+        cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+      },
+      stopReason: "error",
+      errorMessage: "context_length_exceeded",
+      timestamp: Date.now(),
+    },
+  } as SessionEntry;
+  const branch = [user, native, failed];
+  const harness = createHarness(branch);
+  const handler = harness.handlers.get("session_before_compact");
+  assert.ok(handler);
+
+  const result = (await handler(
+    {
+      branchEntries: branch,
+      preparation: { firstKeptEntryId: "user-1", tokensBefore: 100_005 },
+      reason: "overflow",
+      willRetry: true,
+      signal: new AbortController().signal,
+    },
+    harness.context,
+  )) as { compaction: { details: JsonRecord } };
+
+  assert.equal(harness.requests.length, 1);
+  const input = harness.requests[0]?.input as JsonRecord[];
+  assert.match(JSON.stringify(input), /finish this task.*committed progress/);
+  assert.deepEqual(input.at(-1), { type: "compaction_trigger" });
+  assert.doesNotMatch(JSON.stringify(input), /context_length_exceeded/);
+  assert.deepEqual(result.compaction.details["compactionDecision"], {
+    reason: "overflow",
+    willRetry: true,
+  });
 });
 
 void test("captures session scope and suppresses Pi's marker summary", () => {

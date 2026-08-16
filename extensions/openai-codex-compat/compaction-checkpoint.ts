@@ -14,7 +14,7 @@ import {
   isResponsesItem,
   type ResponsesItem,
 } from "./codex-protocol.ts";
-import { nativeResponseOverrides } from "./native-history.ts";
+import { nativeCommittedPrefixBeforeOverflow, nativeResponseOverrides } from "./native-history.ts";
 import {
   CODEX_NAMESPACED_TOOL_NAMES,
   CODEX_TEXT_CONTENT_ITEM_TOOL_RESULT_NAMES,
@@ -279,10 +279,11 @@ export function providerHistory(options: {
   allTools: readonly ToolInfo[];
   grammarToolInputProperties?: GrammarToolInputProperties;
   imageDetail?: ImageDetail;
-  dropLatestFailedAssistant?: boolean;
+  recoverLatestOverflowPrefix?: boolean;
 }): ResponsesItem[] {
   const branch = [...options.branch];
-  if (options.dropLatestFailedAssistant) {
+  let recoveredPrefix: ResponsesItem[] = [];
+  if (options.recoverLatestOverflowPrefix) {
     const index = branch.findLastIndex(
       (entry) => entry.type === "message" && entry.message.role === "assistant",
     );
@@ -292,6 +293,14 @@ export function providerHistory(options: {
       entry.message.role === "assistant" &&
       (entry.message.stopReason === "error" || entry.message.stopReason === "aborted")
     ) {
+      if (entry.message.stopReason === "error" && entry.message.responseId) {
+        recoveredPrefix =
+          nativeCommittedPrefixBeforeOverflow(
+            branch,
+            options.wireModel.id,
+            entry.message.responseId,
+          ) ?? [];
+      }
       branch.splice(index, 1);
     }
   }
@@ -317,16 +326,20 @@ export function providerHistory(options: {
         options.imageDetail,
         nativeAssistantItems,
       ),
+      ...recoveredPrefix,
     ];
   }
 
   const context = buildSessionContext(branch);
-  return encodeMessages(
-    options.wireModel,
-    convertToLlm(context.messages),
-    options.allTools,
-    options.grammarToolInputProperties ?? new Map(),
-    options.imageDetail ?? "auto",
-    nativeAssistantItems,
-  );
+  return [
+    ...encodeMessages(
+      options.wireModel,
+      convertToLlm(context.messages),
+      options.allTools,
+      options.grammarToolInputProperties ?? new Map(),
+      options.imageDetail ?? "auto",
+      nativeAssistantItems,
+    ),
+    ...recoveredPrefix,
+  ];
 }

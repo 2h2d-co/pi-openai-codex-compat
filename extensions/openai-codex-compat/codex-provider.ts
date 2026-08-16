@@ -61,7 +61,11 @@ import {
   type CodexWebSocketResponseHandle,
 } from "./codex-transport.ts";
 import { DEFAULT_CONFIG, type CodexCompatConfig, type ImageDetail } from "./config.ts";
-import { nativeResponseData, NATIVE_RESPONSE_ENTRY_TYPE } from "./native-history.ts";
+import {
+  nativeResponseData,
+  NATIVE_RESPONSE_ENTRY_TYPE,
+  type NativeResponseAttempt,
+} from "./native-history.ts";
 import {
   CODEX_NAMESPACED_TOOL_NAMES,
   CODEX_TEXT_CONTENT_ITEM_TOOL_RESULT_NAMES,
@@ -411,6 +415,22 @@ function retryableResponseFailure(response: JsonRecord | undefined): boolean {
     code === "invalid_prompt" ||
     code === "bio_policy"
   );
+}
+
+function terminalReason(terminalState: CodexTerminalState): string | undefined {
+  if (terminalState.type === "response.failed") {
+    const error = isObject(terminalState.response?.["error"])
+      ? terminalState.response["error"]
+      : undefined;
+    return typeof error?.["code"] === "string" ? error["code"] : undefined;
+  }
+  if (terminalState.type === "response.incomplete") {
+    const details = isObject(terminalState.response?.["incomplete_details"])
+      ? terminalState.response["incomplete_details"]
+      : undefined;
+    return typeof details?.["reason"] === "string" ? details["reason"] : undefined;
+  }
+  return undefined;
 }
 
 function terminalErrorMessage(disposition: CodexPostToolDisposition): string {
@@ -1280,6 +1300,7 @@ export class CodexProviderRuntime {
         );
 
         const rawItems: ResponsesItem[] = [];
+        const nativeAttempts: NativeResponseAttempt[] = [];
         const prewarmDiagnostics: CodexTransportDiagnostic[] = [];
         await this.maybePrewarm({
           model,
@@ -1365,6 +1386,14 @@ export class CodexProviderRuntime {
           // `response.output_item.done` is Codex's item-level commit point. Terminal
           // response.output snapshots are deliberately ignored.
           const attemptItems = attemptCapture.streamedItems;
+          if (terminalState.type) {
+            const reason = terminalReason(terminalState);
+            nativeAttempts.push({
+              itemCount: attemptItems.length,
+              terminalType: terminalState.type,
+              ...(reason ? { terminalReason: reason } : {}),
+            });
+          }
           const toolCalls = assessAttemptToolCalls(attemptItems, attemptCapture);
           const incompleteDetails = isObject(terminalState.response?.["incomplete_details"])
             ? terminalState.response["incomplete_details"]
@@ -1514,7 +1543,7 @@ export class CodexProviderRuntime {
           if (!output.responseId) throw new Error("Codex response is missing a response id.");
           this.pi.appendEntry(
             NATIVE_RESPONSE_ENTRY_TYPE,
-            nativeResponseData(model.id, output.responseId, rawItems),
+            nativeResponseData(model.id, output.responseId, rawItems, nativeAttempts),
           );
         }
         try {

@@ -163,7 +163,7 @@ export default function registerRemoteCompaction(
         allTools,
         grammarToolInputProperties,
         imageDetail: config.imageDetail,
-        dropLatestFailedAssistant: event.reason === "overflow" && event.willRetry,
+        recoverLatestOverflowPrefix: event.reason === "overflow" && event.willRetry,
       });
       const template =
         matching?.payload ??

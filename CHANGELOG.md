@@ -5,6 +5,7 @@
 ### Fixed
 
 - Preserve deferred incomplete and failed Codex response handling across linked tool execution without requiring session affinity or Pi agent-turn hooks.
+- Preserve provider items committed before a later context-overflow subrequest, compact the validated prefix, and retry automatically from the native checkpoint.
 
 ## 0.0.8 - 2026-08-16
 
