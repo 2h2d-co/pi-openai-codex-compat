@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.0.9 - 2026-08-16
+
 ### Fixed
 
 - Preserve deferred incomplete and failed Codex response handling across linked tool execution without requiring session affinity or Pi agent-turn hooks.
