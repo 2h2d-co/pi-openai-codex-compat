@@ -4210,15 +4210,39 @@ function conciseInstructionError(error: string): string {
   return message.split("\n")[0]!;
 }
 
-function instructionEffectFeedback(effect: ApplyPatchInstructionEffect, cwd: string): string {
+function replacementEntryLabel(
+  instruction: ApplyPatchInstructionDetails,
+  details: ApplyPatchDetails,
+  effect: Extract<ApplyPatchInstructionEffect, { kind: "replaced" }>,
+): "regular file" | "symlink" | undefined {
+  if (instruction.kind === "add" || instruction.kind === "update") return "regular file";
+  if (effect.path !== instruction.moveTo) return undefined;
+  for (const changeIndex of instruction.changeIndexes ?? []) {
+    const change = details.changes[changeIndex];
+    if (change?.kind === "move") {
+      return change.entryType === "regular-file" ? "regular file" : "symlink";
+    }
+  }
+  return undefined;
+}
+
+function instructionEffectFeedback(
+  effect: ApplyPatchInstructionEffect,
+  instruction: ApplyPatchInstructionDetails,
+  details: ApplyPatchDetails,
+  cwd: string,
+): string {
   const path = feedbackPath(effect.path, cwd);
   switch (effect.kind) {
     case "created":
       return `Created ${path}.`;
-    case "replaced":
+    case "replaced": {
+      const replacement = replacementEntryLabel(instruction, details, effect);
+      const replacementClause = replacement ? ` with a ${replacement}` : "";
       return effect.previousEntryType === "regular-file"
-        ? `Replaced the regular file at ${path}.`
-        : `Replaced the symlink at ${path} (original target: ${effect.originalTarget}); the original target was not modified.`;
+        ? `Replaced the regular file at ${path}${replacementClause}.`
+        : `Replaced the symlink at ${path} (original target: ${effect.originalTarget})${replacementClause}; the original target was not modified.`;
+    }
     case "updated":
       return `Updated ${path}.`;
     case "deleted":
@@ -4304,7 +4328,7 @@ export function formatApplyPatchInstructionFeedback(
   }
   for (const effect of instruction.effects ?? []) {
     if (instruction.status === "failed" && effect.kind === "updated") continue;
-    clauses.push(instructionEffectFeedback(effect, cwd));
+    clauses.push(instructionEffectFeedback(effect, instruction, details, cwd));
   }
   if (instruction.status === "failed") {
     if (instruction.matcher) clauses.push(matcherInstructionFeedback(instruction.matcher));

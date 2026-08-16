@@ -452,7 +452,7 @@ void test("moves symlink entries and replaces destination symlinks", async (t) =
   );
   assert.match(
     feedback,
-    /2\. \[APPLIED\] Move source\.bin -> destination-link - Replaced the symlink at destination-link \(original target: target\.txt\); the original target was not modified\./u,
+    /2\. \[APPLIED\] Move source\.bin -> destination-link - Replaced the symlink at destination-link \(original target: target\.txt\) with a regular file; the original target was not modified\./u,
   );
 
   await mkdir(join(cwd, "relative-source"));
@@ -720,7 +720,7 @@ void test("follows symlinks for updates but replaces them for adds", async (t) =
   assert.match(feedback, /2\. \[APPLIED\] Update target\.txt$/mu);
   assert.match(
     feedback,
-    /3\. \[APPLIED\] Add alias\.txt - Replaced the symlink at alias\.txt \(original target: target\.txt\); the original target was not modified\./u,
+    /3\. \[APPLIED\] Add alias\.txt - Replaced the symlink at alias\.txt \(original target: target\.txt\) with a regular file; the original target was not modified\./u,
   );
   assert.match(feedback, /4\. \[APPLIED\] Update alias\.txt$/mu);
 
@@ -758,11 +758,11 @@ void test("replaces live and dangling symlinks on add without touching their tar
   const feedback = formatApplyPatchSummary(details, cwd);
   assert.match(
     feedback,
-    /1\. \[APPLIED\] Add live\.txt - Replaced the symlink at live\.txt \(original target: target\.txt\); the original target was not modified\./u,
+    /1\. \[APPLIED\] Add live\.txt - Replaced the symlink at live\.txt \(original target: target\.txt\) with a regular file; the original target was not modified\./u,
   );
   assert.match(
     feedback,
-    /2\. \[APPLIED\] Add dangling\.txt - Replaced the symlink at dangling\.txt \(original target: missing\.txt\); the original target was not modified\./u,
+    /2\. \[APPLIED\] Add dangling\.txt - Replaced the symlink at dangling\.txt \(original target: missing\.txt\) with a regular file; the original target was not modified\./u,
   );
 });
 
@@ -1288,7 +1288,7 @@ void test("executes planned move strategies and reports every injected failure p
       assert.match(feedback, /Files changed:\nM replaced-destination\.txt/u);
       assert.match(
         feedback,
-        /Replaced the regular file at replaced-destination\.txt; replaced-source\.txt remains/u,
+        /Replaced the regular file at replaced-destination\.txt with a regular file; replaced-source\.txt remains/u,
       );
       return true;
     },

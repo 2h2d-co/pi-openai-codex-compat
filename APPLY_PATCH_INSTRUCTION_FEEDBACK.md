@@ -253,7 +253,7 @@ path.
 Examples:
 
 ```text
-1. [APPLIED] Add alias.txt - Replaced the symlink at alias.txt (original target: target.txt); the original target was not modified.
+1. [APPLIED] Add alias.txt - Replaced the symlink at alias.txt (original target: target.txt) with a regular file; the original target was not modified.
 ```
 
 ```text
@@ -275,7 +275,7 @@ Failure examples:
 ```
 
 ```text
-3. [FAILED] Move a.txt -> b.txt - Replaced the regular file at b.txt; a.txt remains; Move failed: permission denied.
+3. [FAILED] Move a.txt -> b.txt - Replaced the regular file at b.txt with a regular file; a.txt remains; Move failed: permission denied.
 ```
 
 ```text
