@@ -359,9 +359,10 @@ Nontrivial provider decisions now record content-free fields needed to distingui
 - terminal event type;
 - incomplete reason;
 - `end_turn`;
-- authoritative item source and output item type counts;
-- streamed-started, streamed-completed, terminal, and omitted call counts;
-- whether the complete call batch was executable;
+- committed done-item output type counts;
+- streamed-started and streamed-done call counts;
+- returned-call and discarded-partial-call counts;
+- deferred post-tool disposition, when applicable;
 - chosen continuation/retry branch;
 - provider attempt number.
 
