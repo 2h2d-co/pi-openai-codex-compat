@@ -303,18 +303,18 @@ Compatibility behavior:
 - Empty and identity updates, identical adds, absent deletes, self-moves, and same-patch fulfilled moves succeed with concise `NO CHANGE` results. Inapplicable operations are `SKIPPED` only when later operations deterministically make every effect unobservable.
 - Model-facing results retain the aggregate A/M/D summary. When any instruction is not applied or an applied instruction has feedback, they list every source-ordered instruction under `Patch instruction results:` as `N. [STATUS] operation`, without an instruction limit; ordinary all-applied results omit the ledger.
 - Combined text updates and moves are labeled `Update & Move`; move-only operations remain `Move`.
-- Symlink feedback uses the raw target pathname stored in the symlink and identifies the verified original entry type when a path is replaced.
+- Replacement feedback always identifies the verified previous and resulting entry types. Symlink feedback also uses the raw target pathname stored in the symlink.
 - Tool-result history stores per-file old/new content, display diffs, move destinations, overwrite information, per-instruction filesystem effects, and deterministic final-path inspection after runtime failures.
 - Opaque moves and symlink deletions use path-only history, so binary bytes and link-target bytes are not serialized as textual deletions.
 - The TUI retains Codex-style changed-file summaries and uses the same conditional instruction ledger; when present, `Ctrl+O` nests complete diffs beneath the instruction that produced them.
 - With `applyPatchDebug` enabled, the tool title becomes `apply_patch (debug)` and a completed collapsed result shows the exact text returned to the model without an extra renderer-only heading; expanding it with `Ctrl+O` still shows the normal visual summary and complete diffs.
-- Failed instruction feedback colocates its error, completed effects, final path states, and concise matcher evidence without repeating patch text or using speculative language.
+- Failed instruction feedback colocates its error, completed effects, final path states, and concise matcher evidence without repeating patch text or using speculative language. Matcher failures include direct guidance for retrying with updated, source-ordered, non-overlapping, or more specific instructions.
 
 Filesystem behavior:
 
 - Relative paths resolve from Pi's current working directory; absolute paths and `..` traversal are honored.
 - `.git` paths are unrestricted.
-- Text updates follow live symlinks; adds replace live or dangling link entries; deletes remove only the link entry; pure moves move a source link entry and replace a destination link entry; state-changing moves create a regular file at the destination without modifying either original link target.
+- Text updates follow live symlinks; adds replace live or dangling symlinks without writing through them; deletes remove only the symlink; pure moves move the source symlink; and state-changing moves create a regular file at the destination without writing updated text through a source or destination symlink.
 - Entry-only operations and no-op updates do not dereference cyclic or inaccessible symlink targets during mutation-queue acquisition.
 - Same-filesystem pure moves use native rename topology. Cross-filesystem moves copy through a temporary entry, create or replace the destination, and then unlink the source, producing an inode independent from remaining source hard links.
 - Strict and formatter-recovered edits preserve the matched region's local CRLF or mixed line endings.

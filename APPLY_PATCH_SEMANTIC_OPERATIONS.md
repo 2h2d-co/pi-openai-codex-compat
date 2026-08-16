@@ -221,7 +221,7 @@ spelling.
   retain their original inode and contents. The replacement preserves the
   replaced regular file's permission bits.
 - If `P` is a symlink, including a dangling link, the link entry is
-  replaced by a regular file. Its original target is not modified.
+  replaced by a regular file without writing through the symlink.
 - If a case- or Unicode-normalized alias of `P` exists, that entry is replaced
   and the exact spelling requested by the add is established.
 - If `P` is a directory or another unsupported special entry, reject.
@@ -539,7 +539,7 @@ operation:
 The independent destination:
 
 - replaces only the named destination directory entry;
-- replaces a destination symlink without modifying its original target;
+- replaces a destination symlink without writing through it;
 - detaches the named destination from any former hard-link set without
   modifying the other links;
 - preserves the source regular file's permission bits;
@@ -550,8 +550,10 @@ The independent destination:
 
 If the source is a symlink, its target supplies the text to edit, the
 updated result is created as a regular destination file, the source symlink is
-unlinked, and its original target is not modified. A dangling source symlink
-rejects because its old text cannot be verified.
+unlinked, and the updated text is not written through the source symlink. A
+target path that is also named as the move destination can still be replaced
+directly by the destination operation. A dangling source symlink rejects
+because its old text cannot be verified.
 
 If another hard link refers to the source inode, that other entry retains the
 original inode and content. The state-changing move does not mutate the shared
@@ -1124,15 +1126,18 @@ Reasons, non-obvious effects, deterministic final states, concise matcher
 evidence, and errors remain on the relevant instruction.
 
 Symlink effects retain the raw target pathname returned by `readlink`.
-Replacement feedback identifies whether the original entry was a regular file
-or symlink. If the original entry type or post-failure state cannot be
-verified, feedback reports that state as not verified rather than inventing a
-generic replacement description.
+Every replacement effect records the verified previous and resulting entry
+types. A resulting symlink also records its raw target pathname. Missing
+replacement information is invalid. If neither execution nor post-failure
+inspection can verify the result, feedback reports that state as not verified
+rather than claiming a replacement.
 
 Model-facing status labels and separators are ASCII, while the TUI may use
 Unicode separators. Failed matcher feedback does not repeat old or replacement
-patch blocks. Model feedback does not discuss diff availability or unreadable
-previous content.
+patch blocks. Every matcher failure gives a short, direct instruction for
+retrying with current content, source-ordered changes, non-overlapping changes,
+or more specific surrounding context as appropriate. Model feedback does not
+discuss diff availability or unreadable previous content.
 
 The default-off `applyPatchDebug` presentation setting replaces a completed
 collapsed TUI result with the exact model-facing text. It does not change tool

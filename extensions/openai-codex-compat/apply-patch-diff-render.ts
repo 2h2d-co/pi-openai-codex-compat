@@ -232,7 +232,8 @@ const INSTRUCTION_EFFECT_KINDS = new Set<ApplyPatchInstructionEffect["kind"]>([
   "directory-created",
   "temporary-entry-remains",
   "source-remains",
-  "symlink-target-not-modified",
+  "symlink-removed",
+  "symlink-moved",
   "symlink-target-modified",
 ]);
 
@@ -241,10 +242,9 @@ function isApplyPatchInstructionEffect(value: unknown): value is ApplyPatchInstr
   const effect = value as {
     kind?: unknown;
     path?: unknown;
-    previousEntryType?: unknown;
-    originalTarget?: unknown;
+    previousEntry?: unknown;
+    replacementEntry?: unknown;
     target?: unknown;
-    symlinkAction?: unknown;
   };
   if (
     typeof effect.kind !== "string" ||
@@ -254,18 +254,21 @@ function isApplyPatchInstructionEffect(value: unknown): value is ApplyPatchInstr
     return false;
   }
   if (effect.kind === "replaced") {
-    return (
-      effect.previousEntryType === "regular-file" ||
-      (effect.previousEntryType === "symlink" && typeof effect.originalTarget === "string")
-    );
+    const isFileEntry = (entry: unknown): boolean => {
+      if (typeof entry !== "object" || entry === null) return false;
+      const candidate = entry as { entryType?: unknown; target?: unknown };
+      return (
+        candidate.entryType === "regular-file" ||
+        (candidate.entryType === "symlink" && typeof candidate.target === "string")
+      );
+    };
+    return isFileEntry(effect.previousEntry) && isFileEntry(effect.replacementEntry);
   }
-  if (effect.kind === "symlink-target-not-modified") {
-    return (
-      typeof effect.target === "string" &&
-      (effect.symlinkAction === "removed" || effect.symlinkAction === "moved")
-    );
-  }
-  if (effect.kind === "symlink-target-modified") {
+  if (
+    effect.kind === "symlink-removed" ||
+    effect.kind === "symlink-moved" ||
+    effect.kind === "symlink-target-modified"
+  ) {
     return typeof effect.target === "string";
   }
   return true;

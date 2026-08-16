@@ -158,24 +158,26 @@ export type ApplyPatchInstructionReason = {
   relatedInstructions?: number[];
 };
 
+export type ApplyPatchFileEntryDetails =
+  | { entryType: "regular-file" }
+  | { entryType: "symlink"; target: string };
+
 export type ApplyPatchInstructionEffect =
   | {
       kind: "created" | "updated" | "deleted" | "directory-created" | "temporary-entry-remains";
       path: string;
     }
-  | { kind: "replaced"; path: string; previousEntryType: "regular-file" }
   | {
       kind: "replaced";
       path: string;
-      previousEntryType: "symlink";
-      originalTarget: string;
+      previousEntry: ApplyPatchFileEntryDetails;
+      replacementEntry: ApplyPatchFileEntryDetails;
     }
   | { kind: "source-remains"; path: string }
   | {
-      kind: "symlink-target-not-modified";
+      kind: "symlink-removed" | "symlink-moved";
       path: string;
       target: string;
-      symlinkAction: "removed" | "moved";
     }
   | { kind: "symlink-target-modified"; path: string; target: string };
 
@@ -717,6 +719,14 @@ export function cloneApplyPatchDetails(details: ApplyPatchDetails): ApplyPatchDe
       ? { replacementCandidates: matcher.replacementCandidates.map((range) => ({ ...range })) }
       : {}),
   });
+  const cloneEffect = (effect: ApplyPatchInstructionEffect): ApplyPatchInstructionEffect =>
+    effect.kind === "replaced"
+      ? {
+          ...effect,
+          previousEntry: { ...effect.previousEntry },
+          replacementEntry: { ...effect.replacementEntry },
+        }
+      : { ...effect };
   return {
     ...details,
     changes: details.changes.map((change) => ({ ...change })),
@@ -727,9 +737,7 @@ export function cloneApplyPatchDetails(details: ApplyPatchDetails): ApplyPatchDe
       ? {
           instructions: details.instructions.map((instruction) => ({
             ...instruction,
-            ...(instruction.effects
-              ? { effects: instruction.effects.map((effect) => ({ ...effect })) }
-              : {}),
+            ...(instruction.effects ? { effects: instruction.effects.map(cloneEffect) } : {}),
             ...(instruction.finalStates
               ? { finalStates: instruction.finalStates.map((state) => ({ ...state })) }
               : {}),
@@ -3124,21 +3132,26 @@ function addInstructionEffect(
   }
 }
 
+function fileEntryDetails(entry: ExistingFileEntry): ApplyPatchFileEntryDetails {
+  return entry.kind === "regular"
+    ? { entryType: "regular-file" }
+    : { entryType: "symlink", target: entry.target };
+}
+
 function replacedInstructionEffect(
   path: string,
   previousEntry: ReplaceableFileEntry,
+  replacementEntry: ApplyPatchFileEntryDetails,
 ): ApplyPatchInstructionEffect {
   if (previousEntry.kind === "absent") {
     throw new Error(`replacement effect for ${path} requires an existing entry`);
   }
-  return previousEntry.kind === "regular"
-    ? { kind: "replaced", path, previousEntryType: "regular-file" }
-    : {
-        kind: "replaced",
-        path,
-        previousEntryType: "symlink",
-        originalTarget: previousEntry.target,
-      };
+  return {
+    kind: "replaced",
+    path,
+    previousEntry: fileEntryDetails(previousEntry),
+    replacementEntry,
+  };
 }
 
 function addInstructionFinalState(
@@ -3229,13 +3242,29 @@ async function currentExecutionEntry(
   }
 }
 
+type ApplyPatchFinalPathInspection = {
+  finalState: ApplyPatchFinalPathState;
+  entry?: VirtualEntry;
+};
+
+function finalPathInspection(
+  path: string,
+  state: ApplyPatchFinalPathState["state"],
+  entry?: VirtualEntry,
+): ApplyPatchFinalPathInspection {
+  return {
+    finalState: { path, state },
+    ...(entry ? { entry } : {}),
+  };
+}
+
 async function inspectFinalPath(
   absolutePath: string,
   displayPath: string,
   expected: VirtualEntry,
   filesystem: ApplyPatchExecutionFilesystem,
   requestedContent?: Buffer,
-): Promise<ApplyPatchFinalPathState> {
+): Promise<ApplyPatchFinalPathInspection> {
   try {
     const actual = await currentExecutionEntry(absolutePath, filesystem);
     const physicalEntryChanged =
@@ -3249,33 +3278,35 @@ async function inspectFinalPath(
       try {
         const bytes = await filesystem.readFile(absolutePath);
         if (buffersEqual(bytes, requestedContent)) {
-          return { path: displayPath, state: "requested-content" };
+          return finalPathInspection(displayPath, "requested-content", actual);
         }
         if (physicalEntryChanged) {
-          return { path: displayPath, state: "different-entry" };
+          return finalPathInspection(displayPath, "different-entry", actual);
         }
         if (expected.kind === "regular" || expected.kind === "symlink") {
           const expectedBytes = expected.content.value?.bytes;
           if (expectedBytes && buffersEqual(bytes, expectedBytes)) {
-            return { path: displayPath, state: "unchanged" };
+            return finalPathInspection(displayPath, "unchanged", actual);
           }
           if (expectedBytes) {
-            return {
-              path: displayPath,
-              state: "different-from-requested-and-previous-content",
-            };
+            return finalPathInspection(
+              displayPath,
+              "different-from-requested-and-previous-content",
+              actual,
+            );
           }
         }
-        return { path: displayPath, state: "different-from-requested-content" };
+        return finalPathInspection(displayPath, "different-from-requested-content", actual);
       } catch {
-        return {
-          path: displayPath,
-          state: physicalEntryChanged ? "different-entry" : "not-verified",
-        };
+        return finalPathInspection(
+          displayPath,
+          physicalEntryChanged ? "different-entry" : "not-verified",
+          actual,
+        );
       }
     }
     if (physicalEntryChanged) {
-      return { path: displayPath, state: "different-entry" };
+      return finalPathInspection(displayPath, "different-entry", actual);
     }
     if (
       (actual.kind === "regular" || actual.kind === "symlink") &&
@@ -3284,21 +3315,22 @@ async function inspectFinalPath(
     ) {
       try {
         const bytes = await filesystem.readFile(absolutePath);
-        return {
-          path: displayPath,
-          state: buffersEqual(bytes, expected.content.value.bytes)
+        return finalPathInspection(
+          displayPath,
+          buffersEqual(bytes, expected.content.value.bytes)
             ? "unchanged"
             : "different-from-previous-content",
-        };
+          actual,
+        );
       } catch {
-        return { path: displayPath, state: "not-verified" };
+        return finalPathInspection(displayPath, "not-verified", actual);
       }
     }
     if (entriesHaveSameIdentity(actual, expected)) {
-      return { path: displayPath, state: "unchanged" };
+      return finalPathInspection(displayPath, "unchanged", actual);
     }
     if (actual.kind !== expected.kind && actual.kind !== "absent" && expected.kind !== "absent") {
-      return { path: displayPath, state: "different-entry-type" };
+      return finalPathInspection(displayPath, "different-entry-type", actual);
     }
     if (
       actual.kind === expected.kind &&
@@ -3307,12 +3339,35 @@ async function inspectFinalPath(
       "fingerprint" in expected &&
       expected.fingerprint
     ) {
-      return { path: displayPath, state: "different-entry" };
+      return finalPathInspection(displayPath, "different-entry", actual);
     }
-    return { path: displayPath, state: currentEntryFinalState(actual) };
+    return finalPathInspection(displayPath, currentEntryFinalState(actual), actual);
   } catch {
-    return { path: displayPath, state: "not-verified" };
+    return finalPathInspection(displayPath, "not-verified");
   }
+}
+
+function inspectedFileEntry(
+  inspection: ApplyPatchFinalPathInspection | undefined,
+): ApplyPatchFileEntryDetails | undefined {
+  const entry = inspection?.entry;
+  return entry?.kind === "regular" || entry?.kind === "symlink"
+    ? fileEntryDetails(entry)
+    : undefined;
+}
+
+function addInspectedReplacementEffect(
+  instruction: ApplyPatchInstructionDetails,
+  path: string,
+  previousEntry: ExistingFileEntry,
+  inspection: ApplyPatchFinalPathInspection | undefined,
+): void {
+  const replacementEntry = inspectedFileEntry(inspection);
+  if (!replacementEntry) return;
+  addInstructionEffect(
+    instruction,
+    replacedInstructionEffect(path, previousEntry, replacementEntry),
+  );
 }
 
 function finalStateHasChangedPresentEntry(
@@ -3347,7 +3402,7 @@ async function recordFailureInspection(
   filesystemMutationStarted: boolean,
   temporaryPath?: string,
 ): Promise<void> {
-  const inspected: ApplyPatchFinalPathState[] = [];
+  const inspected: ApplyPatchFinalPathInspection[] = [];
   if (mutation.kind === "add") {
     inspected.push(
       await inspectFinalPath(
@@ -3407,34 +3462,49 @@ async function recordFailureInspection(
     );
   }
 
-  for (const state of inspected) addInstructionFinalState(instruction, state);
+  for (const inspection of inspected) {
+    addInstructionFinalState(instruction, inspection.finalState);
+  }
   if (!filesystemMutationStarted) return;
 
-  const sourceState = inspected.find((state) => state.path === mutation.operation.path);
+  const sourceInspection = inspected.find(
+    ({ finalState }) => finalState.path === mutation.operation.path,
+  );
+  const sourceState = sourceInspection?.finalState;
   const destinationPath =
     mutation.kind === "text-update" || mutation.kind === "move"
       ? mutation.operation.moveTo
       : undefined;
-  const destinationState = destinationPath
-    ? inspected.find((state) => state.path === destinationPath)
+  const destinationInspection = destinationPath
+    ? inspected.find(({ finalState }) => finalState.path === destinationPath)
     : undefined;
+  const destinationState = destinationInspection?.finalState;
 
   if (mutation.kind === "add") {
     if (finalStateHasChangedPresentEntry(sourceState, mutation.expectedTarget)) {
-      addInstructionEffect(
-        instruction,
-        mutation.expectedTarget.kind === "absent"
-          ? { kind: "created", path: mutation.operation.path }
-          : replacedInstructionEffect(mutation.operation.path, mutation.expectedTarget),
-      );
+      if (mutation.expectedTarget.kind === "absent") {
+        addInstructionEffect(instruction, {
+          kind: "created",
+          path: mutation.operation.path,
+        });
+      } else {
+        addInspectedReplacementEffect(
+          instruction,
+          mutation.operation.path,
+          mutation.expectedTarget,
+          sourceInspection,
+        );
+      }
     }
   } else if (mutation.kind === "delete") {
     if (sourceState?.state === "absent") {
       addInstructionEffect(instruction, { kind: "deleted", path: mutation.operation.path });
     } else if (finalStateHasChangedPresentEntry(sourceState, mutation.expectedTarget)) {
-      addInstructionEffect(
+      addInspectedReplacementEffect(
         instruction,
-        replacedInstructionEffect(mutation.operation.path, mutation.expectedTarget),
+        mutation.operation.path,
+        mutation.expectedTarget,
+        sourceInspection,
       );
     }
   } else if (mutation.kind === "text-update") {
@@ -3444,12 +3514,19 @@ async function recordFailureInspection(
         mutation.expectedDestination &&
         finalStateHasChangedPresentEntry(destinationState, mutation.expectedDestination)
       ) {
-        addInstructionEffect(
-          instruction,
-          mutation.expectedDestination.kind === "absent"
-            ? { kind: "created", path: mutation.operation.moveTo }
-            : replacedInstructionEffect(mutation.operation.moveTo, mutation.expectedDestination),
-        );
+        if (mutation.expectedDestination.kind === "absent") {
+          addInstructionEffect(instruction, {
+            kind: "created",
+            path: mutation.operation.moveTo,
+          });
+        } else {
+          addInspectedReplacementEffect(
+            instruction,
+            mutation.operation.moveTo,
+            mutation.expectedDestination,
+            destinationInspection,
+          );
+        }
       } else if (
         destinationState?.state === "absent" &&
         mutation.expectedDestination?.kind !== "absent"
@@ -3464,9 +3541,11 @@ async function recordFailureInspection(
       } else if (sourceState?.state === "absent") {
         addInstructionEffect(instruction, { kind: "deleted", path: mutation.operation.path });
       } else if (finalStateHasChangedPresentEntry(sourceState, mutation.expectedSource)) {
-        addInstructionEffect(
+        addInspectedReplacementEffect(
           instruction,
-          replacedInstructionEffect(mutation.operation.path, mutation.expectedSource),
+          mutation.operation.path,
+          mutation.expectedSource,
+          sourceInspection,
         );
       }
     } else if (sourceState?.state === "absent") {
@@ -3479,12 +3558,19 @@ async function recordFailureInspection(
       destinationState &&
       finalStateHasChangedPresentEntry(destinationState, mutation.expectedDestination)
     ) {
-      addInstructionEffect(
-        instruction,
-        mutation.expectedDestination.kind === "absent"
-          ? { kind: "created", path: mutation.operation.moveTo! }
-          : replacedInstructionEffect(mutation.operation.moveTo!, mutation.expectedDestination),
-      );
+      if (mutation.expectedDestination.kind === "absent") {
+        addInstructionEffect(instruction, {
+          kind: "created",
+          path: mutation.operation.moveTo!,
+        });
+      } else {
+        addInspectedReplacementEffect(
+          instruction,
+          mutation.operation.moveTo!,
+          mutation.expectedDestination,
+          destinationInspection,
+        );
+      }
     } else if (
       destinationState?.state === "absent" &&
       mutation.expectedDestination.kind !== "absent"
@@ -3502,9 +3588,11 @@ async function recordFailureInspection(
     } else if (sourceState?.state === "absent") {
       addInstructionEffect(instruction, { kind: "deleted", path: mutation.operation.path });
     } else if (finalStateHasChangedPresentEntry(sourceState, mutation.expectedSource)) {
-      addInstructionEffect(
+      addInspectedReplacementEffect(
         instruction,
-        replacedInstructionEffect(mutation.operation.path, mutation.expectedSource),
+        mutation.operation.path,
+        mutation.expectedSource,
+        sourceInspection,
       );
     }
   }
@@ -3538,17 +3626,18 @@ function recordAppliedInstructionEffects(
       if (mutation.expectedTarget.kind !== "absent") {
         addInstructionEffect(
           instruction,
-          replacedInstructionEffect(mutation.operation.path, mutation.expectedTarget),
+          replacedInstructionEffect(mutation.operation.path, mutation.expectedTarget, {
+            entryType: "regular-file",
+          }),
         );
       }
       return;
     case "delete":
       if (mutation.expectedTarget.kind === "symlink") {
         addInstructionEffect(instruction, {
-          kind: "symlink-target-not-modified",
+          kind: "symlink-removed",
           path: mutation.operation.path,
           target: mutation.expectedTarget.target,
-          symlinkAction: "removed",
         });
       }
       return;
@@ -3558,10 +3647,9 @@ function recordAppliedInstructionEffects(
           instruction,
           mutation.operation.moveTo
             ? {
-                kind: "symlink-target-not-modified",
+                kind: "symlink-removed",
                 path: mutation.operation.path,
                 target: mutation.expectedSource.target,
-                symlinkAction: "removed",
               }
             : {
                 kind: "symlink-target-modified",
@@ -3577,23 +3665,28 @@ function recordAppliedInstructionEffects(
       ) {
         addInstructionEffect(
           instruction,
-          replacedInstructionEffect(mutation.operation.moveTo, mutation.expectedDestination),
+          replacedInstructionEffect(mutation.operation.moveTo, mutation.expectedDestination, {
+            entryType: "regular-file",
+          }),
         );
       }
       return;
     case "move":
       if (mutation.expectedSource.kind === "symlink") {
         addInstructionEffect(instruction, {
-          kind: "symlink-target-not-modified",
+          kind: "symlink-moved",
           path: mutation.operation.path,
           target: mutation.expectedSource.target,
-          symlinkAction: "moved",
         });
       }
-      if (mutation.expectedDestination.kind !== "absent") {
+      if (mutation.change.replacedDestination) {
         addInstructionEffect(
           instruction,
-          replacedInstructionEffect(mutation.operation.moveTo!, mutation.expectedDestination),
+          replacedInstructionEffect(
+            mutation.operation.moveTo!,
+            mutation.expectedDestination,
+            fileEntryDetails(mutation.expectedSource),
+          ),
         );
       }
       return;
@@ -3649,7 +3742,9 @@ async function executePlan(
                   activeInstruction,
                   mutation.expectedTarget.kind === "absent"
                     ? { kind: "created", path: mutation.operation.path }
-                    : replacedInstructionEffect(mutation.operation.path, mutation.expectedTarget),
+                    : replacedInstructionEffect(mutation.operation.path, mutation.expectedTarget, {
+                        entryType: "regular-file",
+                      }),
                 );
               }
             }
@@ -3761,6 +3856,7 @@ async function executePlan(
                       : replacedInstructionEffect(
                           mutation.operation.moveTo!,
                           mutation.expectedDestination,
+                          { entryType: "regular-file" },
                         ),
                   );
                 }
@@ -3831,6 +3927,7 @@ async function executePlan(
                   : replacedInstructionEffect(
                       mutation.operation.moveTo!,
                       mutation.expectedDestination,
+                      fileEntryDetails(mutation.expectedSource),
                     ),
               );
             }
@@ -4136,33 +4233,36 @@ function matcherRangeLabel(range: { startLine: number; endLine: number }): strin
     : `lines ${range.startLine}-${range.endLine}`;
 }
 
+const UPDATED_PATCH_GUIDANCE =
+  "Use apply_patch again with more specific surrounding context or smaller changes if needed.";
+
 function matcherInstructionFeedback(matcher: FormatterMatchFailureDetails): string {
   const ranges = matcher.candidates.map(matcherRangeLabel).join(" and ");
   switch (matcher.reason) {
     case "no-candidate": {
       const replacements = matcher.replacementCandidates?.map(matcherRangeLabel).join(" and ");
       return replacements
-        ? `Requested replacement found at ${replacements}, but old content was not found.`
-        : "Old content was not found.";
+        ? `Requested replacement found at ${replacements}, but old content was not found. Inspect the reported lines and use apply_patch again with updated instructions if needed.`
+        : "Old content was not found. Read the current file and use apply_patch again with updated instructions if needed.";
     }
     case "no-ordered-mapping": {
       const previous = matcher.previousCandidates?.map(matcherRangeLabel).join(" and ");
       if (matcher.reverseOrdered) {
-        return `Edit group ${matcher.groupIndex} matches before edit group ${matcher.previousGroupIndex}; matches at ${ranges} and ${previous}.`;
+        return `The requested changes match in reverse source-file order at ${ranges} and ${previous}. Use apply_patch again with the requested changes in source-file order if needed.`;
       }
       if (matcher.overlapping) {
-        return `Edit group ${matcher.groupIndex} overlaps edit group ${matcher.previousGroupIndex}; matches at ${ranges} and ${previous}.`;
+        return `The requested changes overlap at ${ranges} and ${previous}. Use apply_patch again with non-overlapping changes if needed.`;
       }
-      return `Edit group ${matcher.groupIndex} does not follow edit group ${matcher.previousGroupIndex}; matches at ${ranges} and ${previous}.`;
+      return `The requested changes cannot be matched in source-file order; matches were found at ${ranges} and ${previous}. Use apply_patch again with the requested changes in source-file order if needed.`;
     }
     case "too-many-candidates":
-      return `${matcher.candidateCount} matching locations exceed the 64-location limit.`;
+      return `${matcher.candidateCount} matching locations exceed the 64-location limit. ${UPDATED_PATCH_GUIDANCE}`;
     case "ambiguous-output":
-      return `Matching locations${ranges ? ` at ${ranges}` : ""} produce different results.`;
+      return `Matching locations${ranges ? ` at ${ranges}` : ""} produce different results. ${UPDATED_PATCH_GUIDANCE}`;
     case "mapping-limit":
-      return "Matching stopped after 256 complete mappings.";
+      return `More than 256 possible ways to apply the requested changes were found. ${UPDATED_PATCH_GUIDANCE}`;
     case "overlapping-edits":
-      return `Matching edits${ranges ? ` at ${ranges}` : ""} overlap.`;
+      return `The requested changes${ranges ? ` at ${ranges}` : ""} overlap. Use apply_patch again with non-overlapping changes if needed.`;
   }
 }
 
@@ -4206,43 +4306,25 @@ function conciseInstructionError(error: string): string {
       "Filesystem changed after the operation.",
     )
     .replace(/; destination was removed before replacement failed$/u, "")
-    .replace(/^apply_patch was cancelled\.$/u, "Patch stopped.");
+    .replace(/^apply_patch was cancelled\.$/u, "apply_patch was cancelled.");
   return message.split("\n")[0]!;
 }
 
-function replacementEntryLabel(
-  instruction: ApplyPatchInstructionDetails,
-  details: ApplyPatchDetails,
-  effect: Extract<ApplyPatchInstructionEffect, { kind: "replaced" }>,
-): "regular file" | "symlink" | undefined {
-  if (instruction.kind === "add" || instruction.kind === "update") return "regular file";
-  if (effect.path !== instruction.moveTo) return undefined;
-  for (const changeIndex of instruction.changeIndexes ?? []) {
-    const change = details.changes[changeIndex];
-    if (change?.kind === "move") {
-      return change.entryType === "regular-file" ? "regular file" : "symlink";
-    }
-  }
-  return undefined;
+function fileEntryFeedback(entry: ApplyPatchFileEntryDetails): string {
+  return entry.entryType === "regular-file" ? "a regular file" : `a symlink to ${entry.target}`;
 }
 
 function instructionEffectFeedback(
   effect: ApplyPatchInstructionEffect,
   instruction: ApplyPatchInstructionDetails,
-  details: ApplyPatchDetails,
   cwd: string,
 ): string {
   const path = feedbackPath(effect.path, cwd);
   switch (effect.kind) {
     case "created":
       return `Created ${path}.`;
-    case "replaced": {
-      const replacement = replacementEntryLabel(instruction, details, effect);
-      const replacementClause = replacement ? ` with a ${replacement}` : "";
-      return effect.previousEntryType === "regular-file"
-        ? `Replaced the regular file at ${path}${replacementClause}.`
-        : `Replaced the symlink at ${path} (original target: ${effect.originalTarget})${replacementClause}; the original target was not modified.`;
-    }
+    case "replaced":
+      return `${path}, previously ${fileEntryFeedback(effect.previousEntry)}, is now ${fileEntryFeedback(effect.replacementEntry)}.`;
     case "updated":
       return `Updated ${path}.`;
     case "deleted":
@@ -4253,10 +4335,18 @@ function instructionEffectFeedback(
       return `Temporary entry remains at ${path}.`;
     case "source-remains":
       return `${path} remains.`;
-    case "symlink-target-not-modified":
-      return effect.symlinkAction === "moved"
-        ? `The moved symlink from ${path} retains target ${effect.target}.`
-        : `Removed the symlink at ${path} (original target: ${effect.target}); the original target was not modified.`;
+    case "symlink-removed":
+      return `Removed the symlink ${path}; its target was ${effect.target}.`;
+    case "symlink-moved": {
+      if (!instruction.moveTo) {
+        throw new Error(`moved symlink effect for ${instruction.path} requires a destination`);
+      }
+      return instruction.effects?.some(
+        (candidate) => candidate.kind === "replaced" && candidate.path === instruction.moveTo,
+      )
+        ? `Moved the symlink ${path}.`
+        : `Moved the symlink ${path}; ${feedbackPath(instruction.moveTo, cwd)} is now a symlink to ${effect.target}.`;
+    }
     case "symlink-target-modified":
       return `Modified file content through the symlink at ${path} (target: ${effect.target}); the symlink was not modified.`;
   }
@@ -4328,12 +4418,17 @@ export function formatApplyPatchInstructionFeedback(
   }
   for (const effect of instruction.effects ?? []) {
     if (instruction.status === "failed" && effect.kind === "updated") continue;
-    clauses.push(instructionEffectFeedback(effect, instruction, details, cwd));
+    clauses.push(instructionEffectFeedback(effect, instruction, cwd));
   }
   if (instruction.status === "failed") {
     if (instruction.matcher) clauses.push(matcherInstructionFeedback(instruction.matcher));
     else if (instruction.error) clauses.push(conciseInstructionError(instruction.error));
     const effectPaths = new Set((instruction.effects ?? []).map((effect) => effect.path));
+    const replacementPaths = new Set(
+      (instruction.effects ?? []).flatMap((effect) =>
+        effect.kind === "replaced" ? [effect.path] : [],
+      ),
+    );
     for (const state of instruction.finalStates ?? []) {
       if (
         state.state === "not-verified" ||
@@ -4341,8 +4436,8 @@ export function formatApplyPatchInstructionFeedback(
         state.state === "different-from-requested-content" ||
         state.state === "different-from-requested-and-previous-content" ||
         state.state === "different-from-previous-content" ||
-        state.state === "different-entry" ||
-        state.state === "different-entry-type" ||
+        ((state.state === "different-entry" || state.state === "different-entry-type") &&
+          !replacementPaths.has(state.path)) ||
         !effectPaths.has(state.path)
       ) {
         clauses.push(finalStateFeedback(state, cwd));
@@ -4353,15 +4448,15 @@ export function formatApplyPatchInstructionFeedback(
     if (details.failure?.failedInstruction !== undefined) {
       clauses.push(`Instruction ${details.failure.failedInstruction} failed.`);
     } else if (details.failure?.message === "apply_patch was cancelled.") {
-      clauses.push("Patch stopped.");
+      clauses.push("apply_patch was cancelled before this instruction was executed.");
     } else if (details.failure?.phase === "parse") {
       clauses.push("Patch format error.");
     } else if (details.failure?.phase === "preflight") {
-      clauses.push("Filesystem setup failed.");
+      clauses.push("apply_patch setup failed before this instruction was executed.");
     } else if (details.failure?.phase === "input") {
-      clauses.push("Patch input error.");
+      clauses.push("The apply_patch request was rejected before this instruction was executed.");
     } else {
-      clauses.push("Patch stopped.");
+      clauses.push("apply_patch stopped before this instruction was executed.");
     }
   }
 
@@ -4503,26 +4598,32 @@ export function formatApplyPatchFailureHeading(details: ApplyPatchDetails): stri
   const lines: string[] = [];
   const instructions = details.instructions ?? [];
   const failed = instructions.find((instruction) => instruction.status === "failed");
+  const lastApplied = instructions.findLast((instruction) => instruction.status === "applied");
   if (failed) {
     lines.push(`Patch failed at instruction ${failed.index} of ${instructions.length}.`);
+  } else if (details.failure?.message === "apply_patch was cancelled.") {
+    lines.push(
+      lastApplied
+        ? `apply_patch was cancelled after instruction ${lastApplied.index}.`
+        : "apply_patch was cancelled before execution.",
+    );
   } else if (details.failure?.phase === "parse") {
     const line = details.failure.message.match(/line (\d+)/u)?.[1];
     lines.push(
       `Patch format error${line ? ` at line ${line}` : ""}: ${conciseInstructionError(details.failure.message)}`,
     );
   } else if (details.failure?.phase === "preflight") {
-    lines.push(`Patch setup failed: ${conciseInstructionError(details.failure.message)}`);
+    lines.push(`apply_patch setup failed: ${conciseInstructionError(details.failure.message)}`);
   } else if (
     details.failure?.phase === "input" &&
     details.failure.message !== "apply_patch was cancelled."
   ) {
-    lines.push(`Patch input error: ${conciseInstructionError(details.failure.message)}`);
+    lines.push(`apply_patch request rejected: ${conciseInstructionError(details.failure.message)}`);
   } else {
-    const lastApplied = instructions.findLast((instruction) => instruction.status === "applied");
     lines.push(
       lastApplied
-        ? `Patch stopped after instruction ${lastApplied.index}.`
-        : "Patch stopped before execution.",
+        ? `apply_patch stopped after instruction ${lastApplied.index}.`
+        : "apply_patch stopped before execution.",
     );
     if (details.failure?.message && details.failure.message !== "apply_patch was cancelled.") {
       lines.push(`Patch error: ${conciseInstructionError(details.failure.message)}`);

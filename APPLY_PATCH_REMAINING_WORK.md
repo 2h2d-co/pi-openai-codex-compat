@@ -362,7 +362,8 @@ Model and TUI output retain the aggregate summary:
 Success. No files were changed.
 ```
 
-It is followed by every source-ordered result:
+When any instruction is not applied or an applied instruction has feedback, it
+is followed by every source-ordered result:
 
 ```text
 Patch instruction results:
@@ -423,6 +424,14 @@ unlimited source-ordered `Patch instruction results:` ledger.
 - Avoid duplicating raw errors or old/replacement patch text.
 - Preserve the current exit-code and wall-time wrapper.
 - Reuse the canonical instruction-result formatter for model and TUI output.
+- Require verified previous and resulting entry types for every replacement
+  effect; report an unverified final state instead of an incomplete
+  replacement when neither execution nor inspection verifies the result.
+- Include the raw target pathname when a resulting entry is a symlink.
+- Give every formatter-matcher failure a direct `apply_patch` retry
+  instruction.
+- Distinguish cancelled and stopped execution, setup failure, rejected input,
+  and malformed patch syntax.
 - Model-facing move labels use `->`, not a Unicode arrow.
 - Model-facing status output uses plain ASCII words rather than TUI symbols.
 

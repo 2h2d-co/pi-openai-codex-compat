@@ -250,10 +250,16 @@ Use only `symlink` terminology. Symlink feedback records the raw target
 pathname returned by `readlink`; it does not substitute a resolved absolute
 path.
 
+Every replacement effect records both the verified previous entry type and the
+verified resulting entry type. A resulting symlink also records its raw target
+pathname. Replacement feedback must not omit either entry type. If
+neither execution nor post-failure inspection can verify the result, report
+the final state as not verified instead of claiming a replacement.
+
 Examples:
 
 ```text
-1. [APPLIED] Add alias.txt - Replaced the symlink at alias.txt (original target: target.txt) with a regular file; the original target was not modified.
+1. [APPLIED] Add alias.txt - alias.txt, previously a symlink to target.txt, is now a regular file.
 ```
 
 ```text
@@ -261,12 +267,13 @@ Examples:
 ```
 
 ```text
-1. [APPLIED] Move alias.txt -> moved/alias.txt - The moved symlink from alias.txt retains target target.txt.
+1. [APPLIED] Move alias.txt -> moved/alias.txt - Moved the symlink alias.txt; moved/alias.txt is now a symlink to target.txt.
 ```
 
 Deletion and move differ only because deletion removes the symlink while a
-move preserves it and its stored target pathname. Neither operation modifies
-the target.
+move preserves it and its stored target pathname. Feedback reports the
+resulting path directly rather than making an unconditional claim about the
+filesystem path named by the target.
 
 Failure examples:
 
@@ -275,7 +282,7 @@ Failure examples:
 ```
 
 ```text
-3. [FAILED] Move a.txt -> b.txt - Replaced the regular file at b.txt with a regular file; a.txt remains; Move failed: permission denied.
+3. [FAILED] Move a.txt -> b.txt - b.txt, previously a regular file, is now a regular file; a.txt remains; Move failed: permission denied.
 ```
 
 ```text
@@ -347,24 +354,29 @@ detached `Matcher diagnostics:` section or repeat old/replacement patch text.
 Examples:
 
 ```text
-3. [FAILED] Update file.ts - Old content was not found.
+3. [FAILED] Update file.ts - Old content was not found. Read the current file and use apply_patch again with updated instructions if needed.
 ```
 
 ```text
-3. [FAILED] Update file.ts - Edit group 2 matches before edit group 1; matches at lines 10-12 and 30-32.
+3. [FAILED] Update file.ts - The requested changes match in reverse source-file order at lines 10-12 and lines 30-32. Use apply_patch again with the requested changes in source-file order if needed.
 ```
 
 ```text
-3. [FAILED] Update file.ts - Matching locations at lines 10-12 and 40-42 produce different results.
+3. [FAILED] Update file.ts - Matching locations at lines 10-12 and lines 40-42 produce different results. Use apply_patch again with more specific surrounding context or smaller changes if needed.
 ```
 
 ```text
-3. [FAILED] Update file.ts - Matching stopped after 256 complete mappings.
+3. [FAILED] Update file.ts - More than 256 possible ways to apply the requested changes were found. Use apply_patch again with more specific surrounding context or smaller changes if needed.
 ```
 
 ```text
-3. [FAILED] Update file.ts - Requested replacement found at lines 40-44, but old content was not found.
+3. [FAILED] Update file.ts - Requested replacement found at lines 40-44, but old content was not found. Inspect the reported lines and use apply_patch again with updated instructions if needed.
 ```
+
+The 64-location limit, different-result ambiguity, and 256-way limit use the
+same guidance because each requires more specific surrounding context or
+smaller requested changes. Reverse-order and overlap failures instead tell the
+model to reorder or separate the requested changes.
 
 ## Not-run results
 
@@ -381,8 +393,15 @@ For errors not owned by an instruction:
 ```
 
 ```text
-1. [NOT RUN] Update a.txt - Filesystem setup failed.
+1. [NOT RUN] Update a.txt - apply_patch setup failed before this instruction was executed.
 ```
+
+Cancellation uses
+`apply_patch was cancelled before this instruction was executed.` A
+non-cancellation stop without an owning instruction uses
+`apply_patch stopped before this instruction was executed.` Patch-level
+cancellation says `apply_patch was cancelled before execution.` or identifies
+the last completed instruction.
 
 ## Patch-level failures
 
@@ -396,17 +415,21 @@ Patch instruction results:
 ```
 
 ```text
-Patch setup failed: filesystem access failed for path.
+apply_patch setup failed: filesystem access failed for path.
 
 Patch instruction results:
-1. [NOT RUN] Update a.txt - Filesystem setup failed.
+1. [NOT RUN] Update a.txt - apply_patch setup failed before this instruction was executed.
 ```
+
+Rejected tool input uses `apply_patch request rejected: <cause>` once at patch
+level and `The apply_patch request was rejected before this instruction was
+executed.` on each affected instruction.
 
 If cancellation or an integration callback stops the patch after an
 instruction completed and before another instruction became active:
 
 ```text
-Patch stopped after instruction 3.
+apply_patch stopped after instruction 3.
 ```
 
 Completed instruction effects remain listed normally.
@@ -462,6 +485,19 @@ type InstructionResult = {
   error?: InstructionError;
   matching?: MatchingEvidence;
   relatedInstructions?: number[];
+};
+```
+
+Replacement effects are complete:
+
+```ts
+type FileEntry = { entryType: "regular-file" } | { entryType: "symlink"; target: string };
+
+type ReplacementEffect = {
+  kind: "replaced";
+  path: string;
+  previousEntry: FileEntry;
+  replacementEntry: FileEntry;
 };
 ```
 
@@ -527,7 +563,10 @@ When the conditional ledger is present, its heading is
 Cover:
 
 - patch-level input and format errors appear once;
-- cancelled and input-error instructions use distinct reasons;
+- cancelled execution, no-owner stops, setup failures, rejected requests, and
+  patch-format failures use distinct reasons;
+- every replacement records both entry types and every resulting symlink
+  records its raw target;
 - unchanged after failure;
 - requested content present after a reported write failure;
 - different content after failure;
@@ -543,6 +582,9 @@ Cover:
 - parents created without a false no-change statement;
 - temporary entry remains without a false no-change statement; and
 - post-operation verification failure.
+
+Every formatter-matcher failure reason is covered with its direct retry
+guidance.
 
 ### No patch-content repetition
 

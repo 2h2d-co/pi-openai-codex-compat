@@ -35,7 +35,11 @@ import {
   parsePatch,
   previewPatch,
 } from "../extensions/openai-codex-compat/apply-patch-engine.ts";
-import { ApplyPatchDiffComponent } from "../extensions/openai-codex-compat/apply-patch-diff-render.ts";
+import {
+  ApplyPatchDiffComponent,
+  isApplyPatchDetails,
+} from "../extensions/openai-codex-compat/apply-patch-diff-render.ts";
+import type { FormatterMatchFailureDetails } from "../extensions/openai-codex-compat/apply-patch-matcher.ts";
 import { formatApplyPatchRenderText } from "../extensions/openai-codex-compat/apply-patch-render.ts";
 
 const execFileAsync = promisify(execFile);
@@ -147,9 +151,12 @@ void test("reports patch-level input and format failures once", async (t) => {
       const feedback = formatApplyPatchFailureSummary(error.details!, cwd);
       assert.match(
         feedback,
-        /^Patch input error: apply_patch environment selection is unavailable for this turn$/mu,
+        /^apply_patch request rejected: apply_patch environment selection is unavailable for this turn$/mu,
       );
-      assert.match(feedback, /^1\. \[NOT RUN\] Add not-run\.txt - Patch input error\.$/mu);
+      assert.match(
+        feedback,
+        /^1\. \[NOT RUN\] Add not-run\.txt - The apply_patch request was rejected before this instruction was executed\.$/mu,
+      );
       return true;
     },
   );
@@ -161,11 +168,63 @@ void test("reports patch-level input and format failures once", async (t) => {
     (error: unknown) => {
       assert.ok(error instanceof ApplyPatchInputError);
       const feedback = formatApplyPatchFailureSummary(error.details!, cwd);
-      assert.match(feedback, /^Patch stopped before execution\.$/mu);
-      assert.match(feedback, /^1\. \[NOT RUN\] Add cancelled\.txt - Patch stopped\.$/mu);
-      assert.doesNotMatch(feedback, /Filesystem setup failed|Patch input error/u);
+      assert.match(feedback, /^apply_patch was cancelled before execution\.$/mu);
+      assert.match(
+        feedback,
+        /^1\. \[NOT RUN\] Add cancelled\.txt - apply_patch was cancelled before this instruction was executed\.$/mu,
+      );
+      assert.doesNotMatch(feedback, /setup failed|request rejected/u);
       return true;
     },
+  );
+});
+
+void test("distinguishes setup failures from execution stops without an owning instruction", () => {
+  const instruction = {
+    index: 1,
+    kind: "add" as const,
+    path: "not-executed.txt",
+    status: "not-run" as const,
+  };
+  const setup: ApplyPatchDetails = {
+    status: "failed",
+    exact: true,
+    changes: [],
+    added: [],
+    modified: [],
+    deleted: [],
+    instructions: [instruction],
+    failure: { phase: "preflight", message: "metadata unavailable" },
+    error: "metadata unavailable",
+  };
+  assert.equal(
+    formatApplyPatchFailureSummary(setup),
+    [
+      "apply_patch setup failed: metadata unavailable",
+      "No files were changed.",
+      "",
+      "Patch instruction results:",
+      "1. [NOT RUN] Add not-executed.txt - apply_patch setup failed before this instruction was executed.",
+      "",
+    ].join("\n"),
+  );
+
+  const stopped: ApplyPatchDetails = {
+    ...setup,
+    failure: { phase: "execution", message: "integration callback failed" },
+    error: "integration callback failed",
+  };
+  assert.equal(
+    formatApplyPatchFailureSummary(stopped),
+    [
+      "apply_patch stopped before execution.",
+      "Patch error: integration callback failed",
+      "No files were changed.",
+      "",
+      "Patch instruction results:",
+      "1. [NOT RUN] Add not-executed.txt - apply_patch stopped before this instruction was executed.",
+      "",
+    ].join("\n"),
   );
 });
 
@@ -269,6 +328,118 @@ void test("uses explicit filesystem metadata failure terminology", () => {
     formatApplyPatchFailureSummary(details, cwd),
     /1\. \[FAILED\] Update metadata\.txt - Failed to read filesystem metadata for \/workspace\/metadata\.txt: permission denied\./u,
   );
+});
+
+void test("gives actionable guidance for every formatter matcher failure", () => {
+  const base = {
+    path: "matcher.ts",
+    groupCount: 2,
+    candidateCount: 2,
+    candidates: [{ startLine: 10, endLine: 12 }],
+  };
+  const cases: Array<{ matcher: FormatterMatchFailureDetails; expected: RegExp }> = [
+    {
+      matcher: { ...base, reason: "no-candidate", candidateCount: 0, candidates: [] },
+      expected:
+        /Old content was not found\. Read the current file and use apply_patch again with updated instructions if needed\./u,
+    },
+    {
+      matcher: {
+        ...base,
+        reason: "no-candidate",
+        candidateCount: 0,
+        candidates: [],
+        replacementCandidateCount: 1,
+        replacementCandidates: [{ startLine: 40, endLine: 44 }],
+      },
+      expected:
+        /Requested replacement found at lines 40-44, but old content was not found\. Inspect the reported lines and use apply_patch again with updated instructions if needed\./u,
+    },
+    {
+      matcher: {
+        ...base,
+        reason: "no-ordered-mapping",
+        groupIndex: 2,
+        previousGroupIndex: 1,
+        previousCandidates: [{ startLine: 30, endLine: 32 }],
+        reverseOrdered: true,
+      },
+      expected:
+        /The requested changes match in reverse source-file order at lines 10-12 and lines 30-32\. Use apply_patch again with the requested changes in source-file order if needed\./u,
+    },
+    {
+      matcher: {
+        ...base,
+        reason: "no-ordered-mapping",
+        groupIndex: 2,
+        previousGroupIndex: 1,
+        previousCandidates: [{ startLine: 11, endLine: 13 }],
+        overlapping: true,
+      },
+      expected:
+        /The requested changes overlap at lines 10-12 and lines 11-13\. Use apply_patch again with non-overlapping changes if needed\./u,
+    },
+    {
+      matcher: {
+        ...base,
+        reason: "no-ordered-mapping",
+        groupIndex: 2,
+        previousGroupIndex: 1,
+        previousCandidates: [{ startLine: 20, endLine: 22 }],
+      },
+      expected:
+        /The requested changes cannot be matched in source-file order; matches were found at lines 10-12 and lines 20-22\. Use apply_patch again with the requested changes in source-file order if needed\./u,
+    },
+    {
+      matcher: { ...base, reason: "too-many-candidates", candidateCount: 65 },
+      expected:
+        /65 matching locations exceed the 64-location limit\. Use apply_patch again with more specific surrounding context or smaller changes if needed\./u,
+    },
+    {
+      matcher: { ...base, reason: "ambiguous-output" },
+      expected:
+        /Matching locations at lines 10-12 produce different results\. Use apply_patch again with more specific surrounding context or smaller changes if needed\./u,
+    },
+    {
+      matcher: { ...base, reason: "mapping-limit" },
+      expected:
+        /More than 256 possible ways to apply the requested changes were found\. Use apply_patch again with more specific surrounding context or smaller changes if needed\./u,
+    },
+    {
+      matcher: { ...base, reason: "overlapping-edits" },
+      expected:
+        /The requested changes at lines 10-12 overlap\. Use apply_patch again with non-overlapping changes if needed\./u,
+    },
+  ];
+
+  for (const { matcher, expected } of cases) {
+    const details: ApplyPatchDetails = {
+      status: "failed",
+      exact: true,
+      changes: [],
+      added: [],
+      modified: [],
+      deleted: [],
+      instructions: [
+        {
+          index: 1,
+          kind: "update",
+          path: "matcher.ts",
+          status: "failed",
+          matcher,
+          error: "matcher failure",
+        },
+      ],
+      failure: {
+        phase: "preflight",
+        message: "matcher failure",
+        failedInstruction: 1,
+        matcher,
+      },
+      error: "matcher failure",
+    };
+    assert.match(formatApplyPatchFailureSummary(details), expected);
+  }
 });
 
 void test("reports every instruction to the model and TUI without a limit", async (t) => {
@@ -416,23 +587,30 @@ void test("moves opaque regular files without decoding or changing bytes", async
   assert.equal((await stat(join(cwd, "moved", "invalid.bin"))).mode & 0o777, 0o755);
 });
 
-void test("moves symlink entries and replaces destination symlinks", async (t) => {
+void test("moves symlink entries and reports both replacement entry types", async (t) => {
   const cwd = await workspace(t);
   await writeFile(join(cwd, "target.txt"), "target stays unchanged\n");
   await symlink("target.txt", join(cwd, "source-link"));
   await writeFile(join(cwd, "source.bin"), Buffer.from([0xff, 0x00]));
   await symlink("target.txt", join(cwd, "destination-link"));
+  await symlink("target.txt", join(cwd, "replacement-source-link"));
+  await writeFile(join(cwd, "regular-destination.txt"), "replace me\n");
+  const absoluteTarget = join(cwd, "target.txt");
+  await symlink(absoluteTarget, join(cwd, "absolute-target-link"));
 
   const details = await applyPatch(
     cwd,
     patch(
       "*** Update File: source-link\n*** Move to: nested/moved-link\n",
       "*** Update File: source.bin\n*** Move to: destination-link\n",
+      "*** Update File: replacement-source-link\n*** Move to: regular-destination.txt\n",
+      "*** Update File: absolute-target-link\n*** Move to: nested/absolute-target-link\n",
     ),
   );
 
   assert.equal(await readlink(join(cwd, "nested", "moved-link")), "target.txt");
   assert.deepEqual(await readFile(join(cwd, "destination-link")), Buffer.from([0xff, 0x00]));
+  assert.equal(await readlink(join(cwd, "regular-destination.txt")), "target.txt");
   assert.equal(await readFile(join(cwd, "target.txt"), "utf8"), "target stays unchanged\n");
   assert.deepEqual(
     details.changes.map((change) =>
@@ -443,16 +621,55 @@ void test("moves symlink entries and replaces destination symlinks", async (t) =
     [
       ["symlink", false],
       ["regular-file", true],
+      ["symlink", true],
+      ["symlink", false],
     ],
   );
+  const replacementEffect = details.instructions?.[2]?.effects?.find(
+    (effect) => effect.kind === "replaced",
+  );
+  assert.deepEqual(replacementEffect, {
+    kind: "replaced",
+    path: "regular-destination.txt",
+    previousEntry: { entryType: "regular-file" },
+    replacementEntry: { entryType: "symlink", target: "target.txt" },
+  });
+  assert.equal(isApplyPatchDetails(details), true);
+  const incompleteDetails = structuredClone(details) as unknown as {
+    instructions: Array<{ effects?: Array<Record<string, unknown>> }>;
+  };
+  const incompleteReplacement = incompleteDetails.instructions[2]?.effects?.find(
+    (effect) => effect["kind"] === "replaced",
+  );
+  assert.ok(incompleteReplacement);
+  delete incompleteReplacement["replacementEntry"];
+  assert.equal(isApplyPatchDetails(incompleteDetails), false);
   const feedback = formatApplyPatchSummary(details, cwd);
   assert.match(
     feedback,
-    /1\. \[APPLIED\] Move source-link -> nested\/moved-link - The moved symlink from source-link retains target target\.txt\./u,
+    /1\. \[APPLIED\] Move source-link -> nested\/moved-link - Moved the symlink source-link; nested\/moved-link is now a symlink to target\.txt\./u,
   );
   assert.match(
     feedback,
-    /2\. \[APPLIED\] Move source\.bin -> destination-link - Replaced the symlink at destination-link \(original target: target\.txt\) with a regular file; the original target was not modified\./u,
+    /2\. \[APPLIED\] Move source\.bin -> destination-link - destination-link, previously a symlink to target\.txt, is now a regular file\./u,
+  );
+  assert.match(
+    feedback,
+    /3\. \[APPLIED\] Move replacement-source-link -> regular-destination\.txt - Moved the symlink replacement-source-link; regular-destination\.txt, previously a regular file, is now a symlink to target\.txt\./u,
+  );
+  assert.ok(
+    feedback.includes(
+      `4. [APPLIED] Move absolute-target-link -> nested/absolute-target-link - Moved the symlink absolute-target-link; nested/absolute-target-link is now a symlink to ${absoluteTarget}.`,
+    ),
+  );
+  const theme = {
+    fg: (_color: string, text: string) => text,
+    bold: (text: string) => text,
+  } as unknown as Theme;
+  const rendered = new ApplyPatchDiffComponent(details, theme, cwd, false).render(240).join("\n");
+  assert.match(
+    rendered,
+    /3\. \[APPLIED\] Move replacement-source-link → regular-destination\.txt — Moved the symlink replacement-source-link; regular-destination\.txt, previously a regular file, is now a symlink to target\.txt\./u,
   );
 
   await mkdir(join(cwd, "relative-source"));
@@ -720,7 +937,7 @@ void test("follows symlinks for updates but replaces them for adds", async (t) =
   assert.match(feedback, /2\. \[APPLIED\] Update target\.txt$/mu);
   assert.match(
     feedback,
-    /3\. \[APPLIED\] Add alias\.txt - Replaced the symlink at alias\.txt \(original target: target\.txt\) with a regular file; the original target was not modified\./u,
+    /3\. \[APPLIED\] Add alias\.txt - alias\.txt, previously a symlink to target\.txt, is now a regular file\./u,
   );
   assert.match(feedback, /4\. \[APPLIED\] Update alias\.txt$/mu);
 
@@ -758,11 +975,11 @@ void test("replaces live and dangling symlinks on add without touching their tar
   const feedback = formatApplyPatchSummary(details, cwd);
   assert.match(
     feedback,
-    /1\. \[APPLIED\] Add live\.txt - Replaced the symlink at live\.txt \(original target: target\.txt\) with a regular file; the original target was not modified\./u,
+    /1\. \[APPLIED\] Add live\.txt - live\.txt, previously a symlink to target\.txt, is now a regular file\./u,
   );
   assert.match(
     feedback,
-    /2\. \[APPLIED\] Add dangling\.txt - Replaced the symlink at dangling\.txt \(original target: missing\.txt\) with a regular file; the original target was not modified\./u,
+    /2\. \[APPLIED\] Add dangling\.txt - dangling\.txt, previously a symlink to missing\.txt, is now a regular file\./u,
   );
 });
 
@@ -1288,7 +1505,7 @@ void test("executes planned move strategies and reports every injected failure p
       assert.match(feedback, /Files changed:\nM replaced-destination\.txt/u);
       assert.match(
         feedback,
-        /Replaced the regular file at replaced-destination\.txt with a regular file; replaced-source\.txt remains/u,
+        /replaced-destination\.txt, previously a regular file, is now a regular file; replaced-source\.txt remains/u,
       );
       return true;
     },
@@ -2312,7 +2529,7 @@ void test("deletes symlink entries without deleting their targets", async (t) =>
   assert.match(rendered, /followed-link\.txt \(deleted symlink\)/u);
   assert.match(
     formatApplyPatchSummary(followed, cwd),
-    /2\. \[APPLIED\] Delete followed-link\.txt - Removed the symlink at followed-link\.txt \(original target: followed-target\.txt\); the original target was not modified\./u,
+    /2\. \[APPLIED\] Delete followed-link\.txt - Removed the symlink followed-link\.txt; its target was followed-target\.txt\./u,
   );
   assert.doesNotMatch(JSON.stringify(followed.changes[1]), /old target|new target/u);
 });

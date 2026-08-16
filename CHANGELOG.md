@@ -13,7 +13,8 @@
 - Recover uniquely determined `apply_patch` edits after whitespace-only formatter line reflow using the official `web-tree-sitter` runtime and packaged `@2h2d/tree-sitter-wasms` grammars for JavaScript, JSX, TypeScript, TSX, Python, Go, Java, and Scala, including typed Markdown code fences and formatter-aligned tables; require exact old-side punctuation and apply requested replacement lines without reinterpretation.
 - Move regular files and symlink entries opaquely for move-only `apply_patch` hunks, preserving arbitrary binary bytes and rendering path-only move history.
 - Preserve the aggregate `apply_patch` changed-file summary and, when any instruction is not applied or an applied instruction has feedback, list every concise source-ordered result under `Patch instruction results:` as `N. [STATUS] operation` in model and TUI feedback while omitting the redundant ledger for ordinary all-applied patches.
-- Label combined operations `Update & Move`, report verified regular-file and symlink replacement details with raw symlink targets, distinguish byte-identical update outcomes from identical adds, and use explicit metadata, partial-move, and post-failure content wording.
+- Label combined operations `Update & Move`, require verified previous and resulting entry types for replacement feedback, report raw symlink targets in straightforward move results, distinguish byte-identical update outcomes from identical adds, and use explicit metadata, partial-move, and post-failure content wording.
+- Add direct retry guidance to every formatter-matcher failure, including clearer wording when more than 256 possible applications are found.
 
 ### Fixed
 
@@ -25,7 +26,7 @@
 - Attribute completed filesystem effects, deterministic post-failure path states, matcher evidence, and errors to the instruction that produced them.
 - Preserve confirmed partial-move effects in changed-file summaries when later inspection is unavailable, without rendering the partial operation as a completed rename.
 - Report parent-directory and temporary-entry failure effects without a false no-change summary.
-- Report patch-level errors once and distinguish stopped instructions from input failures.
+- Report patch-level errors once and distinguish cancelled or stopped execution, `apply_patch` setup failures, rejected requests, and patch-format failures.
 - Keep unreadable previous content and diff availability out of model feedback.
 - Execute the move strategy proven during validation, with an injectable filesystem boundary covering native rename, cross-filesystem replacement, Windows overwrite fallback, and partial-failure inspection.
 - Retry Tree-sitter parser and grammar initialization after transient failures, and cover cancellation across queue, matching, pre-mutation, and committed-prefix phases.
