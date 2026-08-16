@@ -6,6 +6,7 @@
 - Preserve canonical `openai-codex` assistant history when changing fast-mode request behavior.
 - Native Codex compaction must fail closed and must not intercept `/tree` branch summarization.
 - `apply_patch` must validate all hunks before writes and participate in Pi's file mutation queue.
+- When explaining model/provider context layouts, use concrete, traceable history transformations rather than mixing context with control flow: define a compact symbol legend, show each request/response as an ordered item list, walk each case independently, contrast valid and invalid layouts, and state which items are committed, discarded, compacted, or carried forward. Distinguish the logical full context from transport optimizations such as `previous_response_id` plus a suffix, and end with the key invariant or concise before/after summary.
 - Add changelog entries for user-visible changes under `Unreleased`.
 - Run `npm run pack:dry` to inspect the npm package contents before release.
 - Keep changelog entries under `Unreleased` for prereleases and move them into a release section only for stable releases.
