@@ -41,7 +41,7 @@
   },
   "dependencies": {
     "@2h2d/tree-sitter-wasms": "0.2.1",
-    "web-tree-sitter": "0.26.11"
+    "web-tree-sitter": "0.26.12"
   },
   "devDependencies": {
     "@earendil-works/pi-ai": "0.84.1",
