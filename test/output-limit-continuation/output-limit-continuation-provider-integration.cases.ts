@@ -2,10 +2,13 @@ import assert from "node:assert/strict";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import test from "node:test";
+import type { TestContext } from "node:test";
 import {
   OUTPUT_LIMIT_CONTINUATION_PROMPT,
   OUTPUT_LIMIT_CONTINUATION_TYPE,
 } from "../../extensions/openai-codex-compat/output-limit-continuation.ts";
+import { DEFAULT_RESPONSE_RETRY_POLICY } from "../../extensions/openai-codex-compat/codex-provider/codex-provider-runtime.ts";
+import { responseRetryDelayMs } from "../../extensions/openai-codex-compat/codex-provider/codex-provider-response-attempts.ts";
 import type { JsonRecord } from "./output-limit-continuation-contracts-and-builders.ts";
 import {
   incompleteEvents,
@@ -17,6 +20,28 @@ import {
   startCodexServer,
   createTestSession,
 } from "./output-limit-continuation-session-harness.ts";
+
+function bypassResponseRetryBackoff(t: TestContext): void {
+  t.mock.method(Math, "random", () => 0.5);
+  const retryDelays = new Set(
+    Array.from({ length: DEFAULT_RESPONSE_RETRY_POLICY.maxRetries }, (_, index) =>
+      responseRetryDelayMs(DEFAULT_RESPONSE_RETRY_POLICY.baseDelayMs, index + 1),
+    ),
+  );
+  const realSetTimeout = globalThis.setTimeout;
+  function immediateRetryTimeout<Args extends unknown[]>(
+    callback: (...args: Args) => void,
+    delay?: number,
+    ...args: Args
+  ): NodeJS.Timeout {
+    return realSetTimeout(callback, retryDelays.has(delay ?? 0) ? 0 : delay, ...args);
+  }
+
+  // Preserve all retry attempts while avoiding wall-clock waits that this
+  // integration test does not assert. The delay calculation is covered
+  // separately in the provider unit tests.
+  t.mock.method(globalThis, "setTimeout", immediateRetryTimeout);
+}
 
 void test("resamples a Codex output limit before returning control to Pi", async (t) => {
   const server = await startCodexServer(t);
@@ -203,6 +228,7 @@ void test("continues a fully exhausted output limit after successful threshold c
     return textEvents("finished after hidden continuation");
   });
   const { session } = await createTestSession(t, server.baseUrl);
+  bypassResponseRetryBackoff(t);
 
   await session.prompt("finish this long task", { expandPromptTemplates: false });
   await session.waitForIdle();

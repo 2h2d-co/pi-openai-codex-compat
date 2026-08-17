@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Changed
+
+- Run isolated test files across four workers, bypass unasserted wall-clock response-retry waits in integration coverage, and assert the retry-delay calculation directly.
+
 ## 0.0.9 - 2026-08-16
 
 ### Fixed

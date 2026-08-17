@@ -14,6 +14,16 @@ import {
   type Context,
   type JsonRecord,
 } from "./codex-provider-harness.ts";
+import { responseRetryDelayMs } from "../../extensions/openai-codex-compat/codex-provider/codex-provider-response-attempts.ts";
+
+void test("calculates exponential response retry delays without waiting", (t) => {
+  t.mock.method(Math, "random", () => 0.5);
+
+  assert.equal(responseRetryDelayMs(0, 1), 0);
+  assert.equal(responseRetryDelayMs(200, 1), 200);
+  assert.equal(responseRetryDelayMs(200, 2), 400);
+  assert.equal(responseRetryDelayMs(200, 5), 3_200);
+});
 
 void test("continues response.completed end_turn false without synthetic input", async () => {
   const user = userEntry("user-1", "finish the task");
