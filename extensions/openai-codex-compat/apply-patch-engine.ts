@@ -81,7 +81,7 @@ export {
   formatApplyPatchSummary,
 } from "./apply-patch-engine/apply-patch-engine-feedback.ts";
 
-export function parseFailureDetails(patch: string, error: unknown): ApplyPatchDetails {
+function parseFailureDetails(patch: string, error: unknown): ApplyPatchDetails {
   const scanned = scanPatchInstructions(patch);
   const lineNumber = error instanceof ApplyPatchParseError ? error.lineNumber : undefined;
   const failedInstruction =
@@ -91,7 +91,7 @@ export function parseFailureDetails(patch: string, error: unknown): ApplyPatchDe
   return failedApplyPatchDetails("parse", errorMessage(error), scanned, failedInstruction);
 }
 
-export function parseAndResolvePatch(cwd: string, patch: string): ResolvedOperation[] {
+function parseAndResolvePatch(cwd: string, patch: string): ResolvedOperation[] {
   const parsed = parsePatchDocument(patch);
   if (parsed.environmentId) {
     throw new ApplyPatchInputError(
@@ -104,7 +104,7 @@ export function parseAndResolvePatch(cwd: string, patch: string): ResolvedOperat
   return resolveOperations(cwd, parsed.operations);
 }
 
-export async function buildPlan(
+async function buildPlan(
   operations: readonly ResolvedOperation[],
   signal?: AbortSignal,
   selectMoveStrategy?: ApplyPatchExecutionHooks["selectMoveStrategy"],

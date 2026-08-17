@@ -18,7 +18,7 @@ export {
 } from "./apply-patch-matcher/apply-patch-matcher-diagnostics.ts";
 export { setApplyPatchStructuralRuntimeForTesting } from "./apply-patch-matcher/apply-patch-matcher-structural-runtime.ts";
 
-export function isContextMismatch(error: unknown): boolean {
+function isContextMismatch(error: unknown): boolean {
   return (
     error instanceof Error &&
     (error.message.startsWith("Failed to find context") ||

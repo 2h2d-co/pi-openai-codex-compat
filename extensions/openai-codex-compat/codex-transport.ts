@@ -61,6 +61,8 @@ import { requestInputLength } from "./codex-transport/codex-transport-websocket-
 import { requestWebSocket } from "./codex-transport/codex-transport-websocket-stream.ts";
 
 export type {
+  CodexCacheUsageDiagnostic,
+  CodexContinuationBypassReason,
   CodexContinuationHandle,
   CodexJsonRequestOptions,
   CodexTransportDiagnostic,

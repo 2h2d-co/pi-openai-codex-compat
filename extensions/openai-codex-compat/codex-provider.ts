@@ -6,7 +6,7 @@ import { CodexProviderRuntime } from "./codex-provider/codex-provider-runtime.ts
 export type { CodexResponseRetryPolicy } from "./codex-provider/codex-provider-contracts.ts";
 export { CodexProviderRuntime } from "./codex-provider/codex-provider-runtime.ts";
 
-export const CODEX_PROVIDER = "openai-codex";
+const CODEX_PROVIDER = "openai-codex";
 
 export function registerCodexProvider(
   pi: ExtensionAPI,
