@@ -6,16 +6,16 @@ or intentionally does not reproduce.
 
 ## Baselines
 
-| Baseline                      | Revision                                   | Default-tool representation in `additional_tools`          |
-| ----------------------------- | ------------------------------------------ | ---------------------------------------------------------- |
-| Installed Codex CLI `0.146.0` | `e363b08c9175ac1cbe5893615dd2cb9ddf95043b` | Direct top-level `function` and `custom` declarations      |
-| Inspected upstream `main`     | `0bdce9f424eb9b39d7b3a8811742d10b6fbf8d54` | One canonical `functions` namespace                        |
-| Namespace migration           | `f21dc4638803f40046c9e294b0349782928f6b36` | Introduced the canonical `functions` namespace after 0.146 |
+| Baseline                     | Revision                                   | Default-tool representation in `additional_tools`     |
+| ---------------------------- | ------------------------------------------ | ----------------------------------------------------- |
+| Official Codex CLI `0.147.0` | `be6e8eac029b183056b7e4402879f15d2c85f61b` | One canonical `functions` namespace                   |
+| Previous Codex CLI `0.146.0` | `e363b08c9175ac1cbe5893615dd2cb9ddf95043b` | Direct top-level `function` and `custom` declarations |
+| Namespace migration          | `f21dc4638803f40046c9e294b0349782928f6b36` | Introduced the contract released in `0.147.0`         |
 
-The package targets the current upstream contract. It does not add a legacy `0.146.0` tool-layout
-mode. The earlier cache report's recommendation to remove the `functions` namespace was based on
-the installed `0.146.0` capture; upstream subsequently made the package's grouped representation
-the official behavior.
+The package targets the official `0.147.0` contract. It does not add a legacy `0.146.0`
+tool-layout mode. The earlier cache report's recommendation to remove the `functions` namespace
+was based on a `0.146.0` capture; the following release made the package's grouped representation
+official behavior.
 
 ## Aligned wire contract
 
@@ -50,7 +50,7 @@ wire shape that the strongly typed official implementation cannot construct.
 | Area                       | Difference and rationale                                                                                                                                                                                                                                                         |
 | -------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Activation                 | The package keeps the user-requested `responsesLite` setting default-off and restricts it to Sol, Terra, and Luna. Official Codex activates Lite from remotely supplied model metadata.                                                                                          |
-| Version compatibility      | The package follows current upstream's `functions` namespace. It is therefore intentionally not byte-identical to installed Codex `0.146.0`, which predates commit `f21dc46388`.                                                                                                 |
+| Version compatibility      | The package follows official Codex `0.147.0` and intentionally does not provide a legacy direct-declaration mode for `0.146.0` or older clients.                                                                                                                                 |
 | Namespace capability       | This provider targets the first-party `openai-codex` endpoint and always uses its namespace-capable contract. Official Codex can fall back to direct declarations for custom providers without namespace support.                                                                |
 | Tool surface               | Pi and Codex expose different built-in tools and schemas. The package only maps Pi's default tools plus the fixed native `web.run` and `image_gen.imagegen` allowlist; it does not reproduce Codex Code Mode, collaboration, MCP, plugin, or environment tools.                  |
 | Hosted-tool planning       | The package removes hosted web/image tools during its Lite transformation. Official Codex normally prevents those declarations earlier while constructing the prompt and substitutes eligible standalone extensions. The resulting first-party wire request is equivalent.       |
