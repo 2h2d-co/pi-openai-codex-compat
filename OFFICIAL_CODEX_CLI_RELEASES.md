@@ -2,42 +2,34 @@
 
 ## Purpose
 
-This is the canonical release-by-release decision record for how
-`pi-openai-codex-compat` handles:
+This document answers two questions after every official Codex CLI release:
 
-1. the model-facing Codex protocol; and
-2. `apply_patch`.
+1. What changed in the model-facing protocol or `apply_patch`?
+2. Will this package follow that change, deliberately behave differently, or
+   exclude it because the required Codex runtime does not exist in Pi?
 
-It records alignment, deliberate deviations, and excluded upstream behavior so
-a later release review does not reopen settled decisions without new evidence.
-When asked to “check the new Codex CLI release,” update this document using the
-procedure below.
+The goal is to preserve decisions and their reasons. A later review must not
+treat a known deviation as an accidental bug merely because official Codex
+still behaves differently.
 
 The detailed `apply_patch` contracts remain normative:
 
 - [`APPLY_PATCH_SEMANTIC_OPERATIONS.md`](APPLY_PATCH_SEMANTIC_OPERATIONS.md)
-  for parsing, matching, filesystem, planning, and execution semantics; and
+  defines parsing, matching, filesystem, planning, and execution behavior.
 - [`APPLY_PATCH_INSTRUCTION_FEEDBACK.md`](APPLY_PATCH_INSTRUCTION_FEEDBACK.md)
-  for model-facing and TUI feedback.
-
-This log records when those contracts were compared with official releases and
-why their differences remain intentional.
+  defines model-facing and TUI feedback.
 
 ## Dictionary
 
-- **Official stable:** The non-prerelease release selected by both GitHub's
-  latest-release endpoint and npm's `latest` dist-tag.
-- **Protocol:** The model-facing Responses request, stream, history, compaction,
-  metadata, usage, and tool-declaration contracts. Codex app-server and TUI
-  protocols are included only when they alter one of those contracts.
-- **Aligned:** The package already implements the relevant upstream behavior.
-- **Retained deviation:** The package intentionally behaves differently. The
-  rationale is part of the compatibility contract.
-- **Excluded:** The upstream behavior belongs to a Codex runtime that this
-  package does not implement.
-- **Action required:** The package is intended to align, but implementation or
-  validation work remains. Do not leave this status in a completed release
-  review.
+- **Protocol:** Model-facing Responses requests, streams, history, compaction,
+  metadata, usage, and tool declarations.
+- **Aligned:** We already behave like official Codex for the relevant feature.
+- **Intentional deviation:** We deliberately behave differently for a recorded
+  reason.
+- **Excluded:** The change belongs to a Codex runtime this package does not
+  implement. Copying only its wire shape would be misleading.
+- **Revisit condition:** The concrete event that would justify reconsidering a
+  decision.
 
 ## Current baseline
 
@@ -49,44 +41,273 @@ why their differences remain intentional.
 | npm `latest`            | `@openai/codex@0.147.0`                                                               |
 | Package review baseline | `pi-openai-codex-compat` `0.0.9` at commit `87c598b5674a88f450e2cfd27f9014207fba498d` |
 | Reviewed                | August 17, 2026                                                                       |
-| Latest prerelease seen  | `0.148.0-alpha.20`; recorded for awareness only, not as the normative baseline        |
+| Latest prerelease seen  | `0.148.0-alpha.20`; noted only, not used as the baseline                              |
 
-## Durable protocol decisions
+## Decisions at a glance
 
-These decisions carry forward until this table is explicitly amended with a
-rationale in a later release entry.
+### Protocol
 
-| ID      | Decision                                                                                                                                                                                                                                                                                                                                                                                                                                    |
-| ------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `P-001` | **Pi owns canonical sessions and branches.** Opaque compaction checkpoints live in Pi compaction entries. Exact completed Responses items are stored only as sparse native-response overrides when Pi's normal assistant representation cannot round-trip them. Codex rollout, thread, rollback, and pagination storage are not reproduced.                                                                                                 |
-| `P-002` | **`response.output_item.done` is the native item commit point.** Exact done items, including unknown forward-compatible fields, are preserved for replay. Terminal `response.output` snapshots do not replace item-level commits. Started-only or otherwise incomplete items are discarded according to the provider retry contract.                                                                                                        |
-| `P-003` | **The transport targets the first-party `openai-codex` endpoint without impersonating the official client.** Request and response fields needed for the endpoint are adapted, but the package does not fabricate Codex client versions, originators, attestation, W3C tracing, analytics, Git state, or unsupported runtime metadata.                                                                                                       |
-| `P-004` | **Responses Lite remains explicit and default-off.** It is enabled only for the package's supported model allowlist. Official Codex may instead activate it from remotely supplied model metadata. The package assumes namespace support because this provider targets the first-party endpoint; it does not implement the official custom-provider fallback to direct declarations.                                                        |
-| `P-005` | **Default and non-default namespaces have different boundaries.** Missing, empty, and `functions` response namespaces map to bare Pi tool names. Only the fixed extension-owned allowlist, currently `web.run` and `image_gen.imagegen`, becomes a non-default Responses namespace. Unknown namespaces and ambiguously flat reserved names fail closed; arbitrary MCP/plugin namespaces are not accepted.                                   |
-| `P-006` | **Pi owns global tool registration and override policy.** This provider normalizes the active flat tool surface by name before serialization; the last active definition wins if duplicate names reach the provider. It does not reproduce Codex's global trusted/external tool registry or strict-collision mode because collision provenance is no longer available at this boundary. Malformed Lite namespace members still fail closed. |
-| `P-007` | **Native retained context deliberately uses the Pi checkpoint shape.** The package keeps recent user, developer, and system messages under its 64k budget before the opaque compaction item. It does not adopt Codex's second installed-history filter, eligible structured agent-message retention, attached image-resize notices, or delegated-task state.                                                                                |
-| `P-008` | **Pi's model and runtime capabilities remain authoritative.** Codex-only plan, account, plugin, app, MCP, Code Mode, multi-agent, permission-profile, remote-environment, and model-owned token-budget gates are excluded unless this package explicitly implements the corresponding runtime.                                                                                                                                              |
-| `P-009` | **Metadata is sent only when it has a truthful Pi analogue.** The package sends Pi-derived installation, session, thread, branch, window, turn, source, sandbox, request-kind, and compaction metadata. Parent-agent/parent-turn, workspace Git, plugin, and Code Mode metadata are omitted rather than fabricated.                                                                                                                         |
-| `P-010` | **Pi usage accounting is the storage boundary.** Standard input, output, cache-read, cache-write, total-token, and cost values are retained. Codex-only rollout-budget units are not stored because Pi has no corresponding usage field or persisted-goal budget runtime.                                                                                                                                                                   |
-| `P-011` | **Retry and compaction control flow must preserve Pi history.** Provider retries can carry forward only committed native output. Percentage, threshold, overflow, and manual compaction use the package's documented Pi lifecycle, even where official Codex can perform the same work inside its own sampling loop or session startup.                                                                                                     |
+- **Pi remains the source of truth for conversations.** We adapt Codex
+  Responses items to Pi sessions instead of recreating Codex's rollout store.
+- **Only completed provider items enter history.** The
+  `response.output_item.done` event is our commit point.
+- **We do not pretend to be the official CLI.** Required endpoint metadata is
+  sent; Codex versions, attestation, tracing, analytics, and unsupported
+  runtime state are not fabricated.
+- **Responses Lite remains user-controlled and default-off.**
+- **Only extension-owned dotted tools become native namespaces.** Unknown
+  namespaces fail closed.
+- **Compaction keeps a Pi-specific retained-history shape.**
+- **Codex-only runtimes stay excluded until they are implemented as real Pi
+  runtimes.**
+- **Retries and compaction must preserve canonical Pi history.**
 
-## Durable `apply_patch` decisions
+### `apply_patch`
 
-| ID      | Decision                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
-| ------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `A-001` | **Keep the official freeform Lark grammar and strict matcher as the baseline.** Official matching-mode priority, first-match behavior, `@@` anchor meaning, `*** End of File` meaning, and unrestricted path resolution remain unless a recorded extension below says otherwise.                                                                                                                                                                                                                 |
-| `A-002` | **Accept safe grammar-valid semantic operations that official Codex rejects.** Empty and identity updates, move-only updates, identical adds, absent deletes, self-moves, repeated or aliased paths, and same-patch fulfilled moves use the exact semantics in `APPLY_PATCH_SEMANTIC_OPERATIONS.md`. Inapplicable operations are skipped only after a complete filesystem-identity-aware proof that no observable result changes.                                                                |
-| `A-003` | **Retain conservative formatter recovery.** It runs only after strict matching fails and accepts only exhaustive mappings with byte-identical final output. Tree-sitter recovery is exact-token and whole-line; replacement text is opaque. Typed Markdown fences and exact-cell tables are supported, while prose reflow, optional punctuation, partial-line, single-token, and heuristic candidate selection are rejected. Strict edits preserve local CRLF rather than Codex's LF conversion. |
-| `A-004` | **Validate every hunk before writes.** Parsing, path resolution, semantic planning, conflict detection, and virtual sequential execution are side-effect free. Predictable conflicts reject the whole patch before mutation. Low-level runtime failures can still leave confirmed partial effects, which are inspected and reported without destructive rollback.                                                                                                                                |
-| `A-005` | **Use operation-specific filesystem semantics.** Pure moves preserve opaque bytes and symlink entries, use native rename when valid, and model cross-filesystem and hard-link topology. Text updates follow live symlinks; adds and move destinations replace link entries. Directories and unsupported special entries reject. The normative details are not inferred from official changes; they live in the semantic reference.                                                               |
-| `A-006` | **Participate in Pi's mutation queue and the extension's process-local alias queue.** Every source and destination uses Pi's queue; proven case, Unicode, symlink-parent, and hard-link aliases also use deterministic extension-local keys. This intentionally exceeds official parser/executor behavior but does not claim cross-process coordination or coordination with unrelated Pi mutation tools.                                                                                        |
-| `A-007` | **Do not reproduce Codex sandbox or approval orchestration.** Pi extensions execute with host permissions. The package does not fabricate Codex permission profiles, environment selection, approval caching, automatic review, or sandbox-violation telemetry. Filesystem safety instead comes from complete semantic preflight, mutation queues, execution-time identity checks, and fail-closed behavior.                                                                                     |
-| `A-008` | **Keep structured Pi-native results.** Model and TUI output share one instruction ledger, include every instruction when a ledger is needed, preserve A/M/D summaries, attribute partial effects to the failing instruction, inspect final path states, and retain structured textual/path-only history. This is intentionally richer than official `apply_patch` stdout and Codex TUI events.                                                                                                   |
+- **Official grammar and strict matching stay the compatibility baseline.**
+- **Safe semantic extensions are intentional.** This includes move-only
+  updates, harmless no-change instructions, repeated paths, and exactly proven
+  skipped operations.
+- **Formatter recovery is conservative, exhaustive, and never heuristic.**
+- **The complete patch is validated before writes.**
+- **Filesystem behavior explicitly accounts for symlinks, hard links, opaque
+  files, and cross-filesystem moves.**
+- **All affected paths participate in mutation queues.**
+- **Codex sandbox and approval dialogs are not simulated.**
+- **Pi receives richer, structured failure and instruction feedback than
+  official `apply_patch` stdout.**
 
-Do not reopen an `A-*` decision merely because official Codex still differs.
-Reopen it only when a new official release changes the underlying grammar,
-matching, filesystem, safety, or result contract in a way that supplies new
-technical evidence.
+## Detailed protocol decisions
+
+### P-001 — Pi owns session and branch history
+
+- **Our choice:** Pi sessions, branches, and compaction entries are canonical.
+  We store an opaque Codex checkpoint in a Pi compaction entry. We add a sparse
+  native-response override only when Pi's ordinary assistant message cannot
+  round-trip completed Responses items exactly.
+- **Official Codex:** Owns its rollout, thread, turn, rollback, fork, and
+  paginated-history stores.
+- **Why:** Running a second canonical conversation store beside Pi would create
+  conflicting branch and compaction state.
+- **Revisit only if:** Pi introduces a supported Codex-native session store or
+  this package stops integrating with Pi session history.
+
+### P-002 — Completed output items are the history commit point
+
+- **Our choice:** Commit exact items only from `response.output_item.done`.
+  Preserve unknown fields on those items for forward-compatible replay.
+  Discard started-only and incomplete items. Do not substitute the terminal
+  response's `output` snapshot.
+- **Official Codex:** Uses completed output items as durable model output.
+- **Why:** This prevents retries from duplicating partial text or tool calls.
+- **Revisit only if:** Official Codex changes its item-level commit semantics.
+
+### P-003 — Adapt the endpoint without impersonating the official client
+
+- **Our choice:** Send fields required for the first-party `openai-codex`
+  endpoint, but do not invent a Codex client version, originator, attestation,
+  W3C trace, analytics payload, or Git state.
+- **Official Codex:** Can truthfully send those values because it owns those
+  systems.
+- **Why:** Fabricated operational metadata is incorrect and can make debugging
+  or policy decisions misleading.
+- **Revisit only if:** Pi exposes a truthful equivalent that the endpoint
+  requires.
+
+### P-004 — Responses Lite is explicit and default-off
+
+- **Our choice:** Enable Responses Lite only when the user opts in and the
+  selected model is in this package's supported allowlist. Assume namespace
+  support because this provider targets the first-party endpoint.
+- **Official Codex:** Activates Lite from model metadata and can fall back to
+  direct tool declarations for custom providers without namespace support.
+- **Why:** Pi model objects do not expose the official capability fields, and
+  changing request envelopes should remain user-controlled.
+- **Revisit only if:** Pi exposes equivalent model and provider capability
+  metadata.
+
+### P-005 — Non-default tool namespaces are a fixed allowlist
+
+- **Our choice:** Treat missing, empty, and `functions` namespaces as bare Pi
+  tool names. Convert only `web.run` and `image_gen.imagegen` into non-default
+  Responses namespaces. Reject unknown or ambiguously flat reserved names.
+- **Official Codex:** Can register arbitrary MCP, plugin, app, and internal
+  namespaces.
+- **Why:** Pi tools are flat names, and this package owns only its two fixed
+  namespaced surfaces.
+- **Revisit only if:** Pi adds native namespace identity or this package owns a
+  new namespaced runtime.
+
+### P-006 — Pi owns tool registration and collision policy
+
+- **Our choice:** Normalize the active Pi tool list by name before
+  serialization. If duplicate names somehow reach the provider, the last
+  active definition wins. Continue to reject malformed Lite namespace members.
+- **Official Codex:** Has a trusted/external tool registry, reserved names, and
+  an optional strict collision mode.
+- **Why:** By the provider boundary, Pi has already resolved registration and
+  no longer supplies enough provenance to reproduce Codex's registry policy.
+- **Revisit only if:** Pi exposes tool-source and collision information at the
+  provider boundary.
+
+### P-007 — Compaction keeps Pi's retained-history shape
+
+- **Our choice:** Before the opaque compaction item, retain recent user,
+  developer, and system messages under a 64k budget.
+- **Official Codex:** Applies an additional installed-history filter, can keep
+  bounded structured agent messages, groups image-resize notices with source
+  items, and preserves delegated-task state.
+- **Why:** Pi checkpoints do not represent all of those Codex-specific item
+  types and currently depend on the existing retained-history shape.
+- **Revisit only if:** Pi can represent those items canonically and changing
+  checkpoint shape has an explicit migration plan.
+
+### P-008 — Do not copy schemas for runtimes we do not implement
+
+- **Our choice:** Exclude Codex-only plugin, app, MCP, Code Mode, multi-agent,
+  permission-profile, remote-environment, plan, and model-owned token-budget
+  behavior.
+- **Official Codex:** Owns the state, trust, UI, execution, and lifecycle
+  systems behind those fields and tools.
+- **Why:** Sending a schema without the corresponding runtime would claim
+  capabilities that do not work.
+- **Revisit only if:** A specific runtime is deliberately implemented in this
+  package or a separate Pi package.
+
+### P-009 — Send only truthful metadata
+
+- **Our choice:** Send Pi-derived installation, session, thread, branch,
+  window, turn, source, sandbox, request-kind, and compaction metadata. Omit
+  parent-agent, parent-turn, workspace Git, plugin, and Code Mode metadata.
+- **Official Codex:** Sends those extra values when its runtime owns them.
+- **Why:** Missing data is more accurate than fabricated lineage.
+- **Revisit only if:** Pi gains an equivalent lifecycle and exposes it here.
+
+### P-010 — Pi's usage model is the accounting boundary
+
+- **Our choice:** Store standard input, output, cache-read, cache-write, total
+  token, and cost values. Ignore `codex_rollout_budget_units`.
+- **Official Codex:** Uses rollout-budget units in its goal and budget
+  runtimes.
+- **Why:** Pi has no corresponding usage field or persisted-goal budget
+  runtime.
+- **Revisit only if:** Pi adds a first-class field with defined accounting
+  semantics.
+
+### P-011 — Retry and compaction flow must preserve Pi history
+
+- **Our choice:** Provider retries may carry forward only committed native
+  output. Percentage, threshold, overflow, and manual compaction follow the
+  documented Pi-compatible lifecycle.
+- **Official Codex:** Can perform retries and compaction entirely inside its own
+  sampling and session-startup loops.
+- **Why:** Pi remains responsible for visible messages, tool execution,
+  branches, and compaction entries.
+- **Revisit only if:** Pi delegates the complete agent sampling loop to the
+  provider.
+
+## Detailed `apply_patch` decisions
+
+### A-001 — Official grammar and strict matching are the baseline
+
+- **Our choice:** Keep the official freeform Lark grammar, matching-mode
+  priority, first-match behavior, `@@` anchor meaning, `*** End of File`
+  meaning, and unrestricted path resolution unless another recorded decision
+  explicitly changes behavior.
+- **Why:** This preserves the model contract and predictable official patch
+  behavior.
+- **Revisit only if:** An official release changes the grammar or strict
+  matcher.
+
+### A-002 — Safe semantic extensions are intentional
+
+- **Our choice:** Accept grammar-valid move-only updates, empty and identity
+  updates, identical adds, absent deletes, self-moves, repeated or aliased
+  paths, and same-patch fulfilled moves. Skip an inapplicable operation only
+  after proving that every effect is unobservable.
+- **Official Codex:** Rejects several of these forms even when their meaning or
+  no-change postcondition is safe.
+- **Why:** The objective is safe filesystem semantics, not rejection of
+  harmless model output.
+- **Revisit only if:** A counterexample shows that an accepted operation is
+  ambiguous or unsafe.
+
+### A-003 — Formatter recovery must be exhaustive, not heuristic
+
+- **Our choice:** Run formatter recovery only after strict matching fails.
+  Accept it only when every valid mapping produces byte-identical final output.
+  Tree-sitter matching is exact-token and whole-line. Markdown support is
+  limited to typed code fences and exact-cell tables. Replacement text stays
+  opaque. Strict edits preserve local CRLF.
+- **Official Codex:** Does not provide this recovery and can convert an edited
+  CRLF region to LF.
+- **Why:** Formatters frequently change line layout, but guessing between
+  plausible edits risks corruption.
+- **Revisit only if:** Official Codex introduces a stronger proven matcher or
+  a supported case can be added without heuristics.
+
+### A-004 — Validate the complete patch before writes
+
+- **Our choice:** Parse, resolve, simulate, and classify every instruction
+  before the first mutation. Reject predictable conflicts without writing.
+  After an unpredictable low-level failure, inspect and report confirmed
+  partial effects without destructive rollback.
+- **Official Codex:** Can leave a committed prefix when execution fails after
+  earlier mutations.
+- **Why:** A model-generated multi-file patch should not partially apply
+  because a later semantic conflict was detectable in advance.
+- **Revisit only if:** A safe transactional mechanism replaces complete
+  preflight.
+
+### A-005 — Filesystem semantics are operation-specific
+
+- **Our choice:** Pure moves preserve opaque bytes and symlink entries, use
+  native rename when valid, and model hard-link and cross-filesystem topology.
+  Text updates follow live symlinks. Adds and move destinations replace
+  symlink entries. Directories and unsupported special entries reject.
+- **Why:** Treating every operation as a text rewrite loses identity, metadata,
+  links, or binary content.
+- **Revisit only if:** Host filesystem behavior or official semantics supply
+  new evidence requiring a specific rule change.
+
+### A-006 — Every affected path participates in mutation queues
+
+- **Our choice:** Queue every source and destination through Pi's mutation
+  queue. Also use deterministic process-local keys for proven case, Unicode,
+  symlink-parent, and hard-link aliases.
+- **Official Codex:** Uses its own execution and sandbox orchestration rather
+  than Pi's queue contract.
+- **Why:** Concurrent in-process patches must not preflight the same physical
+  state independently.
+- **Known limit:** This does not coordinate separate Pi processes or unrelated
+  Pi mutation tools.
+- **Revisit only if:** Pi provides a broader shared mutation transaction.
+
+### A-007 — Do not simulate Codex sandbox or approval orchestration
+
+- **Our choice:** Run with the host permissions available to Pi extensions. Do
+  not fabricate permission profiles, environment selection, approval caching,
+  automatic review, or sandbox telemetry.
+- **Official Codex:** Routes patches through its environment, permission,
+  approval, and sandbox systems.
+- **Why:** A confirmation-shaped UI without enforcement would provide false
+  assurance. Our safety boundary is semantic preflight, mutation queues,
+  execution-time identity checks, and fail-closed behavior.
+- **Revisit only if:** Pi provides an enforceable sandbox and approval
+  lifecycle.
+
+### A-008 — Keep structured Pi-native feedback
+
+- **Our choice:** Preserve the aggregate A/M/D summary and, when explanation is
+  needed, list every instruction with its status. Attribute partial effects to
+  the failing instruction, inspect final path states, and store structured
+  textual or path-only history for the TUI.
+- **Official Codex:** Uses its own stdout, rollout events, approval events, and
+  TUI cells.
+- **Why:** Pi needs one canonical result that is useful to both the model and
+  its TUI after success or partial failure.
+- **Revisit only if:** Pi introduces a richer canonical mutation-result
+  protocol that can carry the same facts.
 
 ## Release log
 
@@ -104,58 +325,81 @@ technical evidence.
 - Source comparison:
   [`rust-v0.146.0...rust-v0.147.0`](https://github.com/openai/codex/compare/rust-v0.146.0...rust-v0.147.0)
 
-#### Protocol review
+#### What changed in the protocol
 
-| Official `0.147.0` change                                                                                                                                              | Package decision                                                                                                                                                                                                                                                                   | Status                |
-| ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------- |
-| Responses Lite now groups top-level function and custom tools into one `functions` namespace for namespace-capable providers.                                          | The package had already adopted the post-`0.146.0` upstream contract. It preserves first-occurrence placement, explicit non-empty namespace descriptions, an empty default description, member ordering, and empty-namespace omission.                                             | Aligned               |
-| Freeform custom tools can carry `defer_loading` and can appear inside namespace and tool-search output declarations.                                                   | Immediate `apply_patch` omits `defer_loading`, equivalent to official `None`. Pi additive tool-search history emits `defer_loading: true`, and the Lite transformer accepts both function and custom children.                                                                     | Aligned               |
-| Flat, empty-namespace, and `functions` tool names are canonical aliases. The official registry also adds optional strict collision rejection and reserved-name checks. | Response calls use the same default-namespace aliases. The package retains `P-005` and `P-006`: Pi owns registration, only fixed non-default namespaces are adapted, malformed or unknown namespaces fail closed, and duplicate flat Pi names are normalized rather than rejected. | Retained deviation    |
-| Function-call items can preserve `encrypted_function_args`; an empty array identifies plaintext direct collaboration messages in specific multi-agent tools.           | Raw done items preserve this unknown field through native overrides under `P-002`. The package does not interpret it because Codex collaboration tools and logging are excluded by `P-008`. Ordinary Pi tool calls remain canonical Pi calls.                                      | Excluded runtime      |
-| Completed usage can include `codex_rollout_budget_units`.                                                                                                              | Standard usage remains aligned. The extra field is intentionally not stored under `P-010`; no goal or rollout-budget behavior is inferred from it.                                                                                                                                 | Retained deviation    |
-| Turn metadata can include `parent_turn_id`.                                                                                                                            | Omitted under `P-009` because this package has no Codex parent-agent turn lifecycle.                                                                                                                                                                                               | Excluded runtime      |
-| Remote-compaction retention now groups image-resize notices with source items and can retain bounded non-final structured agent messages.                              | The package retains its Pi checkpoint shape under `P-007`. It does not create official image-resize notices or delegated-agent messages, and does not change its 64k retained-context selection.                                                                                   | Retained deviation    |
-| Model metadata centralizes instruction templates and adds plugin/app guidance, collaboration messages, and model-owned token-budget defaults.                          | Pi supplies the model catalog and system prompt. Plugin, app, collaboration, and model-owned budget runtimes remain excluded by `P-008`; the provider does not synthesize their instructions.                                                                                      | Excluded runtime      |
-| Attempted tool calls can be attached to internal message metadata for official analytics.                                                                              | The package preserves provider-returned unknown metadata but does not create Codex analytics metadata, consistent with `P-003`.                                                                                                                                                    | Excluded runtime      |
-| Cached web search and remote compaction were added for Amazon Bedrock.                                                                                                 | This package targets the first-party `openai-codex` endpoint and does not implement Bedrock provider translation.                                                                                                                                                                  | Excluded provider     |
-| Command secret redaction was added to Codex app-server projections and replay UI.                                                                                      | The package does not own Pi's shell-command projection or general session UI. It preserves exact provider items for replay and does not mutate opaque or encrypted history. Secret handling outside extension-owned diagnostics and tool results remains Pi's responsibility.      | Excluded presentation |
-| The SSE usage parser changed only to carry rollout-budget units; no relevant turn terminal, item-commit, WebSocket continuation, or retry wire change was found.       | Keep the package's current transport, commit-point, retry, and continuation behavior.                                                                                                                                                                                              | Aligned               |
+Already aligned:
 
-#### `apply_patch` review
+1. **Responses Lite default tools:** Official Codex now groups top-level
+   function and custom tools into one `functions` namespace. The package
+   already used this layout.
+2. **Deferred freeform tools:** Official custom tools can carry
+   `defer_loading` and appear inside namespaces or tool-search output. The
+   package already emits the equivalent eager and deferred forms.
+3. **Default namespace aliases:** Missing, empty, and `functions` namespaces
+   identify the same default tool surface. The package maps all three to bare
+   Pi names.
+4. **Transport terminals:** No relevant item-commit, turn-terminal, WebSocket
+   continuation, or retry wire change was found.
 
-| Official `0.147.0` change                                                                                                                                            | Package decision                                                                                                                                                                                                    | Status           |
-| -------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------- |
-| No files changed in `codex-rs/apply-patch/`; the parser, matcher, invocation semantics, fixtures, and standalone executor are unchanged from `0.146.0`.              | Keep the existing official strict baseline and every recorded `A-*` extension. No semantic reevaluation or implementation change is warranted.                                                                      | Aligned baseline |
-| The freeform tool specification gained `defer_loading: None`.                                                                                                        | The package's immediate custom grammar declaration omits the optional field, which is wire-equivalent. Deferred additive declarations already emit `defer_loading: true`.                                           | Aligned          |
-| Core handling was consolidated around the selected turn environment and current permission profile; approval actions now carry shared changes and sandbox telemetry. | Retain `A-007`. This is official runtime orchestration, not a parser, matcher, or filesystem-semantic change. Pi has no corresponding Codex environment, permission-profile, approval, or sandbox runtime to adapt. | Excluded runtime |
+Intentional deviations retained:
+
+1. **Strict tool collisions:** Official Codex can reject registry collisions.
+   We retain P-006 because Pi has already resolved registration before the
+   provider sees tools.
+2. **Rollout-budget usage:** Official usage can include
+   `codex_rollout_budget_units`. We retain P-010 and do not store it.
+3. **Compaction history:** Official Codex can retain bounded structured agent
+   messages and attached image-resize notices. We retain the Pi checkpoint
+   shape under P-007.
+
+Excluded because the runtime is absent:
+
+1. `encrypted_function_args` semantics for plaintext multi-agent messages;
+2. `parent_turn_id` for parent-agent lineage;
+3. attempted-tool-call analytics metadata;
+4. plugin/app/collaboration/model-budget instruction systems;
+5. Amazon Bedrock search and compaction translation; and
+6. Codex app-server command redaction and replay presentation.
+
+Raw completed response items still preserve unknown provider fields under
+P-002, even when the package does not interpret the corresponding runtime.
+
+#### What changed in `apply_patch`
+
+1. **No parser or filesystem change:** Nothing changed under
+   `codex-rs/apply-patch/`. The parser, matcher, fixtures, and standalone
+   executor are unchanged from `0.146.0`. All A-series decisions remain in
+   force.
+2. **Optional deferred field:** The official eager tool now has
+   `defer_loading: None`. Omitting that optional field is wire-equivalent to
+   the package's eager declaration. Deferred Pi history already sends `true`.
+3. **Permission orchestration refactor:** Official core handling now uses the
+   selected environment's current permission profile and revised approval
+   action. This is excluded under A-007 because it did not change patch
+   semantics and Pi has no corresponding enforcement runtime.
 
 #### Outcome
 
 - No runtime implementation change was required for `0.147.0`.
-- `RESPONSES_LITE_COMPATIBILITY.md` and the README baseline were advanced from
-  the inspected post-`0.146.0` upstream state to the official `0.147.0`
-  release.
-- Existing protocol and `apply_patch` tests remain the executable evidence for
-  the aligned behavior and retained deviations.
+- `RESPONSES_LITE_COMPATIBILITY.md` and the README baseline were advanced to
+  the official `0.147.0` release.
+- Existing protocol and `apply_patch` tests remain the executable evidence.
 
 ## Procedure for the next release
 
-Complete every step when asked to check a new official Codex CLI release.
+When asked to check a new official Codex CLI release:
 
-1. **Resolve the release.**
+1. **Resolve the stable release.**
    - Verify GitHub's latest non-prerelease release.
    - Verify npm's `@openai/codex` `latest` dist-tag.
-   - If they disagree, do not advance the baseline; record the discrepancy and
-     ask Kaan how to proceed.
-   - Record newer prereleases for awareness, but do not use one as the
-     normative baseline unless Kaan explicitly requests a prerelease review.
-2. **Pin exact source.**
+   - If they disagree, do not advance the baseline; ask Kaan how to proceed.
+   - Note prereleases for awareness, but use one as the baseline only when Kaan
+     explicitly requests it.
+2. **Pin and compare exact source.**
    - Record the tag, publication date, and commit SHA.
-   - Compare the new tag with the previous reviewed stable tag, not with
-     unpinned `main`.
-   - Use the release notes for discovery, then verify every relevant claim
-     against source and tests.
-3. **Inspect protocol changes.**
+   - Compare with the previous reviewed stable tag, not unpinned `main`.
+   - Use release notes for discovery, then verify against source and tests.
+3. **Inspect the protocol.**
    - Requests and transports:
      `codex-rs/core/src/client.rs`,
      `codex-rs/codex-api/src/requests/responses.rs`,
@@ -171,38 +415,27 @@ Complete every step when asked to check a new official Codex CLI release.
    - Tool wire contracts:
      `codex-rs/tools/src/`, `codex-rs/core/src/tools/`, and Responses Lite
      tests.
-   - Map each material change to an existing `P-*` decision or add a new
-     durable decision with an explicit rationale.
-4. **Inspect `apply_patch` changes.**
-   - Always diff `codex-rs/apply-patch/`, the Lark grammar, prompt/tool
-     specification, core handler, runtime, approval/sandbox path, protocol
+4. **Inspect `apply_patch`.**
+   - Diff `codex-rs/apply-patch/`, the Lark grammar, prompt and tool
+     specification, core handler, runtime, approvals, sandbox path, protocol
      events, and tests.
-   - Separate parser, matcher, and filesystem changes from
-     orchestration-only changes.
-   - Map each material change to an existing `A-*` decision. Do not infer that
-     an intentional deviation became accidental merely because upstream still
-     differs.
-5. **Decide before implementing.**
-   - Classify each item as Aligned, Retained deviation, or Excluded.
-   - If alignment is intended, implement and validate it before completing the
-     release entry.
-   - If a genuinely new product decision cannot be resolved from the durable
-     rules, ask Kaan before implementation instead of leaving an unresolved
-     status.
-6. **Update documentation.**
-   - Advance **Current baseline** and append a release entry; never erase old
-     decisions silently.
-   - Update README compatibility wording and focused reports when their
-     baselines or claims changed.
-   - Update the semantic and feedback references only when their normative
-     contracts changed.
-   - Add a changelog entry only for a user-visible package change, not for a
-     source-review-only baseline update.
-7. **Validate and commit.**
-   - Add or update regression tests for every implementation change.
-   - Run `npm run check` and `npm test`.
-   - Record the implementation outcome and validation in the release entry.
-   - Commit the review and any required adaptation as a cohesive checkpoint.
+   - Separate parser, matcher, and filesystem changes from orchestration-only
+     changes.
+5. **Make each decision explicit.**
+   - Map every material change to an existing P-series or A-series decision.
+   - For a new decision, record our choice, official behavior, reason, and
+     revisit condition.
+   - If the decision cannot be resolved from existing policy, ask Kaan before
+     implementing it.
+   - Do not leave an unresolved “action required” entry in a completed review.
+6. **Update and validate.**
+   - Advance the current baseline and append a release entry.
+   - Update README and focused reports whose claims changed.
+   - Change normative semantic documents only when their contracts changed.
+   - Add a changelog entry only for a user-visible package change.
+   - Add tests for implementation changes, then run `npm run check` and
+     `npm test`.
+   - Commit the review as a cohesive checkpoint.
 
 ## Primary official sources
 
