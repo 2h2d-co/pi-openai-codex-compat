@@ -94,12 +94,16 @@ The detailed `apply_patch` contracts remain normative:
 
 ### P-002 — Completed output items are the history commit point
 
-- **Our choice:** Commit exact items only from `response.output_item.done`.
-  Preserve unknown fields on those items for forward-compatible replay.
-  Discard started-only and incomplete items. Do not substitute the terminal
-  response's `output` snapshot.
+- **Our choice:** For ordinary streamed assistant output, commit exact items
+  from `response.output_item.done`. Preserve unknown fields on those items for
+  forward-compatible replay. Discard started-only and incomplete items. The
+  terminal response's `output` array is normally empty and is not used to
+  reconstruct the completed output.
 - **Official Codex:** Uses completed output items as durable model output.
-- **Why:** This prevents retries from duplicating partial text or tool calls.
+- **Why:** The item-done events are the stream's reliable source of completed
+  output; the terminal event normally supplies status and usage rather than
+  output items. This boundary also prevents retries from duplicating partial
+  text or tool calls.
 - **Revisit only if:** Official Codex changes its item-level commit semantics.
 
 ### P-003 — Adapt the endpoint without impersonating the official client
