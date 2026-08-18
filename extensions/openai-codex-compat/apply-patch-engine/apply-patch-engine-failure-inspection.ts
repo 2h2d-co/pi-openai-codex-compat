@@ -19,7 +19,6 @@ import {
   type ReplaceableFileEntry,
   type VirtualEntry,
 } from "./apply-patch-engine-filesystem-model.ts";
-import { requiredValue } from "../required-value.ts";
 
 export function addInstructionEffect(
   instruction: ApplyPatchInstructionDetails,
@@ -201,8 +200,11 @@ export async function inspectFinalPath(
           }
         }
         return finalPathInspection(displayPath, "different-from-requested-content", actual);
-      } catch (error) {
-        if (!(error instanceof Error)) throw error;
+        // oxlint-disable-next-line 2h2d/no-silent-error-suppression -- Failure inspection records an indeterminate state when content cannot be read.
+      } catch (
+        // oxlint-disable-next-line no-unused-vars -- The caught read failure is intentionally represented by an indeterminate final state.
+        _error
+      ) {
         return finalPathInspection(
           displayPath,
           physicalEntryChanged ? "different-entry" : "not-verified",
@@ -227,8 +229,11 @@ export async function inspectFinalPath(
             : "different-from-previous-content",
           actual,
         );
-      } catch (error) {
-        if (!(error instanceof Error)) throw error;
+        // oxlint-disable-next-line 2h2d/no-silent-error-suppression -- Failure inspection records an indeterminate state when prior content cannot be read.
+      } catch (
+        // oxlint-disable-next-line no-unused-vars -- The caught read failure is intentionally represented by an indeterminate final state.
+        _error
+      ) {
         return finalPathInspection(displayPath, "not-verified", actual);
       }
     }
@@ -248,8 +253,11 @@ export async function inspectFinalPath(
       return finalPathInspection(displayPath, "different-entry", actual);
     }
     return finalPathInspection(displayPath, currentEntryFinalState(actual), actual);
-  } catch (error) {
-    if (!(error instanceof Error)) throw error;
+    // oxlint-disable-next-line 2h2d/no-silent-error-suppression -- Failure inspection must preserve the primary mutation failure when the final path cannot be inspected.
+  } catch (
+    // oxlint-disable-next-line no-unused-vars -- The caught inspection failure is intentionally ignored to preserve the primary mutation failure.
+    _error
+  ) {
     return finalPathInspection(displayPath, "not-verified");
   }
 }
@@ -336,18 +344,14 @@ export async function recordFailureInspection(
         mutation.operation.path,
         mutation.expectedSource,
         filesystem,
-        mutation.operation.moveAbsolutePath ? undefined : mutation.content,
+        mutation.moveMode === "none" ? mutation.content : undefined,
       ),
     );
-    if (mutation.operation.moveAbsolutePath && mutation.expectedDestination) {
-      const moveTo = requiredValue(
-        mutation.operation.moveTo,
-        "A moved text update has no destination.",
-      );
+    if (mutation.moveMode !== "none") {
       inspected.push(
         await inspectFinalPath(
           mutation.operation.moveAbsolutePath,
-          moveTo,
+          mutation.operation.moveTo,
           mutation.expectedDestination,
           filesystem,
           mutation.content,
@@ -355,11 +359,8 @@ export async function recordFailureInspection(
       );
     }
   } else {
-    const moveAbsolutePath = requiredValue(
-      mutation.operation.moveAbsolutePath,
-      "A move mutation has no destination path.",
-    );
-    const moveTo = requiredValue(mutation.operation.moveTo, "A move mutation has no destination.");
+    const moveAbsolutePath = mutation.operation.moveAbsolutePath;
+    const moveTo = mutation.operation.moveTo;
     inspected.push(
       await inspectFinalPath(
         mutation.operation.absolutePath,
@@ -419,10 +420,9 @@ export async function recordFailureInspection(
       );
     }
   } else if (mutation.kind === "text-update") {
-    if (mutation.operation.moveTo) {
+    if (mutation.moveMode !== "none") {
       if (
         destinationState &&
-        mutation.expectedDestination &&
         finalStateHasChangedPresentEntry(destinationState, mutation.expectedDestination)
       ) {
         if (mutation.expectedDestination.kind === "absent") {
@@ -440,7 +440,7 @@ export async function recordFailureInspection(
         }
       } else if (
         destinationState?.state === "absent" &&
-        mutation.expectedDestination?.kind !== "absent"
+        mutation.expectedDestination.kind !== "absent"
       ) {
         addInstructionEffect(instruction, { kind: "deleted", path: mutation.operation.moveTo });
       }
@@ -465,7 +465,7 @@ export async function recordFailureInspection(
       addInstructionEffect(instruction, { kind: "updated", path: mutation.operation.path });
     }
   } else {
-    const moveTo = requiredValue(mutation.operation.moveTo, "A move mutation has no destination.");
+    const moveTo = mutation.operation.moveTo;
     if (
       destinationState &&
       finalStateHasChangedPresentEntry(destinationState, mutation.expectedDestination)
@@ -515,9 +515,8 @@ export async function recordFailureInspection(
       if ((await filesystem.lstat(parent)).isDirectory()) {
         addInstructionEffect(instruction, { kind: "directory-created", path: parent });
       }
-    } catch (error) {
-      if (!(error instanceof Error)) throw error;
-    }
+      // oxlint-disable-next-line 2h2d/no-silent-error-suppression -- Parent-effect inspection is best-effort metadata for the primary mutation failure.
+    } catch (_error) {} // oxlint-disable-line no-unused-vars -- The caught inspection failure is intentionally ignored to preserve the primary mutation failure.
   }
 
   if (temporaryPath) {
@@ -527,8 +526,7 @@ export async function recordFailureInspection(
         kind: "temporary-entry-remains",
         path: temporaryPath,
       });
-    } catch (error) {
-      if (!(error instanceof Error)) throw error;
-    }
+      // oxlint-disable-next-line 2h2d/no-silent-error-suppression -- Temporary-entry inspection is best-effort metadata for the primary mutation failure.
+    } catch (_error) {} // oxlint-disable-line no-unused-vars -- The caught inspection failure is intentionally ignored to preserve the primary mutation failure.
   }
 }

@@ -1,5 +1,3 @@
-import { extensionContextFixture } from "./support/pi-fixtures.ts";
-import { extensionApiFixture } from "./support/pi-fixtures.ts";
 import {
   isJsonValue,
   isObject,
@@ -11,20 +9,28 @@ import {
 import { isString, requireString } from "../extensions/openai-codex-compat/value-contracts.ts";
 import assert from "node:assert/strict";
 import test from "node:test";
-import type { SessionEntry } from "@earendil-works/pi-coding-agent";
+import type { SessionEntry, ToolInfo } from "@earendil-works/pi-coding-agent";
 import type { Api, Model, ProviderHeaders } from "@earendil-works/pi-ai";
 import {
   CHECKPOINT_ENTRY_TYPE,
   parseCheckpoint,
 } from "../extensions/openai-codex-compat/compaction-checkpoint.ts";
 import { CodexProviderRuntime } from "../extensions/openai-codex-compat/codex-provider.ts";
+import type { CodexProviderRuntimeApi } from "../extensions/openai-codex-compat/codex-provider/codex-provider-runtime.ts";
 import { DEFAULT_CONFIG } from "../extensions/openai-codex-compat/config.ts";
 import { CODEX_TURN_METADATA_HEADER } from "../extensions/openai-codex-compat/codex-metadata.ts";
 import {
   nativeResponseData,
   NATIVE_RESPONSE_ENTRY_TYPE,
 } from "../extensions/openai-codex-compat/native-history.ts";
-import registerRemoteCompaction from "../extensions/openai-codex-compat/remote-compaction.ts";
+import registerRemoteCompaction, {
+  type RemoteCompactionApi,
+  type RemoteCompactionContext,
+  type RemoteCompactionContextHandler,
+  type RemoteCompactionHeadersHandler,
+  type RemoteCompactionHookHandler,
+  type RemoteCompactionLifecycleHandler,
+} from "../extensions/openai-codex-compat/remote-compaction.ts";
 
 interface TestCompactionResult {
   compaction: {
@@ -112,20 +118,42 @@ function accessToken(): string {
   return `${header}.${claims}.signature`;
 }
 
+class RemoteCompactionTestApi implements RemoteCompactionApi, CodexProviderRuntimeApi {
+  beforeProviderHeaders: RemoteCompactionHeadersHandler | undefined;
+  context: RemoteCompactionContextHandler | undefined;
+  sessionBeforeCompact: RemoteCompactionHookHandler | undefined;
+  sessionShutdown: RemoteCompactionLifecycleHandler | undefined;
+  sessionStart: RemoteCompactionLifecycleHandler | undefined;
+
+  appendEntry(): void {}
+  getActiveTools(): string[] {
+    return [];
+  }
+  getAllTools(): ToolInfo[] {
+    return [];
+  }
+
+  onBeforeProviderHeaders(handler: RemoteCompactionHeadersHandler): void {
+    this.beforeProviderHeaders = handler;
+  }
+  onContext(handler: RemoteCompactionContextHandler): void {
+    this.context = handler;
+  }
+  onSessionBeforeCompact(handler: RemoteCompactionHookHandler): void {
+    this.sessionBeforeCompact = handler;
+  }
+  onSessionShutdown(handler: RemoteCompactionLifecycleHandler): void {
+    this.sessionShutdown = handler;
+  }
+  onSessionStart(handler: RemoteCompactionLifecycleHandler): void {
+    this.sessionStart = handler;
+  }
+}
+
 function createHarness(branch: SessionEntry[]) {
-  type CompactionHookResult = object | undefined;
-  type Handler = (...args: unknown[]) => CompactionHookResult | Promise<CompactionHookResult>;
-  const handlers = new Map<string, Handler>();
   const selected = codexModel();
   const notices: string[] = [];
-  const pi = extensionApiFixture({
-    on(event: string, handler: Handler) {
-      handlers.set(event, handler);
-    },
-    getAllTools: () => [],
-    getActiveTools: () => [],
-    appendEntry() {},
-  });
+  const pi = new RemoteCompactionTestApi();
   const runtime = new CodexProviderRuntime(pi, () => DEFAULT_CONFIG);
   const requests: JsonRecord[] = [];
   const requestHeaders: Array<ProviderHeaders | undefined> = [];
@@ -141,13 +169,10 @@ function createHarness(branch: SessionEntry[]) {
     getLeafId: () => branch.at(-1)?.id ?? null,
     appendCompaction: () => "",
   };
-  const context = extensionContextFixture({
+  const context = {
     model: selected,
     cwd: process.cwd(),
-    mode: "tui",
     hasUI: true,
-    signal: new AbortController().signal,
-    scopedModels: [],
     sessionManager: manager,
     modelRegistry: {
       getApiKeyAndHeaders: async () => ({
@@ -160,21 +185,20 @@ function createHarness(branch: SessionEntry[]) {
       notify(message: string) {
         notices.push(message);
       },
-      setStatus() {},
     },
     isProjectTrusted: () => true,
     getContextUsage: () => ({ tokens: 50_000, contextWindow: 100_000, percent: 50 }),
     getSystemPrompt: () => "system prompt",
-  });
+  } satisfies RemoteCompactionContext;
 
   registerRemoteCompaction(pi, runtime, () => DEFAULT_CONFIG);
-  return { handlers, runtime, context, requests, requestHeaders, notices };
+  return { hooks: pi, runtime, context, requests, requestHeaders, notices };
 }
 
 void test("routes manual compaction through the custom provider runtime", async () => {
   const user = userEntry("user-1", "Remember BLUE-42.");
   const harness = createHarness([user]);
-  const handler = harness.handlers.get("session_before_compact");
+  const handler = harness.hooks.sessionBeforeCompact;
   assert.ok(handler);
 
   const result = requireCompactionResult(
@@ -265,7 +289,7 @@ void test("classifies every Pi compaction lifecycle in official Codex metadata",
     await t.test(candidate.reason, async () => {
       const user = userEntry("user-1", "Remember BLUE-42.");
       const harness = createHarness([user]);
-      const handler = harness.handlers.get("session_before_compact");
+      const handler = harness.hooks.sessionBeforeCompact;
       assert.ok(handler);
       const result = requireCompactionResult(
         await handler(
@@ -353,7 +377,7 @@ void test("preserves a proven committed prefix in overflow compaction", async ()
   } satisfies SessionEntry;
   const branch = [user, native, failed];
   const harness = createHarness(branch);
-  const handler = harness.handlers.get("session_before_compact");
+  const handler = harness.hooks.sessionBeforeCompact;
   assert.ok(handler);
 
   const result = requireCompactionResult(
@@ -401,14 +425,19 @@ void test("captures session scope and suppresses Pi's marker summary", () => {
     },
   } satisfies SessionEntry;
   const harness = createHarness([user, checkpoint]);
-  const handler = harness.handlers.get("context");
+  const handler = harness.hooks.context;
   assert.ok(handler);
 
   const result = requireContextResult(
     handler(
       {
         messages: [
-          { role: "compactionSummary", content: "marker" },
+          {
+            role: "compactionSummary",
+            summary: "marker",
+            tokensBefore: 1,
+            timestamp: Date.now(),
+          },
           { role: "user", content: "next", timestamp: Date.now() },
         ],
       },
@@ -451,7 +480,7 @@ void test("fails closed when runtime compaction fails", async () => {
     yield* [];
     throw new Error("backend failure");
   };
-  const handler = harness.handlers.get("session_before_compact");
+  const handler = harness.hooks.sessionBeforeCompact;
   assert.ok(handler);
 
   const result = await handler(

@@ -69,12 +69,8 @@ void test("serializes same-process filesystem aliases with deterministic logical
   await writeFile(caseProbe, "");
   const caseAliases =
     (await lstat(caseProbe)).ino ===
-    (
-      await lstat(join(cwd, "caseprobe")).catch((error: unknown) => {
-        if (!(error instanceof Error)) throw error;
-        return { ino: -1 };
-      })
-    ).ino;
+    // oxlint-disable-next-line 2h2d/no-silent-error-suppression -- A failed alias capability probe means the filesystem does not expose the alias.
+    (await lstat(join(cwd, "caseprobe")).catch(() => ({ ino: -1 }))).ino;
   await rm(caseProbe);
   if (caseAliases) await assertAliasAddsSerialize("MissingCase.txt", "missingcase.txt");
 
@@ -83,12 +79,8 @@ void test("serializes same-process filesystem aliases with deterministic logical
   await writeFile(join(cwd, composed), "");
   const unicodeAliases =
     (await lstat(join(cwd, composed))).ino ===
-    (
-      await lstat(join(cwd, decomposed)).catch((error: unknown) => {
-        if (!(error instanceof Error)) throw error;
-        return { ino: -1 };
-      })
-    ).ino;
+    // oxlint-disable-next-line 2h2d/no-silent-error-suppression -- A failed normalization capability probe means the filesystem does not expose the alias.
+    (await lstat(join(cwd, decomposed)).catch(() => ({ ino: -1 }))).ino;
   await rm(join(cwd, composed));
   if (unicodeAliases) {
     await assertAliasAddsSerialize("caf\u00e9-missing.txt", "cafe\u0301-missing.txt");
@@ -474,9 +466,8 @@ void test(
         if ((await lstat("/dev/null")).isCharacterDevice()) {
           specialPaths.push({ path: "/dev/null", kind: "character device" });
         }
-      } catch (error) {
-        if (!(error instanceof Error)) throw error;
-      }
+        // oxlint-disable-next-line 2h2d/no-silent-error-suppression -- Device availability is platform-dependent and only controls optional test coverage.
+      } catch (_error) {} // oxlint-disable-line no-unused-vars -- The caught capability failure intentionally disables optional platform coverage.
       try {
         for (const name of await readdir("/dev")) {
           const candidate = join("/dev", name);
@@ -485,9 +476,8 @@ void test(
             break;
           }
         }
-      } catch (error) {
-        if (!(error instanceof Error)) throw error;
-      }
+        // oxlint-disable-next-line 2h2d/no-silent-error-suppression -- Device enumeration is platform-dependent and only controls optional test coverage.
+      } catch (_error) {} // oxlint-disable-line no-unused-vars -- The caught capability failure intentionally disables optional platform coverage.
 
       for (const special of specialPaths) {
         await assert.rejects(

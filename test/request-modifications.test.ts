@@ -24,7 +24,7 @@ import {
 import type { AssistantMessage, Credential, Model } from "@earendil-works/pi-ai";
 import { getBuiltinModels } from "@earendil-works/pi-ai/providers/all";
 import { CONFIG_FILE } from "../extensions/openai-codex-compat/config.ts";
-import { requireBuiltinModelsModule } from "./support/pi-fixtures.ts";
+import { requireBuiltinModelsModule } from "./support/builtin-models-module.ts";
 
 const rootDir = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const extensionPath = resolve(rootDir, "extensions/index.ts");

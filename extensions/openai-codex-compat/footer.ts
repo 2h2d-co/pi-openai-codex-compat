@@ -6,9 +6,36 @@ import {
 } from "@earendil-works/pi-coding-agent";
 import type { Component } from "@earendil-works/pi-tui";
 import type { CodexCompatConfig } from "./config.ts";
+import type { ConfigContext, ConfigResolver } from "./config-context.ts";
 import { isCodexModel } from "./request-options.ts";
 
-export type ConfigResolver = (ctx: ExtensionContext) => CodexCompatConfig;
+export type FooterContext = ConfigContext &
+  Pick<ExtensionContext, "getContextUsage" | "mode" | "thinkingLevel"> & {
+    model:
+      | {
+          id: string;
+          provider: string;
+        }
+      | undefined;
+    modelRegistry: {
+      find(provider: string, modelId: string): Model<Api> | undefined;
+      getProvider(provider: string):
+        | {
+            auth?: {
+              oauth?: {
+                isSubscription?: boolean;
+              };
+            };
+          }
+        | undefined;
+      isUsingOAuth(model: Model<Api>): boolean;
+    };
+    sessionManager: Pick<
+      ExtensionContext["sessionManager"],
+      "getCwd" | "getEntries" | "getSessionName"
+    >;
+    ui: Pick<ExtensionContext["ui"], "setFooter">;
+  };
 
 export function footerSettingLabels(config: CodexCompatConfig): string[] {
   return [
@@ -56,11 +83,19 @@ interface FooterSessionAdapter {
   };
 }
 
-function footerSession(ctx: ExtensionContext, resolveConfig: ConfigResolver): FooterSessionAdapter {
+function selectedRegistryModel(ctx: FooterContext, provider: string): Model<Api> | undefined {
+  const selected = ctx.model;
+  return selected?.provider === provider
+    ? ctx.modelRegistry.find(selected.provider, selected.id)
+    : undefined;
+}
+
+function footerSession(ctx: FooterContext, resolveConfig: ConfigResolver): FooterSessionAdapter {
   return {
     get state() {
+      const model = ctx.model ? selectedRegistryModel(ctx, ctx.model.provider) : undefined;
       return {
-        model: footerModel(ctx.model, ctx.thinkingLevel ?? "off", resolveConfig(ctx)),
+        model: footerModel(model, ctx.thinkingLevel ?? "off", resolveConfig(ctx)),
         thinkingLevel: ctx.thinkingLevel ?? "off",
       };
     },
@@ -68,20 +103,15 @@ function footerSession(ctx: ExtensionContext, resolveConfig: ConfigResolver): Fo
     getContextUsage: () => ctx.getContextUsage(),
     modelRuntime: {
       isUsingOAuth(provider: string) {
-        const model: unknown = ctx.model;
-        return Boolean(
-          isCodexModel(model) &&
-          model.provider === provider &&
-          ctx.modelRegistry.isUsingOAuth(model),
-        );
+        const model = selectedRegistryModel(ctx, provider);
+        return model !== undefined && ctx.modelRegistry.isUsingOAuth(model);
       },
       isUsingSubscription(provider: string) {
-        const model: unknown = ctx.model;
+        const model = selectedRegistryModel(ctx, provider);
         return Boolean(
-          isCodexModel(model) &&
-          model.provider === provider &&
+          model &&
           ctx.modelRegistry.isUsingOAuth(model) &&
-          ctx.modelRegistry.getProvider(provider)?.auth.oauth?.isSubscription === true,
+          ctx.modelRegistry.getProvider(provider)?.auth?.oauth?.isSubscription === true,
         );
       },
     },
@@ -93,7 +123,7 @@ class CodexFooter implements Component {
 
   constructor(
     footerData: ReadonlyFooterDataProvider,
-    ctx: ExtensionContext,
+    ctx: FooterContext,
     resolveConfig: ConfigResolver,
   ) {
     const footer: unknown = Reflect.construct(FooterComponent, [
@@ -121,7 +151,15 @@ class CodexFooter implements Component {
   }
 }
 
-export function installCodexFooter(ctx: ExtensionContext, resolveConfig: ConfigResolver): void {
+export function createCodexFooter(
+  footerData: ReadonlyFooterDataProvider,
+  ctx: FooterContext,
+  resolveConfig: ConfigResolver,
+): Component & { dispose(): void } {
+  return new CodexFooter(footerData, ctx, resolveConfig);
+}
+
+export function installCodexFooter(ctx: FooterContext, resolveConfig: ConfigResolver): void {
   if (ctx.mode !== "tui") return;
-  ctx.ui.setFooter((_tui, _theme, footerData) => new CodexFooter(footerData, ctx, resolveConfig));
+  ctx.ui.setFooter((_tui, _theme, footerData) => createCodexFooter(footerData, ctx, resolveConfig));
 }

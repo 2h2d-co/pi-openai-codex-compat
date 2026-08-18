@@ -70,19 +70,13 @@ void test("normalizes pre-stream failures without emitting start", async () => {
     ["error"],
   );
   const errorEvent = events.find((event) => event.type === "error");
-  assert.equal(
-    errorEvent?.error.errorMessage,
-    '{"code":"transport_failed","message":"connection failed"}',
-  );
+  assert.equal(errorEvent?.error.errorMessage, "The Codex provider failed with a non-Error value.");
 });
 
-void test("cleans streaming scratch state and surfaces structured provider errors", async () => {
+void test("cleans streaming scratch state and surfaces transport error messages", async () => {
   const user = userEntry("user-1", "hello");
   const harness = createHarness([user]);
-  const failure = Object.assign(new Error("opaque provider failure"), {
-    status: 403,
-    error: { message: "request denied" },
-  });
+  const failure = new Error('403: {"message":"request denied"}');
   harness.runtime.transport.request = async function* () {
     yield {
       type: "response.output_item.added",

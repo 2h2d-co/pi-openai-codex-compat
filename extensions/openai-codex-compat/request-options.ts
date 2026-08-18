@@ -1,21 +1,23 @@
-import { calculateCost, type Api, type AssistantMessage, type Model } from "@earendil-works/pi-ai";
-import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { loadConfig, type CodexCompatConfig, type WebSearchMode } from "./config.ts";
+import {
+  calculateCost,
+  hasApi,
+  type Api,
+  type AssistantMessage,
+  type Model,
+} from "@earendil-works/pi-ai";
+import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import type { CodexCompatConfig, WebSearchMode } from "./config.ts";
+import { resolveFileConfig, type ConfigResolver } from "./config-context.ts";
 import { isObject, type JsonRecord } from "./codex-protocol.ts";
 import { splitNamespacedToolName, WEB_RUN_TOOL_NAME } from "./namespaced-tools.ts";
-import { isNonNullObject } from "./value-contracts.ts";
 
 const CODEX_PROVIDER = "openai-codex";
 const CODEX_API = "openai-codex-responses";
 
-export function isCodexModel(model: unknown): model is Model<typeof CODEX_API> {
-  return (
-    isNonNullObject(model) &&
-    "provider" in model &&
-    model.provider === CODEX_PROVIDER &&
-    "api" in model &&
-    model.api === CODEX_API
-  );
+export type CodexRequestOptionsApi = Pick<ExtensionAPI, "on">;
+
+export function isCodexModel(model: Model<Api> | undefined): model is Model<typeof CODEX_API> {
+  return model !== undefined && model.provider === CODEX_PROVIDER && hasApi(model, CODEX_API);
 }
 
 export function supportsReasoningMode(modelId: string): boolean {
@@ -110,23 +112,19 @@ export function applyPriorityPricing(
   return { ...message, usage };
 }
 
-type ConfigResolver = (ctx: ExtensionContext) => CodexCompatConfig;
-
-function resolveFileConfig(ctx: ExtensionContext): CodexCompatConfig {
-  return loadConfig(ctx.cwd, ctx.isProjectTrusted());
-}
-
 export default function registerCodexRequestOptions(
-  pi: ExtensionAPI,
+  pi: CodexRequestOptionsApi,
   resolveConfig: ConfigResolver = resolveFileConfig,
 ): void {
   pi.on("before_provider_request", (event, ctx) => {
-    if (!isCodexModel(ctx.model) || !isObject(event.payload)) return undefined;
+    const selected = ctx.model;
+    const model = selected ? ctx.modelRegistry.find(selected.provider, selected.id) : undefined;
+    if (!isCodexModel(model) || !isObject(event.payload)) return undefined;
 
     const config = resolveConfig(ctx);
     return applyCodexRequestOptions(event.payload, config, {
-      modelId: ctx.model.id,
-      supportsImageSearch: ctx.model.input.includes("image"),
+      modelId: model.id,
+      supportsImageSearch: model.input.includes("image"),
     });
   });
 }

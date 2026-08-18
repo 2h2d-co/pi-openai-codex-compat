@@ -1,21 +1,10 @@
-import {
-  extensionApiFixture,
-  extensionCommandContextFixture,
-  partialFixture,
-  themeFixture,
-  tuiFixture,
-} from "./support/pi-fixtures.ts";
 import { requireJsonRecord } from "../extensions/openai-codex-compat/codex-protocol.ts";
 import assert from "node:assert/strict";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-import {
-  initTheme,
-  type ExtensionCommandContext,
-  type KeybindingsManager,
-} from "@earendil-works/pi-coding-agent";
+import { initTheme } from "@earendil-works/pi-coding-agent";
 import type { Api, Model } from "@earendil-works/pi-ai";
 import {
   CONFIG_ENVIRONMENT_VARIABLES,
@@ -29,8 +18,17 @@ import { footerModel, footerSettingLabels } from "../extensions/openai-codex-com
 import registerCodexSettings, {
   settingItems,
   settingPatch,
+  type CodexSettingsApi,
+  type CodexSettingsContext,
+  type CodexSettingsHandler,
+  type SettingsComponentFactory,
 } from "../extensions/openai-codex-compat/settings-pane.ts";
-import { setApplyPatchEnabled, syncCodexTools } from "../extensions/openai-codex-compat/tools.ts";
+import {
+  setApplyPatchEnabled,
+  syncCodexTools,
+  type CodexToolActivationApi,
+} from "../extensions/openai-codex-compat/tools.ts";
+import { testTheme } from "./support/test-theme.ts";
 
 void test("persists dedicated settings without discarding unknown configuration", async (t) => {
   const root = await mkdtemp(join(tmpdir(), "pi-codex-settings-"));
@@ -221,17 +219,12 @@ void test("saves on Enter or Ctrl+S and discards unsaved changes on Escape", asy
   });
 
   let sessionConfig = loadConfig(cwd, false);
-  let command: ((args: string, ctx: ExtensionCommandContext) => Promise<void>) | undefined;
-  const pi = extensionApiFixture({
-    registerCommand(
-      _name: string,
-      options: {
-        handler: (args: string, ctx: ExtensionCommandContext) => Promise<void>;
-      },
-    ) {
+  let command: CodexSettingsHandler | undefined;
+  const pi: CodexSettingsApi = {
+    registerCommand(_name, options) {
       command = options.handler;
     },
-  });
+  };
   registerCodexSettings(pi, {
     getConfig: () => sessionConfig,
     onChange: (config) => {
@@ -243,37 +236,43 @@ void test("saves on Enter or Ctrl+S and discards unsaved changes on Escape", asy
 
   const runSettings = async (inputs: string[]) => {
     let closeCount = 0;
-    const context = extensionCommandContextFixture({
+    const context = {
       cwd,
       mode: "tui",
+      model: undefined,
+      modelRegistry: {
+        find: () => undefined,
+      },
+      sessionManager: {
+        getSessionId: () => "settings-session",
+      },
       isProjectTrusted: () => false,
       ui: {
         notify() {},
-        async custom(factory: Parameters<ExtensionCommandContext["ui"]["custom"]>[0]) {
-          let resolveDone: (() => void) | undefined;
-          const closed = new Promise<void>((resolve) => {
+        async custom<T>(factory: SettingsComponentFactory<T>) {
+          let resolveDone: (result: T) => void = () => {
+            throw new Error("Settings completion resolver was not initialized.");
+          };
+          const closed = new Promise<T>((resolve) => {
             resolveDone = resolve;
           });
           const component = await factory(
-            tuiFixture({ requestRender() {} }),
-            themeFixture({
-              fg: (_color: string, text: string) => text,
-              bold: (text: string) => text,
-            }),
-            partialFixture<KeybindingsManager>({
-              matches: (data: string, id: string) =>
+            { requestRender() {} },
+            testTheme(),
+            {
+              matches: (data, id) =>
                 id === "tui.select.cancel" && (data === "\u001b" || data === "\u0003"),
-            }),
-            () => {
+            },
+            (result) => {
               closeCount++;
-              resolveDone?.();
+              resolveDone(result);
             },
           );
           for (const input of inputs) component.handleInput?.(input);
-          await closed;
+          return closed;
         },
       },
-    });
+    } satisfies CodexSettingsContext;
     await runCommand("", context);
     return closeCount;
   };
@@ -293,12 +292,12 @@ void test("saves on Enter or Ctrl+S and discards unsaved changes on Escape", asy
 
 void test("uses apply_patch instead of Pi's active edit and write tools", () => {
   let active = ["read", "edit", "write"];
-  const pi = extensionApiFixture({
+  const pi: CodexToolActivationApi = {
     getActiveTools: () => active,
     setActiveTools(names: string[]) {
       active = names;
     },
-  });
+  };
 
   setApplyPatchEnabled(pi, true);
   assert.deepEqual(active, ["read", "apply_patch"]);
@@ -310,12 +309,12 @@ void test("uses apply_patch instead of Pi's active edit and write tools", () => 
 
 void test("does not restore Pi edit tools that were inactive before apply_patch", () => {
   let active = ["read"];
-  const pi = extensionApiFixture({
+  const pi: CodexToolActivationApi = {
     getActiveTools: () => active,
     setActiveTools(names: string[]) {
       active = names;
     },
-  });
+  };
 
   setApplyPatchEnabled(pi, true);
   assert.deepEqual(active, ["read", "apply_patch"]);
@@ -325,12 +324,12 @@ void test("does not restore Pi edit tools that were inactive before apply_patch"
 
 void test("toggles image_gen.imagegen and web.run independently on Codex models", () => {
   let active = ["read", "edit", "write"];
-  const pi = extensionApiFixture({
+  const pi: CodexToolActivationApi = {
     getActiveTools: () => active,
     setActiveTools(names: string[]) {
       active = names;
     },
-  });
+  };
   const model = {
     id: "gpt-test",
     name: "GPT Test",

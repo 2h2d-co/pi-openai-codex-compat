@@ -1,10 +1,13 @@
 import { isAllowedString, isBoolean, isNumber } from "./value-contracts.ts";
 import {
   getSettingsListTheme,
-  type ExtensionAPI,
-  type ExtensionCommandContext,
+  type ExtensionContext,
+  type KeybindingsManager,
+  type Theme,
 } from "@earendil-works/pi-coding-agent";
+import type { Api, Model } from "@earendil-works/pi-ai";
 import {
+  type Component,
   Container,
   Key,
   matchesKey,
@@ -12,6 +15,7 @@ import {
   SettingsList,
   Text,
   truncateToWidth,
+  type TUI,
 } from "@earendil-works/pi-tui";
 import {
   CONFIG_ENVIRONMENT_VARIABLES,
@@ -24,6 +28,8 @@ import {
   type CodexCompatConfig,
   type ConfigLayer,
 } from "./config.ts";
+import type { ConfigContext } from "./config-context.ts";
+import { errorFromThrown } from "./error-from-thrown.ts";
 
 const COMMAND_NAME = "codex-settings";
 
@@ -59,8 +65,48 @@ const SETTING_IDS = new Set<SettingId>([
 ]);
 
 export type SettingsCallbacks = {
-  getConfig?: (ctx: ExtensionCommandContext) => CodexCompatConfig;
-  onChange?: (config: CodexCompatConfig, ctx: ExtensionCommandContext) => void;
+  getConfig?: (ctx: ConfigContext) => CodexCompatConfig;
+  onChange?: (config: CodexCompatConfig, ctx: SettingsChangeContext) => void;
+};
+
+export type CodexSettingsContext = ConfigContext &
+  Pick<ExtensionContext, "mode"> & {
+    model:
+      | {
+          id: string;
+          provider: string;
+        }
+      | undefined;
+    modelRegistry: Pick<ExtensionContext["modelRegistry"], "find">;
+    sessionManager: Pick<ExtensionContext["sessionManager"], "getSessionId">;
+    ui: {
+      custom<T>(factory: SettingsComponentFactory<T>): Promise<T>;
+      notify(message: string, type?: "info" | "warning" | "error"): void;
+    };
+  };
+
+export type SettingsComponentFactory<T> = (
+  tui: Pick<TUI, "requestRender">,
+  theme: Pick<Theme, "bold" | "fg">,
+  keybindings: Pick<KeybindingsManager, "matches">,
+  done: (result: T) => void,
+) => Component | Promise<Component>;
+
+export type SettingsChangeContext = {
+  model: Model<Api> | undefined;
+  sessionId: string;
+};
+
+export type CodexSettingsHandler = (args: string, ctx: CodexSettingsContext) => Promise<void>;
+
+export type CodexSettingsApi = {
+  registerCommand(
+    name: string,
+    options: {
+      description?: string;
+      handler: CodexSettingsHandler;
+    },
+  ): void;
 };
 
 function toggleValue(value: boolean): string {
@@ -265,7 +311,7 @@ function applySettingPatch(config: CodexCompatConfig, patch: ConfigLayer): Codex
 }
 
 async function showSettings(
-  ctx: ExtensionCommandContext,
+  ctx: CodexSettingsContext,
   callbacks: SettingsCallbacks,
 ): Promise<void> {
   if (ctx.mode !== "tui") {
@@ -280,6 +326,13 @@ async function showSettings(
   let saveQueue = Promise.resolve();
   const filePath = writableConfigPath(ctx.cwd, ctx.isProjectTrusted());
   const environmentConfig = parseEnvironmentConfig();
+  const changeContext = (): SettingsChangeContext => {
+    const selected = ctx.model;
+    return {
+      model: selected ? ctx.modelRegistry.find(selected.provider, selected.id) : undefined,
+      sessionId: ctx.sessionManager.getSessionId(),
+    };
+  };
 
   await ctx.ui.custom((tui, theme, keybindings, done) => {
     let closing = false;
@@ -321,8 +374,12 @@ async function showSettings(
               ? theme.fg("success", `Saved to ${savedPath}`)
               : theme.fg("warning", "Unsaved session changes."),
           );
-        } catch (error) {
-          if (!(error instanceof Error)) throw error;
+          // oxlint-disable-next-line 2h2d/no-silent-error-suppression -- The settings boundary reports save failures through the pane and notification UI.
+        } catch (cause) {
+          const error = errorFromThrown(
+            cause,
+            "Saving Codex settings failed with a non-Error value.",
+          );
           if (closeAfterSave) closing = false;
           const message = error.message;
           saveStatus.setText(theme.fg("error", message));
@@ -341,7 +398,7 @@ async function showSettings(
         if (revision !== savedRevision) {
           config = { ...persistedConfig };
           revision = savedRevision;
-          callbacks.onChange?.(config, ctx);
+          callbacks.onChange?.(config, changeContext());
         }
         done(undefined);
       });
@@ -359,7 +416,7 @@ async function showSettings(
 
         config = applySettingPatch(config, patch);
         revision++;
-        callbacks.onChange?.(config, ctx);
+        callbacks.onChange?.(config, changeContext());
         saveStatus.setText(theme.fg("warning", "Unsaved session changes."));
         tui.requestRender();
       },
@@ -411,7 +468,7 @@ async function showSettings(
 }
 
 export default function registerCodexSettings(
-  pi: ExtensionAPI,
+  pi: CodexSettingsApi,
   callbacks: SettingsCallbacks = {},
 ): void {
   pi.registerCommand(COMMAND_NAME, {

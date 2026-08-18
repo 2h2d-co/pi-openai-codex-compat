@@ -1,5 +1,3 @@
-import { extensionContextFixture } from "../support/pi-fixtures.ts";
-import { extensionApiFixture } from "../support/pi-fixtures.ts";
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import test from "node:test";
@@ -7,6 +5,8 @@ import type { ExtensionAPI, ExtensionContext, SessionEntry } from "@earendil-wor
 import type { Api, AssistantMessage, Context, Model, Tool, Usage } from "@earendil-works/pi-ai";
 import { Type } from "typebox";
 import { CodexProviderRuntime } from "../../extensions/openai-codex-compat/codex-provider.ts";
+import type { CodexProviderRuntimeApi } from "../../extensions/openai-codex-compat/codex-provider/codex-provider-runtime.ts";
+import type { RuntimeScopeContext } from "../../extensions/openai-codex-compat/codex-provider/codex-provider-contracts.ts";
 import {
   DEFAULT_CONFIG,
   type CodexCompatConfig,
@@ -193,10 +193,8 @@ export function createHarness(
   let branch = [...initialBranch];
   const customEntries: Array<{ customType: string; data: unknown }> = [];
   const compactions: Array<{ details: unknown; usage: unknown }> = [];
-  const statuses: Array<{ key: string; text: string | undefined }> = [];
-  const pi = extensionApiFixture({
+  const pi: CodexProviderRuntimeApi = {
     getAllTools: () => [],
-    getActiveTools: () => [],
     appendEntry(customType: string, data: unknown) {
       customEntries.push({ customType, data });
       branch.push({
@@ -208,7 +206,7 @@ export function createHarness(
         data,
       } satisfies SessionEntry);
     },
-  });
+  };
   const runtime = new CodexProviderRuntime(
     pi,
     () => config,
@@ -246,23 +244,16 @@ export function createHarness(
       return id;
     },
   };
-  const extensionContext = extensionContextFixture({
-    model: codexModel(),
+  const extensionContext = {
     cwd: process.cwd(),
-    mode: "tui",
     hasUI: true,
-    signal: new AbortController().signal,
-    scopedModels: [],
     sessionManager: manager,
     ui: {
       notify() {},
-      setStatus(key: string, text: string | undefined) {
-        statuses.push({ key, text });
-      },
     },
     isProjectTrusted: () => true,
     getContextUsage: () => ({ tokens: 80_000, contextWindow: 100_000, percent: 80 }),
-  });
+  } satisfies RuntimeScopeContext;
   runtime.captureScope(extensionContext);
   return {
     runtime,
@@ -270,7 +261,6 @@ export function createHarness(
     branch: () => branch,
     customEntries,
     compactions,
-    statuses,
   };
 }
 

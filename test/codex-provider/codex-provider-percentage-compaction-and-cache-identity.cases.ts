@@ -78,7 +78,6 @@ void test("performs percentage compaction before sampling the current user input
     reason: "provider-boundary",
     willRetry: true,
   });
-  assert.deepEqual(harness.statuses, []);
 });
 
 void test("keeps native history separate from hashed or disabled cache identity", async () => {

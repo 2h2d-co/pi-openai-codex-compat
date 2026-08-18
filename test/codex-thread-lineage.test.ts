@@ -1,13 +1,13 @@
-import { extensionContextFixture } from "./support/pi-fixtures.ts";
-import { extensionApiFixture } from "./support/pi-fixtures.ts";
 import assert from "node:assert/strict";
 import test from "node:test";
-import type { ExtensionContext, SessionEntry } from "@earendil-works/pi-coding-agent";
+import type { SessionEntry } from "@earendil-works/pi-coding-agent";
 import { codexCacheKey } from "../extensions/openai-codex-compat/codex-cache-key.ts";
 import registerCodexThreadLineage, {
   CODEX_THREAD_MARKER_ENTRY_TYPE,
   isCodexThreadMarkerData,
   resolveCodexThreadIdentity,
+  type CodexThreadLineageApi,
+  type CodexThreadLineageContext,
   type CodexThreadMarkerData,
 } from "../extensions/openai-codex-compat/codex-thread-lineage.ts";
 
@@ -15,6 +15,20 @@ type CustomSessionEntry = Extract<SessionEntry, { type: "custom" }>;
 type ThreadMarkerEntry = Omit<CustomSessionEntry, "data"> & {
   data: CodexThreadMarkerData;
 };
+
+type TestEvent = {
+  message?: {
+    content?: unknown;
+    role?: string;
+    timestamp?: number;
+  };
+  newLeafId?: string | null;
+  oldLeafId?: string | null;
+  reason?: string;
+  type?: string;
+};
+
+type TestHandler = (event: TestEvent) => Promise<void> | void;
 
 function entry(
   id: string,
@@ -82,8 +96,7 @@ function marker(
 }
 
 function createHarness(initialEntries: SessionEntry[], initialLeafId: string | null) {
-  type Handler = (event: unknown, ctx: ExtensionContext) => void | Promise<void>;
-  const handlers = new Map<string, Handler[]>();
+  const handlers = new Map<string, TestHandler[]>();
   const entries = [...initialEntries];
   let leafId = initialLeafId;
 
@@ -104,13 +117,33 @@ function createHarness(initialEntries: SessionEntry[], initialLeafId: string | n
     getBranch: branch,
     getLeafId: () => leafId,
   };
-  const context = extensionContextFixture({
+  const context = {
     sessionManager: manager,
-  });
-  const pi = extensionApiFixture({
-    on(eventName: string, handler: Handler) {
+  } satisfies CodexThreadLineageContext;
+  const pi: CodexThreadLineageApi = {
+    onMessageEnd(handler) {
+      const registered = handlers.get("message_end") ?? [];
+      registered.push((event) => {
+        const role = event.message?.role;
+        if (role === undefined) throw new Error("message_end test event has no role.");
+        return handler({ message: { role } }, context);
+      });
+      handlers.set("message_end", registered);
+    },
+    onSessionShutdown(handler) {
+      const registered = handlers.get("session_shutdown") ?? [];
+      registered.push(() => handler(context));
+      handlers.set("session_shutdown", registered);
+    },
+    onSessionStart(handler) {
+      const registered = handlers.get("session_start") ?? [];
+      registered.push(() => handler(context));
+      handlers.set("session_start", registered);
+    },
+    onSessionTree(handler) {
+      const eventName = "session_tree";
       const registered = handlers.get(eventName) ?? [];
-      registered.push(handler);
+      registered.push(() => handler(context));
       handlers.set(eventName, registered);
     },
     appendEntry(customType: string, data: CodexThreadMarkerData) {
@@ -125,12 +158,12 @@ function createHarness(initialEntries: SessionEntry[], initialLeafId: string | n
       } satisfies SessionEntry);
       leafId = id;
     },
-  });
+  };
 
   registerCodexThreadLineage(pi);
-  const emit = async (eventName: string, event: unknown) => {
+  const emit = async (eventName: string, event: TestEvent) => {
     for (const handler of handlers.get(eventName) ?? []) {
-      await handler(event, context);
+      await handler(event);
     }
   };
   const appendUser = (id: string) => {

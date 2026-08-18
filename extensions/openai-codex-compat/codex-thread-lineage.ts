@@ -3,7 +3,6 @@ import { isString } from "./value-contracts.ts";
 import type { ExtensionAPI, ExtensionContext, SessionEntry } from "@earendil-works/pi-coding-agent";
 import { uuidv7 } from "@earendil-works/pi-ai";
 import { codexCacheKey } from "./codex-cache-key.ts";
-import { requiredValue } from "./required-value.ts";
 
 export const CODEX_THREAD_MARKER_ENTRY_TYPE = "openai-codex-compat-thread";
 
@@ -14,6 +13,45 @@ export type CodexThreadMarkerData = {
   forkedFromThreadId: string;
   branchParentEntryId: string | null;
 };
+
+export type CodexThreadLineageContext = {
+  sessionManager: Pick<
+    ExtensionContext["sessionManager"],
+    "getBranch" | "getEntries" | "getLeafId" | "getSessionId"
+  >;
+};
+
+export type CodexThreadLineageMessageHandler = (
+  event: {
+    message: {
+      role: string;
+    };
+  },
+  ctx: CodexThreadLineageContext,
+) => Promise<void> | void;
+
+export type CodexThreadLineageLifecycleHandler = (
+  ctx: CodexThreadLineageContext,
+) => Promise<void> | void;
+
+export type CodexThreadLineageApi = {
+  appendEntry(customType: string, data: CodexThreadMarkerData): void;
+  onMessageEnd(handler: CodexThreadLineageMessageHandler): void;
+  onSessionShutdown(handler: CodexThreadLineageLifecycleHandler): void;
+  onSessionStart(handler: CodexThreadLineageLifecycleHandler): void;
+  onSessionTree(handler: CodexThreadLineageLifecycleHandler): void;
+};
+
+export function codexThreadLineageApi(pi: ExtensionAPI): CodexThreadLineageApi {
+  return {
+    appendEntry: (customType, data) => pi.appendEntry(customType, data),
+    onMessageEnd: (handler) =>
+      pi.on("message_end", (event, ctx) => handler({ message: { role: event.message.role } }, ctx)),
+    onSessionShutdown: (handler) => pi.on("session_shutdown", (_event, ctx) => handler(ctx)),
+    onSessionStart: (handler) => pi.on("session_start", (_event, ctx) => handler(ctx)),
+    onSessionTree: (handler) => pi.on("session_tree", (_event, ctx) => handler(ctx)),
+  };
+}
 
 export type CodexThreadIdentity = {
   threadId: string;
@@ -55,7 +93,8 @@ function markerData(entry: SessionEntry, sessionId: string): CodexThreadMarkerDa
 
 function latestMarkerIndex(sessionId: string, branch: readonly SessionEntry[]): number {
   for (let index = branch.length - 1; index >= 0; index -= 1) {
-    if (markerData(requiredValue(branch[index], "A branch entry is missing."), sessionId)) {
+    const entry = branch[index];
+    if (entry !== undefined && markerData(entry, sessionId)) {
       return index;
     }
   }
@@ -67,10 +106,9 @@ export function resolveCodexThreadIdentity(
   branch: readonly SessionEntry[],
 ): CodexThreadIdentity {
   for (let index = branch.length - 1; index >= 0; index -= 1) {
-    const marker = markerData(
-      requiredValue(branch[index], "A branch entry is missing."),
-      sessionId,
-    );
+    const entry = branch[index];
+    if (entry === undefined) continue;
+    const marker = markerData(entry, sessionId);
     if (marker) {
       return {
         threadId: marker.threadId,
@@ -78,9 +116,9 @@ export function resolveCodexThreadIdentity(
       };
     }
   }
-  return {
-    threadId: requiredValue(codexCacheKey(sessionId), "The session has no Codex cache key."),
-  };
+  const threadId = codexCacheKey(sessionId);
+  if (threadId === undefined) throw new Error("The session has no Codex cache key.");
+  return { threadId };
 }
 
 function shouldForkOnNextAppend(
@@ -100,7 +138,8 @@ function shouldForkOnNextAppend(
 
   const markerIndex = latestMarkerIndex(sessionId, branch);
   for (let index = markerIndex + 1; index < branch.length; index += 1) {
-    const entry = requiredValue(branch[index], "A branch entry is missing.");
+    const entry = branch[index];
+    if (entry === undefined) continue;
     if (firstChildByParent.get(entry.parentId) !== entry.id) return true;
   }
 
@@ -108,7 +147,10 @@ function shouldForkOnNextAppend(
   return entries.some((entry) => entry.parentId === leafId);
 }
 
-function armPendingFork(pending: Map<string, PendingTreeFork>, ctx: ExtensionContext): void {
+function armPendingFork(
+  pending: Map<string, PendingTreeFork>,
+  ctx: CodexThreadLineageContext,
+): void {
   const sessionId = ctx.sessionManager.getSessionId();
   const branch = ctx.sessionManager.getBranch();
   const entries = ctx.sessionManager.getEntries();
@@ -125,18 +167,18 @@ function pendingLeafIsActive(pending: PendingTreeFork, branch: readonly SessionE
   );
 }
 
-export default function registerCodexThreadLineage(pi: ExtensionAPI): void {
+export default function registerCodexThreadLineage(pi: CodexThreadLineageApi): void {
   const pending = new Map<string, PendingTreeFork>();
 
-  pi.on("session_start", (_event, ctx) => {
+  pi.onSessionStart((ctx) => {
     armPendingFork(pending, ctx);
   });
 
-  pi.on("session_tree", (_event, ctx) => {
+  pi.onSessionTree((ctx) => {
     armPendingFork(pending, ctx);
   });
 
-  pi.on("message_end", (event, ctx) => {
+  pi.onMessageEnd((event, ctx) => {
     if (event.message.role !== "user") return;
     const sessionId = ctx.sessionManager.getSessionId();
     const candidate = pending.get(sessionId);
@@ -151,7 +193,7 @@ export default function registerCodexThreadLineage(pi: ExtensionAPI): void {
     // Pi invokes message_end handlers immediately before persisting the
     // finalized user message. Advancing the leaf here makes this context-free
     // marker the user's parent without writing anything during /tree itself.
-    pi.appendEntry<CodexThreadMarkerData>(CODEX_THREAD_MARKER_ENTRY_TYPE, {
+    pi.appendEntry(CODEX_THREAD_MARKER_ENTRY_TYPE, {
       version: 1,
       sessionId,
       threadId: uuidv7(),
@@ -160,7 +202,7 @@ export default function registerCodexThreadLineage(pi: ExtensionAPI): void {
     });
   });
 
-  pi.on("session_shutdown", (_event, ctx) => {
+  pi.onSessionShutdown((ctx) => {
     pending.delete(ctx.sessionManager.getSessionId());
   });
 }

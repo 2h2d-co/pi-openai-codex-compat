@@ -34,7 +34,6 @@ import {
   jsonWireRequestBody,
   requestInputLength,
 } from "./codex-transport-websocket-continuation.ts";
-import { requiredValue } from "../required-value.ts";
 
 export async function* parseWebSocket(
   socket: WebSocketLike,
@@ -109,7 +108,8 @@ export async function* parseWebSocket(
     while (true) {
       if (signal?.aborted) throw new Error("Request was aborted");
       if (queue.length > 0) {
-        yield requiredValue(queue.shift(), "The queued WebSocket event is missing.");
+        const event = queue.shift();
+        if (event !== undefined) yield event;
         continue;
       }
       if (done) break;

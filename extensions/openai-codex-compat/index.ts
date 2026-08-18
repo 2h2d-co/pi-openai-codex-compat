@@ -5,14 +5,17 @@ import {
   writableConfigPath,
   type CodexCompatConfig,
 } from "./config.ts";
+import type { ConfigContext } from "./config-context.ts";
 import { registerCodexProvider } from "./codex-provider.ts";
 import { installCodexFooter } from "./footer.ts";
-import registerCodexModelPolicy from "./model-policy.ts";
-import registerOutputLimitContinuation from "./output-limit-continuation.ts";
-import registerRemoteCompaction from "./remote-compaction.ts";
+import registerCodexModelPolicy, { codexModelPolicyApi } from "./model-policy.ts";
+import registerOutputLimitContinuation, {
+  outputLimitContinuationApi,
+} from "./output-limit-continuation.ts";
+import registerRemoteCompaction, { remoteCompactionApi } from "./remote-compaction.ts";
 import registerCodexRequestOptions from "./request-options.ts";
 import registerCodexSettings from "./settings-pane.ts";
-import registerCodexThreadLineage from "./codex-thread-lineage.ts";
+import registerCodexThreadLineage, { codexThreadLineageApi } from "./codex-thread-lineage.ts";
 import registerCodexTools, { syncCodexTools } from "./tools.ts";
 
 export {
@@ -47,7 +50,7 @@ function settingsSummary(ctx: ExtensionContext, config: CodexCompatConfig): stri
 
 export default function registerOpenAICodexCompat(pi: ExtensionAPI): void {
   let activeConfig: CodexCompatConfig | undefined;
-  const resolveConfig = (ctx: ExtensionContext): CodexCompatConfig => {
+  const resolveConfig = (ctx: ConfigContext): CodexCompatConfig => {
     activeConfig ??= loadConfig(ctx.cwd, ctx.isProjectTrusted());
     return activeConfig;
   };
@@ -64,17 +67,17 @@ export default function registerOpenAICodexCompat(pi: ExtensionAPI): void {
   });
 
   registerCodexTools(pi, resolveConfig, resolveToolBackground, resolveApplyPatchDebug);
-  registerCodexThreadLineage(pi);
+  registerCodexThreadLineage(codexThreadLineageApi(pi));
   const codexProvider = registerCodexProvider(pi, resolveConfig);
   registerCodexRequestOptions(pi, resolveConfig);
-  registerOutputLimitContinuation(pi);
-  registerRemoteCompaction(pi, codexProvider, resolveConfig);
-  registerCodexModelPolicy(pi, resolveConfig);
+  registerOutputLimitContinuation(outputLimitContinuationApi(pi));
+  registerRemoteCompaction(remoteCompactionApi(pi), codexProvider, resolveConfig);
+  registerCodexModelPolicy(codexModelPolicyApi(pi), resolveConfig);
   registerCodexSettings(pi, {
     getConfig: resolveConfig,
     onChange(config, ctx) {
       activeConfig = config;
-      codexProvider.updateSessionConfig(ctx.sessionManager.getSessionId(), config);
+      codexProvider.updateSessionConfig(ctx.sessionId, config);
       syncCodexTools(pi, ctx.model, config);
     },
   });

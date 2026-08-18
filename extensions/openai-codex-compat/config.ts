@@ -308,9 +308,11 @@ function readConfig(filePath: string): ConfigLayer {
   try {
     return parseConfig(JSON.parse(readFileSync(filePath, "utf8")));
   } catch (error) {
-    if (!(error instanceof Error)) throw error;
-    // Invalid configuration must not prevent Pi from starting.
-    return {};
+    if (error instanceof SyntaxError || nodeErrorCode(error) === "ENOENT") {
+      // Invalid or concurrently removed configuration must not prevent Pi from starting.
+      return {};
+    }
+    throw new Error(`Could not read configuration ${filePath}`, { cause: error });
   }
 }
 

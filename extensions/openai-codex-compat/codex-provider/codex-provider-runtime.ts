@@ -1,7 +1,7 @@
 import { requireJsonRecord, requireJsonValues } from "../codex-protocol.ts";
 import { isFunction, isNonNullObject, isString } from "../value-contracts.ts";
 import { randomUUID } from "node:crypto";
-import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import {
   clampThinkingLevel,
   createAssistantMessageEventStream,
@@ -75,7 +75,7 @@ import {
   convertResponsesMessages,
   createGrammarToolInputProperties,
 } from "../vendor/pi-ai/openai-responses-serialization.ts";
-import { formatProviderError } from "../provider-error.ts";
+import { errorFromThrown } from "../error-from-thrown.ts";
 import type {
   ActiveAgentTurn,
   CodexAttemptCapture,
@@ -86,7 +86,9 @@ import type {
   ConfigResolver,
   MutableSessionManager,
   RequestTemplate,
+  RuntimeScopeContext,
   RuntimeScope,
+  SessionContext,
 } from "./codex-provider-contracts.ts";
 
 function isMutableSessionManager(value: unknown): value is MutableSessionManager {
@@ -145,6 +147,8 @@ export const DEFAULT_RESPONSE_RETRY_POLICY: CodexResponseRetryPolicy = {
   baseDelayMs: 200,
 };
 
+export type CodexProviderRuntimeApi = Pick<ExtensionAPI, "appendEntry" | "getAllTools">;
+
 type CodexCompactionResult = { checkpoint: CheckpointData; usage?: Usage };
 
 export function markerSummary(): string {
@@ -161,13 +165,13 @@ export class CodexProviderRuntime {
   private readonly postToolDispositions = new Map<string, CodexPostToolDisposition>();
   private readonly windowNumbers = new Map<string, number>();
   private readonly activeThreadIds = new Map<string, string>();
-  private readonly pi: ExtensionAPI;
+  private readonly pi: CodexProviderRuntimeApi;
   private readonly resolveConfig: ConfigResolver;
   private readonly installationId: string;
   private readonly responseRetryPolicy: CodexResponseRetryPolicy;
 
   constructor(
-    pi: ExtensionAPI,
+    pi: CodexProviderRuntimeApi,
     resolveConfig: ConfigResolver,
     installationId: string = randomUUID(),
     responseRetryPolicy: Partial<CodexResponseRetryPolicy> = {},
@@ -190,7 +194,7 @@ export class CodexProviderRuntime {
     };
   }
 
-  captureScope(ctx: ExtensionContext): void {
+  captureScope(ctx: RuntimeScopeContext): void {
     const sessionId = ctx.sessionManager.getSessionId();
     const usage = ctx.getContextUsage();
     if (!isMutableSessionManager(ctx.sessionManager)) {
@@ -209,7 +213,7 @@ export class CodexProviderRuntime {
     });
   }
 
-  beginAgentTurn(ctx: ExtensionContext): void {
+  beginAgentTurn(ctx: SessionContext): void {
     const sessionId = ctx.sessionManager.getSessionId();
     this.clearPostToolDispositions((disposition) => disposition.sessionId === sessionId);
     this.activeAgentTurns.set(sessionId, {
@@ -219,7 +223,7 @@ export class CodexProviderRuntime {
     });
   }
 
-  endAgentTurn(ctx: ExtensionContext): void {
+  endAgentTurn(ctx: SessionContext): void {
     const sessionId = ctx.sessionManager.getSessionId();
     const agentTurn = this.activeAgentTurns.get(sessionId);
     if (agentTurn) {
@@ -402,8 +406,11 @@ export class CodexProviderRuntime {
           options.diagnostics.push(diagnostic);
         },
       });
-    } catch (error) {
-      if (!(error instanceof Error)) throw error;
+      // oxlint-disable-next-line 2h2d/no-silent-error-suppression -- Warmup is best-effort; the request path already selected sticky SSE fallback.
+    } catch (
+      // oxlint-disable-next-line no-unused-vars -- The caught warmup failure is intentionally ignored by the documented fallback.
+      _error
+    ) {
       // Warmup is best-effort. The transport has already activated sticky SSE
       // after exhausting its WebSocket retry budget.
     }
@@ -1018,7 +1025,7 @@ export class CodexProviderRuntime {
               postToolDisposition = "retry";
               registeredPostToolDisposition = {
                 callIds,
-                errorMessage: formatProviderError(connectionLimitError),
+                errorMessage: connectionLimitError.message,
                 retryAttempt: responseRetries + 1,
                 terminalType: WEBSOCKET_CONNECTION_LIMIT_REACHED_CODE,
                 turnId: agentTurn.turnId,
@@ -1189,9 +1196,13 @@ export class CodexProviderRuntime {
         if (registeredPostToolDisposition) {
           this.forgetPostToolDisposition(registeredPostToolDisposition);
         }
+        const providerError = errorFromThrown(
+          error,
+          "The Codex provider failed with a non-Error value.",
+        );
         clearStreamingScratchState(output);
         output.stopReason = requestOptions.signal?.aborted ? "aborted" : "error";
-        output.errorMessage = formatProviderError(error);
+        output.errorMessage = providerError.message;
         stream.push({ type: "error", reason: output.stopReason, error: output });
         stream.end();
       } finally {

@@ -1,7 +1,6 @@
 import { isNumber, isString } from "./value-contracts.ts";
 import type { SessionEntry } from "@earendil-works/pi-coding-agent";
 import { isObject, isResponsesItem, type ResponsesItem } from "./codex-protocol.ts";
-import { requiredValue } from "./required-value.ts";
 
 export const NATIVE_RESPONSE_ENTRY_TYPE = "openai-codex-compat-native-response";
 export const NATIVE_RESPONSE_FORMAT_VERSION = 1;
@@ -136,7 +135,8 @@ export function nativeCommittedPrefixBeforeOverflow(
   responseId: string,
 ): ResponsesItem[] | undefined {
   for (let index = branch.length - 1; index >= 0; index--) {
-    const entry = requiredValue(branch[index], "A native-response branch entry is missing.");
+    const entry = branch[index];
+    if (entry === undefined) continue;
     if (entry.type !== "custom" || entry.customType !== NATIVE_RESPONSE_ENTRY_TYPE) continue;
     const parsed = parseNativeResponse(entry.data);
     if (!parsed) {

@@ -204,7 +204,7 @@ function mapStopReason(
 export async function processCodexStream(
   events: AsyncIterable<JsonRecord>,
   output: AssistantMessage,
-  stream: AssistantMessageEventStream,
+  stream: Pick<AssistantMessageEventStream, "push">,
   model: Model<Api>,
   grammarToolInputProperties: ReadonlyMap<string, string>,
   options?: ProcessCodexStreamOptions,

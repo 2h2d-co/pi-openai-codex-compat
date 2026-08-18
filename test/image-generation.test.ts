@@ -1,36 +1,28 @@
-import {
-  extensionApiFixture,
-  extensionContextFixture,
-  themeFixture,
-} from "./support/pi-fixtures.ts";
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, sep } from "node:path";
 import test from "node:test";
-import type { SessionEntry, ToolDefinition } from "@earendil-works/pi-coding-agent";
+import type { SessionEntry } from "@earendil-works/pi-coding-agent";
 import type { Api, Model } from "@earendil-works/pi-ai";
 import registerImageGeneration, {
+  type ImageGenerationApi,
+  type ImageGenerationTool,
   normalizeImagePath,
   recentImageUrls,
 } from "../extensions/openai-codex-compat/image-generation.ts";
 import { DEFAULT_CONFIG } from "../extensions/openai-codex-compat/config.ts";
 import type { JsonRecord } from "../extensions/openai-codex-compat/codex-protocol.ts";
 import type { CodexJsonRequestOptions } from "../extensions/openai-codex-compat/codex-transport.ts";
-import { IMAGE_GENERATION_PARAMETERS } from "../extensions/openai-codex-compat/image-generation-schema.ts";
-import type { ImageGenerationDetails } from "../extensions/openai-codex-compat/image-generation-render.ts";
+import type { CodexToolExecutionContext } from "../extensions/openai-codex-compat/tool-definition-contract.ts";
 import { isString } from "../extensions/openai-codex-compat/value-contracts.ts";
+import { testTheme } from "./support/test-theme.ts";
 
 const GENERATED_PNG =
   "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=";
 const ANSI_SEQUENCE_PATTERN = new RegExp(String.raw`\u001b\[[0-?]*[ -/]*[@-~]`, "gu");
 
-type ImageGenerationTool = ToolDefinition<
-  typeof IMAGE_GENERATION_PARAMETERS,
-  ImageGenerationDetails,
-  Record<string, never>
->;
 type ImageRenderContext = Parameters<NonNullable<ImageGenerationTool["renderCall"]>>[2];
 
 function stripAnsi(value: string): string {
@@ -130,12 +122,12 @@ void test("executes generation and recent-image edits through Codex Images", asy
     body: JsonRecord;
     options: CodexJsonRequestOptions;
   }> = [];
-  const pi = extensionApiFixture({
+  const pi: ImageGenerationApi = {
     registerTool(definition: ImageGenerationTool) {
       tool = definition;
     },
     getAllTools: () => [],
-  });
+  };
   registerImageGeneration(
     pi,
     () => DEFAULT_CONFIG,
@@ -179,7 +171,9 @@ void test("executes generation and recent-image edits through Codex Images", asy
     additionalProperties: false,
   });
 
-  const context = extensionContextFixture({
+  const context = {
+    cwd: process.cwd(),
+    isProjectTrusted: () => true,
     model: codexModel(),
     sessionManager: {
       getSessionId: () => "session-1",
@@ -192,7 +186,7 @@ void test("executes generation and recent-image edits through Codex Images", asy
         headers: { "x-test": "value" },
       }),
     },
-  });
+  } satisfies CodexToolExecutionContext;
   await assert.rejects(
     tool.execute(
       "call-too-many-paths|fc-too-many-paths",
@@ -296,14 +290,7 @@ void test("executes generation and recent-image edits through Codex Images", asy
   assert.match(outputMessage.text, /already displayed to the user/);
   assert.match(outputMessage.text, /use the generated image at another path/);
 
-  const theme = themeFixture({
-    fg: (_color: string, text: string) => text,
-    bold: (text: string) => text,
-    getBgAnsi: (color: string) =>
-      color === "toolPendingBg" ? "\u001b[48;2;40;40;50m" : "\u001b[48;2;40;50;40m",
-    getColorMode: () => "truecolor",
-    name: "dark",
-  });
+  const theme = testTheme();
   const args = { prompt: "Draw a blue square." };
   const renderContext: ImageRenderContext = {
     args,

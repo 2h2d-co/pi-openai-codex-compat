@@ -18,7 +18,6 @@ import { basename, dirname, join, resolve } from "node:path";
 import type { ApplyPatchExecutionFilesystem } from "./apply-patch-engine-contracts.ts";
 import { errorMessage, hasErrorCode, isNotFound } from "./apply-patch-engine-errors.ts";
 import type { ParentPlan, PlannedMutation } from "./apply-patch-engine-filesystem-model.ts";
-import { requiredValue } from "../required-value.ts";
 
 export const DEFAULT_EXECUTION_FILESYSTEM: ApplyPatchExecutionFilesystem = {
   chmod,
@@ -151,18 +150,18 @@ export async function exactSpellingExists(
 ): Promise<boolean> {
   try {
     return (await filesystem.readdir(dirname(path))).includes(basename(path));
-  } catch (error) {
-    if (!(error instanceof Error)) throw error;
-    return false;
+  } catch (cause) {
+    if (isNotFound(cause)) return false;
+    throw new Error(`Failed to inspect the spelling of ${path}`, { cause });
   }
 }
 
 export async function requestedSpellingExists(path: string): Promise<boolean> {
   try {
     return (await readdir(dirname(path))).includes(basename(path));
-  } catch (error) {
-    if (!(error instanceof Error)) throw error;
-    return false;
+  } catch (cause) {
+    if (isNotFound(cause)) return false;
+    throw new Error(`Failed to inspect the spelling of ${path}`, { cause });
   }
 }
 
@@ -220,10 +219,7 @@ export async function executeCrossDeviceMove(
   filesystem: ApplyPatchExecutionFilesystem,
 ): Promise<void> {
   const sourcePath = mutation.operation.absolutePath;
-  const destinationPath = requiredValue(
-    mutation.operation.moveAbsolutePath,
-    "A cross-device move has no destination path.",
-  );
+  const destinationPath = mutation.operation.moveAbsolutePath;
   const temporaryPath = resolve(
     dirname(destinationPath),
     `.${basename(destinationPath)}.apply-patch-${randomUUID()}.tmp`,
@@ -300,10 +296,7 @@ export async function executePureMove(
   filesystem: ApplyPatchExecutionFilesystem,
 ): Promise<void> {
   const sourcePath = mutation.operation.absolutePath;
-  const destinationPath = requiredValue(
-    mutation.operation.moveAbsolutePath,
-    "A move mutation has no destination path.",
-  );
+  const destinationPath = mutation.operation.moveAbsolutePath;
   if (mutation.moveStrategy === "copy-unlink") {
     await executeCrossDeviceMove(mutation, filesystem);
     return;
@@ -325,9 +318,8 @@ export async function executePureMove(
     try {
       await filesystem.lstat(destinationPath);
       destinationChanged = true;
-    } catch (inspectionError) {
-      if (!(inspectionError instanceof Error)) throw inspectionError;
-    }
+      // oxlint-disable-next-line 2h2d/no-silent-error-suppression -- Destination inspection is best-effort metadata for the primary move failure.
+    } catch (_error) {} // oxlint-disable-line no-unused-vars -- The caught inspection failure is intentionally ignored to preserve the primary failure.
     throw new PureMoveExecutionError(
       errorMessage(error),
       destinationChanged

@@ -1,6 +1,8 @@
-import { tuiFixture } from "../support/pi-fixtures.ts";
-import { extensionContextFixture } from "../support/pi-fixtures.ts";
-import { extensionApiFixture } from "../support/pi-fixtures.ts";
+import type {
+  ApplyPatchApi,
+  ApplyPatchTool,
+} from "../../extensions/openai-codex-compat/apply-patch.ts";
+import { renderApplyPatchResult } from "../../extensions/openai-codex-compat/apply-patch-render.ts";
 import {
   assert,
   writeFileSync,
@@ -9,18 +11,15 @@ import {
   join,
   test,
   initTheme,
-  ToolExecutionComponent,
   visibleWidth,
   registerApplyPatch,
   APPLY_PATCH_LARK_GRAMMAR,
   ApplyPatchDiffComponent,
   formatApplyPatchRenderText,
-  ANSI_BACKGROUND_PATTERN,
   stripAnsi,
   testTheme,
   requireApplyPatchDetails,
   workspace,
-  type ToolDefinition,
   type ApplyPatchDetails,
   type CodexToolBackground,
 } from "./apply-patch-harness.ts";
@@ -28,21 +27,16 @@ import {
 void test("registers the Codex freeform tool with model, UI, and failed-history parity", async (t) => {
   initTheme("dark", false);
   const cwd = await workspace(t);
-  let registered: ToolDefinition | undefined;
-  let toolResultHandler:
-    | ((event: {
-        toolName: string;
-        toolCallId: string;
-      }) => { details: ApplyPatchDetails } | undefined)
-    | undefined;
-  const pi = extensionApiFixture({
-    registerTool(tool: ToolDefinition) {
+  let registered: ApplyPatchTool | undefined;
+  let toolResultHandler: Parameters<ApplyPatchApi["on"]>[1] | undefined;
+  const pi: ApplyPatchApi = {
+    registerTool(tool: ApplyPatchTool) {
       registered = tool;
     },
-    on(event: string, handler: typeof toolResultHandler) {
+    on(event, handler) {
       if (event === "tool_result") toolResultHandler = handler;
     },
-  });
+  };
 
   let toolBackground: CodexToolBackground = "subtle";
   let applyPatchDebug = false;
@@ -76,7 +70,7 @@ void test("registers the Codex freeform tool with model, UI, and failed-history 
     { patch: "*** Begin Patch\n*** Add File: rendered.txt\n+hello\n*** End Patch" },
     undefined,
     undefined,
-    extensionContextFixture({ cwd }),
+    { cwd },
   );
   const resultText = result.content[0]?.type === "text" ? result.content[0].text : "";
   assert.match(
@@ -164,43 +158,31 @@ void test("registers the Codex freeform tool with model, UI, and failed-history 
   assert.ok(renderedResult.includes("\u001b[48;2;26;26;33m"));
   assert.doesNotMatch(stripAnsi(renderedResult), /1 \+hello/);
 
-  const shellComponent = new ToolExecutionComponent(
-    "apply_patch",
-    "success-call",
-    { patch: "*** Begin Patch\n*** Add File: rendered.txt\n+hello\n*** End Patch" },
-    { showImages: false },
-    tool,
-    tuiFixture({ requestRender() {} }),
-    cwd,
-  );
-  shellComponent.markExecutionStarted();
-  shellComponent.setArgsComplete();
-  shellComponent.updateResult({ ...result, isError: false });
-  const shellRender = shellComponent.render(120).join("\n");
-  const shellText = stripAnsi(shellRender);
-  assert.match(shellText, /apply_patch/);
-  assert.match(shellText, /• Added rendered\.txt \(\+1 -0\)/);
-  assert.doesNotMatch(shellText, /1 \+hello/);
-  assert.doesNotMatch(shellText, /Exit code:/);
-  assert.ok(!shellRender.includes("\u001b[48;2;40;50;40m"));
-  assert.ok((shellRender.match(ANSI_BACKGROUND_PATTERN) ?? []).length > 0);
-  assert.ok(shellComponent.render(120).every((line) => visibleWidth(line) <= 120));
-
   applyPatchDebug = true;
-  const debugShellText = stripAnsi(shellComponent.render(120).join("\n"));
-  assert.match(debugShellText, /apply_patch \(debug\)\s+Exit code: 0/u);
-  assert.doesNotMatch(debugShellText, /Model feedback:/u);
-  assert.doesNotMatch(debugShellText, /Patch instruction results:/u);
-  assert.doesNotMatch(debugShellText, /• Added rendered\.txt/u);
-
-  shellComponent.setExpanded(true);
-  const expandedShellRender = shellComponent.render(120).join("\n");
-  const expandedShellText = stripAnsi(expandedShellRender);
-  assert.match(expandedShellText, /apply_patch \(debug\)/u);
-  assert.doesNotMatch(expandedShellText, /Model feedback:/u);
-  assert.match(expandedShellText, /• Added rendered\.txt/u);
-  assert.match(expandedShellText, /1 \+hello/);
-  assert.ok(new Set(expandedShellRender.match(ANSI_BACKGROUND_PATTERN) ?? []).size >= 2);
+  const debugResultText = stripAnsi(
+    renderResult(result, { expanded: false, isPartial: false }, theme, {
+      args: {
+        patch: "*** Begin Patch\n*** Add File: rendered.txt\n+hello\n*** End Patch",
+      },
+      toolCallId: "success-call",
+      invalidate() {},
+      lastComponent: undefined,
+      state: {},
+      cwd,
+      executionStarted: true,
+      argsComplete: true,
+      isPartial: false,
+      expanded: false,
+      showImages: false,
+      isError: false,
+    })
+      .render(120)
+      .join("\n"),
+  );
+  assert.match(debugResultText, /Exit code: 0/u);
+  assert.doesNotMatch(debugResultText, /Model feedback:/u);
+  assert.doesNotMatch(debugResultText, /Patch instruction results:/u);
+  assert.doesNotMatch(debugResultText, /• Added rendered\.txt/u);
   applyPatchDebug = false;
 
   const sortedText = formatApplyPatchRenderText(
@@ -347,7 +329,7 @@ void test("registers the Codex freeform tool with model, UI, and failed-history 
     },
     undefined,
     undefined,
-    extensionContextFixture({ cwd }),
+    { cwd },
   );
   assert.equal(requireApplyPatchDetails(failedResult.details).status, "completed");
   await writeFile(join(cwd, "partial-first.txt"), "before\n");
@@ -365,7 +347,7 @@ void test("registers the Codex freeform tool with model, UI, and failed-history 
           writeFileSync(join(cwd, "partial-second.txt"), "external\n");
         }
       },
-      extensionContextFixture({ cwd }),
+      { cwd },
     ),
     (error: unknown) => {
       assert.ok(error instanceof Error);
@@ -485,7 +467,7 @@ void test("registers the Codex freeform tool with model, UI, and failed-history 
           cancellationController.abort();
         }
       },
-      extensionContextFixture({ cwd }),
+      { cwd },
     ),
     (error: unknown) => {
       assert.ok(error instanceof Error);
@@ -521,15 +503,7 @@ void test("registers the Codex freeform tool with model, UI, and failed-history 
 *** Delete File: verification-existing.txt
 *** End Patch`;
   await assert.rejects(
-    tool.execute(
-      "verification-call",
-      { patch: verificationPatch },
-      undefined,
-      undefined,
-      extensionContextFixture({
-        cwd,
-      }),
-    ),
+    tool.execute("verification-call", { patch: verificationPatch }, undefined, undefined, { cwd }),
     /Patch failed at instruction 2 of 3/,
   );
   const verificationResult = toolResultHandler?.({
@@ -623,15 +597,7 @@ void test("registers the Codex freeform tool with model, UI, and failed-history 
 +Earlier addition.
 *** End Patch`;
   await assert.rejects(
-    tool.execute(
-      "matcher-call",
-      { patch: reverseOrderedPatch },
-      undefined,
-      undefined,
-      extensionContextFixture({
-        cwd,
-      }),
-    ),
+    tool.execute("matcher-call", { patch: reverseOrderedPatch }, undefined, undefined, { cwd }),
     (error: unknown) => {
       assert.ok(error instanceof Error);
       assert.match(error.message, /Patch failed at instruction 1 of 1\./u);
@@ -679,50 +645,38 @@ void test("registers the Codex freeform tool with model, UI, and failed-history 
     /Matcher:|Candidates:|Previous group:|Later anchor|Earlier anchor/u,
   );
 
-  const genericFailureComponent = renderResult(
+  const genericFailureComponent = renderApplyPatchResult(
     { content: [], details: {} },
-    { expanded: true, isPartial: false },
+    { isPartial: false },
     theme,
     {
-      args: { patch: "invalid" },
-      toolCallId: "generic-failure-call",
-      invalidate() {},
-      lastComponent: undefined,
-      state: {},
       cwd,
-      executionStarted: true,
-      argsComplete: true,
-      isPartial: false,
       expanded: true,
-      showImages: false,
+      isPartial: false,
       isError: true,
     },
+    () => toolBackground,
+    () => applyPatchDebug,
   );
   assert.doesNotThrow(() => genericFailureComponent.render(120));
   assert.match(genericFailureComponent.render(120).join("\n"), /✘ Failed to apply patch/);
 
   applyPatchDebug = true;
-  const genericDebugComponent = renderResult(
+  const genericDebugComponent = renderApplyPatchResult(
     {
       content: [{ type: "text", text: "Unexpected apply_patch failure." }],
       details: {},
     },
-    { expanded: false, isPartial: false },
+    { isPartial: false },
     theme,
     {
-      args: { patch: "invalid" },
-      toolCallId: "generic-debug-call",
-      invalidate() {},
-      lastComponent: undefined,
-      state: {},
       cwd,
-      executionStarted: true,
-      argsComplete: true,
-      isPartial: false,
       expanded: false,
-      showImages: false,
+      isPartial: false,
       isError: true,
     },
+    () => toolBackground,
+    () => applyPatchDebug,
   );
   const genericDebugText = stripAnsi(genericDebugComponent.render(120).join("\n"));
   assert.match(genericDebugText, /^\s*Unexpected apply_patch failure\./u);

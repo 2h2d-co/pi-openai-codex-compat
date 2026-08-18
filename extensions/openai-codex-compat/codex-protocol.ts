@@ -6,7 +6,7 @@ import {
   type ProviderHeaders,
   type Usage,
 } from "@earendil-works/pi-ai";
-import { requiredValue } from "./required-value.ts";
+import { errorFromThrown } from "./error-from-thrown.ts";
 
 export const REMOTE_COMPACTION_BETA = "remote_compaction_v2";
 export const RETAINED_CONTEXT_BUDGET = 64_000;
@@ -273,7 +273,8 @@ export function selectRetainedContext(
   const newestFirst: ResponsesItem[] = [];
 
   for (let index = history.length - 1; index >= 0 && remaining > 0; index--) {
-    const item = requiredValue(history[index], "A retained-history item is missing.");
+    const item = history[index];
+    if (item === undefined) continue;
     if (!retainedRole(item)) continue;
 
     const tokens = Math.max(1, messageTextTokens(item));
@@ -375,13 +376,10 @@ function accountIdFromToken(token: string): string {
   try {
     const pieces = token.split(".");
     if (pieces.length !== 3) throw new Error("not a JWT");
+    const claimsSegment = pieces[1];
+    if (claimsSegment === undefined) throw new Error("JWT claims segment is missing");
     const claims = requireJsonRecord(
-      JSON.parse(
-        Buffer.from(
-          requiredValue(pieces[1], "The authentication token has no claims segment."),
-          "base64url",
-        ).toString("utf8"),
-      ),
+      JSON.parse(Buffer.from(claimsSegment, "base64url").toString("utf8")),
     );
     const openAIClaims = claims["https://api.openai.com/auth"];
     if (!isObject(openAIClaims) || !isString(openAIClaims.chatgpt_account_id)) {
@@ -532,10 +530,10 @@ async function readCompactionStream(
       `Codex returned ${compacted.length} compaction items; exactly one is required.`,
     );
   }
-  const compactionItem = requiredValue(
-    compacted[0],
-    "The completed compaction stream has no compaction item.",
-  );
+  const compactionItem = compacted[0];
+  if (compactionItem === undefined) {
+    throw new PermanentRemoteError("Codex compaction output has no compaction item.");
+  }
   if (!isString(compactionItem.encrypted_content)) {
     throw new PermanentRemoteError("Codex compaction output did not contain encrypted_content.");
   }
@@ -622,10 +620,10 @@ export async function collectRemoteCompaction(
       `Codex returned ${compacted.length} compaction items; exactly one is required.`,
     );
   }
-  const compactionItem = requiredValue(
-    compacted[0],
-    "The completed compaction stream has no compaction item.",
-  );
+  const compactionItem = compacted[0];
+  if (compactionItem === undefined) {
+    throw new Error("Codex compaction output has no compaction item.");
+  }
   if (!isString(compactionItem.encrypted_content)) {
     throw new Error("Codex compaction output did not contain encrypted_content.");
   }
@@ -662,9 +660,8 @@ export async function requestRemoteCompaction(options: {
         let body = "";
         try {
           body = await response.text();
-        } catch (error) {
-          if (!(error instanceof Error)) throw error;
-        }
+          // oxlint-disable-next-line 2h2d/no-silent-error-suppression -- Reading an HTTP error body is best-effort; status metadata remains available.
+        } catch (_error) {} // oxlint-disable-line no-unused-vars -- The caught body-read failure is intentionally omitted from the status error.
         const message = `Codex remote compaction failed (${response.status}): ${body || response.statusText}`;
         if (!retryableStatus(response.status)) throw new PermanentRemoteError(message);
         if (attempt === REQUEST_RETRIES) throw new Error(message);
@@ -678,9 +675,15 @@ export async function requestRemoteCompaction(options: {
       const compacted: RemoteCompactionResponse = { item: result.item };
       if (usage) compacted.usage = usage;
       return compacted;
-    } catch (error) {
-      if (options.signal?.aborted || error instanceof PermanentRemoteError) throw error;
-      if (!(error instanceof Error)) throw error;
+    } catch (cause) {
+      if (cause instanceof PermanentRemoteError) throw cause;
+      if (options.signal?.aborted) {
+        throw new Error("Codex remote compaction was aborted.", { cause });
+      }
+      const error = errorFromThrown(
+        cause,
+        "Codex remote compaction failed with a non-Error value.",
+      );
       lastFailure = error;
       if (attempt === REQUEST_RETRIES) throw error;
       await wait(1000 * 2 ** attempt, options.signal);

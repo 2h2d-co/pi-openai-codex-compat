@@ -1,21 +1,12 @@
-import { tuiFixture } from "./support/pi-fixtures.ts";
-import { extensionContextFixture } from "./support/pi-fixtures.ts";
 import assert from "node:assert/strict";
 import test from "node:test";
 import { initTheme, type ReadonlyFooterDataProvider } from "@earendil-works/pi-coding-agent";
-import type { Component, TUI } from "@earendil-works/pi-tui";
+import type { Api, Model } from "@earendil-works/pi-ai";
 import { DEFAULT_CONFIG } from "../extensions/openai-codex-compat/config.ts";
-import { installCodexFooter } from "../extensions/openai-codex-compat/footer.ts";
+import { createCodexFooter, type FooterContext } from "../extensions/openai-codex-compat/footer.ts";
 
 void test("appends non-default Codex settings to the default second footer line", () => {
   initTheme("dark", false);
-  let footerFactory:
-    | ((
-        tui: TUI,
-        theme: unknown,
-        footerData: ReadonlyFooterDataProvider,
-      ) => Component & { dispose?(): void })
-    | undefined;
   const model = {
     id: "gpt-5.6-sol",
     name: "GPT-5.6 Sol",
@@ -27,8 +18,10 @@ void test("appends non-default Codex settings to the default second footer line"
     cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
     contextWindow: 100_000,
     maxTokens: 10_000,
-  } as const;
-  const context = extensionContextFixture({
+  } satisfies Model<Api>;
+  const context = {
+    cwd: "/workspace",
+    isProjectTrusted: () => true,
     mode: "tui",
     model,
     thinkingLevel: "xhigh",
@@ -39,6 +32,7 @@ void test("appends non-default Codex settings to the default second footer line"
     },
     getContextUsage: () => ({ tokens: 0, contextWindow: 100_000, percent: 0 }),
     modelRegistry: {
+      find: () => model,
       isUsingOAuth: () => true,
       getProvider: () => ({
         auth: {
@@ -49,20 +43,9 @@ void test("appends non-default Codex settings to the default second footer line"
       }),
     },
     ui: {
-      setFooter(factory: typeof footerFactory) {
-        footerFactory = factory;
-      },
+      setFooter() {},
     },
-  });
-
-  installCodexFooter(context, () => ({
-    ...DEFAULT_CONFIG,
-    fastMode: true,
-    reasoningMode: "pro",
-    textVerbosity: "high",
-    reasoningSummary: "detailed",
-  }));
-  assert.ok(footerFactory);
+  } satisfies FooterContext;
 
   let branchSubscriptions = 0;
   const footerData = {
@@ -74,7 +57,13 @@ void test("appends non-default Codex settings to the default second footer line"
       return () => {};
     },
   } satisfies ReadonlyFooterDataProvider;
-  const footer = footerFactory(tuiFixture({ requestRender() {} }), {}, footerData);
+  const footer = createCodexFooter(footerData, context, () => ({
+    ...DEFAULT_CONFIG,
+    fastMode: true,
+    reasoningMode: "pro",
+    textVerbosity: "high",
+    reasoningSummary: "detailed",
+  }));
   const lines = footer.render(160);
 
   assert.equal(branchSubscriptions, 0);

@@ -4,11 +4,11 @@ import {
   createAssistantMessageEventStream,
   type Api,
   type AssistantMessage,
+  type AssistantMessageEventStream,
   type Model,
 } from "@earendil-works/pi-ai";
 import { processCodexStream } from "../extensions/openai-codex-compat/codex-stream.ts";
 import type { JsonRecord } from "../extensions/openai-codex-compat/codex-protocol.ts";
-import { assistantMessageEventStreamFixture } from "./support/pi-fixtures.ts";
 
 const model = {
   id: "gpt-test",
@@ -397,14 +397,14 @@ void test("maps default-namespaced custom calls to bare Pi tool names", async ()
 void test("matches Pi AI phase, reasoning, and final tool-delta events", async () => {
   const message = output();
   const pushed: Array<{ type: string; delta?: string; stopReason?: string }> = [];
-  const stream = assistantMessageEventStreamFixture({
-    push(event: { type: string; delta?: string; partial?: AssistantMessage }) {
+  const stream: Pick<AssistantMessageEventStream, "push"> = {
+    push(event) {
       const pushedEvent: (typeof pushed)[number] = { type: event.type };
-      if (event.delta !== undefined) pushedEvent.delta = event.delta;
-      if (event.partial) pushedEvent.stopReason = event.partial.stopReason;
+      if ("delta" in event && event.delta !== undefined) pushedEvent.delta = event.delta;
+      if ("partial" in event) pushedEvent.stopReason = event.partial.stopReason;
       pushed.push(pushedEvent);
     },
-  });
+  };
 
   await processCodexStream(
     events([

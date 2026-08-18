@@ -1,5 +1,5 @@
 import { performance } from "node:perf_hooks";
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import type { ExtensionContext, ToolResultEvent } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import type { CodexToolBackgroundResolver } from "./codex-tool-surface.ts";
 import { DEFAULT_CONFIG } from "./config.ts";
@@ -18,6 +18,7 @@ import {
   renderApplyPatchCall,
   renderApplyPatchResult,
 } from "./apply-patch-render.ts";
+import type { ToolDefinitionWithContext } from "./tool-definition-contract.ts";
 
 export {
   applyPatch,
@@ -46,6 +47,26 @@ export type { FormatterMatchFailureDetails } from "./apply-patch-matcher.ts";
 
 export const APPLY_PATCH_TOOL_NAME = "apply_patch";
 export const APPLY_PATCH_INPUT_PROPERTY = "patch";
+const APPLY_PATCH_PARAMETERS = Type.Object({
+  patch: Type.String({ description: "Raw patch text beginning with *** Begin Patch" }),
+});
+
+export type ApplyPatchTool = ToolDefinitionWithContext<
+  typeof APPLY_PATCH_PARAMETERS,
+  ApplyPatchDetails,
+  Record<string, never>,
+  Pick<ExtensionContext, "cwd">
+>;
+
+export type ApplyPatchApi = {
+  on(
+    event: "tool_result",
+    handler: (
+      event: Pick<ToolResultEvent, "toolCallId" | "toolName">,
+    ) => { details: ApplyPatchDetails } | undefined,
+  ): void;
+  registerTool(tool: ApplyPatchTool): void;
+};
 
 // Adapted from OpenAI Codex's Apache-2.0 apply_patch grammar; see
 // THIRD_PARTY_NOTICES.md. Pi serializes it as a native custom grammar tool for
@@ -71,7 +92,7 @@ eof_line: "*** End of File" LF
 %import common.LF`;
 
 export default function registerApplyPatch(
-  pi: ExtensionAPI,
+  pi: ApplyPatchApi,
   resolveToolBackground: CodexToolBackgroundResolver = () => DEFAULT_CONFIG.toolBackground,
   resolveDebug: ApplyPatchDebugResolver = () => DEFAULT_CONFIG.applyPatchDebug,
 ): void {
@@ -96,9 +117,7 @@ export default function registerApplyPatch(
       "Do not create or edit files with `cat` or other shell write tricks.",
       "Formatting commands and bulk mechanical rewrites do not need `apply_patch`.",
     ],
-    parameters: Type.Object({
-      patch: Type.String({ description: "Raw patch text beginning with *** Begin Patch" }),
-    }),
+    parameters: APPLY_PATCH_PARAMETERS,
     constrainedSampling: {
       type: "grammar",
       variants: { openai_lark: APPLY_PATCH_LARK_GRAMMAR },

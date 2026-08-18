@@ -25,7 +25,6 @@ import {
   splitNamespacedToolName,
 } from "./namespaced-tools.ts";
 import { convertResponsesMessages } from "./vendor/pi-ai/openai-responses-serialization.ts";
-import { requiredValue } from "./required-value.ts";
 
 export const CHECKPOINT_ENTRY_TYPE = "openai-codex-compat-remote-compaction";
 export const CHECKPOINT_FORMAT_VERSION = 1;
@@ -265,7 +264,8 @@ export function parseCheckpoint(value: unknown): CheckpointData | undefined {
 /** Find the newest applicable checkpoint on the active branch. */
 export function searchCheckpoint(branch: readonly SessionEntry[]): CheckpointSearch {
   for (let index = branch.length - 1; index >= 0; index--) {
-    const entry = requiredValue(branch[index], "A checkpoint branch entry is missing.");
+    const entry = branch[index];
+    if (entry === undefined) continue;
     let candidate: unknown;
 
     if (entry.type === "compaction") {

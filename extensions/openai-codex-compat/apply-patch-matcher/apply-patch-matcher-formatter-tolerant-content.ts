@@ -43,36 +43,29 @@ export function editGroups(chunks: readonly UpdateChunk[]): EditGroup[] {
   for (const [chunkIndex, chunk] of chunks.entries()) {
     const chunkGroups: EditGroup[] = [];
     for (let index = 0; index < chunk.lines.length;) {
-      if (
-        requiredValue(chunk.lines[index], "Patch line index is outside the chunk.").kind ===
-        "context"
-      ) {
+      const line = chunk.lines[index];
+      if (line === undefined) break;
+      if (line.kind === "context") {
         index += 1;
         continue;
       }
       const start = index;
-      while (
-        index < chunk.lines.length &&
-        requiredValue(chunk.lines[index], "Patch line index is outside the chunk.").kind !==
-          "context"
-      ) {
+      while (index < chunk.lines.length) {
+        const current = chunk.lines[index];
+        if (current === undefined || current.kind === "context") break;
         index += 1;
       }
       const segment = chunk.lines.slice(start, index);
       let beforeStart = start;
-      while (
-        beforeStart > 0 &&
-        requiredValue(chunk.lines[beforeStart - 1], "Patch context index is outside the chunk.")
-          .kind === "context"
-      ) {
+      while (beforeStart > 0) {
+        const previous = chunk.lines[beforeStart - 1];
+        if (previous === undefined || previous.kind !== "context") break;
         beforeStart -= 1;
       }
       let afterEnd = index;
-      while (
-        afterEnd < chunk.lines.length &&
-        requiredValue(chunk.lines[afterEnd], "Patch context index is outside the chunk.").kind ===
-          "context"
-      ) {
+      while (afterEnd < chunk.lines.length) {
+        const following = chunk.lines[afterEnd];
+        if (following === undefined || following.kind !== "context") break;
         afterEnd += 1;
       }
       chunkGroups.push({
@@ -117,7 +110,9 @@ export function lineForByte(lineStarts: readonly number[], byte: number): number
   let high = lineStarts.length - 1;
   while (low < high) {
     const middle = Math.ceil((low + high) / 2);
-    if (requiredValue(lineStarts[middle], "Line-start index is outside the source.") <= byte) {
+    const middleStart = lineStarts[middle];
+    if (middleStart === undefined) return low;
+    if (middleStart <= byte) {
       low = middle;
     } else high = middle - 1;
   }
@@ -171,24 +166,24 @@ export function lineCandidates(
 ): EditCandidate[] {
   const starts = findTolerantSequences(sourceLines, group.oldLines, 0, false, path);
   const ordinary = starts
-    .map((startLine) => {
+    .flatMap((startLine) => {
       const endLine = startLine + group.oldLines.length;
-      const start = requiredValue(
-        lineStarts[startLine],
-        "Candidate start line is outside the source.",
-      );
-      const end = requiredValue(lineStarts[endLine], "Candidate end line is outside the source.");
+      const start = lineStarts[startLine];
+      const end = lineStarts[endLine];
+      if (start === undefined || end === undefined) return [];
       const replacement = replacementLines(
         group.newLines,
         lineEndingForLine(sourceLines, startLine),
       );
-      return {
-        start,
-        end,
-        startLine,
-        endLine,
-        edits: [{ start, end, replacement }],
-      };
+      return [
+        {
+          start,
+          end,
+          startLine,
+          endLine,
+          edits: [{ start, end, replacement }],
+        },
+      ];
     })
     .filter(
       (candidate) =>
@@ -237,16 +232,19 @@ export function insertionCandidates(
         candidateFollowsAnchor(group, sourceLines, line, path) &&
         candidateSatisfiesEndOfFile(group, sourceLines.length, line),
     )
-    .map((line) => {
-      const byte = requiredValue(lineStarts[line], "Insertion line is outside the source.");
+    .flatMap((line) => {
+      const byte = lineStarts[line];
+      if (byte === undefined) return [];
       const replacement = replacementLines(group.newLines, lineEndingAtBoundary(sourceLines, line));
-      return {
-        start: byte,
-        end: byte,
-        startLine: line,
-        endLine: line,
-        edits: [{ start: byte, end: byte, replacement }],
-      };
+      return [
+        {
+          start: byte,
+          end: byte,
+          startLine: line,
+          endLine: line,
+          edits: [{ start: byte, end: byte, replacement }],
+        },
+      ];
     });
 }
 
@@ -285,8 +283,9 @@ export async function tokenCandidates(
     if (!tokenSignatureMatches(window, oldTokens) || relativeSyntaxPath(window) !== expectedPath) {
       continue;
     }
-    const first = requiredValue(window[0], "Token window has no first token.");
-    const last = requiredValue(window.at(-1), "Token window has no last token.");
+    const first = window[0];
+    const last = window.at(-1);
+    if (first === undefined || last === undefined) continue;
     const bounds = lineBounds(sourceBytes, first.start, last.end);
     if (!bounds.fullLines) continue;
     const lineEnding: "\n" | "\r\n" =
@@ -324,11 +323,9 @@ export function applyEdits(source: Buffer, edits: readonly ByteEdit[]): Buffer {
     .map((edit, index) => ({ ...edit, index }))
     .sort((left, right) => left.start - right.start || left.index - right.index);
   for (let index = 1; index < ordered.length; index++) {
-    const current = requiredValue(ordered[index], "Ordered edit index is outside the edit list.");
-    const previous = requiredValue(
-      ordered[index - 1],
-      "Previous ordered edit index is outside the edit list.",
-    );
+    const current = ordered[index];
+    const previous = ordered[index - 1];
+    if (current === undefined || previous === undefined) continue;
     if (current.start < previous.end) {
       throw new OverlappingFormatterEditsError("formatter-tolerant edits overlap");
     }
@@ -372,10 +369,8 @@ export function distinctMappedOutputs(
       outputs.set(output.toString("base64"), output);
       return;
     }
-    const groupCandidates = requiredValue(
-      candidateSets[groupIndex],
-      "Candidate group index is outside the candidate sets.",
-    );
+    const groupCandidates = candidateSets[groupIndex];
+    if (groupCandidates === undefined) return;
     for (const candidate of groupCandidates) {
       if (candidate.start < previousEnd) continue;
       visit(groupIndex + 1, candidate.end, [...edits, ...candidate.edits]);

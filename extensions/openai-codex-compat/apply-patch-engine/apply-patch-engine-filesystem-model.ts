@@ -2,6 +2,7 @@ import type { Stats } from "node:fs";
 import type {
   AppliedPatchChange,
   ApplyPatchInstructionDetails,
+  ResolvedMoveUpdateOperation,
   ResolvedOperation,
 } from "./apply-patch-engine-contracts.ts";
 
@@ -78,6 +79,43 @@ export type ParentPlan = {
   expectations: Array<{ path: string; kind: "absent" | "directory" | "directory-symlink" }>;
 };
 
+type PlannedTextUpdateBase = {
+  kind: "text-update";
+  expectedSource: ExistingFileEntry;
+  parents: ParentPlan;
+  content: Buffer;
+  replacementMode?: number;
+  sourceKey: string;
+  entryMutations: PlannedEntryMutation[];
+  change: Extract<AppliedPatchChange, { kind: "update" }>;
+};
+
+type PlannedTextUpdate =
+  | (PlannedTextUpdateBase & {
+      moveMode: "none";
+      operation: Extract<ResolvedOperation, { kind: "update" }>;
+      expectedDestination?: never;
+      destinationKey?: never;
+      sameEntryMove?: never;
+      provisionalChange?: never;
+    })
+  | (PlannedTextUpdateBase & {
+      moveMode: "same-entry";
+      operation: ResolvedMoveUpdateOperation;
+      expectedDestination: ExistingFileEntry;
+      destinationKey: string;
+      sameEntryMove: "rename" | "satisfied";
+      provisionalChange: Extract<AppliedPatchChange, { kind: "update" }>;
+    })
+  | (PlannedTextUpdateBase & {
+      moveMode: "destination";
+      operation: ResolvedMoveUpdateOperation;
+      expectedDestination: ReplaceableFileEntry;
+      destinationKey: string;
+      sameEntryMove?: never;
+      provisionalChange: Extract<AppliedPatchChange, { kind: "add" }>;
+    });
+
 export type PlannedMutation = (
   | {
       kind: "add";
@@ -98,24 +136,10 @@ export type PlannedMutation = (
       entryMutations: PlannedEntryMutation[];
       change: Extract<AppliedPatchChange, { kind: "delete" }>;
     }
-  | {
-      kind: "text-update";
-      operation: Extract<ResolvedOperation, { kind: "update" }>;
-      expectedSource: ExistingFileEntry;
-      expectedDestination?: ReplaceableFileEntry;
-      parents: ParentPlan;
-      content: Buffer;
-      replacementMode?: number;
-      sourceKey: string;
-      destinationKey?: string;
-      sameEntryMove?: "rename" | "satisfied";
-      entryMutations: PlannedEntryMutation[];
-      change: Extract<AppliedPatchChange, { kind: "update" }>;
-      provisionalChange?: Extract<AppliedPatchChange, { kind: "add" | "update" }>;
-    }
+  | PlannedTextUpdate
   | {
       kind: "move";
-      operation: Extract<ResolvedOperation, { kind: "update" }>;
+      operation: ResolvedMoveUpdateOperation;
       expectedSource: ExistingFileEntry;
       expectedDestination: ReplaceableFileEntry;
       parents: ParentPlan;

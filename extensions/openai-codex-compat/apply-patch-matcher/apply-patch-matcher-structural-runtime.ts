@@ -104,9 +104,8 @@ export function fenceGrammar(group: EditGroup): GrammarName | undefined {
     if (/^ {0,3}(?:`{3,}|~{3,})[\t ]*$/u.test(line)) return undefined;
     const match = rustTrim(line).match(/^(?:`{3,}|~{3,})[\t ]*([A-Za-z0-9_+-]+)/u);
     if (match) {
-      return GRAMMAR_BY_FENCE_INFO.get(
-        requiredValue(match[1], "A matched fence language is missing.").toLowerCase(),
-      );
+      const language = match[1];
+      if (language !== undefined) return GRAMMAR_BY_FENCE_INFO.get(language.toLowerCase());
     }
   }
   return undefined;
@@ -117,10 +116,8 @@ export function utf16ByteOffsets(source: string): Uint32Array {
   let byteOffset = 0;
   for (let index = 0; index < source.length;) {
     offsets[index] = byteOffset;
-    const codePoint = requiredValue(
-      source.codePointAt(index),
-      "UTF-16 source index is outside the string.",
-    );
+    const codePoint = source.codePointAt(index);
+    if (codePoint === undefined) break;
     const width = codePoint > 0xffff ? 2 : 1;
     if (width === 2) offsets[index + 1] = byteOffset;
     byteOffset += Buffer.byteLength(String.fromCodePoint(codePoint), "utf8");
@@ -192,7 +189,6 @@ export async function parseStructuralDocument(
     }
   } catch (error) {
     if (signal?.aborted) throw new Error("apply_patch was cancelled.", { cause: error });
-    if (!(error instanceof Error)) throw error;
     return null;
   }
 }
@@ -207,31 +203,22 @@ export async function embeddedStructuralDocuments(
   const documents: StructuralDocument[] = [];
   const sourceBytes = Buffer.from(source, "utf8");
   for (let index = 0; index < sourceLines.length; index++) {
-    const opening = fenceOpening(
-      requiredValue(sourceLines[index], "Fence line index is outside the source."),
-    );
+    const sourceLine = sourceLines[index];
+    if (sourceLine === undefined) continue;
+    const opening = fenceOpening(sourceLine);
     if (!opening) continue;
     const contentStart = index + 1;
     let closing = contentStart;
-    while (
-      closing < sourceLines.length &&
-      !fenceClosing(
-        requiredValue(sourceLines[closing], "Fence line index is outside the source."),
-        opening,
-      )
-    ) {
+    while (closing < sourceLines.length) {
+      const closingLine = sourceLines[closing];
+      if (closingLine === undefined || fenceClosing(closingLine, opening)) break;
       closing += 1;
     }
     if (closing >= sourceLines.length) break;
     if (opening.grammar === grammar) {
-      const start = requiredValue(
-        lineStarts[contentStart],
-        "Embedded document start is outside the source.",
-      );
-      const end = requiredValue(
-        lineStarts[closing],
-        "Embedded document end is outside the source.",
-      );
+      const start = lineStarts[contentStart];
+      const end = lineStarts[closing];
+      if (start === undefined || end === undefined) continue;
       const document = await parseStructuralDocument(
         grammar,
         sourceBytes.subarray(start, end).toString("utf8"),
@@ -270,7 +257,7 @@ export function commonIndent(lines: readonly string[]): string {
     .filter((line) => line.trim().length > 0)
     .map((line) => line.match(/^[\t ]*/u)?.[0] ?? "");
   if (indents.length === 0) return "";
-  let prefix = requiredValue(indents[0], "The first non-empty indentation is missing.");
+  let prefix = indents[0] ?? "";
   for (const indent of indents.slice(1)) {
     while (prefix && !indent.startsWith(prefix)) prefix = prefix.slice(0, -1);
   }
@@ -414,16 +401,16 @@ export function tokenSignatureMatches(
 
 export function relativeSyntaxPath(tokens: readonly SyntaxToken[]): string {
   if (tokens.length === 0) return "";
-  const firstToken = requiredValue(tokens[0], "The first syntax token is missing.");
+  const firstToken = tokens[0];
+  if (firstToken === undefined) return "";
   let common = firstToken.path.length;
   for (const token of tokens.slice(1)) {
     let index = 0;
-    while (
-      index < common &&
-      index < token.path.length &&
-      requiredValue(firstToken.path[index], "Common syntax path index is missing.").id ===
-        requiredValue(token.path[index], "Syntax path index is missing.").id
-    ) {
+    while (index < common && index < token.path.length) {
+      const firstStep = firstToken.path[index];
+      const tokenStep = token.path[index];
+      if (firstStep === undefined || tokenStep === undefined || firstStep.id !== tokenStep.id)
+        break;
       index += 1;
     }
     common = index;

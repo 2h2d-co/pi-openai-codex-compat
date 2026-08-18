@@ -45,7 +45,6 @@ import {
   finishSameInodeRename,
   replaceRegularFile,
 } from "./apply-patch-engine-filesystem-mutations.ts";
-import { requiredValue } from "../required-value.ts";
 
 export async function currentEntry(path: string): Promise<VirtualEntry> {
   try {
@@ -296,7 +295,7 @@ export function recordAppliedInstructionEffects(
         addInstructionEffect(
           instruction,
           replacedInstructionEffect(
-            requiredValue(mutation.operation.moveTo, "A move mutation has no destination."),
+            mutation.operation.moveTo,
             mutation.expectedDestination,
             fileEntryDetails(mutation.expectedSource),
           ),
@@ -392,19 +391,10 @@ export async function executePlan(
           mutation.expectedSource,
           committedEntryMutations,
         );
-        if (mutation.sameEntryMove) {
-          const provisionalChange = requiredValue(
-            mutation.provisionalChange,
-            "A same-entry move has no provisional change.",
-          );
-          const moveAbsolutePath = requiredValue(
-            mutation.operation.moveAbsolutePath,
-            "A same-entry move has no destination path.",
-          );
-          const moveTo = requiredValue(
-            mutation.operation.moveTo,
-            "A same-entry move has no destination.",
-          );
+        if (mutation.moveMode === "same-entry") {
+          const provisionalChange = mutation.provisionalChange;
+          const moveAbsolutePath = mutation.operation.moveAbsolutePath;
+          const moveTo = mutation.operation.moveTo;
           try {
             activeFilesystemMutationStarted = true;
             await replaceRegularFile(
@@ -458,19 +448,10 @@ export async function executePlan(
           }
           details.changes[lastChangeIndex] = mutation.change;
           details.modified[lastModifiedIndex] = moveTo;
-        } else if (mutation.operation.moveAbsolutePath && mutation.expectedDestination) {
-          const destinationKey = requiredValue(
-            mutation.destinationKey,
-            "A moved text update has no destination key.",
-          );
-          const provisionalChange = requiredValue(
-            mutation.provisionalChange,
-            "A moved text update has no provisional change.",
-          );
-          const moveTo = requiredValue(
-            mutation.operation.moveTo,
-            "A moved text update has no destination.",
-          );
+        } else if (mutation.moveMode === "destination") {
+          const destinationKey = mutation.destinationKey;
+          const provisionalChange = mutation.provisionalChange;
+          const moveTo = mutation.operation.moveTo;
           await assertMutationEntryMatches(
             mutation.operation.moveAbsolutePath,
             destinationKey,
@@ -543,14 +524,8 @@ export async function executePlan(
           appendChange(details, mutation.change, mutation.instructionIndex);
         }
       } else {
-        const moveAbsolutePath = requiredValue(
-          mutation.operation.moveAbsolutePath,
-          "A move mutation has no destination path.",
-        );
-        const moveTo = requiredValue(
-          mutation.operation.moveTo,
-          "A move mutation has no destination.",
-        );
+        const moveAbsolutePath = mutation.operation.moveAbsolutePath;
+        const moveTo = mutation.operation.moveTo;
         await assertMutationEntryMatches(
           mutation.operation.absolutePath,
           mutation.sourceKey,

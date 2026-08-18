@@ -165,17 +165,29 @@ export type ApplyPatchDetails = {
   error?: string;
 };
 
+type ResolvedUpdateBase = {
+  kind: "update";
+  path: string;
+  absolutePath: string;
+  chunks: UpdateChunk[];
+};
+
+export type ResolvedTextUpdateOperation = ResolvedUpdateBase & {
+  moveTo?: never;
+  moveAbsolutePath?: never;
+};
+
+export type ResolvedMoveUpdateOperation = ResolvedUpdateBase & {
+  moveTo: string;
+  moveAbsolutePath: string;
+};
+
+export type ResolvedUpdateOperation = ResolvedTextUpdateOperation | ResolvedMoveUpdateOperation;
+
 export type ResolvedOperation =
   | { kind: "add"; path: string; absolutePath: string; content: string }
   | { kind: "delete"; path: string; absolutePath: string }
-  | {
-      kind: "update";
-      path: string;
-      absolutePath: string;
-      moveTo?: string;
-      moveAbsolutePath?: string;
-      chunks: UpdateChunk[];
-    };
+  | ResolvedUpdateOperation;
 
 export type ApplyPatchExecutionHooks = {
   onExecutionStart?: () => void | Promise<void>;

@@ -1,13 +1,14 @@
-import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import type { Api, Model } from "@earendil-works/pi-ai";
-import registerApplyPatch, { APPLY_PATCH_TOOL_NAME } from "./apply-patch.ts";
+import registerApplyPatch, { APPLY_PATCH_TOOL_NAME, type ApplyPatchApi } from "./apply-patch.ts";
 import type { CodexToolBackgroundResolver } from "./codex-tool-surface.ts";
 import type { CodexCompatConfig } from "./config.ts";
+import type { ConfigResolver } from "./config-context.ts";
 import { DEFAULT_CONFIG } from "./config.ts";
-import registerImageGeneration from "./image-generation.ts";
+import registerImageGeneration, { type ImageGenerationApi } from "./image-generation.ts";
 import { IMAGE_GENERATION_TOOL_NAME, WEB_RUN_TOOL_NAME } from "./namespaced-tools.ts";
 import { isCodexModel } from "./request-options.ts";
-import registerWebRun from "./web-run.ts";
+import registerWebRun, { type WebRunApi } from "./web-run.ts";
 
 const PI_EDIT_TOOLS = ["edit", "write"] as const;
 const CODEX_EXTENSION_TOOLS = [
@@ -15,10 +16,12 @@ const CODEX_EXTENSION_TOOLS = [
   IMAGE_GENERATION_TOOL_NAME,
   WEB_RUN_TOOL_NAME,
 ] as const;
-const suppressedEditTools = new WeakMap<ExtensionAPI, Set<string>>();
-type ConfigResolver = (ctx: ExtensionContext) => CodexCompatConfig;
+export type CodexToolActivationApi = Pick<ExtensionAPI, "getActiveTools" | "setActiveTools">;
+export type CodexToolsApi = CodexToolActivationApi & ApplyPatchApi & ImageGenerationApi & WebRunApi;
 
-export function setApplyPatchEnabled(pi: ExtensionAPI, enabled: boolean): void {
+const suppressedEditTools = new WeakMap<CodexToolActivationApi, Set<string>>();
+
+export function setApplyPatchEnabled(pi: CodexToolActivationApi, enabled: boolean): void {
   const active = new Set(pi.getActiveTools());
   active.delete(APPLY_PATCH_TOOL_NAME);
   if (enabled) {
@@ -41,7 +44,7 @@ export function setApplyPatchEnabled(pi: ExtensionAPI, enabled: boolean): void {
 }
 
 export function syncCodexTools(
-  pi: ExtensionAPI,
+  pi: CodexToolActivationApi,
   model: Model<Api> | undefined,
   config: CodexCompatConfig,
 ): void {
@@ -60,7 +63,7 @@ export function syncCodexTools(
 }
 
 export default function registerCodexTools(
-  pi: ExtensionAPI,
+  pi: CodexToolsApi,
   resolveConfig: ConfigResolver,
   resolveToolBackground: CodexToolBackgroundResolver = () => DEFAULT_CONFIG.toolBackground,
   resolveApplyPatchDebug: () => boolean = () => DEFAULT_CONFIG.applyPatchDebug,

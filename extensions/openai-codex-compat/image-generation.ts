@@ -1,13 +1,10 @@
 import { isString, nodeErrorCode } from "./value-contracts.ts";
 import { readFile, mkdir, writeFile } from "node:fs/promises";
 import { dirname, isAbsolute, join, normalize } from "node:path";
-import {
-  getAgentDir,
-  type ExtensionAPI,
-  type ExtensionContext,
-} from "@earendil-works/pi-coding-agent";
+import { getAgentDir, type ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import type { Api, Model } from "@earendil-works/pi-ai";
-import type { CodexCompatConfig } from "./config.ts";
+import { errorFromThrown } from "./error-from-thrown.ts";
+import type { ConfigResolver } from "./config-context.ts";
 import type { CodexToolBackgroundResolver } from "./codex-tool-surface.ts";
 import { DEFAULT_CONFIG } from "./config.ts";
 import { isObject, type JsonRecord, type JsonValue, type ResponsesItem } from "./codex-protocol.ts";
@@ -24,10 +21,24 @@ import {
   type ImageGenerationDetails,
 } from "./image-generation-render.ts";
 import { isCodexModel } from "./request-options.ts";
+import type {
+  CodexToolExecutionContext,
+  ToolDefinitionWithContext,
+} from "./tool-definition-contract.ts";
 import { codexToolAuthentication, codexToolHistory } from "./tool-runtime.ts";
 
 const IMAGE_MODEL = "gpt-image-2";
 const GENERATION_ENDPOINT = "images/generations";
+
+export type ImageGenerationTool = ToolDefinitionWithContext<
+  typeof IMAGE_GENERATION_PARAMETERS,
+  ImageGenerationDetails,
+  Record<string, never>,
+  CodexToolExecutionContext
+>;
+export type ImageGenerationApi = Pick<ExtensionAPI, "getAllTools"> & {
+  registerTool(tool: ImageGenerationTool): void;
+};
 const EDIT_ENDPOINT = "images/edits";
 const GENERATED_IMAGES_DIRECTORY = "generated_images";
 
@@ -54,8 +65,6 @@ type JsonRequester = (
   body: JsonRecord,
   options: CodexJsonRequestOptions,
 ) => Promise<JsonValue>;
-type ConfigResolver = (ctx: ExtensionContext) => CodexCompatConfig;
-
 type ImageRequest = {
   operation: "generate" | "edit";
   endpoint: typeof GENERATION_ENDPOINT | typeof EDIT_ENDPOINT;
@@ -252,7 +261,7 @@ The generated image is already displayed to the user. There is no need to render
 }
 
 export default function registerImageGeneration(
-  pi: ExtensionAPI,
+  pi: ImageGenerationApi,
   resolveConfig: ConfigResolver,
   resolveToolBackground: CodexToolBackgroundResolver = () => DEFAULT_CONFIG.toolBackground,
   requestJson: JsonRequester = requestCodexJson,
@@ -278,7 +287,15 @@ export default function registerImageGeneration(
       }
       onUpdate?.({
         content: [{ type: "text", text: "Generating image…" }],
-        details: undefined,
+        details: {
+          operation:
+            (params.referenced_image_paths?.length ?? 0) > 0 ||
+            (params.num_last_images_to_include !== undefined &&
+              params.num_last_images_to_include !== null)
+              ? "edit"
+              : "generate",
+          revisedPrompt: params.prompt,
+        },
       });
       const config = resolveConfig(ctx);
       const history = codexToolHistory(pi, ctx, model, config.imageDetail);
@@ -307,8 +324,12 @@ export default function registerImageGeneration(
           callId,
           imageBase64,
         );
-      } catch (error) {
-        if (!(error instanceof Error)) throw error;
+        // oxlint-disable-next-line 2h2d/no-silent-error-suppression -- Image persistence failure is returned with the generated image rather than replacing it.
+      } catch (cause) {
+        const error = errorFromThrown(
+          cause,
+          "Saving the generated image failed with a non-Error value.",
+        );
         saveError = error.message;
       }
 

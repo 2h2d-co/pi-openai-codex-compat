@@ -1,6 +1,6 @@
 import { isString } from "./value-contracts.ts";
 import { readFileSync } from "node:fs";
-import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import type { Api, Model } from "@earendil-works/pi-ai";
 import {
   approximateTokens,
@@ -11,11 +11,16 @@ import {
   type ResponsesItem,
 } from "./codex-protocol.ts";
 import { requestCodexJson, type CodexJsonRequestOptions } from "./codex-transport.ts";
-import type { CodexCompatConfig, WebSearchMode } from "./config.ts";
+import type { WebSearchMode } from "./config.ts";
+import type { ConfigResolver } from "./config-context.ts";
 import type { CodexToolBackgroundResolver } from "./codex-tool-surface.ts";
 import { DEFAULT_CONFIG } from "./config.ts";
 import { WEB_RUN_TOOL_NAME } from "./namespaced-tools.ts";
 import { isCodexModel } from "./request-options.ts";
+import type {
+  CodexToolExecutionContext,
+  ToolDefinitionWithContext,
+} from "./tool-definition-contract.ts";
 import { codexToolAuthentication, codexToolHistory } from "./tool-runtime.ts";
 import { renderWebRunCall, renderWebRunResult, type WebRunDetails } from "./web-run-render.ts";
 import { WEB_RUN_PARAMETERS } from "./web-run-schema.ts";
@@ -29,9 +34,18 @@ const WEB_RUN_DESCRIPTION = readFileSync(
   "utf8",
 );
 
+export type WebRunTool = ToolDefinitionWithContext<
+  typeof WEB_RUN_PARAMETERS,
+  WebRunDetails,
+  Record<string, never>,
+  CodexToolExecutionContext
+>;
+export type WebRunApi = Pick<ExtensionAPI, "getAllTools"> & {
+  registerTool(tool: WebRunTool): void;
+};
+
 export type { WebRunDetails } from "./web-run-render.ts";
 
-type ConfigResolver = (ctx: ExtensionContext) => CodexCompatConfig;
 type JsonRequester = (
   model: Model<Api>,
   path: string,
@@ -109,7 +123,7 @@ function externalWebAccess(mode: WebSearchMode): boolean | "indexed" {
 }
 
 export default function registerWebRun(
-  pi: ExtensionAPI,
+  pi: WebRunApi,
   resolveConfig: ConfigResolver,
   resolveToolBackground: CodexToolBackgroundResolver = () => DEFAULT_CONFIG.toolBackground,
   requestJson: JsonRequester = requestCodexJson,

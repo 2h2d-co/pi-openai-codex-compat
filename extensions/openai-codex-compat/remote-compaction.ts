@@ -1,6 +1,8 @@
 import { isString } from "./value-contracts.ts";
 import { randomUUID } from "node:crypto";
 import type {
+  BeforeProviderHeadersEvent,
+  ContextEvent,
   ExtensionAPI,
   ExtensionContext,
   SessionBeforeCompactEvent,
@@ -11,6 +13,7 @@ import type {
   Model,
   OpenAICodexResponsesOptions,
   ProviderHeaders,
+  Usage,
 } from "@earendil-works/pi-ai";
 import { addRemoteCompactionFeature, isObject, type JsonRecord } from "./codex-protocol.ts";
 import {
@@ -20,7 +23,7 @@ import {
   searchCheckpoint,
   type GrammarToolInputProperties,
 } from "./compaction-checkpoint.ts";
-import { loadConfig, type CodexCompatConfig } from "./config.ts";
+import { resolveFileConfig, type ConfigResolver } from "./config-context.ts";
 import type { CodexProviderRuntime } from "./codex-provider.ts";
 import { responsesCompactionV2Metadata, type CodexCompactionMetadata } from "./codex-metadata.ts";
 import { APPLY_PATCH_INPUT_PROPERTY, APPLY_PATCH_TOOL_NAME } from "./apply-patch.ts";
@@ -28,14 +31,104 @@ import { APPLY_PATCH_INPUT_PROPERTY, APPLY_PATCH_TOOL_NAME } from "./apply-patch
 const CODEX_PROVIDER = "openai-codex";
 const CODEX_API = "openai-codex-responses";
 
-type ConfigResolver = (ctx: ExtensionContext) => CodexCompatConfig;
+export type RemoteCompactionContext = Parameters<ConfigResolver>[0] & {
+  getContextUsage: ExtensionContext["getContextUsage"];
+  getSystemPrompt: ExtensionContext["getSystemPrompt"];
+  hasUI: boolean;
+  model: Model<Api> | undefined;
+  modelRegistry: Pick<ExtensionContext["modelRegistry"], "getApiKeyAndHeaders">;
+  sessionManager: Pick<
+    ExtensionContext["sessionManager"],
+    "getBranch" | "getLeafId" | "getSessionId"
+  >;
+  ui: Pick<ExtensionContext["ui"], "notify">;
+};
+
+export type RemoteCompactionLifecycleHandler = (
+  event: { type?: string },
+  ctx: RemoteCompactionContext,
+) => void;
+
+export type RemoteCompactionContextHandler = (
+  event: Pick<ContextEvent, "messages">,
+  ctx: RemoteCompactionContext,
+) => { messages: ContextEvent["messages"] } | undefined;
+
+export type RemoteCompactionHeadersHandler = (
+  event: Pick<BeforeProviderHeadersEvent, "headers">,
+  ctx: RemoteCompactionContext,
+) => void;
+
+type RemoteCompactionHookResult = {
+  cancel?: boolean;
+  compaction?: {
+    summary: string;
+    firstKeptEntryId: string;
+    tokensBefore: number;
+    details?: unknown;
+    usage?: Usage;
+  };
+};
+
+export type RemoteCompactionHookHandler = (
+  event: {
+    branchEntries: SessionBeforeCompactEvent["branchEntries"];
+    customInstructions?: string;
+    preparation: Pick<
+      SessionBeforeCompactEvent["preparation"],
+      "firstKeptEntryId" | "tokensBefore"
+    >;
+    reason: SessionBeforeCompactEvent["reason"];
+    signal: AbortSignal;
+    willRetry: boolean;
+  },
+  ctx: RemoteCompactionContext,
+) => Promise<RemoteCompactionHookResult | undefined>;
+
+export type RemoteCompactionApi = {
+  getActiveTools(): string[];
+  getAllTools(): ToolInfo[];
+  onBeforeProviderHeaders(handler: RemoteCompactionHeadersHandler): void;
+  onContext(handler: RemoteCompactionContextHandler): void;
+  onSessionBeforeCompact(handler: RemoteCompactionHookHandler): void;
+  onSessionShutdown(handler: RemoteCompactionLifecycleHandler): void;
+  onSessionStart(handler: RemoteCompactionLifecycleHandler): void;
+};
+
+export function remoteCompactionApi(pi: ExtensionAPI): RemoteCompactionApi {
+  const context = (ctx: ExtensionContext): RemoteCompactionContext => {
+    const selected = ctx.model;
+    const model = selected ? ctx.modelRegistry.find(selected.provider, selected.id) : undefined;
+    return {
+      cwd: ctx.cwd,
+      getContextUsage: () => ctx.getContextUsage(),
+      getSystemPrompt: () => ctx.getSystemPrompt(),
+      hasUI: ctx.hasUI,
+      isProjectTrusted: () => ctx.isProjectTrusted(),
+      model,
+      modelRegistry: ctx.modelRegistry,
+      sessionManager: ctx.sessionManager,
+      ui: ctx.ui,
+    };
+  };
+
+  return {
+    getActiveTools: () => pi.getActiveTools(),
+    getAllTools: () => pi.getAllTools(),
+    onBeforeProviderHeaders: (handler) =>
+      pi.on("before_provider_headers", (event, ctx) => handler(event, context(ctx))),
+    onContext: (handler) => pi.on("context", (event, ctx) => handler(event, context(ctx))),
+    onSessionBeforeCompact: (handler) =>
+      pi.on("session_before_compact", (event, ctx) => handler(event, context(ctx))),
+    onSessionShutdown: (handler) =>
+      pi.on("session_shutdown", (event, ctx) => handler(event, context(ctx))),
+    onSessionStart: (handler) =>
+      pi.on("session_start", (event, ctx) => handler(event, context(ctx))),
+  };
+}
 
 function selectedCodexModel(model: Model<Api> | undefined): model is Model<typeof CODEX_API> {
   return Boolean(model && model.provider === CODEX_PROVIDER && model.api === CODEX_API);
-}
-
-function resolveFileConfig(ctx: ExtensionContext): CodexCompatConfig {
-  return loadConfig(ctx.cwd, ctx.isProjectTrusted());
 }
 
 function appendFeatureHeader(headers: Record<string, string | null>): void {
@@ -120,16 +213,16 @@ function compactionMetadata(reason: SessionBeforeCompactEvent["reason"]): CodexC
 }
 
 export default function registerRemoteCompaction(
-  pi: ExtensionAPI,
+  pi: RemoteCompactionApi,
   runtime: CodexProviderRuntime,
   resolveConfig: ConfigResolver = resolveFileConfig,
 ): void {
-  pi.on("session_start", (_event, ctx) => runtime.captureScope(ctx));
-  pi.on("session_shutdown", (_event, ctx) => {
+  pi.onSessionStart((_event, ctx) => runtime.captureScope(ctx));
+  pi.onSessionShutdown((_event, ctx) => {
     runtime.clearSession(ctx.sessionManager.getSessionId());
   });
 
-  pi.on("context", (event, ctx) => {
+  pi.onContext((event, ctx) => {
     runtime.captureScope(ctx);
     const checkpoint = searchCheckpoint(ctx.sessionManager.getBranch());
     if (checkpoint.kind === "absent") return undefined;
@@ -138,11 +231,11 @@ export default function registerRemoteCompaction(
     };
   });
 
-  pi.on("before_provider_headers", (event, ctx) => {
+  pi.onBeforeProviderHeaders((event, ctx) => {
     if (selectedCodexModel(ctx.model)) appendFeatureHeader(event.headers);
   });
 
-  pi.on("session_before_compact", async (event: SessionBeforeCompactEvent, ctx) => {
+  pi.onSessionBeforeCompact(async (event, ctx) => {
     if (!selectedCodexModel(ctx.model)) return undefined;
     if (event.signal.aborted) return { cancel: true };
     runtime.captureScope(ctx);

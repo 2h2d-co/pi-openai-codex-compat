@@ -31,8 +31,11 @@ export async function directoryIsCaseInsensitive(
               lstat(join(dirname(candidate), toggled)),
             ]);
             return original.dev === alias.dev && original.ino === alias.ino;
-          } catch (error) {
-            if (!(error instanceof Error)) throw error;
+            // oxlint-disable-next-line 2h2d/no-silent-error-suppression -- Case-sensitivity probing continues at the nearest inspectable ancestor.
+          } catch (
+            // oxlint-disable-next-line no-unused-vars -- The caught probe failure is intentionally handled by checking the parent.
+            _error
+          ) {
             candidate = dirname(candidate);
             continue;
           }

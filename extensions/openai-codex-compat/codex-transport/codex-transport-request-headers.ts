@@ -12,7 +12,6 @@ import { isObject, type JsonRecord } from "../codex-protocol.ts";
 import { applyResponsesLiteHeaders } from "../responses-lite.ts";
 import type { CacheIdentitySnapshot } from "./codex-transport-contracts.ts";
 import type { CodexTurnState } from "./codex-transport-turn-state.ts";
-import { requiredValue } from "../required-value.ts";
 
 export const DEFAULT_CODEX_BASE_URL = "https://chatgpt.com/backend-api";
 
@@ -114,13 +113,10 @@ export function extractAccountId(token: string): string {
   try {
     const parts = token.split(".");
     if (parts.length !== 3) throw new Error("Invalid token");
+    const claimsSegment = parts[1];
+    if (claimsSegment === undefined) throw new Error("Token claims segment is missing");
     const payload = requireJsonRecord(
-      JSON.parse(
-        Buffer.from(
-          requiredValue(parts[1], "The authentication token has no claims segment."),
-          "base64url",
-        ).toString("utf8"),
-      ),
+      JSON.parse(Buffer.from(claimsSegment, "base64url").toString("utf8")),
     );
     const authentication = payload["https://api.openai.com/auth"];
     if (
@@ -312,8 +308,11 @@ export function compressBody(body: string): Uint8Array | undefined {
       params: { [zlib.constants.ZSTD_c_compressionLevel]: REQUEST_COMPRESSION_ZSTD_LEVEL },
     });
     return new Uint8Array(compressed.buffer, compressed.byteOffset, compressed.byteLength);
-  } catch (error) {
-    if (!(error instanceof Error)) throw error;
+    // oxlint-disable-next-line 2h2d/no-silent-error-suppression -- Request compression is optional; every failure falls back to the uncompressed body.
+  } catch (
+    // oxlint-disable-next-line no-unused-vars -- The caught compression failure is intentionally handled by the uncompressed fallback.
+    _error
+  ) {
     return undefined;
   }
 }

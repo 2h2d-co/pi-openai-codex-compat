@@ -1,33 +1,26 @@
-import {
-  extensionApiFixture,
-  extensionContextFixture,
-  themeFixture,
-} from "./support/pi-fixtures.ts";
 import { requireJsonRecord } from "../extensions/openai-codex-compat/codex-protocol.ts";
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import test from "node:test";
-import type {
-  AgentToolResult,
-  SessionEntry,
-  ToolDefinition,
-} from "@earendil-works/pi-coding-agent";
+import type { AgentToolResult, SessionEntry } from "@earendil-works/pi-coding-agent";
 import type { Api, Model } from "@earendil-works/pi-ai";
 import { DEFAULT_CONFIG, type WebSearchMode } from "../extensions/openai-codex-compat/config.ts";
 import { isObject, type JsonRecord } from "../extensions/openai-codex-compat/codex-protocol.ts";
 import { CODEX_NAMESPACED_TOOL_NAMES } from "../extensions/openai-codex-compat/namespaced-tools.ts";
 import { convertResponsesTools } from "../extensions/openai-codex-compat/vendor/pi-ai/openai-responses-serialization.ts";
-import registerWebRun, { recentSearchInput } from "../extensions/openai-codex-compat/web-run.ts";
+import registerWebRun, {
+  recentSearchInput,
+  type WebRunApi,
+  type WebRunTool,
+} from "../extensions/openai-codex-compat/web-run.ts";
 import type { CodexJsonRequestOptions } from "../extensions/openai-codex-compat/codex-transport.ts";
 import type { WebRunDetails } from "../extensions/openai-codex-compat/web-run-render.ts";
-import {
-  WEB_RUN_PARAMETERS,
-  type WebRunCommands,
-} from "../extensions/openai-codex-compat/web-run-schema.ts";
+import type { CodexToolExecutionContext } from "../extensions/openai-codex-compat/tool-definition-contract.ts";
+import type { WebRunCommands } from "../extensions/openai-codex-compat/web-run-schema.ts";
+import { testTheme } from "./support/test-theme.ts";
 
 const ANSI_SEQUENCE_PATTERN = new RegExp(String.raw`\u001b\[[0-?]*[ -/]*[@-~]`, "gu");
 
-type WebRunTool = ToolDefinition<typeof WEB_RUN_PARAMETERS, WebRunDetails, Record<string, never>>;
 type WebRunRenderContext = Parameters<NonNullable<WebRunTool["renderCall"]>>[2];
 
 function stripAnsi(value: string): string {
@@ -121,12 +114,12 @@ void test("registers the complete reserved web.run schema and executes alpha/sea
     options: CodexJsonRequestOptions;
   }> = [];
   const branch = [userEntry("user-1", "Find current Pi documentation.")];
-  const pi = extensionApiFixture({
+  const pi: WebRunApi = {
     registerTool(definition: WebRunTool) {
       tool = definition;
     },
     getAllTools: () => [],
-  });
+  };
   registerWebRun(
     pi,
     () => ({ ...DEFAULT_CONFIG, webSearch }),
@@ -199,7 +192,9 @@ void test("registers the complete reserved web.run schema and executes alpha/sea
     "cee1fb436b2d198ef7d8d2883cb3161d75f31c10fe40249480031ca2673b364c",
   );
 
-  const context = extensionContextFixture({
+  const context = {
+    cwd: process.cwd(),
+    isProjectTrusted: () => true,
     model: codexModel(),
     sessionManager: {
       getSessionId: () => "session-1",
@@ -212,7 +207,7 @@ void test("registers the complete reserved web.run schema and executes alpha/sea
         headers: { "x-remove": null, "x-test": "value" },
       }),
     },
-  });
+  } satisfies CodexToolExecutionContext;
   const commands = {
     search_query: [{ q: "Pi" }],
     finance: [{ ticker: "AMD", type: "equity", market: "USA" }],
@@ -259,14 +254,7 @@ void test("registers the complete reserved web.run schema and executes alpha/sea
     external_web_access: false,
   });
 
-  const theme = themeFixture({
-    fg: (_color: string, text: string) => text,
-    bold: (text: string) => text,
-    getBgAnsi: (color: string) =>
-      color === "toolPendingBg" ? "\u001b[48;2;40;40;50m" : "\u001b[48;2;40;50;40m",
-    getColorMode: () => "truecolor",
-    name: "dark",
-  });
+  const theme = testTheme();
   const renderContext: WebRunRenderContext = {
     args: commands,
     toolCallId: "call-web|fc-web",

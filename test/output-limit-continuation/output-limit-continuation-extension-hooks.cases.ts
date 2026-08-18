@@ -1,9 +1,9 @@
-import { extensionContextFixture } from "../support/pi-fixtures.ts";
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
   OUTPUT_LIMIT_CONTINUATION_PROMPT,
   OUTPUT_LIMIT_CONTINUATION_TYPE,
+  type OutputLimitContinuationContext,
 } from "../../extensions/openai-codex-compat/output-limit-continuation.ts";
 import { codexModel, assistant } from "./output-limit-continuation-contracts-and-builders.ts";
 import {
@@ -46,7 +46,7 @@ void test("requires the exact raw stop reason and respects existing work", async
   await completed.emit("agent_settled");
   assert.deepEqual(completed.sent, []);
 
-  const otherModel = extensionContextFixture({
+  const otherModel = {
     model: { ...codexModel(), provider: "openai" },
     isIdle: () => true,
     hasPendingMessages: () => false,
@@ -54,7 +54,7 @@ void test("requires the exact raw stop reason and respects existing work", async
       getSessionId: () => "session-output-limit",
       getBranch: () => [],
     },
-  });
+  } satisfies OutputLimitContinuationContext;
   await completed.emit("agent_end", { messages: [assistant("length")] }, otherModel);
   await completed.emit("agent_settled", {}, otherModel);
   assert.deepEqual(completed.sent, []);

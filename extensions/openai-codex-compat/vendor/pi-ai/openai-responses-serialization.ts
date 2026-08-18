@@ -19,7 +19,6 @@ import type {
   ToolCall,
   ToolResultMessage,
 } from "@earendil-works/pi-ai";
-import { requiredValue } from "../../required-value.ts";
 
 /**
  * Focused copies of the methods used to serialize Pi messages for OpenAI's
@@ -502,15 +501,14 @@ export function convertResponsesMessages(
     if (!allowedToolCallProviders.has(model.provider)) return normalizeIdPart(id);
     if (!id.includes("|")) return normalizeIdPart(id);
     const [callId, itemId] = id.split("|");
-    const normalizedCallId = normalizeIdPart(
-      requiredValue(callId, "A compound tool-call id has no call id."),
-    );
+    if (callId === undefined || itemId === undefined) {
+      throw new Error("A compound tool-call id is incomplete.");
+    }
+    const normalizedCallId = normalizeIdPart(callId);
     const isForeignToolCall = source.provider !== model.provider || source.api !== model.api;
     let normalizedItemId = isForeignToolCall
-      ? buildForeignResponsesItemId(
-          requiredValue(itemId, "A compound tool-call id has no item id."),
-        )
-      : normalizeIdPart(requiredValue(itemId, "A compound tool-call id has no item id."));
+      ? buildForeignResponsesItemId(itemId)
+      : normalizeIdPart(itemId);
     if (!normalizedItemId.startsWith("fc_")) {
       normalizedItemId = normalizeIdPart(`fc_${normalizedItemId}`);
     }

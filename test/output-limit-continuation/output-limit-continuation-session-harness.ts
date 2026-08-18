@@ -3,7 +3,7 @@ import {
   requireJsonRecords,
 } from "../../extensions/openai-codex-compat/codex-protocol.ts";
 import { hasObjectType } from "../../extensions/openai-codex-compat/value-contracts.ts";
-import { requireBuiltinModelsModule } from "../support/pi-fixtures.ts";
+import { requireBuiltinModelsModule } from "../support/builtin-models-module.ts";
 import assert from "node:assert/strict";
 import { createServer } from "node:http";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";

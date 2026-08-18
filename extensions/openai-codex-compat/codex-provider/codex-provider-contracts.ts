@@ -2,10 +2,24 @@ import type { ExtensionContext, SessionEntry } from "@earendil-works/pi-coding-a
 import type { OpenAICodexResponsesOptions, Usage } from "@earendil-works/pi-ai";
 import type { GrammarToolInputProperties } from "../compaction-checkpoint.ts";
 import type { CodexCompatConfig } from "../config.ts";
+import type { ConfigResolver } from "../config-context.ts";
 import type { JsonRecord, ResponsesItem } from "../codex-protocol.ts";
 import type { CodexTurnState } from "../codex-transport.ts";
 
-export type ConfigResolver = (ctx: ExtensionContext) => CodexCompatConfig;
+export type { ConfigResolver } from "../config-context.ts";
+
+export type SessionContext = {
+  sessionManager: Pick<ExtensionContext["sessionManager"], "getSessionId">;
+};
+
+export type RuntimeScopeContext = Pick<ExtensionContext, "getContextUsage" | "hasUI"> &
+  Parameters<ConfigResolver>[0] & {
+    sessionManager: Pick<
+      ExtensionContext["sessionManager"],
+      "getBranch" | "getLeafId" | "getSessionId"
+    >;
+    ui: Pick<ExtensionContext["ui"], "notify">;
+  };
 
 export type MutableSessionManager = ExtensionContext["sessionManager"] & {
   appendCompaction?<T>(

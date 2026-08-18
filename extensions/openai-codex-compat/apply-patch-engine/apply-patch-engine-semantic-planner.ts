@@ -10,7 +10,9 @@ import type {
   ApplyPatchExecutionHooks,
   ApplyPatchInstructionDetails,
   ApplyPatchInstructionReasonCode,
+  ResolvedMoveUpdateOperation,
   ResolvedOperation,
+  ResolvedUpdateOperation,
 } from "./apply-patch-engine-contracts.ts";
 import { diffDetails } from "./apply-patch-engine-details.ts";
 import { errorMessage, isNotFound, throwIfAborted } from "./apply-patch-engine-errors.ts";
@@ -36,7 +38,8 @@ import {
   instructionReason,
   moveAlreadyFulfilledReason,
   pathIsRelated,
-  updateHasSemanticMove,
+  resolvedUpdateHasMove,
+  semanticMoveOperation,
 } from "./apply-patch-engine-operation-semantics.ts";
 import {
   directoryIsCaseInsensitive,
@@ -126,16 +129,10 @@ export class SemanticPlanner {
         }
       } catch (error) {
         if (operation.kind === "update") {
-          const deadProof = !updateHasSemanticMove(operation)
-            ? await this.deadUpdateProof(index, operation.absolutePath)
-            : await this.deadMoveProof(
-                index,
-                operation.absolutePath,
-                requiredValue(
-                  operation.moveAbsolutePath,
-                  "A semantic move has no destination path.",
-                ),
-              );
+          const move = semanticMoveOperation(operation);
+          const deadProof = move
+            ? await this.deadMoveProof(index, operation.absolutePath, move.moveAbsolutePath)
+            : await this.deadUpdateProof(index, operation.absolutePath);
           if (deadProof) {
             instruction.status = "dead";
             instruction.reason = instructionReason(
@@ -229,8 +226,11 @@ export class SemanticPlanner {
           }
         }
       }
-    } catch (error) {
-      if (!(error instanceof Error)) throw error;
+      // oxlint-disable-next-line 2h2d/no-silent-error-suppression -- Physical-name discovery falls back to known virtual aliases when direct inspection fails.
+    } catch (
+      // oxlint-disable-next-line no-unused-vars -- The caught discovery failure is intentionally handled by the virtual-alias fallback.
+      _error
+    ) {
       for (const [knownPath, knownKey] of this.pathKeys) {
         const knownParent = await realpathWithMissingTail(dirname(knownPath));
         if (
@@ -315,20 +315,24 @@ export class SemanticPlanner {
     destinationPath: string,
   ): Promise<"rename" | "satisfied"> {
     const [sourceParent, destinationParent] = await Promise.all([
-      realpath(dirname(sourcePath)).catch((error: unknown) => {
-        if (!(error instanceof Error)) throw error;
-        return dirname(sourcePath);
-      }),
-      realpath(dirname(destinationPath)).catch((error: unknown) => {
-        if (!(error instanceof Error)) throw error;
-        return dirname(destinationPath);
-      }),
+      this.realParentOrLexical(sourcePath),
+      this.realParentOrLexical(destinationPath),
     ]);
     return sourceParent === destinationParent &&
       dirname(sourcePath) === dirname(destinationPath) &&
       basename(sourcePath) !== basename(destinationPath)
       ? "rename"
       : "satisfied";
+  }
+
+  private async realParentOrLexical(path: string): Promise<string> {
+    const parent = dirname(path);
+    try {
+      return await realpath(parent);
+    } catch (cause) {
+      if (isNotFound(cause)) return parent;
+      throw new Error(`Failed to resolve parent directory ${parent}`, { cause });
+    }
   }
 
   private virtualSpellingSatisfied(entryPath: string, requestedPath: string): boolean {
@@ -408,8 +412,11 @@ export class SemanticPlanner {
       const text = UTF8_DECODER.decode(bytes);
       entry.content.value = { bytes, text };
       return text;
-    } catch (error) {
-      if (!(error instanceof Error)) throw error;
+      // oxlint-disable-next-line 2h2d/no-silent-error-suppression -- Prior text is optional diagnostic context and must not block planning.
+    } catch (
+      // oxlint-disable-next-line no-unused-vars -- The caught read failure is intentionally omitted from optional diagnostic context.
+      _error
+    ) {
       return undefined;
     }
   }
@@ -438,8 +445,10 @@ export class SemanticPlanner {
             expectations.push({ path: parent, kind: "directory-symlink" });
             break;
           }
-        } catch (error) {
-          if (!(error instanceof Error)) throw error;
+        } catch (cause) {
+          if (!isNotFound(cause)) {
+            throw new Error(`Failed to inspect parent path ${parent}`, { cause });
+          }
         }
       }
       throw new Error(`Cannot create ${targetPath}: parent path ${parent} is not a directory`);
@@ -462,8 +471,10 @@ export class SemanticPlanner {
         try {
           const metadata = await stat(entry.sourcePath ?? parent);
           if (metadata.isDirectory()) return metadata.dev;
-        } catch (error) {
-          if (!(error instanceof Error)) throw error;
+        } catch (cause) {
+          if (!isNotFound(cause)) {
+            throw new Error(`Failed to inspect parent path ${parent}`, { cause });
+          }
         }
       }
       if (parent === root) {
@@ -516,11 +527,10 @@ export class SemanticPlanner {
       return sameEntry(target?.entry);
     }
     if (operation.kind === "update" && chunksAreIdentity(operation.chunks)) {
-      if (!updateHasSemanticMove(operation)) return false;
+      const move = semanticMoveOperation(operation);
+      if (!move) return false;
       const source = await this.stateAt(operation.absolutePath);
-      const destination = await this.stateAt(
-        requiredValue(operation.moveAbsolutePath, "A semantic move has no destination path."),
-      );
+      const destination = await this.stateAt(move.moveAbsolutePath);
       return [source, destination].some(sameEntry);
     }
     return false;
@@ -536,10 +546,8 @@ export class SemanticPlanner {
     const targetKey = await this.pathKey(targetPath);
     if (target.entry.kind === "absent") {
       for (let futureIndex = index + 1; futureIndex < this.operations.length; futureIndex += 1) {
-        const operation = requiredValue(
-          this.operations[futureIndex],
-          "A future apply_patch operation is missing.",
-        );
+        const operation = this.operations[futureIndex];
+        if (operation === undefined) continue;
         if (
           (operation.kind === "add" || operation.kind === "delete") &&
           (await this.pathKey(operation.absolutePath)) === targetKey
@@ -548,7 +556,7 @@ export class SemanticPlanner {
         }
         if (
           operation.kind === "update" &&
-          !updateHasSemanticMove(operation) &&
+          semanticMoveOperation(operation) === undefined &&
           chunksAreIdentity(operation.chunks)
         ) {
           continue;
@@ -572,10 +580,8 @@ export class SemanticPlanner {
     const affectedFingerprint = target.entry.fingerprint;
     const affectedPhysical = target.entry.physical;
     if (!affectedFingerprint && !affectedPhysical) return undefined;
-    const effectiveLinkCount =
-      affectedPhysical?.linkCount ??
-      requiredValue(affectedFingerprint, "The affected file has no identity fingerprint.")
-        .linkCount;
+    const effectiveLinkCount = affectedPhysical?.linkCount ?? affectedFingerprint?.linkCount;
+    if (effectiveLinkCount === undefined) return undefined;
     const affectedKey = await this.pathKey(target.path);
     const removedEntryInstructions = new Map<string, number>();
     const samePhysicalFile = (
@@ -613,13 +619,11 @@ export class SemanticPlanner {
         : undefined;
     };
     for (let futureIndex = index + 1; futureIndex < this.operations.length; futureIndex += 1) {
-      const operation = requiredValue(
-        this.operations[futureIndex],
-        "A future apply_patch operation is missing.",
-      );
+      const operation = this.operations[futureIndex];
+      if (operation === undefined) continue;
       if (
         operation.kind === "update" &&
-        !updateHasSemanticMove(operation) &&
+        semanticMoveOperation(operation) === undefined &&
         chunksAreIdentity(operation.chunks)
       ) {
         continue;
@@ -728,24 +732,23 @@ export class SemanticPlanner {
     } else if (destinationParent.kind === "symlink") {
       try {
         destinationParentsReproduced = (await stat(destinationParent.entryPath)).isDirectory();
-      } catch (error) {
-        if (!(error instanceof Error)) throw error;
+        // oxlint-disable-next-line 2h2d/no-silent-error-suppression -- A failed destination-parent probe means the dead-move proof is unavailable.
+      } catch (
+        // oxlint-disable-next-line no-unused-vars -- The caught probe failure is intentionally represented by an unavailable proof.
+        _error
+      ) {
         return undefined;
       }
     }
 
     for (let futureIndex = index + 1; futureIndex < this.operations.length; futureIndex += 1) {
-      const operation = requiredValue(
-        this.operations[futureIndex],
-        "A future apply_patch operation is missing.",
-      );
+      const operation = this.operations[futureIndex];
+      if (operation === undefined) continue;
       const instructionNumber = futureIndex + 1;
       const operationPaths = this.operationRelatedPaths(operation);
       const operationKeys = await Promise.all(operationPaths.map((path) => this.pathKey(path)));
-      const targetKey = requiredValue(
-        operationKeys[0],
-        "An operation has no resolved target path key.",
-      );
+      const targetKey = operationKeys[0];
+      if (targetKey === undefined) return undefined;
       if (operation.kind === "add" || operation.kind === "delete") {
         if (
           targetKey === sourceKey &&
@@ -774,7 +777,7 @@ export class SemanticPlanner {
       }
       if (
         operation.kind === "update" &&
-        !updateHasSemanticMove(operation) &&
+        semanticMoveOperation(operation) === undefined &&
         chunksAreIdentity(operation.chunks)
       ) {
         continue;
@@ -817,8 +820,11 @@ export class SemanticPlanner {
           this.markNoOp(instructionIndex, "content-already-present");
           return;
         }
-      } catch (error) {
-        if (!(error instanceof Error)) throw error;
+        // oxlint-disable-next-line 2h2d/no-silent-error-suppression -- No-op detection is best-effort; execution still verifies and applies the requested add.
+      } catch (
+        // oxlint-disable-next-line no-unused-vars -- The caught no-op probe failure is intentionally handled by normal execution.
+        _error
+      ) {
         this.exact = false;
       }
     }
@@ -947,14 +953,15 @@ export class SemanticPlanner {
   }
 
   private async planUpdate(
-    operation: Extract<ResolvedOperation, { kind: "update" }>,
+    operation: ResolvedUpdateOperation,
     instructionIndex: number,
   ): Promise<void> {
     const identity = chunksAreIdentity(operation.chunks);
     if (identity) {
-      if (operation.moveAbsolutePath !== undefined) {
-        if (updateHasSemanticMove(operation)) {
-          await this.planPureMove(operation, instructionIndex);
+      if (resolvedUpdateHasMove(operation)) {
+        const move = semanticMoveOperation(operation);
+        if (move) {
+          await this.planPureMove(move, instructionIndex);
         } else {
           this.markNoOp(instructionIndex, "same-entry-move");
         }
@@ -986,10 +993,10 @@ export class SemanticPlanner {
       this.signal,
     );
     const content = Buffer.from(newContent, "utf8");
-    const semanticMove = updateHasSemanticMove(operation);
+    const semanticMove = semanticMoveOperation(operation);
     const sourceKey = await this.pathKey(operation.absolutePath);
     if (
-      !semanticMove &&
+      semanticMove === undefined &&
       buffersEqual(
         requiredValue(
           source.content.value,
@@ -1002,7 +1009,7 @@ export class SemanticPlanner {
       return;
     }
 
-    if (!semanticMove) {
+    if (semanticMove === undefined) {
       const expectedSource = this.snapshot(source);
       expectedSource.content.planned = true;
       const change: Extract<AppliedPatchChange, { kind: "update" }> = {
@@ -1015,6 +1022,7 @@ export class SemanticPlanner {
       this.mutations.push({
         instructionIndex,
         kind: "text-update",
+        moveMode: "none",
         operation,
         expectedSource,
         parents: { createdPaths: [], expectations: [] },
@@ -1045,11 +1053,8 @@ export class SemanticPlanner {
       return;
     }
 
-    const destinationPath = requiredValue(
-      operation.moveAbsolutePath,
-      "A semantic move has no destination path.",
-    );
-    const moveTo = requiredValue(operation.moveTo, "A semantic move has no destination.");
+    const destinationPath = semanticMove.moveAbsolutePath;
+    const moveTo = semanticMove.moveTo;
     const destinationKey = await this.pathKey(destinationPath);
     if (sourceKey === destinationKey) {
       const expectedSource = this.snapshot(source);
@@ -1072,7 +1077,8 @@ export class SemanticPlanner {
       const mutation: Extract<PlannedMutation, { kind: "text-update" }> = {
         instructionIndex,
         kind: "text-update",
-        operation,
+        moveMode: "same-entry",
+        operation: semanticMove,
         expectedSource,
         expectedDestination: expectedSource,
         parents: { createdPaths: [], expectations: [] },
@@ -1171,7 +1177,8 @@ export class SemanticPlanner {
     const mutation: Extract<PlannedMutation, { kind: "text-update" }> = {
       instructionIndex,
       kind: "text-update",
-      operation,
+      moveMode: "destination",
+      operation: semanticMove,
       expectedSource,
       expectedDestination,
       parents,
@@ -1208,14 +1215,11 @@ export class SemanticPlanner {
   }
 
   private async planPureMove(
-    operation: Extract<ResolvedOperation, { kind: "update" }>,
+    operation: ResolvedMoveUpdateOperation,
     instructionIndex: number,
   ): Promise<void> {
-    const destinationPath = requiredValue(
-      operation.moveAbsolutePath,
-      "A semantic move has no destination path.",
-    );
-    const moveTo = requiredValue(operation.moveTo, "A semantic move has no destination.");
+    const destinationPath = operation.moveAbsolutePath;
+    const moveTo = operation.moveTo;
     const sourceKey = await this.pathKey(operation.absolutePath);
     const destinationKey = await this.pathKey(destinationPath);
     if (sourceKey === destinationKey) {

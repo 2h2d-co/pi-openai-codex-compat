@@ -9,8 +9,16 @@ export interface CodexToolAuthentication {
   headers?: ProviderHeaders;
 }
 
+export type ToolAuthenticationContext = {
+  modelRegistry: Pick<ExtensionContext["modelRegistry"], "getApiKeyAndHeaders">;
+};
+export type ToolHistoryApi = Pick<ExtensionAPI, "getAllTools">;
+export type ToolHistoryContext = {
+  sessionManager: Pick<ExtensionContext["sessionManager"], "getBranch">;
+};
+
 export async function codexToolAuthentication(
-  ctx: ExtensionContext,
+  ctx: ToolAuthenticationContext,
   model: Model<Api>,
 ): Promise<CodexToolAuthentication> {
   const authentication = await ctx.modelRegistry.getApiKeyAndHeaders(model);
@@ -24,8 +32,8 @@ export async function codexToolAuthentication(
 }
 
 export function codexToolHistory(
-  pi: ExtensionAPI,
-  ctx: ExtensionContext,
+  pi: ToolHistoryApi,
+  ctx: ToolHistoryContext,
   model: Model<Api>,
   imageDetail: ImageDetail = "auto",
 ): ResponsesItem[] {

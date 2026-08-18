@@ -5,7 +5,9 @@ import type {
   ApplyPatchInstructionReason,
   ApplyPatchInstructionReasonCode,
   PatchOperation,
+  ResolvedMoveUpdateOperation,
   ResolvedOperation,
+  ResolvedUpdateOperation,
 } from "./apply-patch-engine-contracts.ts";
 
 export function resolvePatchPath(cwd: string, patchPath: string): string {
@@ -18,12 +20,23 @@ export function resolveOperations(
 ): ResolvedOperation[] {
   return operations.map((operation) => {
     const absolutePath = resolvePatchPath(cwd, operation.path);
-    if (operation.kind !== "update" || !operation.moveTo) {
+    if (operation.kind !== "update") {
       return { ...operation, absolutePath };
     }
+    if (!operation.moveTo) {
+      return {
+        kind: "update",
+        path: operation.path,
+        absolutePath,
+        chunks: operation.chunks,
+      };
+    }
     return {
-      ...operation,
+      kind: "update",
+      path: operation.path,
       absolutePath,
+      chunks: operation.chunks,
+      moveTo: operation.moveTo,
       moveAbsolutePath: resolvePatchPath(cwd, operation.moveTo),
     };
   });
@@ -45,13 +58,18 @@ export function pathIsRelated(left: string, right: string): boolean {
   return leftToRight === "" || isWithin(leftToRight) || isWithin(rightToLeft);
 }
 
-export function updateHasSemanticMove(
-  operation: Extract<ResolvedOperation, { kind: "update" }>,
-): boolean {
-  return (
-    operation.moveAbsolutePath !== undefined &&
-    operation.moveAbsolutePath !== operation.absolutePath
-  );
+export function resolvedUpdateHasMove(
+  operation: ResolvedUpdateOperation,
+): operation is ResolvedMoveUpdateOperation {
+  return operation.moveAbsolutePath !== undefined;
+}
+
+export function semanticMoveOperation(
+  operation: ResolvedUpdateOperation,
+): ResolvedMoveUpdateOperation | undefined {
+  return resolvedUpdateHasMove(operation) && operation.moveAbsolutePath !== operation.absolutePath
+    ? operation
+    : undefined;
 }
 
 export function instructionReason(

@@ -1,15 +1,21 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { resolveCodexInstallationId } from "./codex-installation.ts";
 import type { ConfigResolver } from "./codex-provider/codex-provider-contracts.ts";
-import { CodexProviderRuntime } from "./codex-provider/codex-provider-runtime.ts";
+import {
+  CodexProviderRuntime,
+  type CodexProviderRuntimeApi,
+} from "./codex-provider/codex-provider-runtime.ts";
 
 export type { CodexResponseRetryPolicy } from "./codex-provider/codex-provider-contracts.ts";
 export { CodexProviderRuntime } from "./codex-provider/codex-provider-runtime.ts";
 
 const CODEX_PROVIDER = "openai-codex";
 
+export type CodexProviderApi = CodexProviderRuntimeApi &
+  Pick<ExtensionAPI, "on" | "registerProvider">;
+
 export function registerCodexProvider(
-  pi: ExtensionAPI,
+  pi: CodexProviderApi,
   resolveConfig: ConfigResolver,
 ): CodexProviderRuntime {
   const runtime = new CodexProviderRuntime(pi, resolveConfig, resolveCodexInstallationId());

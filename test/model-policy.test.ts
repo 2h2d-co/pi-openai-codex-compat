@@ -1,14 +1,19 @@
-import { extensionContextFixture } from "./support/pi-fixtures.ts";
-import { extensionApiFixture } from "./support/pi-fixtures.ts";
 import assert from "node:assert/strict";
 import test from "node:test";
-import type { ExtensionEvent, SessionEntry } from "@earendil-works/pi-coding-agent";
+import type { SessionEntry } from "@earendil-works/pi-coding-agent";
 import type { Api, Model } from "@earendil-works/pi-ai";
 import { CHECKPOINT_ENTRY_TYPE } from "../extensions/openai-codex-compat/compaction-checkpoint.ts";
 import { DEFAULT_CONFIG } from "../extensions/openai-codex-compat/config.ts";
-import registerCodexModelPolicy from "../extensions/openai-codex-compat/model-policy.ts";
+import registerCodexModelPolicy, {
+  type CodexModelPolicyApi,
+  type CodexModelPolicyContext,
+  type CodexModelPolicyEvent,
+} from "../extensions/openai-codex-compat/model-policy.ts";
 
-type ModelSelectEvent = Extract<ExtensionEvent, { type: "model_select" }>;
+type TestHandler = (
+  event: CodexModelPolicyEvent | undefined,
+  ctx: CodexModelPolicyContext,
+) => Promise<void> | void;
 
 function model(provider: string, id: string, api: Api): Model<Api> {
   return {
@@ -47,14 +52,15 @@ function checkpointEntry(): SessionEntry {
 }
 
 function createHarness(branch: SessionEntry[], initialModel: Model<Api>) {
-  type Handler = (...args: unknown[]) => void | Promise<void>;
-  const handlers = new Map<string, Handler>();
+  const handlers = new Map<string, TestHandler>();
   const notices: Array<{ message: string; level: string }> = [];
   const setModelCalls: Model<Api>[] = [];
   let activeTools = ["read", "edit", "write"];
   let selectedModel = initialModel;
 
-  const context = extensionContextFixture({
+  const context = {
+    cwd: process.cwd(),
+    isProjectTrusted: () => true,
     get model() {
       return selectedModel;
     },
@@ -62,16 +68,19 @@ function createHarness(branch: SessionEntry[], initialModel: Model<Api>) {
       getBranch: () => branch,
     },
     ui: {
-      notify(message: string, level: string) {
-        notices.push({ message, level });
+      notify(message, level) {
+        notices.push({ message, level: level ?? "info" });
       },
     },
-  });
+  } satisfies CodexModelPolicyContext;
 
-  const pi = extensionApiFixture({
-    on(event: string, handler: Handler) {
-      handlers.set(event, handler);
-    },
+  const pi: CodexModelPolicyApi = {
+    onModelSelect: (handler) =>
+      handlers.set("model_select", (event, ctx) => {
+        if (!event) throw new Error("model_select test event is missing.");
+        return handler(event, ctx);
+      }),
+    onSessionStart: (handler) => handlers.set("session_start", (_event, ctx) => handler(ctx)),
     getActiveTools: () => activeTools,
     setActiveTools(names: string[]) {
       activeTools = names;
@@ -82,26 +91,22 @@ function createHarness(branch: SessionEntry[], initialModel: Model<Api>) {
       selectedModel = nextModel;
       await handlers.get("model_select")?.(
         {
-          type: "model_select",
           model: nextModel,
           previousModel,
           source: "set",
-        } satisfies ModelSelectEvent,
+        },
         context,
       );
       return true;
     },
-  });
+  };
 
   registerCodexModelPolicy(pi, () => DEFAULT_CONFIG);
 
-  const select = async (nextModel: Model<Api>, source: ModelSelectEvent["source"] = "set") => {
+  const select = async (nextModel: Model<Api>, source: CodexModelPolicyEvent["source"] = "set") => {
     const previousModel = selectedModel;
     selectedModel = nextModel;
-    await handlers.get("model_select")?.(
-      { type: "model_select", model: nextModel, previousModel, source },
-      context,
-    );
+    await handlers.get("model_select")?.({ model: nextModel, previousModel, source }, context);
   };
 
   return {
@@ -117,7 +122,7 @@ function createHarness(branch: SessionEntry[], initialModel: Model<Api>) {
 
 void test("activates extension tools only for OpenAI Codex models", async () => {
   const harness = createHarness([], codexModel);
-  await harness.handlers.get("session_start")?.({}, harness.context);
+  await harness.handlers.get("session_start")?.(undefined, harness.context);
   assert.deepEqual(harness.activeTools(), ["read", "apply_patch", "image_gen.imagegen"]);
 
   await harness.select(foreignModel);
@@ -129,7 +134,7 @@ void test("activates extension tools only for OpenAI Codex models", async () => 
 
 void test("rejects model switches while the active branch contains a native checkpoint", async () => {
   const harness = createHarness([checkpointEntry()], codexModel);
-  await harness.handlers.get("session_start")?.({}, harness.context);
+  await harness.handlers.get("session_start")?.(undefined, harness.context);
 
   await harness.select(foreignModel);
 

@@ -1,5 +1,6 @@
 import type { Api, Model } from "@earendil-works/pi-ai";
 import { isObject, type JsonRecord } from "../codex-protocol.ts";
+import { errorFromThrown } from "../error-from-thrown.ts";
 import type { CodexTransportOptions } from "./codex-transport-contracts.ts";
 import {
   CodexHttpError,
@@ -28,10 +29,12 @@ import {
   validateRetryDelay,
 } from "./codex-transport-retry.ts";
 
-function ignoreReaderCleanupError(_error: unknown): void {}
-
 export async function* parseSse(
-  response: Response,
+  response: {
+    body: {
+      getReader(): Pick<ReadableStreamDefaultReader<Uint8Array>, "cancel" | "read" | "releaseLock">;
+    } | null;
+  },
   signal?: AbortSignal,
 ): AsyncGenerator<JsonRecord> {
   if (!response.body) throw new Error("No response body");
@@ -92,9 +95,7 @@ export async function* parseSse(
     try {
       reader.releaseLock();
       // oxlint-disable-next-line 2h2d/no-silent-error-suppression -- Releasing an already-invalidated reader lock is best-effort cleanup.
-    } catch (error) {
-      ignoreReaderCleanupError(error);
-    }
+    } catch (_error) {} // oxlint-disable-line no-unused-vars -- The caught release failure is intentionally ignored after stream completion.
   }
 }
 
@@ -169,8 +170,11 @@ export async function* requestSse(
       ) {
         throw new Error("Request was aborted", { cause: error });
       }
-      if (!(error instanceof Error)) throw error;
-      lastError = error;
+      const requestError = errorFromThrown(
+        error,
+        "Codex SSE transport failed with a non-Error value.",
+      );
+      lastError = requestError;
       if (
         attempt < maxRetries &&
         !(lastError instanceof CodexHttpError) &&

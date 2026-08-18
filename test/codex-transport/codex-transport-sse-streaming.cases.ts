@@ -9,7 +9,7 @@ import {
   type CodexTransportDiagnostic,
   type JsonRecord,
 } from "./codex-transport-harness.ts";
-import { responseFixture } from "../support/pi-fixtures.ts";
+import { parseSse } from "../../extensions/openai-codex-compat/codex-transport/codex-transport-sse-stream.ts";
 
 void test("finishes SSE requests when the terminal event arrives before EOF", async () => {
   let cancelled = false;
@@ -101,11 +101,7 @@ void test("serializes SSE request payloads exactly once", async () => {
 });
 
 void test("preserves SSE read errors when reader cleanup also fails", async () => {
-  const response = responseFixture({
-    ok: true,
-    status: 200,
-    statusText: "OK",
-    headers: new Headers(),
+  const response = {
     body: {
       getReader() {
         return {
@@ -119,20 +115,11 @@ void test("preserves SSE read errors when reader cleanup also fails", async () =
         };
       },
     },
-  });
+  };
 
   await assert.rejects(
     async () => {
-      for await (const _event of new CodexTransport().request(
-        codexModel(),
-        { input: [] },
-        {
-          apiKey: accessToken(),
-          transport: "sse",
-          sseStreamMaxRetries: 0,
-          fetch: async () => response,
-        },
-      )) {
+      for await (const _event of parseSse(response)) {
         // Consume the response.
       }
     },
