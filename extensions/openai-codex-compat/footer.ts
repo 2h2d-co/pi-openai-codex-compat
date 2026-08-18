@@ -1,4 +1,4 @@
-import type { Model } from "@earendil-works/pi-ai";
+import type { Api, Model } from "@earendil-works/pi-ai";
 import {
   FooterComponent,
   type ExtensionContext,
@@ -20,10 +20,10 @@ export function footerSettingLabels(config: CodexCompatConfig): string[] {
 }
 
 export function footerModel(
-  model: Model<any> | undefined,
+  model: Model<Api> | undefined,
   thinkingLevel: string,
   config: CodexCompatConfig,
-): Model<any> | undefined {
+): Model<Api> | undefined {
   if (!model || !isCodexModel(model)) return model;
 
   const settings = footerSettingLabels(config);
@@ -42,7 +42,7 @@ export function footerModel(
 
 interface FooterSessionAdapter {
   readonly state: {
-    model: Model<any> | undefined;
+    model: Model<Api> | undefined;
     thinkingLevel: string;
   };
   sessionManager: Pick<
@@ -68,15 +68,17 @@ function footerSession(ctx: ExtensionContext, resolveConfig: ConfigResolver): Fo
     getContextUsage: () => ctx.getContextUsage(),
     modelRuntime: {
       isUsingOAuth(provider: string) {
-        const model = ctx.model;
+        const model: unknown = ctx.model;
         return Boolean(
-          model && model.provider === provider && ctx.modelRegistry.isUsingOAuth(model),
+          isCodexModel(model) &&
+          model.provider === provider &&
+          ctx.modelRegistry.isUsingOAuth(model),
         );
       },
       isUsingSubscription(provider: string) {
-        const model = ctx.model;
+        const model: unknown = ctx.model;
         return Boolean(
-          model &&
+          isCodexModel(model) &&
           model.provider === provider &&
           ctx.modelRegistry.isUsingOAuth(model) &&
           ctx.modelRegistry.getProvider(provider)?.auth.oauth?.isSubscription === true,

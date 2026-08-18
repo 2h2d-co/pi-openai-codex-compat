@@ -1,7 +1,7 @@
 import { isString } from "./value-contracts.ts";
 import { readFileSync } from "node:fs";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
-import type { Model } from "@earendil-works/pi-ai";
+import type { Api, Model } from "@earendil-works/pi-ai";
 import {
   approximateTokens,
   isObject,
@@ -33,7 +33,7 @@ export type { WebRunDetails } from "./web-run-render.ts";
 
 type ConfigResolver = (ctx: ExtensionContext) => CodexCompatConfig;
 type JsonRequester = (
-  model: Model<any>,
+  model: Model<Api>,
   path: string,
   body: JsonRecord,
   options: CodexJsonRequestOptions,

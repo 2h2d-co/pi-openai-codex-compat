@@ -2,7 +2,7 @@ import { requireJsonRecord } from "../codex-protocol.ts";
 import { isFunction, isString } from "../value-contracts.ts";
 import type * as NodeOs from "node:os";
 import type * as NodeZlib from "node:zlib";
-import type { Model, ProviderHeaders } from "@earendil-works/pi-ai";
+import type { Api, Model, ProviderHeaders } from "@earendil-works/pi-ai";
 import {
   applyCodexMetadataHeaders,
   CODEX_INSTALLATION_ID_METADATA_KEY,
@@ -12,6 +12,7 @@ import { isObject, type JsonRecord } from "../codex-protocol.ts";
 import { applyResponsesLiteHeaders } from "../responses-lite.ts";
 import type { CacheIdentitySnapshot } from "./codex-transport-contracts.ts";
 import type { CodexTurnState } from "./codex-transport-turn-state.ts";
+import { requiredValue } from "../required-value.ts";
 
 export const DEFAULT_CODEX_BASE_URL = "https://chatgpt.com/backend-api";
 
@@ -114,7 +115,12 @@ export function extractAccountId(token: string): string {
     const parts = token.split(".");
     if (parts.length !== 3) throw new Error("Invalid token");
     const payload = requireJsonRecord(
-      JSON.parse(Buffer.from(parts[1]!, "base64url").toString("utf8")),
+      JSON.parse(
+        Buffer.from(
+          requiredValue(parts[1], "The authentication token has no claims segment."),
+          "base64url",
+        ).toString("utf8"),
+      ),
     );
     const authentication = payload["https://api.openai.com/auth"];
     if (
@@ -125,12 +131,12 @@ export function extractAccountId(token: string): string {
       throw new Error("No account ID");
     }
     return authentication["chatgpt_account_id"];
-  } catch {
-    throw new Error("Failed to extract accountId from token");
+  } catch (error) {
+    throw new Error("Failed to extract accountId from token", { cause: error });
   }
 }
 
-export function validateCodexAuthentication(model: Model<any>, apiKey: string | undefined): string {
+export function validateCodexAuthentication(model: Model<Api>, apiKey: string | undefined): string {
   if (!apiKey) throw new Error(`No API key for provider: ${model.provider}`);
   return extractAccountId(apiKey);
 }
@@ -306,7 +312,8 @@ export function compressBody(body: string): Uint8Array | undefined {
       params: { [zlib.constants.ZSTD_c_compressionLevel]: REQUEST_COMPRESSION_ZSTD_LEVEL },
     });
     return new Uint8Array(compressed.buffer, compressed.byteOffset, compressed.byteLength);
-  } catch {
+  } catch (error) {
+    if (!(error instanceof Error)) throw error;
     return undefined;
   }
 }

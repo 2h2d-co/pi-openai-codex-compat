@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import type { Model } from "@earendil-works/pi-ai";
+import type { Api, Model } from "@earendil-works/pi-ai";
 import {
   approximateTokens,
   collectRemoteCompaction,
@@ -27,7 +27,7 @@ const codexModel = {
   cost: { input: 1, output: 2, cacheRead: 0.1, cacheWrite: 1.25 },
   contextWindow: 100_000,
   maxTokens: 10_000,
-} satisfies Model<any>;
+} satisfies Model<Api>;
 
 function user(text: string): ResponsesItem {
   return { role: "user", content: [{ type: "input_text", text }] };

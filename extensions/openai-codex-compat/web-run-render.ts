@@ -186,7 +186,8 @@ function domainFromUrl(value: string | undefined): string | undefined {
   if (!value) return undefined;
   try {
     return displayDomain(new URL(value).hostname);
-  } catch {
+  } catch (error) {
+    if (!(error instanceof TypeError)) throw error;
     return undefined;
   }
 }
@@ -201,7 +202,8 @@ function resultDomains(results: readonly JsonRecord[]): string[] {
       results.flatMap((item) => {
         const domain = stringField(item, "domain");
         const url = stringField(item, "url") ?? stringField(item, "source_url");
-        return domain ? [displayDomain(domain)] : domainFromUrl(url) ? [domainFromUrl(url)!] : [];
+        const urlDomain = domainFromUrl(url);
+        return domain ? [displayDomain(domain)] : urlDomain ? [urlDomain] : [];
       }),
     ),
   ];
@@ -269,7 +271,7 @@ function actionLabel(action: WebRunAction | undefined): string {
       return "Sports";
     case "time":
       return "Time";
-    default:
+    case undefined:
       return "Web request";
   }
 }
@@ -297,8 +299,11 @@ function timeSummary(blocks: readonly WebRunOutputBlock[]): string | undefined {
   const entries = blocks.flatMap((block) => {
     const match = blockPlainText(block).match(/The time in (UTC[+-]\d{2}:\d{2}) is (.+?)(?:\s*)$/u);
     if (!match) return [];
-    const clock = match[2]!.match(/(\d{1,2}:\d{2}(?::\d{2})?\s*[AP]M)$/u)?.[1] ?? match[2]!;
-    return [`${match[1]} ${clock.replace(/\s+/gu, " ")}`];
+    const offset = match[1];
+    const time = match[2];
+    if (offset === undefined || time === undefined) return [];
+    const clock = time.match(/(\d{1,2}:\d{2}(?::\d{2})?\s*[AP]M)$/u)?.[1] ?? time;
+    return [`${offset} ${clock.replace(/\s+/gu, " ")}`];
   });
   return previewItems(entries, (entry) => entry);
 }
@@ -521,7 +526,7 @@ function operationLabel(
     }
     case "time":
       return args.time?.[index]?.utc_offset ?? `Time ${index + 1}`;
-    default:
+    case undefined:
       return `Result ${index + 1}`;
   }
 }

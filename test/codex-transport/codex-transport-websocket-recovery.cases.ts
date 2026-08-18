@@ -341,6 +341,7 @@ void test("matches Pi AI's recovered WebSocket failure diagnostics", async (t) =
     }
 
     send(): void {
+      // oxlint-disable-next-line typescript/only-throw-error -- This test verifies transport diagnostics for third-party sockets that throw non-Error values.
       throw "socket send failed";
     }
 

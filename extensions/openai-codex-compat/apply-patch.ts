@@ -148,14 +148,19 @@ export default function registerApplyPatch(
               executionDurationMs(),
               formatApplyPatchFailureSummary(error.details, ctx.cwd),
             ),
+            { cause: error },
           );
         }
         if (error instanceof ApplyPatchVerificationError) {
           failedDetails.set(toolCallId, error.details);
-          throw new Error(formatApplyPatchFailureSummary(error.details, ctx.cwd));
+          throw new Error(formatApplyPatchFailureSummary(error.details, ctx.cwd), {
+            cause: error,
+          });
         } else if (error instanceof ApplyPatchInputError && error.details) {
           failedDetails.set(toolCallId, error.details);
-          throw new Error(formatApplyPatchFailureSummary(error.details, ctx.cwd));
+          throw new Error(formatApplyPatchFailureSummary(error.details, ctx.cwd), {
+            cause: error,
+          });
         }
         throw error;
       }

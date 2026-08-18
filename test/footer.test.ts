@@ -79,8 +79,13 @@ void test("appends non-default Codex settings to the default second footer line"
 
   assert.equal(branchSubscriptions, 0);
   assert.equal(lines.length, 2);
-  assert.match(lines[1]!, /gpt-5\.6-sol • xhigh • fast • pro • verbosity high • summary detailed/);
-  assert.match(lines[1]!, /\$0\.000 \(sub\)/);
-  assert.doesNotMatch(lines[1]!, /\(auto\)/);
+  const settingsLine = lines[1];
+  assert.ok(settingsLine);
+  assert.match(
+    settingsLine,
+    /gpt-5\.6-sol • xhigh • fast • pro • verbosity high • summary detailed/,
+  );
+  assert.match(settingsLine, /\$0\.000 \(sub\)/);
+  assert.doesNotMatch(settingsLine, /\(auto\)/);
   footer.dispose?.();
 });

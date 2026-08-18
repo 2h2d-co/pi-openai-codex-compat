@@ -307,7 +307,8 @@ function readConfig(filePath: string): ConfigLayer {
 
   try {
     return parseConfig(JSON.parse(readFileSync(filePath, "utf8")));
-  } catch {
+  } catch (error) {
+    if (!(error instanceof Error)) throw error;
     // Invalid configuration must not prevent Pi from starting.
     return {};
   }
@@ -400,7 +401,7 @@ async function readWritableConfig(filePath: string): Promise<JsonRecord> {
   } catch (error) {
     if (nodeErrorCode(error) === "ENOENT") return {};
     const detail = error instanceof Error ? error.message : String(error);
-    throw new Error(`Cannot update ${filePath}: ${detail}`);
+    throw new Error(`Cannot update ${filePath}: ${detail}`, { cause: error });
   }
 }
 
@@ -425,8 +426,8 @@ export async function saveConfig(
   await mkdir(directory, { recursive: true });
   const existingMode = await stat(filePath)
     .then((metadata) => metadata.mode & 0o777)
-    .catch((error: NodeJS.ErrnoException) => {
-      if (error.code === "ENOENT") return 0o600;
+    .catch((error: unknown) => {
+      if (nodeErrorCode(error) === "ENOENT") return 0o600;
       throw error;
     });
 

@@ -4,7 +4,7 @@ import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import test from "node:test";
 import type { ExtensionAPI, ExtensionContext, SessionEntry } from "@earendil-works/pi-coding-agent";
-import type { AssistantMessage, Context, Model, Tool, Usage } from "@earendil-works/pi-ai";
+import type { Api, AssistantMessage, Context, Model, Tool, Usage } from "@earendil-works/pi-ai";
 import { Type } from "typebox";
 import { CodexProviderRuntime } from "../../extensions/openai-codex-compat/codex-provider.ts";
 import {
@@ -44,7 +44,7 @@ export const MANUAL_COMPACTION_METADATA = responsesCompactionV2Metadata(
   "standalone_turn",
 );
 
-export function codexModel(id = "gpt-test"): Model<any> {
+export function codexModel(id = "gpt-test"): Model<Api> {
   return {
     id,
     name: "GPT Test",
@@ -57,7 +57,7 @@ export function codexModel(id = "gpt-test"): Model<any> {
     contextWindow: 100_000,
     maxTokens: 10_000,
     compat: { supportsOpenAIGrammarTools: true },
-  } satisfies Model<any>;
+  } satisfies Model<Api>;
 }
 
 export function userEntry(

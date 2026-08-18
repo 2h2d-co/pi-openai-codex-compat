@@ -1,13 +1,16 @@
-import { extensionContextFixture } from "./support/pi-fixtures.ts";
-import { extensionApiFixture } from "./support/pi-fixtures.ts";
+import {
+  extensionApiFixture,
+  extensionContextFixture,
+  themeFixture,
+} from "./support/pi-fixtures.ts";
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, sep } from "node:path";
 import test from "node:test";
-import type { SessionEntry } from "@earendil-works/pi-coding-agent";
-import type { Model } from "@earendil-works/pi-ai";
+import type { SessionEntry, ToolDefinition } from "@earendil-works/pi-coding-agent";
+import type { Api, Model } from "@earendil-works/pi-ai";
 import registerImageGeneration, {
   normalizeImagePath,
   recentImageUrls,
@@ -15,17 +18,26 @@ import registerImageGeneration, {
 import { DEFAULT_CONFIG } from "../extensions/openai-codex-compat/config.ts";
 import type { JsonRecord } from "../extensions/openai-codex-compat/codex-protocol.ts";
 import type { CodexJsonRequestOptions } from "../extensions/openai-codex-compat/codex-transport.ts";
+import { IMAGE_GENERATION_PARAMETERS } from "../extensions/openai-codex-compat/image-generation-schema.ts";
+import type { ImageGenerationDetails } from "../extensions/openai-codex-compat/image-generation-render.ts";
 import { isString } from "../extensions/openai-codex-compat/value-contracts.ts";
 
 const GENERATED_PNG =
   "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=";
 const ANSI_SEQUENCE_PATTERN = new RegExp(String.raw`\u001b\[[0-?]*[ -/]*[@-~]`, "gu");
 
+type ImageGenerationTool = ToolDefinition<
+  typeof IMAGE_GENERATION_PARAMETERS,
+  ImageGenerationDetails,
+  Record<string, never>
+>;
+type ImageRenderContext = Parameters<NonNullable<ImageGenerationTool["renderCall"]>>[2];
+
 function stripAnsi(value: string): string {
   return value.replace(ANSI_SEQUENCE_PATTERN, "");
 }
 
-function codexModel(): Model<any> {
+function codexModel(): Model<Api> {
   return {
     id: "gpt-test",
     name: "GPT Test",
@@ -37,7 +49,7 @@ function codexModel(): Model<any> {
     cost: { input: 1, output: 2, cacheRead: 0.1, cacheWrite: 1.25 },
     contextWindow: 100_000,
     maxTokens: 10_000,
-  } satisfies Model<any>;
+  } satisfies Model<Api>;
 }
 
 void test("selects the newest conversation images in chronological order", () => {
@@ -112,14 +124,14 @@ void test("executes generation and recent-image edits through Codex Images", asy
       },
     } satisfies SessionEntry,
   ];
-  let tool: any;
+  let tool: ImageGenerationTool | undefined;
   const requests: Array<{
     path: string;
     body: JsonRecord;
     options: CodexJsonRequestOptions;
   }> = [];
   const pi = extensionApiFixture({
-    registerTool(definition: unknown) {
+    registerTool(definition: ImageGenerationTool) {
       tool = definition;
     },
     getAllTools: () => [],
@@ -133,6 +145,7 @@ void test("executes generation and recent-image edits through Codex Images", asy
       return { created: 1, data: [{ b64_json: GENERATED_PNG }] };
     },
   );
+  assert.ok(tool);
   assert.equal(tool.promptSnippet, "Generate new images or edit existing images");
   assert.deepEqual(tool.promptGuidelines, [
     "Use image_gen.imagegen directly to generate new images or edit existing images without reconfirmation unless required source images are unavailable.",
@@ -275,19 +288,24 @@ void test("executes generation and recent-image edits through Codex Images", asy
     data: GENERATED_PNG,
     mimeType: "image/png",
   });
-  assert.match(result.content[1]?.text ?? "", /already displayed to the user/);
-  assert.match(result.content[1]?.text ?? "", /use the generated image at another path/);
+  const outputMessage = result.content[1];
+  assert.equal(outputMessage?.type, "text");
+  if (outputMessage?.type !== "text") {
+    throw new Error("The image-generation result has no text output hint.");
+  }
+  assert.match(outputMessage.text, /already displayed to the user/);
+  assert.match(outputMessage.text, /use the generated image at another path/);
 
-  const theme = {
+  const theme = themeFixture({
     fg: (_color: string, text: string) => text,
     bold: (text: string) => text,
     getBgAnsi: (color: string) =>
       color === "toolPendingBg" ? "\u001b[48;2;40;40;50m" : "\u001b[48;2;40;50;40m",
     getColorMode: () => "truecolor",
     name: "dark",
-  };
+  });
   const args = { prompt: "Draw a blue square." };
-  const renderContext = {
+  const renderContext: ImageRenderContext = {
     args,
     toolCallId: "call-generate|fc-generate",
     invalidate() {},
@@ -301,20 +319,30 @@ void test("executes generation and recent-image edits through Codex Images", asy
     showImages: true,
     isError: false,
   };
-  const callText = stripAnsi(tool.renderCall(args, theme, renderContext).render(100).join("\n"));
+  const renderCall = tool.renderCall;
+  const renderResult = tool.renderResult;
+  assert.ok(renderCall);
+  assert.ok(renderResult);
+  const callText = stripAnsi(renderCall(args, theme, renderContext).render(100).join("\n"));
   assert.match(callText, /image_gen\.imagegen  generate "Draw a blue square\."/);
 
   const longPrompt = "x".repeat(260);
   const longCallText = stripAnsi(
-    tool
-      .renderCall({ prompt: longPrompt }, theme, { ...renderContext, args: { prompt: longPrompt } })
+    renderCall({ prompt: longPrompt }, theme, {
+      ...renderContext,
+      args: { prompt: longPrompt },
+    })
       .render(400)
       .join("\n"),
   );
   assert.match(longCallText, new RegExp(`generate "${"x".repeat(249)}…"`));
 
-  const collapsed = tool
-    .renderResult(generated, { expanded: false, isPartial: false }, theme, renderContext)
+  const collapsed = renderResult(
+    generated,
+    { expanded: false, isPartial: false },
+    theme,
+    renderContext,
+  )
     .render(100)
     .join("\n");
   const collapsedText = stripAnsi(collapsed);
@@ -324,11 +352,10 @@ void test("executes generation and recent-image edits through Codex Images", asy
   assert.ok(collapsed.includes("\u001b[48;2;26;26;33m"));
 
   const expandedText = stripAnsi(
-    tool
-      .renderResult(generated, { expanded: true, isPartial: false }, theme, {
-        ...renderContext,
-        expanded: true,
-      })
+    renderResult(generated, { expanded: true, isPartial: false }, theme, {
+      ...renderContext,
+      expanded: true,
+    })
       .render(100)
       .join("\n"),
   );

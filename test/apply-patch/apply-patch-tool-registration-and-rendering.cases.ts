@@ -51,24 +51,27 @@ void test("registers the Codex freeform tool with model, UI, and failed-history 
     () => toolBackground,
     () => applyPatchDebug,
   );
-  assert.equal(registered?.name, "apply_patch");
-  assert.equal(
-    registered?.promptSnippet,
-    "Apply freeform patches to add, update, move, or delete files",
-  );
-  assert.deepEqual(registered?.promptGuidelines, [
+  assert.ok(registered);
+  const tool = registered;
+  const renderCall = tool.renderCall;
+  const renderResult = tool.renderResult;
+  assert.ok(renderCall);
+  assert.ok(renderResult);
+  assert.equal(tool.name, "apply_patch");
+  assert.equal(tool.promptSnippet, "Apply freeform patches to add, update, move, or delete files");
+  assert.deepEqual(tool.promptGuidelines, [
     "Use `apply_patch` for local file edits.",
     "Do not create or edit files with `cat` or other shell write tricks.",
     "Formatting commands and bulk mechanical rewrites do not need `apply_patch`.",
   ]);
-  assert.equal(registered?.executionMode, "sequential");
-  assert.equal(registered?.renderShell, "self");
-  assert.deepEqual(registered?.constrainedSampling, {
+  assert.equal(tool.executionMode, "sequential");
+  assert.equal(tool.renderShell, "self");
+  assert.deepEqual(tool.constrainedSampling, {
     type: "grammar",
     variants: { openai_lark: APPLY_PATCH_LARK_GRAMMAR },
   });
 
-  const result = await registered!.execute(
+  const result = await tool.execute(
     "success-call",
     { patch: "*** Begin Patch\n*** Add File: rendered.txt\n+hello\n*** End Patch" },
     undefined,
@@ -83,7 +86,7 @@ void test("registers the Codex freeform tool with model, UI, and failed-history 
   assert.equal(requireApplyPatchDetails(result.details).changes[0]?.kind, "add");
 
   const theme = testTheme();
-  const callComponent = registered!.renderCall!(
+  const callComponent = renderCall(
     { patch: "*** Begin Patch\n*** Add File: rendered.txt\n+hello\n*** End Patch" },
     theme,
     {
@@ -113,27 +116,22 @@ void test("registers the Codex freeform tool with model, UI, and failed-history 
   assert.ok(callComponent.render(120).join("\n").includes("\u001b[48;2;40;50;40m"));
   toolBackground = "subtle";
 
-  const component = registered!.renderResult!(
-    result,
-    { expanded: false, isPartial: false },
-    theme,
-    {
-      args: {
-        patch: "*** Begin Patch\n*** Add File: rendered.txt\n+hello\n*** End Patch",
-      },
-      toolCallId: "success-call",
-      invalidate() {},
-      lastComponent: undefined,
-      state: {},
-      cwd,
-      executionStarted: true,
-      argsComplete: true,
-      isPartial: false,
-      expanded: false,
-      showImages: false,
-      isError: false,
+  const component = renderResult(result, { expanded: false, isPartial: false }, theme, {
+    args: {
+      patch: "*** Begin Patch\n*** Add File: rendered.txt\n+hello\n*** End Patch",
     },
-  );
+    toolCallId: "success-call",
+    invalidate() {},
+    lastComponent: undefined,
+    state: {},
+    cwd,
+    executionStarted: true,
+    argsComplete: true,
+    isPartial: false,
+    expanded: false,
+    showImages: false,
+    isError: false,
+  });
   const renderedResult = component.render(120).join("\n");
   assert.match(renderedResult, /• Added rendered\.txt \(\+1 -0\)/);
   assert.doesNotMatch(stripAnsi(renderedResult), /Patch instruction results:/);
@@ -146,7 +144,7 @@ void test("registers the Codex freeform tool with model, UI, and failed-history 
     "success-call",
     { patch: "*** Begin Patch\n*** Add File: rendered.txt\n+hello\n*** End Patch" },
     { showImages: false },
-    registered,
+    tool,
     tuiFixture({ requestRender() {} }),
     cwd,
   );
@@ -317,7 +315,7 @@ void test("registers the Codex freeform tool with model, UI, and failed-history 
 -before
 +again
 *** End Patch`;
-  const failedResult = await registered!.execute(
+  const failedResult = await tool.execute(
     "failed-call",
     {
       patch: failedPatch,
@@ -331,7 +329,7 @@ void test("registers the Codex freeform tool with model, UI, and failed-history 
   await writeFile(join(cwd, "partial-second.txt"), "before\n");
   let failedModelFeedback = "";
   await assert.rejects(
-    registered!.execute(
+    tool.execute(
       "failed-call",
       {
         patch: failedPatch,
@@ -366,6 +364,7 @@ void test("registers the Codex freeform tool with model, UI, and failed-history 
     toolName: "apply_patch",
     toolCallId: "failed-call",
   });
+  assert.ok(patchedResult);
   assert.equal(patchedResult?.details.status, "failed");
   assert.equal(patchedResult?.details.changes.length, 1);
   assert.equal(patchedResult?.details.failure?.phase, "execution");
@@ -374,11 +373,11 @@ void test("registers the Codex freeform tool with model, UI, and failed-history 
     ["applied", "failed"],
   );
   assert.match(
-    formatApplyPatchRenderText(patchedResult!.details, theme, cwd),
+    formatApplyPatchRenderText(patchedResult.details, theme, cwd),
     /Patch failed at instruction 2 of 2\./,
   );
-  const failedComponent = registered!.renderResult!(
-    { content: [], details: patchedResult!.details },
+  const failedComponent = renderResult(
+    { content: [], details: patchedResult.details },
     { expanded: false, isPartial: false },
     theme,
     {
@@ -407,10 +406,10 @@ void test("registers the Codex freeform tool with model, UI, and failed-history 
   assert.doesNotMatch(failedText, /Committed prefix|exact|inexact|Preflight/);
 
   applyPatchDebug = true;
-  const failedDebugComponent = registered!.renderResult!(
+  const failedDebugComponent = renderResult(
     {
       content: [{ type: "text", text: failedModelFeedback }],
-      details: patchedResult!.details,
+      details: patchedResult.details,
     },
     { expanded: false, isPartial: false },
     theme,
@@ -452,7 +451,7 @@ void test("registers the Codex freeform tool with model, UI, and failed-history 
 +after
 *** End Patch`;
   await assert.rejects(
-    registered!.execute(
+    tool.execute(
       "cancelled-call",
       { patch: cancellationPatch },
       cancellationController.signal,
@@ -497,7 +496,7 @@ void test("registers the Codex freeform tool with model, UI, and failed-history 
 *** Delete File: verification-existing.txt
 *** End Patch`;
   await assert.rejects(
-    registered!.execute(
+    tool.execute(
       "verification-call",
       { patch: verificationPatch },
       undefined,
@@ -512,13 +511,14 @@ void test("registers the Codex freeform tool with model, UI, and failed-history 
     toolName: "apply_patch",
     toolCallId: "verification-call",
   });
+  assert.ok(verificationResult);
   assert.equal(verificationResult?.details.failure?.phase, "preflight");
   assert.deepEqual(
     verificationResult?.details.instructions?.map(({ status }) => status),
     ["not-run", "failed", "not-run"],
   );
-  const verificationComponent = registered!.renderResult!(
-    { content: [], details: verificationResult!.details },
+  const verificationComponent = renderResult(
+    { content: [], details: verificationResult.details },
     { expanded: false, isPartial: false },
     theme,
     {
@@ -551,8 +551,8 @@ void test("registers the Codex freeform tool with model, UI, and failed-history 
     /3\. \[NOT RUN\] Delete verification-existing\.txt — Instruction 2 failed\./,
   );
 
-  const expandedVerificationComponent = registered!.renderResult!(
-    { content: [], details: verificationResult!.details },
+  const expandedVerificationComponent = renderResult(
+    { content: [], details: verificationResult.details },
     { expanded: false, isPartial: false },
     theme,
     {
@@ -598,7 +598,7 @@ void test("registers the Codex freeform tool with model, UI, and failed-history 
 +Earlier addition.
 *** End Patch`;
   await assert.rejects(
-    registered!.execute(
+    tool.execute(
       "matcher-call",
       { patch: reverseOrderedPatch },
       undefined,
@@ -623,9 +623,10 @@ void test("registers the Codex freeform tool with model, UI, and failed-history 
     toolName: "apply_patch",
     toolCallId: "matcher-call",
   });
+  assert.ok(matcherResult);
   assert.equal(matcherResult?.details.failure?.matcher?.reason, "no-ordered-mapping");
-  const matcherComponent = registered!.renderResult!(
-    { content: [], details: matcherResult!.details },
+  const matcherComponent = renderResult(
+    { content: [], details: matcherResult.details },
     { expanded: false, isPartial: false },
     theme,
     {
@@ -653,7 +654,7 @@ void test("registers the Codex freeform tool with model, UI, and failed-history 
     /Matcher:|Candidates:|Previous group:|Later anchor|Earlier anchor/u,
   );
 
-  const genericFailureComponent = registered!.renderResult!(
+  const genericFailureComponent = renderResult(
     { content: [], details: {} },
     { expanded: true, isPartial: false },
     theme,
@@ -676,7 +677,7 @@ void test("registers the Codex freeform tool with model, UI, and failed-history 
   assert.match(genericFailureComponent.render(120).join("\n"), /✘ Failed to apply patch/);
 
   applyPatchDebug = true;
-  const genericDebugComponent = registered!.renderResult!(
+  const genericDebugComponent = renderResult(
     {
       content: [{ type: "text", text: "Unexpected apply_patch failure." }],
       details: {},

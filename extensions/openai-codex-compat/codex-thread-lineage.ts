@@ -3,6 +3,7 @@ import { isString } from "./value-contracts.ts";
 import type { ExtensionAPI, ExtensionContext, SessionEntry } from "@earendil-works/pi-coding-agent";
 import { uuidv7 } from "@earendil-works/pi-ai";
 import { codexCacheKey } from "./codex-cache-key.ts";
+import { requiredValue } from "./required-value.ts";
 
 export const CODEX_THREAD_MARKER_ENTRY_TYPE = "openai-codex-compat-thread";
 
@@ -54,7 +55,9 @@ function markerData(entry: SessionEntry, sessionId: string): CodexThreadMarkerDa
 
 function latestMarkerIndex(sessionId: string, branch: readonly SessionEntry[]): number {
   for (let index = branch.length - 1; index >= 0; index -= 1) {
-    if (markerData(branch[index]!, sessionId)) return index;
+    if (markerData(requiredValue(branch[index], "A branch entry is missing."), sessionId)) {
+      return index;
+    }
   }
   return -1;
 }
@@ -64,7 +67,10 @@ export function resolveCodexThreadIdentity(
   branch: readonly SessionEntry[],
 ): CodexThreadIdentity {
   for (let index = branch.length - 1; index >= 0; index -= 1) {
-    const marker = markerData(branch[index]!, sessionId);
+    const marker = markerData(
+      requiredValue(branch[index], "A branch entry is missing."),
+      sessionId,
+    );
     if (marker) {
       return {
         threadId: marker.threadId,
@@ -72,7 +78,9 @@ export function resolveCodexThreadIdentity(
       };
     }
   }
-  return { threadId: codexCacheKey(sessionId)! };
+  return {
+    threadId: requiredValue(codexCacheKey(sessionId), "The session has no Codex cache key."),
+  };
 }
 
 function shouldForkOnNextAppend(
@@ -92,7 +100,7 @@ function shouldForkOnNextAppend(
 
   const markerIndex = latestMarkerIndex(sessionId, branch);
   for (let index = markerIndex + 1; index < branch.length; index += 1) {
-    const entry = branch[index]!;
+    const entry = requiredValue(branch[index], "A branch entry is missing.");
     if (firstChildByParent.get(entry.parentId) !== entry.id) return true;
   }
 

@@ -1,6 +1,6 @@
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import type { AssistantMessage, Credential, Model } from "@earendil-works/pi-ai";
+import type { Api, AssistantMessage, Credential, Model } from "@earendil-works/pi-ai";
 import type { JsonRecord } from "../../extensions/openai-codex-compat/codex-protocol.ts";
 
 export const rootDir = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
@@ -39,7 +39,7 @@ export function codexCredential(): Credential {
   };
 }
 
-export function codexModel(): Model<any> {
+export function codexModel(): Model<Api> {
   return {
     id: MODEL_ID,
     name: "GPT Test",

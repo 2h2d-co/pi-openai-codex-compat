@@ -53,6 +53,7 @@ void test("normalizes pre-stream failures without emitting start", async () => {
   const harness = createHarness([user]);
   harness.runtime.transport.request = async function* () {
     yield* [];
+    // oxlint-disable-next-line typescript/only-throw-error -- This test verifies normalization of provider failures that reject with non-Error values.
     throw { code: "transport_failed", message: "connection failed" };
   };
 

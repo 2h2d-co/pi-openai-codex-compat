@@ -10,6 +10,7 @@ import type {
 } from "./apply-patch-engine-contracts.ts";
 import type { SemanticPlan } from "./apply-patch-engine-filesystem-model.ts";
 import { resolvePatchPath } from "./apply-patch-engine-operation-semantics.ts";
+import { requiredValue } from "../required-value.ts";
 
 export interface PatchDiffDetails {
   displayDiff: string;
@@ -67,8 +68,8 @@ export function coalesceAppliedPatchChangesForRendering(
   }
 
   for (const group of groups.values()) {
-    const first = group.changes[0]!;
-    const last = group.changes.at(-1)!;
+    const first = requiredValue(group.changes[0], "A textual change group has no first change.");
+    const last = requiredValue(group.changes.at(-1), "A textual change group has no last change.");
     if (group.changes.length === 1) {
       rendered.push({ index: group.firstIndex, change: first });
       continue;

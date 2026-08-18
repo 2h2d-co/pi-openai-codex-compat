@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   createAssistantMessageEventStream,
+  type Api,
   type AssistantMessage,
   type Model,
 } from "@earendil-works/pi-ai";
@@ -20,7 +21,7 @@ const model = {
   cost: { input: 1, output: 2, cacheRead: 0.1, cacheWrite: 1.25 },
   contextWindow: 100_000,
   maxTokens: 10_000,
-} satisfies Model<any>;
+} satisfies Model<Api>;
 
 function output(): AssistantMessage {
   return {

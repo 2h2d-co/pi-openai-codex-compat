@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
-import type { AssistantMessage, Model } from "@earendil-works/pi-ai";
+import type { Api, AssistantMessage, Model } from "@earendil-works/pi-ai";
 import { isNonNullObject } from "./value-contracts.ts";
 
 const CODEX_PROVIDER = "openai-codex";
@@ -22,7 +22,7 @@ type PendingRecovery = {
   cancelled: boolean;
 };
 
-function isSelectedCodexModel(model: Model<any> | undefined): boolean {
+function isSelectedCodexModel(model: Model<Api> | undefined): boolean {
   return model?.provider === CODEX_PROVIDER && model.api === CODEX_API;
 }
 

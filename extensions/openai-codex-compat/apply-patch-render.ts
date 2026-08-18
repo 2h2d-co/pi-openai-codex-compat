@@ -131,7 +131,9 @@ export function renderApplyPatchCall(
           .then((preview) => {
             if (state.previewKey === previewKey) state.preview = preview;
           })
-          .catch(() => {})
+          .catch((error: unknown) => {
+            if (!(error instanceof Error)) throw error;
+          })
           .finally(() => {
             if (state.previewKey === previewKey) {
               state.previewPending = false;

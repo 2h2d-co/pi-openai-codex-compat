@@ -1,13 +1,22 @@
-import { extensionCommandContextFixture } from "./support/pi-fixtures.ts";
-import { extensionApiFixture } from "./support/pi-fixtures.ts";
+import {
+  extensionApiFixture,
+  extensionCommandContextFixture,
+  partialFixture,
+  themeFixture,
+  tuiFixture,
+} from "./support/pi-fixtures.ts";
 import { requireJsonRecord } from "../extensions/openai-codex-compat/codex-protocol.ts";
 import assert from "node:assert/strict";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-import { initTheme, type ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
-import type { Model } from "@earendil-works/pi-ai";
+import {
+  initTheme,
+  type ExtensionCommandContext,
+  type KeybindingsManager,
+} from "@earendil-works/pi-coding-agent";
+import type { Api, Model } from "@earendil-works/pi-ai";
 import {
   CONFIG_ENVIRONMENT_VARIABLES,
   CONFIG_FILE,
@@ -230,6 +239,7 @@ void test("saves on Enter or Ctrl+S and discards unsaved changes on Escape", asy
     },
   });
   assert.ok(command);
+  const runCommand = command;
 
   const runSettings = async (inputs: string[]) => {
     let closeCount = 0;
@@ -239,21 +249,21 @@ void test("saves on Enter or Ctrl+S and discards unsaved changes on Escape", asy
       isProjectTrusted: () => false,
       ui: {
         notify() {},
-        async custom(factory: (...args: any[]) => any) {
+        async custom(factory: Parameters<ExtensionCommandContext["ui"]["custom"]>[0]) {
           let resolveDone: (() => void) | undefined;
           const closed = new Promise<void>((resolve) => {
             resolveDone = resolve;
           });
-          const component = factory(
-            { requestRender() {} },
-            {
+          const component = await factory(
+            tuiFixture({ requestRender() {} }),
+            themeFixture({
               fg: (_color: string, text: string) => text,
               bold: (text: string) => text,
-            },
-            {
+            }),
+            partialFixture<KeybindingsManager>({
               matches: (data: string, id: string) =>
                 id === "tui.select.cancel" && (data === "\u001b" || data === "\u0003"),
-            },
+            }),
             () => {
               closeCount++;
               resolveDone?.();
@@ -264,7 +274,7 @@ void test("saves on Enter or Ctrl+S and discards unsaved changes on Escape", asy
         },
       },
     });
-    await command!("", context);
+    await runCommand("", context);
     return closeCount;
   };
 
@@ -332,7 +342,7 @@ void test("toggles image_gen.imagegen and web.run independently on Codex models"
     cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
     contextWindow: 100_000,
     maxTokens: 10_000,
-  } satisfies Model<any>;
+  } satisfies Model<Api>;
 
   syncCodexTools(pi, model, {
     ...DEFAULT_CONFIG,

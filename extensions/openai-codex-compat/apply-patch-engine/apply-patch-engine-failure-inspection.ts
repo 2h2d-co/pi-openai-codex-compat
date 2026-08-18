@@ -19,6 +19,7 @@ import {
   type ReplaceableFileEntry,
   type VirtualEntry,
 } from "./apply-patch-engine-filesystem-model.ts";
+import { requiredValue } from "../required-value.ts";
 
 export function addInstructionEffect(
   instruction: ApplyPatchInstructionDetails,
@@ -200,7 +201,8 @@ export async function inspectFinalPath(
           }
         }
         return finalPathInspection(displayPath, "different-from-requested-content", actual);
-      } catch {
+      } catch (error) {
+        if (!(error instanceof Error)) throw error;
         return finalPathInspection(
           displayPath,
           physicalEntryChanged ? "different-entry" : "not-verified",
@@ -225,7 +227,8 @@ export async function inspectFinalPath(
             : "different-from-previous-content",
           actual,
         );
-      } catch {
+      } catch (error) {
+        if (!(error instanceof Error)) throw error;
         return finalPathInspection(displayPath, "not-verified", actual);
       }
     }
@@ -245,7 +248,8 @@ export async function inspectFinalPath(
       return finalPathInspection(displayPath, "different-entry", actual);
     }
     return finalPathInspection(displayPath, currentEntryFinalState(actual), actual);
-  } catch {
+  } catch (error) {
+    if (!(error instanceof Error)) throw error;
     return finalPathInspection(displayPath, "not-verified");
   }
 }
@@ -336,10 +340,14 @@ export async function recordFailureInspection(
       ),
     );
     if (mutation.operation.moveAbsolutePath && mutation.expectedDestination) {
+      const moveTo = requiredValue(
+        mutation.operation.moveTo,
+        "A moved text update has no destination.",
+      );
       inspected.push(
         await inspectFinalPath(
           mutation.operation.moveAbsolutePath,
-          mutation.operation.moveTo!,
+          moveTo,
           mutation.expectedDestination,
           filesystem,
           mutation.content,
@@ -347,6 +355,11 @@ export async function recordFailureInspection(
       );
     }
   } else {
+    const moveAbsolutePath = requiredValue(
+      mutation.operation.moveAbsolutePath,
+      "A move mutation has no destination path.",
+    );
+    const moveTo = requiredValue(mutation.operation.moveTo, "A move mutation has no destination.");
     inspected.push(
       await inspectFinalPath(
         mutation.operation.absolutePath,
@@ -356,12 +369,7 @@ export async function recordFailureInspection(
       ),
     );
     inspected.push(
-      await inspectFinalPath(
-        mutation.operation.moveAbsolutePath!,
-        mutation.operation.moveTo!,
-        mutation.expectedDestination,
-        filesystem,
-      ),
+      await inspectFinalPath(moveAbsolutePath, moveTo, mutation.expectedDestination, filesystem),
     );
   }
 
@@ -457,6 +465,7 @@ export async function recordFailureInspection(
       addInstructionEffect(instruction, { kind: "updated", path: mutation.operation.path });
     }
   } else {
+    const moveTo = requiredValue(mutation.operation.moveTo, "A move mutation has no destination.");
     if (
       destinationState &&
       finalStateHasChangedPresentEntry(destinationState, mutation.expectedDestination)
@@ -464,12 +473,12 @@ export async function recordFailureInspection(
       if (mutation.expectedDestination.kind === "absent") {
         addInstructionEffect(instruction, {
           kind: "created",
-          path: mutation.operation.moveTo!,
+          path: moveTo,
         });
       } else {
         addInspectedReplacementEffect(
           instruction,
-          mutation.operation.moveTo!,
+          moveTo,
           mutation.expectedDestination,
           destinationInspection,
         );
@@ -480,7 +489,7 @@ export async function recordFailureInspection(
     ) {
       addInstructionEffect(instruction, {
         kind: "deleted",
-        path: mutation.operation.moveTo!,
+        path: moveTo,
       });
     }
     if (sourceState?.state === "unchanged") {
@@ -506,7 +515,9 @@ export async function recordFailureInspection(
       if ((await filesystem.lstat(parent)).isDirectory()) {
         addInstructionEffect(instruction, { kind: "directory-created", path: parent });
       }
-    } catch {}
+    } catch (error) {
+      if (!(error instanceof Error)) throw error;
+    }
   }
 
   if (temporaryPath) {
@@ -516,6 +527,8 @@ export async function recordFailureInspection(
         kind: "temporary-entry-remains",
         path: temporaryPath,
       });
-    } catch {}
+    } catch (error) {
+      if (!(error instanceof Error)) throw error;
+    }
   }
 }

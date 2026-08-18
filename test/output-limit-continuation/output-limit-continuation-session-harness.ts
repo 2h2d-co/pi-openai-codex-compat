@@ -181,32 +181,42 @@ export async function startCodexServer(
 ): Promise<{ baseUrl: string; requests: JsonRecord[] }> {
   const requests: JsonRecord[] = [];
   let ordinaryRequests = 0;
-  const server = createServer(async (request, response) => {
-    const chunks: Buffer[] = [];
-    for await (const chunk of request) {
-      chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
-    }
-    const bodyBuffer = Buffer.concat(chunks);
-    const compressed = String(request.headers["content-encoding"] ?? "")
-      .split(",")
-      .some((value) => value.trim().toLowerCase() === "zstd");
-    const rawBody = compressed
-      ? zstdDecompressSync(bodyBuffer).toString("utf8")
-      : bodyBuffer.toString("utf8");
-    const body = requireJsonRecord(JSON.parse(rawBody));
-    requests.push(body);
+  const server = createServer((request, response) => {
+    const requestTask = async () => {
+      const chunks: Buffer[] = [];
+      for await (const rawChunk of request) {
+        const chunk: unknown = rawChunk;
+        if (!(chunk instanceof Uint8Array)) {
+          throw new TypeError("Expected an HTTP request body byte chunk.");
+        }
+        chunks.push(Buffer.from(chunk));
+      }
+      const bodyBuffer = Buffer.concat(chunks);
+      const compressed = String(request.headers["content-encoding"] ?? "")
+        .split(",")
+        .some((value) => value.trim().toLowerCase() === "zstd");
+      const rawBody = compressed
+        ? zstdDecompressSync(bodyBuffer).toString("utf8")
+        : bodyBuffer.toString("utf8");
+      const body = requireJsonRecord(JSON.parse(rawBody));
+      requests.push(body);
 
-    const input = Array.isArray(body["input"]) ? requireJsonRecords(body["input"]) : [];
-    const compacting = input.some((item) => item["type"] === "compaction_trigger");
-    const events = responseEvents
-      ? responseEvents(requests.length, body)
-      : compacting
-        ? compactionEvents()
-        : ++ordinaryRequests === 1
-          ? incompleteEvents()
-          : textEvents("continued after resampling");
-    response.writeHead(200, { "content-type": "text/event-stream" });
-    response.end(sse(events));
+      const input = Array.isArray(body["input"]) ? requireJsonRecords(body["input"]) : [];
+      const compacting = input.some((item) => item["type"] === "compaction_trigger");
+      const events = responseEvents
+        ? responseEvents(requests.length, body)
+        : compacting
+          ? compactionEvents()
+          : ++ordinaryRequests === 1
+            ? incompleteEvents()
+            : textEvents("continued after resampling");
+      response.writeHead(200, { "content-type": "text/event-stream" });
+      response.end(sse(events));
+    };
+    // oxlint-disable-next-line 2h2d/no-silent-error-suppression -- Destroying the response forwards request-processing failures to the test client.
+    void requestTask().catch((error: unknown) => {
+      response.destroy(error instanceof Error ? error : new Error(String(error)));
+    });
   });
 
   await new Promise<void>((resolveListen) => server.listen(0, "127.0.0.1", resolveListen));
@@ -235,7 +245,10 @@ export async function pointBuiltInCodexAt(baseUrl: string, t: TestContext): Prom
     if (getNestedModels) {
       modelSources.push(() => getNestedModels(CODEX_PROVIDER));
     }
-  } catch {
+  } catch (error) {
+    if (!(error instanceof Error && "code" in error && error.code === "ERR_MODULE_NOT_FOUND")) {
+      throw error;
+    }
     // This dependency layout has no nested Pi AI copy.
   }
 

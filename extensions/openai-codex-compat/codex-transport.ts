@@ -1,5 +1,10 @@
 import { isString } from "./value-contracts.ts";
-import { registerSessionResourceCleanup, type Model, uuidv7 } from "@earendil-works/pi-ai";
+import {
+  registerSessionResourceCleanup,
+  type Api,
+  type Model,
+  uuidv7,
+} from "@earendil-works/pi-ai";
 import { codexCacheKey } from "./codex-cache-key.ts";
 import { isJsonValue, isObject, type JsonRecord, type JsonValue } from "./codex-protocol.ts";
 import { responsesLiteSsePayload } from "./responses-lite.ts";
@@ -99,7 +104,7 @@ export {
  */
 
 export async function requestCodexJson(
-  model: Model<any>,
+  model: Model<Api>,
   path: string,
   body: JsonRecord,
   options: CodexJsonRequestOptions,
@@ -136,13 +141,14 @@ export async function requestCodexJson(
       `Codex returned invalid JSON from ${path}: ${
         error instanceof Error ? error.message : String(error)
       }`,
+      { cause: error },
     );
   }
 }
 
 export class CodexTransport {
   async prewarm(
-    model: Model<any>,
+    model: Model<Api>,
     body: JsonRecord,
     options: CodexTransportOptions,
   ): Promise<boolean> {
@@ -243,7 +249,7 @@ export class CodexTransport {
   }
 
   async *request(
-    model: Model<any>,
+    model: Model<Api>,
     body: JsonRecord | JsonValue[],
     options: CodexTransportOptions,
   ): AsyncGenerator<JsonRecord> {

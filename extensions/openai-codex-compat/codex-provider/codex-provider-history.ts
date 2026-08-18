@@ -1,5 +1,5 @@
 import type { SessionEntry, ToolInfo } from "@earendil-works/pi-coding-agent";
-import type { Context, Model, Tool } from "@earendil-works/pi-ai";
+import type { Api, Context, Model, Tool } from "@earendil-works/pi-ai";
 import { providerHistory, type GrammarToolInputProperties } from "../compaction-checkpoint.ts";
 import type { ImageDetail } from "../config.ts";
 import type { ResponsesItem } from "../codex-protocol.ts";
@@ -68,7 +68,7 @@ export function userEntryAfterLastSampled(
 export function splitUnsampledUserInput(options: {
   branch: readonly SessionEntry[];
   history: readonly ResponsesItem[];
-  model: Model<any>;
+  model: Model<Api>;
   allTools: readonly ToolInfo[];
   grammarToolInputProperties: GrammarToolInputProperties;
   imageDetail: ImageDetail;

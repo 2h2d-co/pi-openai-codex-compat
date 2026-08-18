@@ -122,7 +122,9 @@ export function websocketConstructor(): WebSocketConstructor | undefined {
 export function closeSocket(socket: WebSocketLike, reason = "done"): void {
   try {
     socket.close(1_000, reason);
-  } catch {}
+  } catch (error) {
+    if (!(error instanceof Error)) throw error;
+  }
 }
 
 export function socketReusable(socket: WebSocketLike): boolean {
@@ -174,8 +176,9 @@ export async function connectWebSocket(
 
     try {
       socket = new WebSocketClass(url, { headers: requestHeaders });
+      // oxlint-disable-next-line 2h2d/no-silent-error-suppression -- The constructor failure is propagated by rejecting the returned connection promise.
     } catch (error) {
-      reject(error instanceof Error ? error : new Error(String(error)));
+      reject(error);
       return;
     }
     socket.addEventListener("open", onOpen);

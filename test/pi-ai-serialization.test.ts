@@ -10,7 +10,7 @@ import {
   type SessionEntry,
   type ToolInfo,
 } from "@earendil-works/pi-coding-agent";
-import type { AssistantMessage, Context, Model, Tool } from "@earendil-works/pi-ai";
+import type { Api, AssistantMessage, Context, Model, Tool } from "@earendil-works/pi-ai";
 import { convertResponsesMessages as referenceConvertResponsesMessages } from "@earendil-works/pi-ai/api/openai-responses-shared";
 import {
   activeResponsesTools,
@@ -28,7 +28,7 @@ import {
   convertResponsesTools,
 } from "../extensions/openai-codex-compat/vendor/pi-ai/openai-responses-serialization.ts";
 
-const model: Model<any> = {
+const model: Model<Api> = {
   id: "gpt-test",
   name: "GPT Test",
   api: "openai-codex-responses",
@@ -159,7 +159,7 @@ void test("copied Pi AI Responses serialization matches the dependency", () => {
 });
 
 void test("configures image detail for image tool-result history", () => {
-  const imageModel = { ...model, input: ["text", "image"] } satisfies Model<any>;
+  const imageModel = { ...model, input: ["text", "image"] } satisfies Model<Api>;
   const imageAssistant = {
     ...assistantMessage,
     content: [

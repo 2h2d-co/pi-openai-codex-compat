@@ -1,7 +1,7 @@
 import { requireJsonRecords } from "../extensions/openai-codex-compat/codex-protocol.ts";
 import assert from "node:assert/strict";
 import test from "node:test";
-import type { AssistantMessage, Model } from "@earendil-works/pi-ai";
+import type { Api, AssistantMessage, Model } from "@earendil-works/pi-ai";
 import {
   CONFIG_ENVIRONMENT_VARIABLES,
   DEFAULT_CONFIG,
@@ -299,7 +299,7 @@ void test("recomputes canonical priority-tier costs after payload modification",
     cost: { input: 5, output: 30, cacheRead: 0.5, cacheWrite: 0 },
     contextWindow: 100_000,
     maxTokens: 10_000,
-  } satisfies Model<any>;
+  } satisfies Model<Api>;
   const message = {
     role: "assistant",
     content: [],

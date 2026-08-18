@@ -1,5 +1,6 @@
 import { extname } from "node:path";
 import type { GrammarName } from "@2h2d/tree-sitter-wasms";
+import { requiredValue } from "../required-value.ts";
 import type { MatchMode } from "./apply-patch-matcher-contracts.ts";
 
 export const MATCH_MODES: readonly MatchMode[] = ["exact", "trim-end", "trim", "unicode"];
@@ -112,7 +113,13 @@ export function sequenceMatches(
   mode: MatchMode,
 ): boolean {
   if (index + pattern.length > lines.length) return false;
-  return pattern.every((expected, offset) => linesMatch(lines[index + offset]!, expected, mode));
+  return pattern.every((expected, offset) =>
+    linesMatch(
+      requiredValue(lines[index + offset], "Matched line index is outside the source."),
+      expected,
+      mode,
+    ),
+  );
 }
 
 export function findSequences(
@@ -199,7 +206,10 @@ export function findTolerantSequences(
     (index) =>
       !isMarkdownPath(path) ||
       pattern.every((expected, offset) =>
-        markdownTolerantLineIsSafe(lines[index + offset]!, expected),
+        markdownTolerantLineIsSafe(
+          requiredValue(lines[index + offset], "Matched line index is outside the source."),
+          expected,
+        ),
       ),
   );
   if (ordinary.length > 0 || !isMarkdownPath(path) || pattern.length === 0) return ordinary;
@@ -212,7 +222,12 @@ export function findTolerantSequences(
   for (let index = searchStart; index <= last; index++) {
     if (
       !pattern.some((_, offset) => fencedLines.has(index + offset)) &&
-      pattern.every((expected, offset) => markdownTableLinesMatch(lines[index + offset]!, expected))
+      pattern.every((expected, offset) =>
+        markdownTableLinesMatch(
+          requiredValue(lines[index + offset], "Markdown table index is outside the source."),
+          expected,
+        ),
+      )
     ) {
       matches.push(index);
     }
@@ -274,13 +289,22 @@ export function fenceClosing(line: string, opening: FenceOpening): boolean {
 export function markdownFencedLines(sourceLines: readonly string[]): Set<number> {
   const fenced = new Set<number>();
   for (let index = 0; index < sourceLines.length; index++) {
-    const opening = fenceOpening(sourceLines[index]!);
+    const opening = fenceOpening(
+      requiredValue(sourceLines[index], "Fence line index is outside the source."),
+    );
     if (!opening) continue;
     fenced.add(index);
     index += 1;
     while (index < sourceLines.length) {
       fenced.add(index);
-      if (fenceClosing(sourceLines[index]!, opening)) break;
+      if (
+        fenceClosing(
+          requiredValue(sourceLines[index], "Fence line index is outside the source."),
+          opening,
+        )
+      ) {
+        break;
+      }
       index += 1;
     }
   }

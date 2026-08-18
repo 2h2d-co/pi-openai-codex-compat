@@ -82,10 +82,8 @@ function marker(
 }
 
 function createHarness(initialEntries: SessionEntry[], initialLeafId: string | null) {
-  const handlers = new Map<
-    string,
-    Array<(event: any, ctx: ExtensionContext) => void | Promise<void>>
-  >();
+  type Handler = (event: unknown, ctx: ExtensionContext) => void | Promise<void>;
+  const handlers = new Map<string, Handler[]>();
   const entries = [...initialEntries];
   let leafId = initialLeafId;
 
@@ -110,7 +108,7 @@ function createHarness(initialEntries: SessionEntry[], initialLeafId: string | n
     sessionManager: manager,
   });
   const pi = extensionApiFixture({
-    on(eventName: string, handler: (event: any, ctx: ExtensionContext) => void | Promise<void>) {
+    on(eventName: string, handler: Handler) {
       const registered = handlers.get(eventName) ?? [];
       registered.push(handler);
       handlers.set(eventName, registered);
@@ -226,7 +224,9 @@ void test("drops unsummarized navigation with Pi's ephemeral leaf on shutdown", 
 
 void test("forks from the nearest existing branch thread when editing its first user", async () => {
   const root = entry("root", null);
-  const firstMarker = marker("marker-a", "root", "thread-a", codexCacheKey("session-1")!);
+  const initialThreadId = codexCacheKey("session-1");
+  assert.ok(initialThreadId);
+  const firstMarker = marker("marker-a", "root", "thread-a", initialThreadId);
   const firstUser = entry("first-user", "marker-a", "user");
   const harness = createHarness([root, firstMarker, firstUser], "first-user");
 

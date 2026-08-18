@@ -69,7 +69,12 @@ void test("serializes same-process filesystem aliases with deterministic logical
   await writeFile(caseProbe, "");
   const caseAliases =
     (await lstat(caseProbe)).ino ===
-    (await lstat(join(cwd, "caseprobe")).catch(() => ({ ino: -1 }))).ino;
+    (
+      await lstat(join(cwd, "caseprobe")).catch((error: unknown) => {
+        if (!(error instanceof Error)) throw error;
+        return { ino: -1 };
+      })
+    ).ino;
   await rm(caseProbe);
   if (caseAliases) await assertAliasAddsSerialize("MissingCase.txt", "missingcase.txt");
 
@@ -78,7 +83,12 @@ void test("serializes same-process filesystem aliases with deterministic logical
   await writeFile(join(cwd, composed), "");
   const unicodeAliases =
     (await lstat(join(cwd, composed))).ino ===
-    (await lstat(join(cwd, decomposed)).catch(() => ({ ino: -1 }))).ino;
+    (
+      await lstat(join(cwd, decomposed)).catch((error: unknown) => {
+        if (!(error instanceof Error)) throw error;
+        return { ino: -1 };
+      })
+    ).ino;
   await rm(join(cwd, composed));
   if (unicodeAliases) {
     await assertAliasAddsSerialize("caf\u00e9-missing.txt", "cafe\u0301-missing.txt");
@@ -320,7 +330,8 @@ void test("honors cancellation before, during, and between apply_patch phases", 
         signalReads += 1;
         return signalReads >= 6;
       }
-      return Reflect.get(target, property, target);
+      const value: unknown = Reflect.get(target, property, target);
+      return value;
     },
   });
   await assert.rejects(
@@ -463,7 +474,9 @@ void test(
         if ((await lstat("/dev/null")).isCharacterDevice()) {
           specialPaths.push({ path: "/dev/null", kind: "character device" });
         }
-      } catch {}
+      } catch (error) {
+        if (!(error instanceof Error)) throw error;
+      }
       try {
         for (const name of await readdir("/dev")) {
           const candidate = join("/dev", name);
@@ -472,7 +485,9 @@ void test(
             break;
           }
         }
-      } catch {}
+      } catch (error) {
+        if (!(error instanceof Error)) throw error;
+      }
 
       for (const special of specialPaths) {
         await assert.rejects(

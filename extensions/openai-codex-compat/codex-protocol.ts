@@ -1,5 +1,12 @@
 import { isBoolean, isNonNullObject, isNumber, isString } from "./value-contracts.ts";
-import { calculateCost, type Model, type ProviderHeaders, type Usage } from "@earendil-works/pi-ai";
+import {
+  calculateCost,
+  type Api,
+  type Model,
+  type ProviderHeaders,
+  type Usage,
+} from "@earendil-works/pi-ai";
+import { requiredValue } from "./required-value.ts";
 
 export const REMOTE_COMPACTION_BETA = "remote_compaction_v2";
 export const RETAINED_CONTEXT_BUDGET = 64_000;
@@ -266,7 +273,7 @@ export function selectRetainedContext(
   const newestFirst: ResponsesItem[] = [];
 
   for (let index = history.length - 1; index >= 0 && remaining > 0; index--) {
-    const item = history[index]!;
+    const item = requiredValue(history[index], "A retained-history item is missing.");
     if (!retainedRole(item)) continue;
 
     const tokens = Math.max(1, messageTextTokens(item));
@@ -369,15 +376,22 @@ function accountIdFromToken(token: string): string {
     const pieces = token.split(".");
     if (pieces.length !== 3) throw new Error("not a JWT");
     const claims = requireJsonRecord(
-      JSON.parse(Buffer.from(pieces[1]!, "base64url").toString("utf8")),
+      JSON.parse(
+        Buffer.from(
+          requiredValue(pieces[1], "The authentication token has no claims segment."),
+          "base64url",
+        ).toString("utf8"),
+      ),
     );
     const openAIClaims = claims["https://api.openai.com/auth"];
     if (!isObject(openAIClaims) || !isString(openAIClaims.chatgpt_account_id)) {
       throw new Error("account id missing");
     }
     return openAIClaims.chatgpt_account_id;
-  } catch {
-    throw new Error("Could not read the ChatGPT account id from OpenAI Codex authentication.");
+  } catch (error) {
+    throw new Error("Could not read the ChatGPT account id from OpenAI Codex authentication.", {
+      cause: error,
+    });
   }
 }
 
@@ -467,8 +481,10 @@ async function readCompactionStream(
     let event: unknown;
     try {
       event = JSON.parse(encoded);
-    } catch {
-      throw new PermanentRemoteError("Codex returned malformed compaction stream data.");
+    } catch (error) {
+      throw new PermanentRemoteError("Codex returned malformed compaction stream data.", {
+        cause: error,
+      });
     }
     if (!isObject(event)) return;
 
@@ -495,7 +511,11 @@ async function readCompactionStream(
 
   while (true) {
     const chunk = await reader.read();
-    pending += decoder.decode(chunk.value, { stream: !chunk.done }).replace(/\r\n/g, "\n");
+    const rawChunk: unknown = chunk.value;
+    if (rawChunk !== undefined && !(rawChunk instanceof Uint8Array)) {
+      throw new PermanentRemoteError("Codex returned a non-byte compaction stream chunk.");
+    }
+    pending += decoder.decode(rawChunk, { stream: !chunk.done }).replace(/\r\n/g, "\n");
     let separator = pending.indexOf("\n\n");
     while (separator !== -1) {
       consumeEvent(pending.slice(0, separator));
@@ -512,15 +532,19 @@ async function readCompactionStream(
       `Codex returned ${compacted.length} compaction items; exactly one is required.`,
     );
   }
-  if (!isString(compacted[0]!.encrypted_content)) {
+  const compactionItem = requiredValue(
+    compacted[0],
+    "The completed compaction stream has no compaction item.",
+  );
+  if (!isString(compactionItem.encrypted_content)) {
     throw new PermanentRemoteError("Codex compaction output did not contain encrypted_content.");
   }
 
-  return { item: compacted[0]!, usage };
+  return { item: compactionItem, usage };
 }
 
 export function responseUsage(
-  model: Model<any>,
+  model: Model<Api>,
   value: unknown,
   priority: boolean,
 ): Usage | undefined {
@@ -558,7 +582,7 @@ export function responseUsage(
 
 export async function collectRemoteCompaction(
   events: AsyncIterable<JsonRecord>,
-  accountingModel: Model<any>,
+  accountingModel: Model<Api>,
   priority: boolean,
 ): Promise<RemoteCompactionResponse> {
   const compacted: ResponsesItem[] = [];
@@ -598,12 +622,16 @@ export async function collectRemoteCompaction(
       `Codex returned ${compacted.length} compaction items; exactly one is required.`,
     );
   }
-  if (!isString(compacted[0]!.encrypted_content)) {
+  const compactionItem = requiredValue(
+    compacted[0],
+    "The completed compaction stream has no compaction item.",
+  );
+  if (!isString(compactionItem.encrypted_content)) {
     throw new Error("Codex compaction output did not contain encrypted_content.");
   }
 
   const usage = responseUsage(accountingModel, usageValue, priority);
-  const result: RemoteCompactionResponse = { item: compacted[0]! };
+  const result: RemoteCompactionResponse = { item: compactionItem };
   if (usage) result.usage = usage;
   return result;
 }
@@ -612,7 +640,7 @@ export async function requestRemoteCompaction(options: {
   endpoint: string;
   headers: Headers;
   payload: JsonRecord;
-  accountingModel: Model<any>;
+  accountingModel: Model<Api>;
   priority: boolean;
   signal?: AbortSignal | undefined;
   fetcher?: typeof fetch | undefined;
@@ -631,7 +659,12 @@ export async function requestRemoteCompaction(options: {
       const response = await fetcher(options.endpoint, init);
 
       if (!response.ok) {
-        const body = await response.text().catch(() => "");
+        let body = "";
+        try {
+          body = await response.text();
+        } catch (error) {
+          if (!(error instanceof Error)) throw error;
+        }
         const message = `Codex remote compaction failed (${response.status}): ${body || response.statusText}`;
         if (!retryableStatus(response.status)) throw new PermanentRemoteError(message);
         if (attempt === REQUEST_RETRIES) throw new Error(message);
@@ -647,7 +680,8 @@ export async function requestRemoteCompaction(options: {
       return compacted;
     } catch (error) {
       if (options.signal?.aborted || error instanceof PermanentRemoteError) throw error;
-      lastFailure = error instanceof Error ? error : new Error(String(error));
+      if (!(error instanceof Error)) throw error;
+      lastFailure = error;
       if (attempt === REQUEST_RETRIES) throw error;
       await wait(1000 * 2 ** attempt, options.signal);
     }

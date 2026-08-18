@@ -1,5 +1,5 @@
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
-import type { Model, ProviderHeaders } from "@earendil-works/pi-ai";
+import type { Api, Model, ProviderHeaders } from "@earendil-works/pi-ai";
 import { providerHistory } from "./compaction-checkpoint.ts";
 import type { ImageDetail } from "./config.ts";
 import type { ResponsesItem } from "./codex-protocol.ts";
@@ -11,7 +11,7 @@ export interface CodexToolAuthentication {
 
 export async function codexToolAuthentication(
   ctx: ExtensionContext,
-  model: Model<any>,
+  model: Model<Api>,
 ): Promise<CodexToolAuthentication> {
   const authentication = await ctx.modelRegistry.getApiKeyAndHeaders(model);
   if (!authentication.ok) throw new Error(authentication.error);
@@ -26,7 +26,7 @@ export async function codexToolAuthentication(
 export function codexToolHistory(
   pi: ExtensionAPI,
   ctx: ExtensionContext,
-  model: Model<any>,
+  model: Model<Api>,
   imageDetail: ImageDetail = "auto",
 ): ResponsesItem[] {
   return providerHistory({

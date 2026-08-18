@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import test from "node:test";
-import type { Model } from "@earendil-works/pi-ai";
+import type { Api, Model } from "@earendil-works/pi-ai";
 import {
   CODEX_WS_REQUEST_START_METADATA_KEY,
   closeOpenAICodexWebSocketSessions,
@@ -18,7 +18,7 @@ import {
 } from "../../extensions/openai-codex-compat/codex-transport.ts";
 import type { JsonRecord } from "../../extensions/openai-codex-compat/codex-protocol.ts";
 
-export function codexModel(): Model<any> {
+export function codexModel(): Model<Api> {
   return {
     id: "gpt-test",
     name: "GPT Test",
@@ -30,7 +30,7 @@ export function codexModel(): Model<any> {
     cost: { input: 1, output: 2, cacheRead: 0.1, cacheWrite: 1.25 },
     contextWindow: 100_000,
     maxTokens: 10_000,
-  } satisfies Model<any>;
+  } satisfies Model<Api>;
 }
 
 export function accessToken(accountId = "account-1"): string {

@@ -36,25 +36,43 @@ import {
   structuralDocuments,
   tokenSignatureMatches,
 } from "./apply-patch-matcher-structural-runtime.ts";
+import { requiredValue } from "../required-value.ts";
 
 export function editGroups(chunks: readonly UpdateChunk[]): EditGroup[] {
   const groups: EditGroup[] = [];
   for (const [chunkIndex, chunk] of chunks.entries()) {
     const chunkGroups: EditGroup[] = [];
     for (let index = 0; index < chunk.lines.length;) {
-      if (chunk.lines[index]!.kind === "context") {
+      if (
+        requiredValue(chunk.lines[index], "Patch line index is outside the chunk.").kind ===
+        "context"
+      ) {
         index += 1;
         continue;
       }
       const start = index;
-      while (index < chunk.lines.length && chunk.lines[index]!.kind !== "context") index += 1;
+      while (
+        index < chunk.lines.length &&
+        requiredValue(chunk.lines[index], "Patch line index is outside the chunk.").kind !==
+          "context"
+      ) {
+        index += 1;
+      }
       const segment = chunk.lines.slice(start, index);
       let beforeStart = start;
-      while (beforeStart > 0 && chunk.lines[beforeStart - 1]!.kind === "context") {
+      while (
+        beforeStart > 0 &&
+        requiredValue(chunk.lines[beforeStart - 1], "Patch context index is outside the chunk.")
+          .kind === "context"
+      ) {
         beforeStart -= 1;
       }
       let afterEnd = index;
-      while (afterEnd < chunk.lines.length && chunk.lines[afterEnd]!.kind === "context") {
+      while (
+        afterEnd < chunk.lines.length &&
+        requiredValue(chunk.lines[afterEnd], "Patch context index is outside the chunk.").kind ===
+          "context"
+      ) {
         afterEnd += 1;
       }
       chunkGroups.push({
@@ -99,8 +117,9 @@ export function lineForByte(lineStarts: readonly number[], byte: number): number
   let high = lineStarts.length - 1;
   while (low < high) {
     const middle = Math.ceil((low + high) / 2);
-    if (lineStarts[middle]! <= byte) low = middle;
-    else high = middle - 1;
+    if (requiredValue(lineStarts[middle], "Line-start index is outside the source.") <= byte) {
+      low = middle;
+    } else high = middle - 1;
   }
   return low;
 }
@@ -118,9 +137,8 @@ export function anchorLines(
   path: string,
 ): number[] {
   if (!group.chunk.context) return [];
-  return sourceLines.flatMap((line, index) =>
-    contextMatches(line, group.chunk.context!, path) ? [index] : [],
-  );
+  const context = group.chunk.context;
+  return sourceLines.flatMap((line, index) => (contextMatches(line, context, path) ? [index] : []));
 }
 
 export function candidateFollowsAnchor(
@@ -155,8 +173,11 @@ export function lineCandidates(
   const ordinary = starts
     .map((startLine) => {
       const endLine = startLine + group.oldLines.length;
-      const start = lineStarts[startLine]!;
-      const end = lineStarts[endLine]!;
+      const start = requiredValue(
+        lineStarts[startLine],
+        "Candidate start line is outside the source.",
+      );
+      const end = requiredValue(lineStarts[endLine], "Candidate end line is outside the source.");
       const replacement = replacementLines(
         group.newLines,
         lineEndingForLine(sourceLines, startLine),
@@ -217,7 +238,7 @@ export function insertionCandidates(
         candidateSatisfiesEndOfFile(group, sourceLines.length, line),
     )
     .map((line) => {
-      const byte = lineStarts[line]!;
+      const byte = requiredValue(lineStarts[line], "Insertion line is outside the source.");
       const replacement = replacementLines(group.newLines, lineEndingAtBoundary(sourceLines, line));
       return {
         start: byte,
@@ -264,8 +285,8 @@ export async function tokenCandidates(
     if (!tokenSignatureMatches(window, oldTokens) || relativeSyntaxPath(window) !== expectedPath) {
       continue;
     }
-    const first = window[0]!;
-    const last = window.at(-1)!;
+    const first = requiredValue(window[0], "Token window has no first token.");
+    const last = requiredValue(window.at(-1), "Token window has no last token.");
     const bounds = lineBounds(sourceBytes, first.start, last.end);
     if (!bounds.fullLines) continue;
     const lineEnding: "\n" | "\r\n" =
@@ -303,7 +324,12 @@ export function applyEdits(source: Buffer, edits: readonly ByteEdit[]): Buffer {
     .map((edit, index) => ({ ...edit, index }))
     .sort((left, right) => left.start - right.start || left.index - right.index);
   for (let index = 1; index < ordered.length; index++) {
-    if (ordered[index]!.start < ordered[index - 1]!.end) {
+    const current = requiredValue(ordered[index], "Ordered edit index is outside the edit list.");
+    const previous = requiredValue(
+      ordered[index - 1],
+      "Previous ordered edit index is outside the edit list.",
+    );
+    if (current.start < previous.end) {
       throw new OverlappingFormatterEditsError("formatter-tolerant edits overlap");
     }
   }
@@ -346,7 +372,11 @@ export function distinctMappedOutputs(
       outputs.set(output.toString("base64"), output);
       return;
     }
-    for (const candidate of candidateSets[groupIndex]!) {
+    const groupCandidates = requiredValue(
+      candidateSets[groupIndex],
+      "Candidate group index is outside the candidate sets.",
+    );
+    for (const candidate of groupCandidates) {
       if (candidate.start < previousEnd) continue;
       visit(groupIndex + 1, candidate.end, [...edits, ...candidate.edits]);
     }
@@ -368,9 +398,12 @@ export function noOrderedMappingDetails(
   groups: readonly EditGroup[],
   candidateSets: readonly EditCandidate[][],
 ): FormatterMatchError {
-  let reachable = [...candidateSets[0]!];
+  let reachable = [...requiredValue(candidateSets[0], "The first candidate group is missing.")];
   for (let groupIndex = 1; groupIndex < candidateSets.length; groupIndex++) {
-    const groupCandidates = candidateSets[groupIndex]!;
+    const groupCandidates = requiredValue(
+      candidateSets[groupIndex],
+      "Candidate group index is outside the candidate sets.",
+    );
     const nextReachable = groupCandidates.filter((candidate) =>
       candidateFollows(candidate, reachable),
     );
@@ -386,14 +419,15 @@ export function noOrderedMappingDetails(
         (previous) => candidate.start < previous.end && candidate.end > previous.start,
       ),
     );
-    const excerpt = oldExcerpt(groups[groupIndex]!);
+    const group = requiredValue(groups[groupIndex], "Patch group index is outside the groups.");
+    const excerpt = oldExcerpt(group);
     const details: FormatterMatchFailureDetails = {
       reason: "no-ordered-mapping",
       path,
       groupCount: groups.length,
       groupIndex: groupIndex + 1,
-      chunkCount: groups[groupIndex]!.chunkCount,
-      chunkIndex: groups[groupIndex]!.chunkIndex,
+      chunkCount: group.chunkCount,
+      chunkIndex: group.chunkIndex,
       candidateCount: groupCandidates.length,
       candidates: candidateRanges(groupCandidates),
       previousGroupIndex: groupIndex,
@@ -570,5 +604,8 @@ export async function deriveFormatterTolerantContent(
     };
     throw new FormatterMatchAmbiguityError(formatFormatterMatchFailure(details), details);
   }
-  return outputs.values().next().value!.toString("utf8");
+  return requiredValue(
+    outputs.values().next().value,
+    "A unique formatter output was expected.",
+  ).toString("utf8");
 }

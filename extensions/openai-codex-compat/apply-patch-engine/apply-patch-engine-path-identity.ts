@@ -31,7 +31,8 @@ export async function directoryIsCaseInsensitive(
               lstat(join(dirname(candidate), toggled)),
             ]);
             return original.dev === alias.dev && original.ino === alias.ino;
-          } catch {
+          } catch (error) {
+            if (!(error instanceof Error)) throw error;
             candidate = dirname(candidate);
             continue;
           }

@@ -111,29 +111,40 @@ async function startCodexServer(t: TestContext): Promise<{
   requests: CapturedRequest[];
 }> {
   const requests: CapturedRequest[] = [];
-  const server = createServer(async (request, response) => {
-    const chunks: Buffer[] = [];
-    for await (const chunk of request) {
-      chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
-    }
-    const bodyBuffer = Buffer.concat(chunks);
-    const contentEncoding = request.headers["content-encoding"];
-    const compressed = (Array.isArray(contentEncoding) ? contentEncoding : [contentEncoding])
-      .filter((value): value is string => value !== undefined)
-      .flatMap((value) => value.split(","))
-      .some((value) => value.trim().toLowerCase() === "zstd");
-    const rawBody = compressed
-      ? zstdDecompressSync(bodyBuffer).toString("utf8")
-      : bodyBuffer.toString("utf8");
-    requests.push({
-      method: request.method,
-      url: request.url,
-      headers: request.headers,
-      body: rawBody ? requireJsonRecord(JSON.parse(rawBody)) : {},
-    });
+  const server = createServer((request, response) => {
+    const requestTask = async () => {
+      const chunks: Buffer[] = [];
+      for await (const rawChunk of request) {
+        const chunk: unknown = rawChunk;
+        if (!(chunk instanceof Uint8Array)) {
+          throw new TypeError("Expected an HTTP request body byte chunk.");
+        }
+        chunks.push(Buffer.from(chunk));
+      }
+      const bodyBuffer = Buffer.concat(chunks);
+      const contentEncoding = request.headers["content-encoding"];
+      const contentEncodings = (
+        isString(contentEncoding) ? [contentEncoding] : (contentEncoding ?? [])
+      )
+        .flatMap((value) => value.split(","))
+        .map((value) => value.trim().toLowerCase());
+      const rawBody = contentEncodings.includes("zstd")
+        ? zstdDecompressSync(bodyBuffer).toString("utf8")
+        : bodyBuffer.toString("utf8");
+      requests.push({
+        method: request.method,
+        url: request.url,
+        headers: request.headers,
+        body: rawBody ? requireJsonRecord(JSON.parse(rawBody)) : {},
+      });
 
-    response.writeHead(200, { "content-type": "text/event-stream" });
-    response.end(sse(textResponseEvents("modified request ok")));
+      response.writeHead(200, { "content-type": "text/event-stream" });
+      response.end(sse(textResponseEvents("modified request ok")));
+    };
+    // oxlint-disable-next-line 2h2d/no-silent-error-suppression -- Destroying the response forwards request-processing failures to the test client.
+    void requestTask().catch((error: unknown) => {
+      response.destroy(error instanceof Error ? error : new Error(String(error)));
+    });
   });
 
   await new Promise<void>((resolveListen) => server.listen(0, "127.0.0.1", resolveListen));
@@ -162,7 +173,10 @@ async function pointBuiltInCodexAt(baseUrl: string, t: TestContext): Promise<voi
     if (getNestedModels) {
       modelSources.push(() => getNestedModels(CODEX_PROVIDER));
     }
-  } catch {
+  } catch (error) {
+    if (!(error instanceof Error && "code" in error && error.code === "ERR_MODULE_NOT_FOUND")) {
+      throw error;
+    }
     // This dependency layout has no nested Pi AI copy.
   }
 
@@ -272,7 +286,8 @@ void test("modifies requests on the canonical OpenAI Codex provider", async (t) 
   await result.session.prompt("exercise request settings", { expandPromptTemplates: false });
 
   assert.equal(server.requests.length, 1);
-  const request = server.requests[0]!;
+  const request = server.requests[0];
+  assert.ok(request);
   assert.equal(request.method, "POST");
   assert.equal(request.url, "/codex/responses");
   assert.equal(request.headers.authorization, `Bearer ${fakeCodexToken()}`);

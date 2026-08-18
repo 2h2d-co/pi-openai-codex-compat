@@ -37,8 +37,8 @@ export class ApplyPatchVerificationError extends Error {
 export class ApplyPatchExecutionError extends Error {
   readonly details: ApplyPatchDetails;
 
-  constructor(message: string, details: ApplyPatchDetails) {
-    super(message);
+  constructor(message: string, details: ApplyPatchDetails, cause?: unknown) {
+    super(message, { cause });
     this.details = details;
   }
 }

@@ -12,7 +12,7 @@ import { isString, requireString } from "../extensions/openai-codex-compat/value
 import assert from "node:assert/strict";
 import test from "node:test";
 import type { SessionEntry } from "@earendil-works/pi-coding-agent";
-import type { Model, ProviderHeaders } from "@earendil-works/pi-ai";
+import type { Api, Model, ProviderHeaders } from "@earendil-works/pi-ai";
 import {
   CHECKPOINT_ENTRY_TYPE,
   parseCheckpoint,
@@ -61,7 +61,7 @@ function requireContextResult(value: unknown): TestContextResult {
   return { messages };
 }
 
-function codexModel(): Model<any> {
+function codexModel(): Model<Api> {
   return {
     id: "gpt-test",
     name: "GPT Test",
@@ -74,7 +74,7 @@ function codexModel(): Model<any> {
     contextWindow: 100_000,
     maxTokens: 10_000,
     compat: { supportsOpenAIGrammarTools: true },
-  } satisfies Model<any>;
+  } satisfies Model<Api>;
 }
 
 function userEntry(id: string, text: string, parentId: string | null = null): SessionEntry {
@@ -113,11 +113,13 @@ function accessToken(): string {
 }
 
 function createHarness(branch: SessionEntry[]) {
-  const handlers = new Map<string, (...args: any[]) => any>();
+  type CompactionHookResult = object | undefined;
+  type Handler = (...args: unknown[]) => CompactionHookResult | Promise<CompactionHookResult>;
+  const handlers = new Map<string, Handler>();
   const selected = codexModel();
   const notices: string[] = [];
   const pi = extensionApiFixture({
-    on(event: string, handler: (...args: any[]) => any) {
+    on(event: string, handler: Handler) {
       handlers.set(event, handler);
     },
     getAllTools: () => [],
@@ -189,7 +191,8 @@ void test("routes manual compaction through the custom provider runtime", async 
   );
 
   assert.equal(harness.requests.length, 1);
-  const request = harness.requests[0]!;
+  const request = harness.requests[0];
+  assert.ok(request);
   assert.match(JSON.stringify(request.input), /Remember BLUE-42/);
   assert.deepEqual(requireJsonRecords(request.input).at(-1), {
     type: "compaction_trigger",

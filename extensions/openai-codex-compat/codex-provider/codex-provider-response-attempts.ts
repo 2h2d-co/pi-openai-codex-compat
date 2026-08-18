@@ -1,5 +1,6 @@
 import { isBoolean, isNumber, isString } from "../value-contracts.ts";
 import type {
+  Api,
   AssistantMessage,
   AssistantMessageDiagnostic,
   Context,
@@ -224,7 +225,7 @@ export function accumulateUsage(previous: Usage, current: Usage): Usage {
 export function reachedProviderCompactionThreshold(
   scope: RuntimeScope | undefined,
   usage: Usage,
-  model: Model<any>,
+  model: Model<Api>,
 ): boolean {
   const threshold = scope?.config.autoCompactAtPercent;
   if (threshold === undefined || model.contextWindow <= 0 || usage.output >= model.maxTokens) {
@@ -370,7 +371,7 @@ export function assertSuccessfulOutput(
 
 export function applyServiceTierPricing(
   usage: Usage,
-  model: Model<any>,
+  model: Model<Api>,
   requestedTier: unknown,
   responseTier: string | undefined,
 ): void {

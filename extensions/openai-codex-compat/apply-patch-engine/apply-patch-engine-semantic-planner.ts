@@ -43,6 +43,7 @@ import {
   namesAlias,
   realpathWithMissingTail,
 } from "./apply-patch-engine-path-identity.ts";
+import { requiredValue } from "../required-value.ts";
 
 export class SemanticPlanningError extends Error {
   readonly instructions: ApplyPatchInstructionDetails[];
@@ -54,8 +55,9 @@ export class SemanticPlanningError extends Error {
     instructions: ApplyPatchInstructionDetails[],
     failedInstruction: number,
     matcher?: FormatterMatchFailureDetails,
+    cause?: unknown,
   ) {
-    super(message);
+    super(message, { cause });
     this.instructions = instructions;
     this.failedInstruction = failedInstruction;
     this.matcher = matcher;
@@ -100,7 +102,10 @@ export class SemanticPlanner {
 
   async plan(): Promise<SemanticPlan> {
     for (const [index, operation] of this.operations.entries()) {
-      const instruction = this.instructions[index]!;
+      const instruction = requiredValue(
+        this.instructions[index],
+        "The current apply_patch instruction is missing.",
+      );
       const mutationCount = this.mutations.length;
       try {
         throwIfAborted(this.signal);
@@ -123,7 +128,14 @@ export class SemanticPlanner {
         if (operation.kind === "update") {
           const deadProof = !updateHasSemanticMove(operation)
             ? await this.deadUpdateProof(index, operation.absolutePath)
-            : await this.deadMoveProof(index, operation.absolutePath, operation.moveAbsolutePath!);
+            : await this.deadMoveProof(
+                index,
+                operation.absolutePath,
+                requiredValue(
+                  operation.moveAbsolutePath,
+                  "A semantic move has no destination path.",
+                ),
+              );
           if (deadProof) {
             instruction.status = "dead";
             instruction.reason = instructionReason(
@@ -144,6 +156,7 @@ export class SemanticPlanner {
           this.instructions.map((item) => ({ ...item })),
           instruction.index,
           error instanceof FormatterMatchError ? error.details : undefined,
+          error,
         );
       }
     }
@@ -177,7 +190,10 @@ export class SemanticPlanner {
     instructionIndex: number,
     code: Exclude<ApplyPatchInstructionReasonCode, "dead-dominated" | "move-already-fulfilled">,
   ): void {
-    this.instructions[instructionIndex]!.reason = instructionReason(code);
+    requiredValue(
+      this.instructions[instructionIndex],
+      "The apply_patch instruction to mark as a no-op is missing.",
+    ).reason = instructionReason(code);
   }
 
   private async directoryIsCaseInsensitive(directory: string): Promise<boolean> {
@@ -213,7 +229,8 @@ export class SemanticPlanner {
           }
         }
       }
-    } catch {
+    } catch (error) {
+      if (!(error instanceof Error)) throw error;
       for (const [knownPath, knownKey] of this.pathKeys) {
         const knownParent = await realpathWithMissingTail(dirname(knownPath));
         if (
@@ -281,7 +298,7 @@ export class SemanticPlanner {
       }
     } catch (error) {
       if (!isNotFound(error)) {
-        throw new Error(`Failed to inspect ${path}: ${errorMessage(error)}`);
+        throw new Error(`Failed to inspect ${path}: ${errorMessage(error)}`, { cause: error });
       }
       result = ABSENT_ENTRY;
     }
@@ -298,8 +315,14 @@ export class SemanticPlanner {
     destinationPath: string,
   ): Promise<"rename" | "satisfied"> {
     const [sourceParent, destinationParent] = await Promise.all([
-      realpath(dirname(sourcePath)).catch(() => dirname(sourcePath)),
-      realpath(dirname(destinationPath)).catch(() => dirname(destinationPath)),
+      realpath(dirname(sourcePath)).catch((error: unknown) => {
+        if (!(error instanceof Error)) throw error;
+        return dirname(sourcePath);
+      }),
+      realpath(dirname(destinationPath)).catch((error: unknown) => {
+        if (!(error instanceof Error)) throw error;
+        return dirname(destinationPath);
+      }),
     ]);
     return sourceParent === destinationParent &&
       dirname(sourcePath) === dirname(destinationPath) &&
@@ -351,7 +374,9 @@ export class SemanticPlanner {
       entry.content.value = { bytes };
       return bytes;
     } catch (error) {
-      throw new Error(`Failed to read file to update ${path}: ${errorMessage(error)}`);
+      throw new Error(`Failed to read file to update ${path}: ${errorMessage(error)}`, {
+        cause: error,
+      });
     }
   }
 
@@ -365,7 +390,9 @@ export class SemanticPlanner {
     try {
       text = UTF8_DECODER.decode(bytes);
     } catch (error) {
-      throw new Error(`Failed to read file to update ${path}: ${errorMessage(error)}`);
+      throw new Error(`Failed to read file to update ${path}: ${errorMessage(error)}`, {
+        cause: error,
+      });
     }
     entry.content.value = { bytes, text };
     return text;
@@ -381,7 +408,8 @@ export class SemanticPlanner {
       const text = UTF8_DECODER.decode(bytes);
       entry.content.value = { bytes, text };
       return text;
-    } catch {
+    } catch (error) {
+      if (!(error instanceof Error)) throw error;
       return undefined;
     }
   }
@@ -410,7 +438,9 @@ export class SemanticPlanner {
             expectations.push({ path: parent, kind: "directory-symlink" });
             break;
           }
-        } catch {}
+        } catch (error) {
+          if (!(error instanceof Error)) throw error;
+        }
       }
       throw new Error(`Cannot create ${targetPath}: parent path ${parent} is not a directory`);
     }
@@ -432,7 +462,9 @@ export class SemanticPlanner {
         try {
           const metadata = await stat(entry.sourcePath ?? parent);
           if (metadata.isDirectory()) return metadata.dev;
-        } catch {}
+        } catch (error) {
+          if (!(error instanceof Error)) throw error;
+        }
       }
       if (parent === root) {
         throw new Error(`Cannot determine filesystem for ${path}`);
@@ -486,7 +518,9 @@ export class SemanticPlanner {
     if (operation.kind === "update" && chunksAreIdentity(operation.chunks)) {
       if (!updateHasSemanticMove(operation)) return false;
       const source = await this.stateAt(operation.absolutePath);
-      const destination = await this.stateAt(operation.moveAbsolutePath!);
+      const destination = await this.stateAt(
+        requiredValue(operation.moveAbsolutePath, "A semantic move has no destination path."),
+      );
       return [source, destination].some(sameEntry);
     }
     return false;
@@ -502,7 +536,10 @@ export class SemanticPlanner {
     const targetKey = await this.pathKey(targetPath);
     if (target.entry.kind === "absent") {
       for (let futureIndex = index + 1; futureIndex < this.operations.length; futureIndex += 1) {
-        const operation = this.operations[futureIndex]!;
+        const operation = requiredValue(
+          this.operations[futureIndex],
+          "A future apply_patch operation is missing.",
+        );
         if (
           (operation.kind === "add" || operation.kind === "delete") &&
           (await this.pathKey(operation.absolutePath)) === targetKey
@@ -535,7 +572,10 @@ export class SemanticPlanner {
     const affectedFingerprint = target.entry.fingerprint;
     const affectedPhysical = target.entry.physical;
     if (!affectedFingerprint && !affectedPhysical) return undefined;
-    const effectiveLinkCount = affectedPhysical?.linkCount ?? affectedFingerprint!.linkCount;
+    const effectiveLinkCount =
+      affectedPhysical?.linkCount ??
+      requiredValue(affectedFingerprint, "The affected file has no identity fingerprint.")
+        .linkCount;
     const affectedKey = await this.pathKey(target.path);
     const removedEntryInstructions = new Map<string, number>();
     const samePhysicalFile = (
@@ -573,7 +613,10 @@ export class SemanticPlanner {
         : undefined;
     };
     for (let futureIndex = index + 1; futureIndex < this.operations.length; futureIndex += 1) {
-      const operation = this.operations[futureIndex]!;
+      const operation = requiredValue(
+        this.operations[futureIndex],
+        "A future apply_patch operation is missing.",
+      );
       if (
         operation.kind === "update" &&
         !updateHasSemanticMove(operation) &&
@@ -594,7 +637,10 @@ export class SemanticPlanner {
       if (operation.kind === "add") {
         const replaced = await proofEntryAt(operation.absolutePath);
         if (replaced.state === "affected") {
-          const entry = replaced.entry!;
+          const entry = requiredValue(
+            replaced.entry,
+            "An affected proof entry has no filesystem entry.",
+          );
           const addIsNoOp =
             buffersEqual(
               await this.readBytes(entry, operation.absolutePath),
@@ -682,17 +728,24 @@ export class SemanticPlanner {
     } else if (destinationParent.kind === "symlink") {
       try {
         destinationParentsReproduced = (await stat(destinationParent.entryPath)).isDirectory();
-      } catch {
+      } catch (error) {
+        if (!(error instanceof Error)) throw error;
         return undefined;
       }
     }
 
     for (let futureIndex = index + 1; futureIndex < this.operations.length; futureIndex += 1) {
-      const operation = this.operations[futureIndex]!;
+      const operation = requiredValue(
+        this.operations[futureIndex],
+        "A future apply_patch operation is missing.",
+      );
       const instructionNumber = futureIndex + 1;
       const operationPaths = this.operationRelatedPaths(operation);
       const operationKeys = await Promise.all(operationPaths.map((path) => this.pathKey(path)));
-      const targetKey = operationKeys[0]!;
+      const targetKey = requiredValue(
+        operationKeys[0],
+        "An operation has no resolved target path key.",
+      );
       if (operation.kind === "add" || operation.kind === "delete") {
         if (
           targetKey === sourceKey &&
@@ -764,7 +817,8 @@ export class SemanticPlanner {
           this.markNoOp(instructionIndex, "content-already-present");
           return;
         }
-      } catch {
+      } catch (error) {
+        if (!(error instanceof Error)) throw error;
         this.exact = false;
       }
     }
@@ -934,7 +988,16 @@ export class SemanticPlanner {
     const content = Buffer.from(newContent, "utf8");
     const semanticMove = updateHasSemanticMove(operation);
     const sourceKey = await this.pathKey(operation.absolutePath);
-    if (!semanticMove && buffersEqual(source.content.value!.bytes, content)) {
+    if (
+      !semanticMove &&
+      buffersEqual(
+        requiredValue(
+          source.content.value,
+          "The source content was not populated after reading it.",
+        ).bytes,
+        content,
+      )
+    ) {
       this.markNoOp(instructionIndex, "update-result-unchanged");
       return;
     }
@@ -982,7 +1045,11 @@ export class SemanticPlanner {
       return;
     }
 
-    const destinationPath = operation.moveAbsolutePath!;
+    const destinationPath = requiredValue(
+      operation.moveAbsolutePath,
+      "A semantic move has no destination path.",
+    );
+    const moveTo = requiredValue(operation.moveTo, "A semantic move has no destination.");
     const destinationKey = await this.pathKey(destinationPath);
     if (sourceKey === destinationKey) {
       const expectedSource = this.snapshot(source);
@@ -991,7 +1058,7 @@ export class SemanticPlanner {
       const change: Extract<AppliedPatchChange, { kind: "update" }> = {
         kind: "update",
         path: operation.path,
-        moveTo: operation.moveTo!,
+        moveTo,
         oldContent,
         newContent,
         ...diffDetails(oldContent, newContent),
@@ -1067,7 +1134,7 @@ export class SemanticPlanner {
     const change: Extract<AppliedPatchChange, { kind: "update" }> = {
       kind: "update",
       path: operation.path,
-      moveTo: operation.moveTo!,
+      moveTo,
       oldContent,
       newContent,
       ...diffDetails(oldContent, newContent),
@@ -1077,7 +1144,7 @@ export class SemanticPlanner {
     }
     const provisionalChange: Extract<AppliedPatchChange, { kind: "add" }> = {
       kind: "add",
-      path: operation.moveTo!,
+      path: moveTo,
       content: newContent,
       ...diffDetails("", newContent),
     };
@@ -1144,7 +1211,11 @@ export class SemanticPlanner {
     operation: Extract<ResolvedOperation, { kind: "update" }>,
     instructionIndex: number,
   ): Promise<void> {
-    const destinationPath = operation.moveAbsolutePath!;
+    const destinationPath = requiredValue(
+      operation.moveAbsolutePath,
+      "A semantic move has no destination path.",
+    );
+    const moveTo = requiredValue(operation.moveTo, "A semantic move has no destination.");
     const sourceKey = await this.pathKey(operation.absolutePath);
     const destinationKey = await this.pathKey(destinationPath);
     if (sourceKey === destinationKey) {
@@ -1170,7 +1241,7 @@ export class SemanticPlanner {
         const change: Extract<AppliedPatchChange, { kind: "move" }> = {
           kind: "move",
           sourcePath: operation.path,
-          destinationPath: operation.moveTo!,
+          destinationPath: moveTo,
           replacedDestination: false,
           entryType: expectedSource.kind === "regular" ? "regular-file" : "symlink",
           exact: true,
@@ -1213,9 +1284,10 @@ export class SemanticPlanner {
         (destination.kind === "regular" || destination.kind === "symlink") &&
         fulfilled.destinationEntryId === destination.id
       ) {
-        this.instructions[instructionIndex]!.reason = moveAlreadyFulfilledReason(
-          fulfilled.instruction,
-        );
+        requiredValue(
+          this.instructions[instructionIndex],
+          "The fulfilled move instruction is missing.",
+        ).reason = moveAlreadyFulfilledReason(fulfilled.instruction);
         return;
       }
       throw new Error(
@@ -1252,7 +1324,7 @@ export class SemanticPlanner {
     const change: Extract<AppliedPatchChange, { kind: "move" }> = {
       kind: "move",
       sourcePath: operation.path,
-      destinationPath: operation.moveTo!,
+      destinationPath: moveTo,
       replacedDestination,
       entryType: expectedSource.kind === "regular" ? "regular-file" : "symlink",
       exact: true,

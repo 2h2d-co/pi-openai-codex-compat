@@ -322,8 +322,9 @@ async function showSettings(
               : theme.fg("warning", "Unsaved session changes."),
           );
         } catch (error) {
+          if (!(error instanceof Error)) throw error;
           if (closeAfterSave) closing = false;
-          const message = error instanceof Error ? error.message : String(error);
+          const message = error.message;
           saveStatus.setText(theme.fg("error", message));
           ctx.ui.notify(message, "error");
         }

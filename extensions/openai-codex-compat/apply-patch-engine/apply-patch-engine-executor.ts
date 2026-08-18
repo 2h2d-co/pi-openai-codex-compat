@@ -45,6 +45,7 @@ import {
   finishSameInodeRename,
   replaceRegularFile,
 } from "./apply-patch-engine-filesystem-mutations.ts";
+import { requiredValue } from "../required-value.ts";
 
 export async function currentEntry(path: string): Promise<VirtualEntry> {
   try {
@@ -88,7 +89,9 @@ export async function assertEntryMatches(path: string, expected: VirtualEntry): 
   try {
     actual = await currentEntry(path);
   } catch (error) {
-    throw new Error(`Failed to verify ${path} before mutation: ${errorMessage(error)}`);
+    throw new Error(`Failed to verify ${path} before mutation: ${errorMessage(error)}`, {
+      cause: error,
+    });
   }
   if (actual.kind !== expected.kind) {
     throw new Error(`Filesystem changed after apply_patch preflight at ${path}`);
@@ -196,6 +199,7 @@ export async function assertParentPlanMatches(parents: ParentPlan): Promise<void
     } catch (error) {
       throw new Error(
         `Failed to verify parent ${expectation.path} before mutation: ${errorMessage(error)}`,
+        { cause: error },
       );
     }
     if (expectation.kind === "absent") {
@@ -220,6 +224,7 @@ export async function assertParentPlanMatches(parents: ParentPlan): Promise<void
     } catch (error) {
       throw new Error(
         `Failed to verify parent ${expectation.path} before mutation: ${errorMessage(error)}`,
+        { cause: error },
       );
     }
   }
@@ -291,7 +296,7 @@ export function recordAppliedInstructionEffects(
         addInstructionEffect(
           instruction,
           replacedInstructionEffect(
-            mutation.operation.moveTo!,
+            requiredValue(mutation.operation.moveTo, "A move mutation has no destination."),
             mutation.expectedDestination,
             fileEntryDetails(mutation.expectedSource),
           ),
@@ -359,6 +364,7 @@ export async function executePlan(
           }
           throw new Error(
             `Failed to write file ${mutation.operation.absolutePath}: ${errorMessage(error)}`,
+            { cause: error },
           );
         }
         appendChange(details, mutation.change, mutation.instructionIndex);
@@ -375,6 +381,7 @@ export async function executePlan(
         } catch (error) {
           throw new Error(
             `Failed to delete file ${mutation.operation.absolutePath}: ${errorMessage(error)}`,
+            { cause: error },
           );
         }
         appendChange(details, mutation.change, mutation.instructionIndex);
@@ -386,6 +393,18 @@ export async function executePlan(
           committedEntryMutations,
         );
         if (mutation.sameEntryMove) {
+          const provisionalChange = requiredValue(
+            mutation.provisionalChange,
+            "A same-entry move has no provisional change.",
+          );
+          const moveAbsolutePath = requiredValue(
+            mutation.operation.moveAbsolutePath,
+            "A same-entry move has no destination path.",
+          );
+          const moveTo = requiredValue(
+            mutation.operation.moveTo,
+            "A same-entry move has no destination.",
+          );
           try {
             activeFilesystemMutationStarted = true;
             await replaceRegularFile(
@@ -399,7 +418,7 @@ export async function executePlan(
             if (error instanceof RegularFileReplacementError) {
               activeTemporaryPath = error.temporaryPath;
               if (error.destinationChanged) {
-                appendChange(details, mutation.provisionalChange!, mutation.instructionIndex);
+                appendChange(details, provisionalChange, mutation.instructionIndex);
                 if (activeInstruction) {
                   addInstructionEffect(activeInstruction, {
                     kind: "updated",
@@ -410,33 +429,51 @@ export async function executePlan(
             }
             throw new Error(
               `Failed to write file ${mutation.operation.absolutePath}: ${errorMessage(error)}`,
+              { cause: error },
             );
           }
-          appendChange(details, mutation.provisionalChange!, mutation.instructionIndex);
+          appendChange(details, provisionalChange, mutation.instructionIndex);
           if (mutation.sameEntryMove === "rename") {
             try {
-              await filesystem.rename(
-                mutation.operation.absolutePath,
-                mutation.operation.moveAbsolutePath!,
-              );
+              await filesystem.rename(mutation.operation.absolutePath, moveAbsolutePath);
               await finishSameInodeRename(
                 mutation.operation.absolutePath,
-                mutation.operation.moveAbsolutePath!,
+                moveAbsolutePath,
                 filesystem,
               );
             } catch (error) {
               details.exact = false;
               throw new Error(
                 `Failed to establish move from ${mutation.operation.absolutePath} to ${mutation.operation.moveAbsolutePath}: ${errorMessage(error)}`,
+                { cause: error },
               );
             }
           }
-          details.changes[details.changes.length - 1] = mutation.change;
-          details.modified[details.modified.length - 1] = mutation.operation.moveTo!;
+          const lastChangeIndex = details.changes.length - 1;
+          const lastModifiedIndex = details.modified.length - 1;
+          if (lastChangeIndex < 0 || lastModifiedIndex < 0) {
+            throw new Error(
+              "A same-entry move completed without recording its provisional change.",
+            );
+          }
+          details.changes[lastChangeIndex] = mutation.change;
+          details.modified[lastModifiedIndex] = moveTo;
         } else if (mutation.operation.moveAbsolutePath && mutation.expectedDestination) {
+          const destinationKey = requiredValue(
+            mutation.destinationKey,
+            "A moved text update has no destination key.",
+          );
+          const provisionalChange = requiredValue(
+            mutation.provisionalChange,
+            "A moved text update has no provisional change.",
+          );
+          const moveTo = requiredValue(
+            mutation.operation.moveTo,
+            "A moved text update has no destination.",
+          );
           await assertMutationEntryMatches(
             mutation.operation.moveAbsolutePath,
-            mutation.destinationKey!,
+            destinationKey,
             mutation.expectedDestination,
             committedEntryMutations,
           );
@@ -455,37 +492,43 @@ export async function executePlan(
             if (error instanceof RegularFileReplacementError) {
               activeTemporaryPath = error.temporaryPath;
               if (error.destinationChanged) {
-                appendChange(details, mutation.provisionalChange!, mutation.instructionIndex);
+                appendChange(details, provisionalChange, mutation.instructionIndex);
                 if (activeInstruction) {
                   addInstructionEffect(
                     activeInstruction,
                     mutation.expectedDestination.kind === "absent"
-                      ? { kind: "created", path: mutation.operation.moveTo! }
-                      : replacedInstructionEffect(
-                          mutation.operation.moveTo!,
-                          mutation.expectedDestination,
-                          { entryType: "regular-file" },
-                        ),
+                      ? { kind: "created", path: moveTo }
+                      : replacedInstructionEffect(moveTo, mutation.expectedDestination, {
+                          entryType: "regular-file",
+                        }),
                   );
                 }
               }
             }
             throw new Error(
               `Failed to write file ${mutation.operation.moveAbsolutePath}: ${errorMessage(error)}`,
+              { cause: error },
             );
           }
-          appendChange(details, mutation.provisionalChange!, mutation.instructionIndex);
+          appendChange(details, provisionalChange, mutation.instructionIndex);
           try {
             await filesystem.unlink(mutation.operation.absolutePath);
           } catch (error) {
             details.exact = false;
             throw new Error(
               `Failed to remove original ${mutation.operation.absolutePath}: ${errorMessage(error)}`,
+              { cause: error },
             );
           }
-          details.changes[details.changes.length - 1] = mutation.change;
+          const lastChangeIndex = details.changes.length - 1;
+          if (lastChangeIndex < 0) {
+            throw new Error(
+              "A moved text update completed without recording its provisional change.",
+            );
+          }
+          details.changes[lastChangeIndex] = mutation.change;
           details.added.pop();
-          details.modified.push(mutation.operation.moveTo!);
+          details.modified.push(moveTo);
         } else {
           try {
             activeFilesystemMutationStarted = true;
@@ -494,11 +537,20 @@ export async function executePlan(
             details.exact = false;
             throw new Error(
               `Failed to write file ${mutation.operation.absolutePath}: ${errorMessage(error)}`,
+              { cause: error },
             );
           }
           appendChange(details, mutation.change, mutation.instructionIndex);
         }
       } else {
+        const moveAbsolutePath = requiredValue(
+          mutation.operation.moveAbsolutePath,
+          "A move mutation has no destination path.",
+        );
+        const moveTo = requiredValue(
+          mutation.operation.moveTo,
+          "A move mutation has no destination.",
+        );
         await assertMutationEntryMatches(
           mutation.operation.absolutePath,
           mutation.sourceKey,
@@ -506,7 +558,7 @@ export async function executePlan(
           committedEntryMutations,
         );
         await assertMutationEntryMatches(
-          mutation.operation.moveAbsolutePath!,
+          moveAbsolutePath,
           mutation.destinationKey,
           mutation.expectedDestination,
           committedEntryMutations,
@@ -531,9 +583,9 @@ export async function executePlan(
               addInstructionEffect(
                 activeInstruction,
                 error.destinationState === "created"
-                  ? { kind: "created", path: mutation.operation.moveTo! }
+                  ? { kind: "created", path: moveTo }
                   : replacedInstructionEffect(
-                      mutation.operation.moveTo!,
+                      moveTo,
                       mutation.expectedDestination,
                       fileEntryDetails(mutation.expectedSource),
                     ),
@@ -545,13 +597,14 @@ export async function executePlan(
             if (activeInstruction) {
               addInstructionEffect(activeInstruction, {
                 kind: "deleted",
-                path: mutation.operation.moveTo!,
+                path: moveTo,
               });
             }
             details.exact = false;
           }
           throw new Error(
             `Failed to move ${mutation.operation.absolutePath} to ${mutation.operation.moveAbsolutePath}: ${errorMessage(error)}`,
+            { cause: error },
           );
         }
         appendChange(details, mutation.change, mutation.instructionIndex);
@@ -601,6 +654,6 @@ export async function executePlan(
     };
     if (activeInstruction) failure.failedInstruction = activeInstruction.index;
     details.failure = failure;
-    throw new ApplyPatchExecutionError(details.error, cloneApplyPatchDetails(details));
+    throw new ApplyPatchExecutionError(details.error, cloneApplyPatchDetails(details), error);
   }
 }

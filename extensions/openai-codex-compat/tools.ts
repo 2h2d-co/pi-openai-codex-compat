@@ -1,5 +1,5 @@
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
-import type { Model } from "@earendil-works/pi-ai";
+import type { Api, Model } from "@earendil-works/pi-ai";
 import registerApplyPatch, { APPLY_PATCH_TOOL_NAME } from "./apply-patch.ts";
 import type { CodexToolBackgroundResolver } from "./codex-tool-surface.ts";
 import type { CodexCompatConfig } from "./config.ts";
@@ -42,7 +42,7 @@ export function setApplyPatchEnabled(pi: ExtensionAPI, enabled: boolean): void {
 
 export function syncCodexTools(
   pi: ExtensionAPI,
-  model: Model<any> | undefined,
+  model: Model<Api> | undefined,
   config: CodexCompatConfig,
 ): void {
   const codexSelected = isCodexModel(model);

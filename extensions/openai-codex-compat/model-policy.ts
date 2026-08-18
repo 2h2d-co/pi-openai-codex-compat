@@ -40,10 +40,9 @@ export default function registerCodexModelPolicy(
     try {
       restored = await pi.setModel(previousModel);
     } catch (error) {
+      if (!(error instanceof Error)) throw error;
       ctx.ui.notify(
-        `OpenAI Codex could not restore the previous model after rejecting the switch: ${
-          error instanceof Error ? error.message : String(error)
-        }`,
+        `OpenAI Codex could not restore the previous model after rejecting the switch: ${error.message}`,
         "error",
       );
     } finally {

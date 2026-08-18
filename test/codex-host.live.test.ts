@@ -230,7 +230,9 @@ function assertCurrentMarkerOnly(
   index: number,
 ): void {
   const serialized = JSON.stringify(input);
-  assert.match(serialized, new RegExp(values[index]!));
+  const currentValue = values[index];
+  assert.ok(currentValue);
+  assert.match(serialized, new RegExp(currentValue));
   for (const prior of values.slice(0, index)) {
     assert.doesNotMatch(serialized, new RegExp(prior));
   }

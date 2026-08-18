@@ -1,5 +1,5 @@
 import { isString } from "../value-contracts.ts";
-import type { Model } from "@earendil-works/pi-ai";
+import type { Api, Model } from "@earendil-works/pi-ai";
 import { isObject, type JsonRecord } from "../codex-protocol.ts";
 import { normalizeReplayItem } from "../responses-replay.ts";
 import type {
@@ -34,6 +34,7 @@ import {
   jsonWireRequestBody,
   requestInputLength,
 } from "./codex-transport-websocket-continuation.ts";
+import { requiredValue } from "../required-value.ts";
 
 export async function* parseWebSocket(
   socket: WebSocketLike,
@@ -72,6 +73,7 @@ export async function* parseWebSocket(
         }
         queue.push(parsed);
         notify();
+        // oxlint-disable-next-line 2h2d/no-silent-error-suppression -- The listener converts parse failures into the generator's failure state and wakes its consumer.
       } catch (error) {
         failure = new CodexProtocolError(
           `Invalid Codex WebSocket JSON: ${thrownMessage(error)}`,
@@ -107,7 +109,7 @@ export async function* parseWebSocket(
     while (true) {
       if (signal?.aborted) throw new Error("Request was aborted");
       if (queue.length > 0) {
-        yield queue.shift()!;
+        yield requiredValue(queue.shift(), "The queued WebSocket event is missing.");
         continue;
       }
       if (done) break;
@@ -141,7 +143,7 @@ export async function* parseWebSocket(
 }
 
 export async function* requestWebSocket(
-  model: Model<any>,
+  model: Model<Api>,
   body: JsonRecord,
   options: CodexTransportOptions,
   headers: Headers,

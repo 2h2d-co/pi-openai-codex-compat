@@ -48,7 +48,8 @@ function metadataParts(value: string): string[] {
     .map((part) => {
       const contentType = part.match(/^Content type:\s*(.+)$/u);
       if (contentType) {
-        const type = contentType[1]!;
+        const type = contentType[1];
+        if (type === undefined) return part;
         if (type === "text/html") return "HTML";
         if (type === "application/pdf") return "PDF";
         return type;
@@ -100,7 +101,9 @@ function parseBlock(value: string): WebRunOutputBlock | undefined {
   while (rawLines.at(-1)?.trim() === "") rawLines.pop();
   if (rawLines.length === 0) return undefined;
 
-  const firstLine = cleanCitations(rawLines[0]!, references);
+  const firstRawLine = rawLines[0];
+  if (firstRawLine === undefined) return undefined;
+  const firstLine = cleanCitations(firstRawLine, references);
   const header = firstLine.match(TITLE_URL_PATTERN);
   const titleOnly = firstLine.match(/^(.+?)\s*\(\)\s*$/u);
   let title = header?.[1]?.trim() || titleOnly?.[1]?.trim() || undefined;
@@ -112,7 +115,9 @@ function parseBlock(value: string): WebRunOutputBlock | undefined {
 
   const metadata: string[] = [];
   while (bodyStart < rawLines.length) {
-    const clean = cleanCitations(rawLines[bodyStart]!, references);
+    const rawLine = rawLines[bodyStart];
+    if (rawLine === undefined) break;
+    const clean = cleanCitations(rawLine, references);
     if (!isMetadata(clean)) break;
     metadata.push(...metadataParts(clean));
     bodyStart += 1;
@@ -123,7 +128,8 @@ function parseBlock(value: string): WebRunOutputBlock | undefined {
   if (!title && url) {
     try {
       title = new URL(url).hostname;
-    } catch {
+    } catch (error) {
+      if (!(error instanceof TypeError)) throw error;
       title = url;
     }
   }
@@ -159,7 +165,8 @@ export function outputDomains(blocks: readonly WebRunOutputBlock[]): string[] {
     if (!block.url) return [];
     try {
       return [new URL(block.url).hostname];
-    } catch {
+    } catch (error) {
+      if (!(error instanceof TypeError)) throw error;
       return [];
     }
   });

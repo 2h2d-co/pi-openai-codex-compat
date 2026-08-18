@@ -14,7 +14,8 @@ function safeJsonStringify(value: unknown): string {
   try {
     const serialized = JSON.stringify(value);
     return serialized === undefined ? String(value) : serialized;
-  } catch {
+  } catch (error) {
+    if (!(error instanceof TypeError)) throw error;
     return String(value);
   }
 }
@@ -29,7 +30,7 @@ function truncateErrorText(text: string): string {
 
 function isPlainNonEmptyObject(value: unknown): value is object {
   if (typeof value !== "object" || value === null) return false;
-  const prototype = Object.getPrototypeOf(value);
+  const prototype: unknown = Object.getPrototypeOf(value);
   return (prototype === Object.prototype || prototype === null) && Object.keys(value).length > 0;
 }
 

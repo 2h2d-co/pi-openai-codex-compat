@@ -88,7 +88,8 @@ void test("reports patch-level input and format failures once", async (t) => {
     ),
     (error: unknown) => {
       assert.ok(error instanceof ApplyPatchInputError);
-      const feedback = formatApplyPatchFailureSummary(error.details!, cwd);
+      assert.ok(error.details);
+      const feedback = formatApplyPatchFailureSummary(error.details, cwd);
       assert.match(
         feedback,
         /^apply_patch request rejected: apply_patch environment selection is unavailable for this turn$/mu,
@@ -107,7 +108,8 @@ void test("reports patch-level input and format failures once", async (t) => {
     applyPatch(cwd, patch("*** Add File: cancelled.txt\n+cancelled\n"), controller.signal),
     (error: unknown) => {
       assert.ok(error instanceof ApplyPatchInputError);
-      const feedback = formatApplyPatchFailureSummary(error.details!, cwd);
+      assert.ok(error.details);
+      const feedback = formatApplyPatchFailureSummary(error.details, cwd);
       assert.match(feedback, /^apply_patch was cancelled before execution\.$/mu);
       assert.match(
         feedback,

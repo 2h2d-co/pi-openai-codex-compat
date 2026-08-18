@@ -117,7 +117,7 @@ export function conciseInstructionError(error: string): string {
     )
     .replace(/; destination was removed before replacement failed$/u, "")
     .replace(/^apply_patch was cancelled\.$/u, "apply_patch was cancelled.");
-  return message.split("\n")[0]!;
+  return message.split("\n")[0] ?? "";
 }
 
 export function fileEntryFeedback(entry: ApplyPatchFileEntryDetails): string {

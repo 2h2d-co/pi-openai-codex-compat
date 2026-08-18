@@ -78,7 +78,7 @@ export function instructionReason(
       const noun = instructions.length === 1 ? "instruction" : "instructions";
       return {
         code,
-        message: `${noun[0]!.toUpperCase()}${noun.slice(1)} ${instructions.join(", ")} ${instructions.length === 1 ? "determines" : "determine"} the final filesystem state before another instruction reads it.`,
+        message: `${noun.charAt(0).toUpperCase()}${noun.slice(1)} ${instructions.join(", ")} ${instructions.length === 1 ? "determines" : "determine"} the final filesystem state before another instruction reads it.`,
         dominatingInstructions: instructions,
         relatedInstructions: instructions,
       };

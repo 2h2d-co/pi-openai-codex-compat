@@ -2,6 +2,7 @@ import type {
   ExtensionAPI,
   ExtensionCommandContext,
   ExtensionContext,
+  Theme,
 } from "@earendil-works/pi-coding-agent";
 import type { TUI } from "@earendil-works/pi-tui";
 import type { AssistantMessageEventStream, Model } from "@earendil-works/pi-ai";
@@ -10,32 +11,43 @@ import {
   isNonNullObject,
 } from "../../extensions/openai-codex-compat/value-contracts.ts";
 
+export function partialFixture<T extends object, Members extends object = object>(
+  members: Members,
+): T {
+  // oxlint-disable-next-line typescript/no-unsafe-return -- Focused test doubles intentionally implement only the members exercised by each test.
+  return Object.assign(Object.create(null), members);
+}
+
 /**
  * Adapt a focused test double to Pi's broad extension API. Unimplemented
  * members remain absent and fail immediately if production code reaches them.
  */
 export function extensionApiFixture<Members extends object>(members: Members): ExtensionAPI {
-  return Object.assign(Object.create(null), members);
+  return partialFixture(members);
 }
 
 export function extensionContextFixture<Members extends object>(
   members: Members,
 ): ExtensionContext {
-  return Object.assign(Object.create(null), members);
+  return partialFixture(members);
 }
 
 export function extensionCommandContextFixture<Members extends object>(
   members: Members,
 ): ExtensionCommandContext {
-  return Object.assign(Object.create(null), members);
+  return partialFixture(members);
 }
 
 export function tuiFixture<Members extends object>(members: Members): TUI {
-  return Object.assign(Object.create(null), members);
+  return partialFixture(members);
+}
+
+export function themeFixture<Members extends object>(members: Members): Theme {
+  return partialFixture(members);
 }
 
 export interface BuiltinModelsModule {
-  getBuiltinModels?(provider: string): Model<any>[];
+  getBuiltinModels?(provider: string): Model<"openai-codex-responses">[];
 }
 
 export function requireBuiltinModelsModule(value: unknown): BuiltinModelsModule {
@@ -51,11 +63,11 @@ export function requireBuiltinModelsModule(value: unknown): BuiltinModelsModule 
 }
 
 export function responseFixture<Members extends object>(members: Members): Response {
-  return Object.assign(Object.create(null), members);
+  return partialFixture(members);
 }
 
 export function assistantMessageEventStreamFixture<Members extends object>(
   members: Members,
 ): AssistantMessageEventStream {
-  return Object.assign(Object.create(null), members);
+  return partialFixture(members);
 }

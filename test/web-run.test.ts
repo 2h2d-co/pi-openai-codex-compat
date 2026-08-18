@@ -1,25 +1,40 @@
-import { extensionContextFixture } from "./support/pi-fixtures.ts";
-import { extensionApiFixture } from "./support/pi-fixtures.ts";
+import {
+  extensionApiFixture,
+  extensionContextFixture,
+  themeFixture,
+} from "./support/pi-fixtures.ts";
 import { requireJsonRecord } from "../extensions/openai-codex-compat/codex-protocol.ts";
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import test from "node:test";
-import type { SessionEntry } from "@earendil-works/pi-coding-agent";
-import type { Model } from "@earendil-works/pi-ai";
+import type {
+  AgentToolResult,
+  SessionEntry,
+  ToolDefinition,
+} from "@earendil-works/pi-coding-agent";
+import type { Api, Model } from "@earendil-works/pi-ai";
 import { DEFAULT_CONFIG, type WebSearchMode } from "../extensions/openai-codex-compat/config.ts";
 import { isObject, type JsonRecord } from "../extensions/openai-codex-compat/codex-protocol.ts";
 import { CODEX_NAMESPACED_TOOL_NAMES } from "../extensions/openai-codex-compat/namespaced-tools.ts";
 import { convertResponsesTools } from "../extensions/openai-codex-compat/vendor/pi-ai/openai-responses-serialization.ts";
 import registerWebRun, { recentSearchInput } from "../extensions/openai-codex-compat/web-run.ts";
 import type { CodexJsonRequestOptions } from "../extensions/openai-codex-compat/codex-transport.ts";
+import type { WebRunDetails } from "../extensions/openai-codex-compat/web-run-render.ts";
+import {
+  WEB_RUN_PARAMETERS,
+  type WebRunCommands,
+} from "../extensions/openai-codex-compat/web-run-schema.ts";
 
 const ANSI_SEQUENCE_PATTERN = new RegExp(String.raw`\u001b\[[0-?]*[ -/]*[@-~]`, "gu");
+
+type WebRunTool = ToolDefinition<typeof WEB_RUN_PARAMETERS, WebRunDetails, Record<string, never>>;
+type WebRunRenderContext = Parameters<NonNullable<WebRunTool["renderCall"]>>[2];
 
 function stripAnsi(value: string): string {
   return value.replace(ANSI_SEQUENCE_PATTERN, "");
 }
 
-function codexModel(): Model<any> {
+function codexModel(): Model<Api> {
   return {
     id: "gpt-test",
     name: "GPT Test",
@@ -31,7 +46,7 @@ function codexModel(): Model<any> {
     cost: { input: 1, output: 2, cacheRead: 0.1, cacheWrite: 1.25 },
     contextWindow: 100_000,
     maxTokens: 10_000,
-  } satisfies Model<any>;
+  } satisfies Model<Api>;
 }
 
 function userEntry(id: string, text: string, parentId: string | null = null): SessionEntry {
@@ -98,7 +113,7 @@ void test("retains only the latest two visible user turns for standalone search"
 });
 
 void test("registers the complete reserved web.run schema and executes alpha/search", async () => {
-  let tool: any;
+  let tool: WebRunTool | undefined;
   let webSearch: WebSearchMode = "indexed";
   const requests: Array<{
     path: string;
@@ -107,7 +122,7 @@ void test("registers the complete reserved web.run schema and executes alpha/sea
   }> = [];
   const branch = [userEntry("user-1", "Find current Pi documentation.")];
   const pi = extensionApiFixture({
-    registerTool(definition: unknown) {
+    registerTool(definition: WebRunTool) {
       tool = definition;
     },
     getAllTools: () => [],
@@ -135,6 +150,7 @@ void test("registers the complete reserved web.run schema and executes alpha/sea
     },
   );
 
+  assert.ok(tool);
   assert.equal(tool.promptSnippet, "Search and browse the internet");
   assert.deepEqual(tool.promptGuidelines, [
     "Use `web.run` when the user explicitly asks to browse or when answering requires current, niche, high-stakes, or precisely sourced information, including recommendations that may change over time.",
@@ -142,7 +158,9 @@ void test("registers the complete reserved web.run schema and executes alpha/sea
     "For technical research, prefer primary sources; for OpenAI product questions, inspect local code first and restrict fallback browsing to official OpenAI sites.",
     "Cite supported claims with direct Markdown links near the relevant text, never expose internal reference IDs, and respect the description's quotation and source word limits.",
   ]);
-  const properties = requireJsonRecord(tool.parameters.properties);
+  const properties = requireJsonRecord(
+    requireJsonRecord(tool.parameters, "web.run parameters")["properties"],
+  );
   assert.deepEqual(Object.keys(properties), [
     "click",
     "finance",
@@ -202,7 +220,7 @@ void test("registers the complete reserved web.run schema and executes alpha/sea
     time: [{ utc_offset: "+03:00" }],
     weather: [{ location: "United States, California, San Francisco" }],
     response_length: "short",
-  };
+  } satisfies WebRunCommands;
   const result = await tool.execute("call-web|fc-web", commands, undefined, undefined, context);
 
   assert.equal(tool.renderShell, "self");
@@ -241,15 +259,15 @@ void test("registers the complete reserved web.run schema and executes alpha/sea
     external_web_access: false,
   });
 
-  const theme = {
+  const theme = themeFixture({
     fg: (_color: string, text: string) => text,
     bold: (text: string) => text,
     getBgAnsi: (color: string) =>
       color === "toolPendingBg" ? "\u001b[48;2;40;40;50m" : "\u001b[48;2;40;50;40m",
     getColorMode: () => "truecolor",
     name: "dark",
-  };
-  const renderContext = {
+  });
+  const renderContext: WebRunRenderContext = {
     args: commands,
     toolCallId: "call-web|fc-web",
     invalidate() {},
@@ -263,14 +281,20 @@ void test("registers the complete reserved web.run schema and executes alpha/sea
     showImages: false,
     isError: false,
   };
-  const callText = stripAnsi(
-    tool.renderCall(commands, theme, renderContext).render(100).join("\n"),
-  );
+  const renderCall = tool.renderCall;
+  const renderResult = tool.renderResult;
+  assert.ok(renderCall);
+  assert.ok(renderResult);
+  const callText = stripAnsi(renderCall(commands, theme, renderContext).render(100).join("\n"));
   assert.match(callText, /web\.run  search "Pi"/);
   assert.doesNotMatch(callText, /"search_query":/);
 
-  const collapsed = tool
-    .renderResult(result, { expanded: false, isPartial: false }, theme, renderContext)
+  const collapsed = renderResult(
+    result,
+    { expanded: false, isPartial: false },
+    theme,
+    renderContext,
+  )
     .render(100)
     .join("\n");
   const collapsedText = stripAnsi(collapsed);
@@ -280,11 +304,10 @@ void test("registers the complete reserved web.run schema and executes alpha/sea
   assert.ok(collapsed.includes("\u001b[48;2;26;26;33m"));
 
   const expandedText = stripAnsi(
-    tool
-      .renderResult(result, { expanded: true, isPartial: false }, theme, {
-        ...renderContext,
-        expanded: true,
-      })
+    renderResult(result, { expanded: true, isPartial: false }, theme, {
+      ...renderContext,
+      expanded: true,
+    })
       .render(100)
       .join("\n"),
   );
@@ -294,7 +317,7 @@ void test("registers the complete reserved web.run schema and executes alpha/sea
   assert.match(expandedText, /A concise source excerpt/);
   assert.doesNotMatch(expandedText, /Raw search output/);
 
-  const navigationResult = {
+  const navigationResult: AgentToolResult<WebRunDetails> = {
     content: [{ type: "text", text: "Opened page title\nL10: expanded page content" }],
     details: { results: [] },
   };
@@ -303,24 +326,17 @@ void test("registers the complete reserved web.run schema and executes alpha/sea
     args: { open: [{ ref_id: "turn0search0", lineno: 10 }] },
   };
   const collapsedNavigation = stripAnsi(
-    tool
-      .renderResult(
-        navigationResult,
-        { expanded: false, isPartial: false },
-        theme,
-        navigationContext,
-      )
+    renderResult(navigationResult, { expanded: false, isPartial: false }, theme, navigationContext)
       .render(100)
       .join("\n"),
   );
   assert.match(collapsedNavigation, /Opened turn0search0/);
   assert.doesNotMatch(collapsedNavigation, /expanded page content/);
   const expandedNavigation = stripAnsi(
-    tool
-      .renderResult(navigationResult, { expanded: true, isPartial: false }, theme, {
-        ...navigationContext,
-        expanded: true,
-      })
+    renderResult(navigationResult, { expanded: true, isPartial: false }, theme, {
+      ...navigationContext,
+      expanded: true,
+    })
       .render(100)
       .join("\n"),
   );

@@ -1,4 +1,4 @@
-import type { Model } from "@earendil-works/pi-ai";
+import type { Api, Model } from "@earendil-works/pi-ai";
 import { isObject, type JsonRecord } from "../codex-protocol.ts";
 import type { CodexTransportOptions } from "./codex-transport-contracts.ts";
 import {
@@ -28,6 +28,8 @@ import {
   validateRetryDelay,
 } from "./codex-transport-retry.ts";
 
+function ignoreReaderCleanupError(_error: unknown): void {}
+
 export async function* parseSse(
   response: Response,
   signal?: AbortSignal,
@@ -36,15 +38,25 @@ export async function* parseSse(
   const reader = response.body.getReader();
   const decoder = new TextDecoder();
   let buffer = "";
+  // oxlint-disable-next-line 2h2d/no-silent-error-suppression -- Abort-triggered cancellation is best-effort; the parse loop observes the abort signal directly.
   const onAbort = () => void reader.cancel().catch(() => {});
   signal?.addEventListener("abort", onAbort, { once: true });
 
   try {
     while (true) {
       if (signal?.aborted) throw new Error("Request was aborted");
-      const { done, value } = await reader.read();
+      const chunk = await reader.read();
+      const { done } = chunk;
       if (signal?.aborted) throw new Error("Request was aborted");
       if (done) break;
+      const value: unknown = chunk.value;
+      if (!(value instanceof Uint8Array)) {
+        throw new CodexProtocolError(
+          "Codex returned a non-byte SSE stream chunk.",
+          value,
+          undefined,
+        );
+      }
       buffer += decoder.decode(value, { stream: true }).replaceAll("\r\n", "\n");
       let boundary = buffer.indexOf("\n\n");
       while (boundary !== -1) {
@@ -75,15 +87,19 @@ export async function* parseSse(
     }
   } finally {
     signal?.removeEventListener("abort", onAbort);
-    await reader.cancel().catch(() => {});
+    // oxlint-disable-next-line 2h2d/no-silent-error-suppression -- Reader cancellation is best-effort cleanup after parsing has already completed or failed.
+    await reader.cancel().catch((_error: unknown) => {});
     try {
       reader.releaseLock();
-    } catch {}
+      // oxlint-disable-next-line 2h2d/no-silent-error-suppression -- Releasing an already-invalidated reader lock is best-effort cleanup.
+    } catch (error) {
+      ignoreReaderCleanupError(error);
+    }
   }
 }
 
 export async function* requestSse(
-  model: Model<any>,
+  model: Model<Api>,
   bodyJson: string,
   options: CodexTransportOptions,
   headers: Headers,
@@ -118,7 +134,9 @@ export async function* requestSse(
           );
         } catch (error) {
           if (timeoutSignal?.aborted && !options.signal?.aborted) {
-            throw new Error(`Codex SSE response headers timed out after ${String(timeoutMs)}ms`);
+            throw new Error(`Codex SSE response headers timed out after ${String(timeoutMs)}ms`, {
+              cause: error,
+            });
           }
           throw error;
         }
@@ -149,9 +167,10 @@ export async function* requestSse(
         (error instanceof Error &&
           (error.name === "AbortError" || error.message === "Request was aborted"))
       ) {
-        throw new Error("Request was aborted");
+        throw new Error("Request was aborted", { cause: error });
       }
-      lastError = error instanceof Error ? error : new Error(String(error));
+      if (!(error instanceof Error)) throw error;
+      lastError = error;
       if (
         attempt < maxRetries &&
         !(lastError instanceof CodexHttpError) &&

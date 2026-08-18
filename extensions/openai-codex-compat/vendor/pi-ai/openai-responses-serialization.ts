@@ -7,6 +7,7 @@ import {
   type JsonRecord,
 } from "../../codex-protocol.ts";
 import type {
+  Api,
   AssistantMessage,
   Context,
   ImageContent,
@@ -18,6 +19,7 @@ import type {
   ToolCall,
   ToolResultMessage,
 } from "@earendil-works/pi-ai";
+import { requiredValue } from "../../required-value.ts";
 
 /**
  * Focused copies of the methods used to serialize Pi messages for OpenAI's
@@ -89,7 +91,7 @@ function getGrammarToolInput(
   arguments_: ToolCall["arguments"],
   inputProperty: string,
 ): string {
-  const input = arguments_[inputProperty];
+  const input: unknown = arguments_[inputProperty];
   if (!isString(input)) {
     throw new Error(
       `Grammar tool call "${toolName}" requires argument "${inputProperty}" to be a string.`,
@@ -170,7 +172,9 @@ function resolveGrammarConstrainedSampling(
     };
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    throw new Error(`Tool "${tool.name}" cannot use grammar constrained sampling: ${message}.`);
+    throw new Error(`Tool "${tool.name}" cannot use grammar constrained sampling: ${message}.`, {
+      cause: error,
+    });
   }
 }
 
@@ -297,7 +301,7 @@ function replaceImagesWithPlaceholder(
   return result;
 }
 
-function downgradeUnsupportedImages(messages: Message[], model: Model<any>): Message[] {
+function downgradeUnsupportedImages(messages: Message[], model: Model<Api>): Message[] {
   if (model.input.includes("image")) return messages;
   return messages.map((message) => {
     if (message.role === "user" && Array.isArray(message.content)) {
@@ -318,8 +322,8 @@ function downgradeUnsupportedImages(messages: Message[], model: Model<any>): Mes
 
 function transformMessages(
   messages: Message[],
-  model: Model<any>,
-  normalizeToolCallId?: (id: string, model: Model<any>, source: AssistantMessage) => string,
+  model: Model<Api>,
+  normalizeToolCallId?: (id: string, model: Model<Api>, source: AssistantMessage) => string,
 ): Message[] {
   const toolCallIdMap = new Map<string, string>();
   const normalizedMessages = messages.map((message) =>
@@ -434,7 +438,8 @@ function parseTextSignature(
         }
         return { id: parsed.id };
       }
-    } catch {
+    } catch (error) {
+      if (!(error instanceof SyntaxError)) throw error;
       // Fall through to legacy plain-string handling.
     }
   }
@@ -442,7 +447,7 @@ function parseTextSignature(
 }
 
 function convertToolResultOutput(
-  model: Model<any>,
+  model: Model<Api>,
   content: readonly (TextContent | ImageContent)[],
   imageDetail: ToolResultImageDetail,
   textAsContentItem: boolean,
@@ -473,7 +478,7 @@ function convertToolResultOutput(
 }
 
 export function convertResponsesMessages(
-  model: Model<any>,
+  model: Model<Api>,
   context: Context,
   allowedToolCallProviders: ReadonlySet<string>,
   options?: ConvertResponsesMessagesOptions,
@@ -491,17 +496,21 @@ export function convertResponsesMessages(
   };
   const normalizeToolCallId = (
     id: string,
-    _targetModel: Model<any>,
+    _targetModel: Model<Api>,
     source: AssistantMessage,
   ): string => {
     if (!allowedToolCallProviders.has(model.provider)) return normalizeIdPart(id);
     if (!id.includes("|")) return normalizeIdPart(id);
     const [callId, itemId] = id.split("|");
-    const normalizedCallId = normalizeIdPart(callId!);
+    const normalizedCallId = normalizeIdPart(
+      requiredValue(callId, "A compound tool-call id has no call id."),
+    );
     const isForeignToolCall = source.provider !== model.provider || source.api !== model.api;
     let normalizedItemId = isForeignToolCall
-      ? buildForeignResponsesItemId(itemId!)
-      : normalizeIdPart(itemId!);
+      ? buildForeignResponsesItemId(
+          requiredValue(itemId, "A compound tool-call id has no item id."),
+        )
+      : normalizeIdPart(requiredValue(itemId, "A compound tool-call id has no item id."));
     if (!normalizedItemId.startsWith("fc_")) {
       normalizedItemId = normalizeIdPart(`fc_${normalizedItemId}`);
     }

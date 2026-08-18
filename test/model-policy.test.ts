@@ -3,14 +3,14 @@ import { extensionApiFixture } from "./support/pi-fixtures.ts";
 import assert from "node:assert/strict";
 import test from "node:test";
 import type { ExtensionEvent, SessionEntry } from "@earendil-works/pi-coding-agent";
-import type { Model } from "@earendil-works/pi-ai";
+import type { Api, Model } from "@earendil-works/pi-ai";
 import { CHECKPOINT_ENTRY_TYPE } from "../extensions/openai-codex-compat/compaction-checkpoint.ts";
 import { DEFAULT_CONFIG } from "../extensions/openai-codex-compat/config.ts";
 import registerCodexModelPolicy from "../extensions/openai-codex-compat/model-policy.ts";
 
 type ModelSelectEvent = Extract<ExtensionEvent, { type: "model_select" }>;
 
-function model(provider: string, id: string, api: string): Model<any> {
+function model(provider: string, id: string, api: Api): Model<Api> {
   return {
     id,
     name: id,
@@ -22,7 +22,7 @@ function model(provider: string, id: string, api: string): Model<any> {
     cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
     contextWindow: 100_000,
     maxTokens: 10_000,
-  } satisfies Model<any>;
+  } satisfies Model<Api>;
 }
 
 const codexModel = model("openai-codex", "gpt-test", "openai-codex-responses");
@@ -46,10 +46,11 @@ function checkpointEntry(): SessionEntry {
   } satisfies SessionEntry;
 }
 
-function createHarness(branch: SessionEntry[], initialModel: Model<any>) {
-  const handlers = new Map<string, (...args: any[]) => any>();
+function createHarness(branch: SessionEntry[], initialModel: Model<Api>) {
+  type Handler = (...args: unknown[]) => void | Promise<void>;
+  const handlers = new Map<string, Handler>();
   const notices: Array<{ message: string; level: string }> = [];
-  const setModelCalls: Model<any>[] = [];
+  const setModelCalls: Model<Api>[] = [];
   let activeTools = ["read", "edit", "write"];
   let selectedModel = initialModel;
 
@@ -68,14 +69,14 @@ function createHarness(branch: SessionEntry[], initialModel: Model<any>) {
   });
 
   const pi = extensionApiFixture({
-    on(event: string, handler: (...args: any[]) => any) {
+    on(event: string, handler: Handler) {
       handlers.set(event, handler);
     },
     getActiveTools: () => activeTools,
     setActiveTools(names: string[]) {
       activeTools = names;
     },
-    async setModel(nextModel: Model<any>) {
+    async setModel(nextModel: Model<Api>) {
       setModelCalls.push(nextModel);
       const previousModel = selectedModel;
       selectedModel = nextModel;
@@ -94,7 +95,7 @@ function createHarness(branch: SessionEntry[], initialModel: Model<any>) {
 
   registerCodexModelPolicy(pi, () => DEFAULT_CONFIG);
 
-  const select = async (nextModel: Model<any>, source: ModelSelectEvent["source"] = "set") => {
+  const select = async (nextModel: Model<Api>, source: ModelSelectEvent["source"] = "set") => {
     const previousModel = selectedModel;
     selectedModel = nextModel;
     await handlers.get("model_select")?.(

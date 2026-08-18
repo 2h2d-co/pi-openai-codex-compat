@@ -2,6 +2,7 @@ import { isAllowedString, isNumber, isString } from "./value-contracts.ts";
 import {
   calculateCost,
   parseStreamingJson,
+  type Api,
   type AssistantMessage,
   type AssistantMessageEventStream,
   type Model,
@@ -128,7 +129,7 @@ function appendGrammarDelta(
 function customInput(block: StreamingToolCall): string {
   const property = block.customInput?.property;
   if (!property) return "";
-  const value = block.arguments[property];
+  const value: unknown = block.arguments[property];
   return isString(value) ? value : "";
 }
 
@@ -204,7 +205,7 @@ export async function processCodexStream(
   events: AsyncIterable<JsonRecord>,
   output: AssistantMessage,
   stream: AssistantMessageEventStream,
-  model: Model<any>,
+  model: Model<Api>,
   grammarToolInputProperties: ReadonlyMap<string, string>,
   options?: ProcessCodexStreamOptions,
 ): Promise<void> {

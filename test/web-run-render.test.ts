@@ -169,9 +169,11 @@ void test("renders PDF screenshots as concise page cards", () => {
   const collapsed = renderResult(args, output, false);
   assert.match(collapsed, /Processed 2 PDF pages 1, 3 · reference only · cdn\.example/);
 
+  const firstOutput = output.split(SEPARATOR)[0];
+  assert.ok(firstOutput);
   const single = renderResult(
     { screenshot: [{ ref_id: "turn4pdf0", pageno: 0 }] },
-    output.split(SEPARATOR)[0]!,
+    firstOutput,
     false,
   );
   assert.match(single, /Processed PDF page 1 · reference only · cdn\.example/);

@@ -1,14 +1,21 @@
-import { calculateCost, type AssistantMessage, type Model } from "@earendil-works/pi-ai";
+import { calculateCost, type Api, type AssistantMessage, type Model } from "@earendil-works/pi-ai";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { loadConfig, type CodexCompatConfig, type WebSearchMode } from "./config.ts";
 import { isObject, type JsonRecord } from "./codex-protocol.ts";
 import { splitNamespacedToolName, WEB_RUN_TOOL_NAME } from "./namespaced-tools.ts";
+import { isNonNullObject } from "./value-contracts.ts";
 
 const CODEX_PROVIDER = "openai-codex";
 const CODEX_API = "openai-codex-responses";
 
-export function isCodexModel(model: Model<any> | undefined): model is Model<any> {
-  return Boolean(model && model.provider === CODEX_PROVIDER && model.api === CODEX_API);
+export function isCodexModel(model: unknown): model is Model<typeof CODEX_API> {
+  return (
+    isNonNullObject(model) &&
+    "provider" in model &&
+    model.provider === CODEX_PROVIDER &&
+    "api" in model &&
+    model.api === CODEX_API
+  );
 }
 
 export function supportsReasoningMode(modelId: string): boolean {
@@ -21,7 +28,10 @@ function isWebSearchTool(value: unknown): boolean {
 
 function isWebRunNamespace(value: unknown): boolean {
   if (!isObject(value) || value.type !== "namespace") return false;
-  const webRun = splitNamespacedToolName(WEB_RUN_TOOL_NAME)!;
+  const webRun = splitNamespacedToolName(WEB_RUN_TOOL_NAME);
+  if (!webRun) {
+    throw new Error("The web.run tool name is not namespaced.");
+  }
   return (
     value.name === webRun.namespace &&
     Array.isArray(value.tools) &&
@@ -86,7 +96,7 @@ export function applyCodexRequestOptions(
 /** Recompute cost from canonical rates so payload-only priority mode cannot be undercounted. */
 export function applyPriorityPricing(
   message: AssistantMessage,
-  model: Model<any>,
+  model: Model<Api>,
 ): AssistantMessage {
   const usage = structuredClone(message.usage);
   calculateCost(model, usage);
@@ -115,8 +125,8 @@ export default function registerCodexRequestOptions(
 
     const config = resolveConfig(ctx);
     return applyCodexRequestOptions(event.payload, config, {
-      modelId: ctx.model!.id,
-      supportsImageSearch: ctx.model!.input.includes("image"),
+      modelId: ctx.model.id,
+      supportsImageSearch: ctx.model.input.includes("image"),
     });
   });
 }

@@ -155,7 +155,9 @@ export function codexHttpError(status: number, statusText: string, raw: string):
     }
     message =
       (isString(error["message"]) ? error["message"] : undefined) || friendlyMessage || message;
-  } catch {}
+  } catch (error) {
+    if (!(error instanceof SyntaxError)) throw error;
+  }
   return new CodexHttpError(friendlyMessage || message, retryable);
 }
 

@@ -28,11 +28,12 @@ const releaseMetadataFiles: string[] = ["package-lock.json", "package.json"];
 const buildScripts: string[] = [];
 const executablePackageFiles: string[] = [];
 const forbiddenInstallScripts = ["preinstall", "install", "postinstall"];
-const npmExecPath = process.env["npm_execpath"];
+const configuredNpmExecPath = process.env["npm_execpath"];
 
-if (!npmExecPath) {
+if (!configuredNpmExecPath) {
   throw new Error("Run this release command through npm so npm_execpath is available.");
 }
+const npmExecPath = configuredNpmExecPath;
 
 const version = process.argv[2];
 if (!version || process.argv.length !== 3) {
@@ -266,11 +267,11 @@ function verifyReleaseCommit(commit: string, releaseTag: string, digest: string)
 }
 
 function npm(args: string[], cwd: string): void {
-  run(process.execPath, [npmExecPath!, ...args], cwd, false);
+  run(process.execPath, [npmExecPath, ...args], cwd, false);
 }
 
 function npmOutput(args: string[], cwd: string): string {
-  return run(process.execPath, [npmExecPath!, ...args], cwd, true);
+  return run(process.execPath, [npmExecPath, ...args], cwd, true);
 }
 
 function git(args: string[]): void {

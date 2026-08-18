@@ -6,7 +6,12 @@ import type {
   SessionBeforeCompactEvent,
   ToolInfo,
 } from "@earendil-works/pi-coding-agent";
-import type { Model, OpenAICodexResponsesOptions, ProviderHeaders } from "@earendil-works/pi-ai";
+import type {
+  Api,
+  Model,
+  OpenAICodexResponsesOptions,
+  ProviderHeaders,
+} from "@earendil-works/pi-ai";
 import { addRemoteCompactionFeature, isObject, type JsonRecord } from "./codex-protocol.ts";
 import {
   activeResponsesTools,
@@ -25,7 +30,7 @@ const CODEX_API = "openai-codex-responses";
 
 type ConfigResolver = (ctx: ExtensionContext) => CodexCompatConfig;
 
-function selectedCodexModel(model: Model<any> | undefined): model is Model<any> {
+function selectedCodexModel(model: Model<Api> | undefined): model is Model<typeof CODEX_API> {
   return Boolean(model && model.provider === CODEX_PROVIDER && model.api === CODEX_API);
 }
 
@@ -65,8 +70,10 @@ function toolInputProperty(tool: ToolInfo | undefined): string | undefined {
     ? tool.parameters["required"].filter((name): name is string => typeof name === "string")
     : [];
   if (required.length !== 1 || !isObject(tool.parameters["properties"])) return undefined;
-  const property = tool.parameters["properties"][required[0]!];
-  return isObject(property) && property.type === "string" ? required[0] : undefined;
+  const requiredProperty = required[0];
+  if (requiredProperty === undefined) return undefined;
+  const property = tool.parameters["properties"][requiredProperty];
+  return isObject(property) && property.type === "string" ? requiredProperty : undefined;
 }
 
 function requestGrammarToolInputProperties(
@@ -89,7 +96,7 @@ function requestGrammarToolInputProperties(
 
 function fallbackGrammarToolInputProperties(
   activeNames: readonly string[],
-  model: Model<any>,
+  model: Model<Api>,
 ): GrammarToolInputProperties {
   const compat = responsesCompatibility(model.compat);
   return activeNames.includes(APPLY_PATCH_TOOL_NAME) && compat?.supportsOpenAIGrammarTools
@@ -205,6 +212,7 @@ export default function registerRemoteCompaction(
       };
       if (compacted.usage) Object.assign(result.compaction, { usage: compacted.usage });
       return result;
+      // oxlint-disable-next-line 2h2d/no-silent-error-suppression -- The compaction hook reports the failure and returns Pi's explicit cancellation result.
     } catch (error) {
       if (!event.signal.aborted && ctx.hasUI) {
         ctx.ui.notify(`OpenAI Codex native compaction failed: ${explain(error)}`, "error");

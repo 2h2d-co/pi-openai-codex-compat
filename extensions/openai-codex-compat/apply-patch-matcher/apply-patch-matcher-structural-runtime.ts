@@ -17,6 +17,7 @@ import {
   rustTrim,
   throwIfAborted,
 } from "./apply-patch-matcher-line-matching.ts";
+import { requiredValue } from "../required-value.ts";
 
 export const GRAMMAR_BY_EXTENSION = new Map<string, GrammarName>([
   [".js", "javascript"],
@@ -44,6 +45,7 @@ export function parserInitializationPromise(): Promise<void> {
   if (!parserInitialization) {
     const promise = structuralRuntime.initializeParser();
     parserInitialization = promise;
+    // oxlint-disable-next-line 2h2d/no-silent-error-suppression -- The original promise retains the rejection; this branch only removes the failed cache entry.
     void promise.catch(() => {
       if (parserInitialization === promise) parserInitialization = undefined;
     });
@@ -59,6 +61,7 @@ export async function loadLanguage(grammar: GrammarName): Promise<Language> {
       return structuralRuntime.loadLanguage(fileURLToPath(wasmURL(grammar)));
     })();
     languagePromises.set(grammar, promise);
+    // oxlint-disable-next-line 2h2d/no-silent-error-suppression -- The original promise retains the rejection; this branch only removes the failed cache entry.
     void promise.catch(() => {
       if (languagePromises.get(grammar) === promise) languagePromises.delete(grammar);
     });
@@ -100,7 +103,11 @@ export function fenceGrammar(group: EditGroup): GrammarName | undefined {
   for (const line of context.toReversed()) {
     if (/^ {0,3}(?:`{3,}|~{3,})[\t ]*$/u.test(line)) return undefined;
     const match = rustTrim(line).match(/^(?:`{3,}|~{3,})[\t ]*([A-Za-z0-9_+-]+)/u);
-    if (match) return GRAMMAR_BY_FENCE_INFO.get(match[1]!.toLowerCase());
+    if (match) {
+      return GRAMMAR_BY_FENCE_INFO.get(
+        requiredValue(match[1], "A matched fence language is missing.").toLowerCase(),
+      );
+    }
   }
   return undefined;
 }
@@ -110,7 +117,10 @@ export function utf16ByteOffsets(source: string): Uint32Array {
   let byteOffset = 0;
   for (let index = 0; index < source.length;) {
     offsets[index] = byteOffset;
-    const codePoint = source.codePointAt(index)!;
+    const codePoint = requiredValue(
+      source.codePointAt(index),
+      "UTF-16 source index is outside the string.",
+    );
     const width = codePoint > 0xffff ? 2 : 1;
     if (width === 2) offsets[index + 1] = byteOffset;
     byteOffset += Buffer.byteLength(String.fromCodePoint(codePoint), "utf8");
@@ -131,8 +141,11 @@ export function syntaxTokens(root: SyntaxNode, source: string): SyntaxToken[] {
         tokens.push({
           type: node.type,
           text: node.text,
-          start: byteOffsets[node.startIndex]!,
-          end: byteOffsets[node.endIndex]!,
+          start: requiredValue(
+            byteOffsets[node.startIndex],
+            "Syntax-node start is outside the source.",
+          ),
+          end: requiredValue(byteOffsets[node.endIndex], "Syntax-node end is outside the source."),
           path: nextPath,
           unsafe: nextUnsafe,
         });
@@ -177,8 +190,9 @@ export async function parseStructuralDocument(
     } finally {
       parser.delete();
     }
-  } catch {
-    if (signal?.aborted) throw new Error("apply_patch was cancelled.");
+  } catch (error) {
+    if (signal?.aborted) throw new Error("apply_patch was cancelled.", { cause: error });
+    if (!(error instanceof Error)) throw error;
     return null;
   }
 }
@@ -193,17 +207,31 @@ export async function embeddedStructuralDocuments(
   const documents: StructuralDocument[] = [];
   const sourceBytes = Buffer.from(source, "utf8");
   for (let index = 0; index < sourceLines.length; index++) {
-    const opening = fenceOpening(sourceLines[index]!);
+    const opening = fenceOpening(
+      requiredValue(sourceLines[index], "Fence line index is outside the source."),
+    );
     if (!opening) continue;
     const contentStart = index + 1;
     let closing = contentStart;
-    while (closing < sourceLines.length && !fenceClosing(sourceLines[closing]!, opening)) {
+    while (
+      closing < sourceLines.length &&
+      !fenceClosing(
+        requiredValue(sourceLines[closing], "Fence line index is outside the source."),
+        opening,
+      )
+    ) {
       closing += 1;
     }
     if (closing >= sourceLines.length) break;
     if (opening.grammar === grammar) {
-      const start = lineStarts[contentStart]!;
-      const end = lineStarts[closing]!;
+      const start = requiredValue(
+        lineStarts[contentStart],
+        "Embedded document start is outside the source.",
+      );
+      const end = requiredValue(
+        lineStarts[closing],
+        "Embedded document end is outside the source.",
+      );
       const document = await parseStructuralDocument(
         grammar,
         sourceBytes.subarray(start, end).toString("utf8"),
@@ -242,7 +270,7 @@ export function commonIndent(lines: readonly string[]): string {
     .filter((line) => line.trim().length > 0)
     .map((line) => line.match(/^[\t ]*/u)?.[0] ?? "");
   if (indents.length === 0) return "";
-  let prefix = indents[0]!;
+  let prefix = requiredValue(indents[0], "The first non-empty indentation is missing.");
   for (const indent of indents.slice(1)) {
     while (prefix && !indent.startsWith(prefix)) prefix = prefix.slice(0, -1);
   }
@@ -312,7 +340,15 @@ export function fragmentWrappers(grammar: GrammarName, value: string): WrappedFr
         wrapped("object __Patch__ { def __patch__ = {\n", body, "\n}}\n"),
         wrapped("object __Patch__ { val __patch__ = (\n", body, "\n) }\n"),
       ];
-    default:
+    case "bash":
+    case "c":
+    case "cpp":
+    case "csharp":
+    case "css":
+    case "html":
+    case "json":
+    case "ruby":
+    case "rust":
       return [];
   }
 }
@@ -378,13 +414,15 @@ export function tokenSignatureMatches(
 
 export function relativeSyntaxPath(tokens: readonly SyntaxToken[]): string {
   if (tokens.length === 0) return "";
-  let common = tokens[0]!.path.length;
+  const firstToken = requiredValue(tokens[0], "The first syntax token is missing.");
+  let common = firstToken.path.length;
   for (const token of tokens.slice(1)) {
     let index = 0;
     while (
       index < common &&
       index < token.path.length &&
-      tokens[0]!.path[index]!.id === token.path[index]!.id
+      requiredValue(firstToken.path[index], "Common syntax path index is missing.").id ===
+        requiredValue(token.path[index], "Syntax path index is missing.").id
     ) {
       index += 1;
     }

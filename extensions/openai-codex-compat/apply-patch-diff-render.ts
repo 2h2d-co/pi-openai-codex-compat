@@ -562,7 +562,8 @@ function renderHeader(
   const additions = changes.reduce((total, change) => total + change.additions, 0);
   const deletions = changes.reduce((total, change) => total + change.deletions, 0);
   if (changes.length === 1) {
-    const change = changes[0]!;
+    const change = changes[0];
+    if (!change) throw new Error("A single-change diff has no change to render.");
     return `${theme.fg("dim", "• ")}${theme.bold(changeVerb(change))} ${changePath(change, cwd)} ${countSummary(change.additions, change.deletions, theme)}`;
   }
   const noun = changes.length === 1 ? "file" : "files";

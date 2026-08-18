@@ -6,7 +6,7 @@ import {
   type SessionEntry,
   type ToolInfo,
 } from "@earendil-works/pi-coding-agent";
-import type { Message, Model, Tool } from "@earendil-works/pi-ai";
+import type { Api, Message, Model, Tool } from "@earendil-works/pi-ai";
 import { APPLY_PATCH_LARK_GRAMMAR, APPLY_PATCH_TOOL_NAME } from "./apply-patch.ts";
 import type { ImageDetail } from "./config.ts";
 import {
@@ -25,6 +25,7 @@ import {
   splitNamespacedToolName,
 } from "./namespaced-tools.ts";
 import { convertResponsesMessages } from "./vendor/pi-ai/openai-responses-serialization.ts";
+import { requiredValue } from "./required-value.ts";
 
 export const CHECKPOINT_ENTRY_TYPE = "openai-codex-compat-remote-compaction";
 export const CHECKPOINT_FORMAT_VERSION = 1;
@@ -154,7 +155,7 @@ function asPiTool(tool: ToolInfo, grammarToolInputProperties: GrammarToolInputPr
 
 /** Encode Pi's canonical messages using Pi AI's OpenAI Responses serializer. */
 function encodeMessages(
-  model: Model<any>,
+  model: Model<Api>,
   messages: Message[],
   allTools: readonly ToolInfo[],
   grammarToolInputProperties: GrammarToolInputProperties,
@@ -190,7 +191,7 @@ function encodeMessages(
 }
 
 export function encodeSessionEntries(
-  model: Model<any>,
+  model: Model<Api>,
   entries: readonly SessionEntry[],
   allTools: readonly ToolInfo[],
   grammarToolInputProperties: GrammarToolInputProperties = new Map(),
@@ -223,7 +224,12 @@ export function parseCheckpoint(value: unknown): CheckpointData | undefined {
   if (history.length === 0) return undefined;
 
   const compactionItems = history.filter((item) => item.type === "compaction");
-  if (compactionItems.length !== 1 || !isString(compactionItems[0]!.encrypted_content)) {
+  const compactionItem = compactionItems[0];
+  if (
+    compactionItems.length !== 1 ||
+    !compactionItem ||
+    !isString(compactionItem.encrypted_content)
+  ) {
     return undefined;
   }
 
@@ -259,7 +265,7 @@ export function parseCheckpoint(value: unknown): CheckpointData | undefined {
 /** Find the newest applicable checkpoint on the active branch. */
 export function searchCheckpoint(branch: readonly SessionEntry[]): CheckpointSearch {
   for (let index = branch.length - 1; index >= 0; index--) {
-    const entry = branch[index]!;
+    const entry = requiredValue(branch[index], "A checkpoint branch entry is missing.");
     let candidate: unknown;
 
     if (entry.type === "compaction") {
@@ -318,7 +324,7 @@ export function checkpointData(
  */
 export function providerHistory(options: {
   branch: readonly SessionEntry[];
-  wireModel: Model<any>;
+  wireModel: Model<Api>;
   allTools: readonly ToolInfo[];
   grammarToolInputProperties?: GrammarToolInputProperties;
   imageDetail?: ImageDetail;

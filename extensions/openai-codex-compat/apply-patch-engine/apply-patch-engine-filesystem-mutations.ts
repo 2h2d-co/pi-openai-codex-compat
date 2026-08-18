@@ -18,6 +18,7 @@ import { basename, dirname, join, resolve } from "node:path";
 import type { ApplyPatchExecutionFilesystem } from "./apply-patch-engine-contracts.ts";
 import { errorMessage, hasErrorCode, isNotFound } from "./apply-patch-engine-errors.ts";
 import type { ParentPlan, PlannedMutation } from "./apply-patch-engine-filesystem-model.ts";
+import { requiredValue } from "../required-value.ts";
 
 export const DEFAULT_EXECUTION_FILESYSTEM: ApplyPatchExecutionFilesystem = {
   chmod,
@@ -38,8 +39,13 @@ export class RegularFileReplacementError extends Error {
   readonly destinationChanged: boolean;
   readonly temporaryPath: string | undefined;
 
-  constructor(message: string, destinationChanged: boolean, temporaryPath?: string) {
-    super(message);
+  constructor(
+    message: string,
+    destinationChanged: boolean,
+    temporaryPath?: string,
+    cause?: unknown,
+  ) {
+    super(message, { cause });
     this.destinationChanged = destinationChanged;
     this.temporaryPath = temporaryPath;
   }
@@ -64,11 +70,13 @@ export async function replaceRegularFile(
     await filesystem.rename(temporaryPath, path);
     destinationChanged = true;
     await establishExactSpelling(path, filesystem);
+    // oxlint-disable-next-line 2h2d/no-silent-error-suppression -- The failure is captured and thrown after the temporary-file cleanup attempt.
   } catch (error) {
     pendingError = error;
   } finally {
     try {
       await filesystem.unlink(temporaryPath);
+      // oxlint-disable-next-line 2h2d/no-silent-error-suppression -- Non-ENOENT cleanup failures are captured and thrown after cleanup completes.
     } catch (error) {
       if (!isNotFound(error)) {
         temporaryEntryRemains = true;
@@ -81,6 +89,7 @@ export async function replaceRegularFile(
       errorMessage(pendingError),
       destinationChanged,
       temporaryEntryRemains ? temporaryPath : undefined,
+      pendingError,
     );
   }
 }
@@ -120,8 +129,9 @@ export async function establishExactSpelling(
   } catch (error) {
     try {
       await filesystem.rename(temporaryPath, actualPath);
-    } catch {
-      // Preserve the original error; the executor reports that the mutation is inexact.
+    } catch (restoreError) {
+      // oxlint-disable-next-line preserve-caught-error -- AggregateError.errors retains both rename failures, and cause identifies the original failure.
+      throw new AggregateError([error, restoreError], errorMessage(error), { cause: error });
     }
     throw error;
   }
@@ -141,7 +151,8 @@ export async function exactSpellingExists(
 ): Promise<boolean> {
   try {
     return (await filesystem.readdir(dirname(path))).includes(basename(path));
-  } catch {
+  } catch (error) {
+    if (!(error instanceof Error)) throw error;
     return false;
   }
 }
@@ -149,7 +160,8 @@ export async function exactSpellingExists(
 export async function requestedSpellingExists(path: string): Promise<boolean> {
   try {
     return (await readdir(dirname(path))).includes(basename(path));
-  } catch {
+  } catch (error) {
+    if (!(error instanceof Error)) throw error;
     return false;
   }
 }
@@ -195,8 +207,9 @@ export class PureMoveExecutionError extends Error {
     message: string,
     destinationState: "unchanged" | "removed" | "created" | "replaced",
     temporaryPath?: string,
+    cause?: unknown,
   ) {
-    super(message);
+    super(message, { cause });
     this.destinationState = destinationState;
     this.temporaryPath = temporaryPath;
   }
@@ -207,7 +220,10 @@ export async function executeCrossDeviceMove(
   filesystem: ApplyPatchExecutionFilesystem,
 ): Promise<void> {
   const sourcePath = mutation.operation.absolutePath;
-  const destinationPath = mutation.operation.moveAbsolutePath!;
+  const destinationPath = requiredValue(
+    mutation.operation.moveAbsolutePath,
+    "A cross-device move has no destination path.",
+  );
   const temporaryPath = resolve(
     dirname(destinationPath),
     `.${basename(destinationPath)}.apply-patch-${randomUUID()}.tmp`,
@@ -245,11 +261,13 @@ export async function executeCrossDeviceMove(
     }
     destinationChanged = true;
     await filesystem.unlink(sourcePath);
+    // oxlint-disable-next-line 2h2d/no-silent-error-suppression -- The failure is captured and thrown after the temporary-entry cleanup attempt.
   } catch (error) {
     pendingError = error;
   } finally {
     try {
       await filesystem.unlink(temporaryPath);
+      // oxlint-disable-next-line 2h2d/no-silent-error-suppression -- Non-ENOENT cleanup failures are captured and thrown after cleanup completes.
     } catch (error) {
       if (!isNotFound(error)) {
         temporaryEntryRemains = true;
@@ -272,6 +290,7 @@ export async function executeCrossDeviceMove(
           ? "removed"
           : "unchanged",
       temporaryEntryRemains ? temporaryPath : undefined,
+      pendingError,
     );
   }
 }
@@ -281,7 +300,10 @@ export async function executePureMove(
   filesystem: ApplyPatchExecutionFilesystem,
 ): Promise<void> {
   const sourcePath = mutation.operation.absolutePath;
-  const destinationPath = mutation.operation.moveAbsolutePath!;
+  const destinationPath = requiredValue(
+    mutation.operation.moveAbsolutePath,
+    "A move mutation has no destination path.",
+  );
   if (mutation.moveStrategy === "copy-unlink") {
     await executeCrossDeviceMove(mutation, filesystem);
     return;
@@ -290,7 +312,9 @@ export async function executePureMove(
     await filesystem.rename(sourcePath, destinationPath);
   } catch (error) {
     if (hasErrorCode(error, "EXDEV")) {
-      throw new Error("rename unexpectedly crossed filesystem boundaries after validation");
+      throw new Error("rename unexpectedly crossed filesystem boundaries after validation", {
+        cause: error,
+      });
     }
     throw error;
   }
@@ -301,7 +325,9 @@ export async function executePureMove(
     try {
       await filesystem.lstat(destinationPath);
       destinationChanged = true;
-    } catch {}
+    } catch (inspectionError) {
+      if (!(inspectionError instanceof Error)) throw inspectionError;
+    }
     throw new PureMoveExecutionError(
       errorMessage(error),
       destinationChanged
@@ -309,6 +335,8 @@ export async function executePureMove(
           ? "created"
           : "replaced"
         : "unchanged",
+      undefined,
+      error,
     );
   }
 }

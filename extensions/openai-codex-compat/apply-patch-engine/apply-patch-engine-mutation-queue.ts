@@ -134,7 +134,8 @@ export async function logicalMutationQueueKeys(
           if (targetMetadata.isFile()) {
             keys.add(`physical:${targetMetadata.dev}:${targetMetadata.ino}`);
           }
-        } catch {
+        } catch (error) {
+          if (!(error instanceof Error)) throw error;
           // The semantic planner reports inaccessible, dangling, or cyclic targets.
         }
       }
@@ -173,7 +174,9 @@ export async function canonicalMutationQueuePaths(
           if ((await lstat(path)).isSymbolicLink()) {
             return symlinkEntryQueuePath(path);
           }
-        } catch {}
+        } catch (inspectionError) {
+          if (!(inspectionError instanceof Error)) throw inspectionError;
+        }
         throw error;
       }
     }),

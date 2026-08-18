@@ -5,6 +5,7 @@ import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-a
 import {
   clampThinkingLevel,
   createAssistantMessageEventStream,
+  type Api,
   type AssistantMessage,
   type AssistantMessageEventStream,
   type Context,
@@ -359,7 +360,7 @@ export class CodexProviderRuntime {
   }
 
   private async maybePrewarm(options: {
-    model: Model<any>;
+    model: Model<Api>;
     body: JsonRecord;
     fullBody: JsonRecord;
     requestOptions: OpenAICodexResponsesOptions;
@@ -401,7 +402,8 @@ export class CodexProviderRuntime {
           options.diagnostics.push(diagnostic);
         },
       });
-    } catch {
+    } catch (error) {
+      if (!(error instanceof Error)) throw error;
       // Warmup is best-effort. The transport has already activated sticky SSE
       // after exhausting its WebSocket retry budget.
     }
@@ -467,7 +469,7 @@ export class CodexProviderRuntime {
   }
 
   private wireHistory(
-    model: Model<any>,
+    model: Model<Api>,
     context: Context,
     grammarToolInputProperties: GrammarToolInputProperties,
     sessionId: string | undefined,
@@ -503,7 +505,7 @@ export class CodexProviderRuntime {
   }
 
   private buildRequestBody(
-    model: Model<any>,
+    model: Model<Api>,
     context: Context,
     options: OpenAICodexResponsesOptions,
     runtimeSessionId: string | undefined,
@@ -562,7 +564,7 @@ export class CodexProviderRuntime {
   }
 
   private async performCompaction(options: {
-    model: Model<any>;
+    model: Model<Api>;
     requestOptions: OpenAICodexResponsesOptions;
     history: ResponsesItem[];
     postCompactionTail?: ResponsesItem[];
@@ -653,7 +655,7 @@ export class CodexProviderRuntime {
   }
 
   private async maybeCompactPercentage(
-    model: Model<any>,
+    model: Model<Api>,
     context: Context,
     options: OpenAICodexResponsesOptions,
     body: JsonRecord,
@@ -754,7 +756,7 @@ export class CodexProviderRuntime {
   }
 
   stream(
-    model: Model<any>,
+    model: Model<Api>,
     context: Context,
     options?: OpenAICodexResponsesOptions,
   ): AssistantMessageEventStream {
@@ -1182,6 +1184,7 @@ export class CodexProviderRuntime {
 
         stream.push({ type: "done", reason: output.stopReason, message: output });
         stream.end();
+        // oxlint-disable-next-line 2h2d/no-silent-error-suppression -- The stream protocol reports terminal failures as error events instead of rejecting a detached task.
       } catch (error) {
         if (registeredPostToolDisposition) {
           this.forgetPostToolDisposition(registeredPostToolDisposition);
@@ -1199,7 +1202,7 @@ export class CodexProviderRuntime {
   }
 
   streamSimple(
-    model: Model<any>,
+    model: Model<Api>,
     context: Context,
     options?: SimpleStreamOptions,
   ): AssistantMessageEventStream {
@@ -1215,7 +1218,7 @@ export class CodexProviderRuntime {
   }
 
   async compact(options: {
-    model: Model<any>;
+    model: Model<Api>;
     requestOptions: OpenAICodexResponsesOptions;
     history: ResponsesItem[];
     instructions: string;

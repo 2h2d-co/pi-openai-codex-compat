@@ -6,7 +6,7 @@ import {
   type ExtensionAPI,
   type ExtensionContext,
 } from "@earendil-works/pi-coding-agent";
-import type { Model } from "@earendil-works/pi-ai";
+import type { Api, Model } from "@earendil-works/pi-ai";
 import type { CodexCompatConfig } from "./config.ts";
 import type { CodexToolBackgroundResolver } from "./codex-tool-surface.ts";
 import { DEFAULT_CONFIG } from "./config.ts";
@@ -49,7 +49,7 @@ Guidelines:
 export type { ImageGenerationDetails } from "./image-generation-render.ts";
 
 type JsonRequester = (
-  model: Model<any>,
+  model: Model<Api>,
   path: string,
   body: JsonRecord,
   options: CodexJsonRequestOptions,
@@ -308,7 +308,8 @@ export default function registerImageGeneration(
           imageBase64,
         );
       } catch (error) {
-        saveError = error instanceof Error ? error.message : String(error);
+        if (!(error instanceof Error)) throw error;
+        saveError = error.message;
       }
 
       const content: Array<
