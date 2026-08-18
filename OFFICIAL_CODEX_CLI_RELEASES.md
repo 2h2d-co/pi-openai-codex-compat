@@ -108,9 +108,10 @@ The detailed `apply_patch` contracts remain normative:
 
 ### P-003 — Adapt the endpoint without impersonating the official client
 
-- **Our choice:** Send fields required for the first-party `openai-codex`
-  endpoint, but do not invent a Codex client version, originator, attestation,
-  W3C trace, analytics payload, or Git state.
+- **Our choice:** Identify the client truthfully as Pi with `originator: pi`
+  and a Pi user agent. Send fields required for the first-party
+  `openai-codex` endpoint, but do not invent an official Codex client version
+  or identity, attestation, W3C trace, analytics payload, or Git state.
 - **Official Codex:** Can truthfully send those values because it owns those
   systems.
 - **Why:** Fabricated operational metadata is incorrect and can make debugging
