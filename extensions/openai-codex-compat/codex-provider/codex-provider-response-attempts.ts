@@ -70,6 +70,7 @@ export function responseDecisionDiagnostic(options: {
   attemptItems: readonly ResponsesItem[];
   capture: CodexAttemptCapture;
   decision: CodexResponseDecision;
+  failureReason?: string;
   incompleteReason?: string;
   postToolDisposition?: "continue" | "error" | "retry";
   terminalState: CodexTerminalState;
@@ -81,13 +82,14 @@ export function responseDecisionDiagnostic(options: {
   const nontrivial =
     options.attempt > 1 ||
     options.terminalState.type !== "response.completed" ||
+    options.failureReason !== undefined ||
     endTurn === false ||
     options.capture.streamedToolCallIndexes.size > 0;
   if (!nontrivial) return undefined;
 
   const details: JsonRecord = {
     attempt: options.attempt,
-    terminalType: options.terminalState.type ?? "missing",
+    terminalType: options.failureReason ?? options.terminalState.type ?? "missing",
     outputItemTypes: outputItemTypeCounts(options.attemptItems),
     streamedCallsStarted: options.capture.streamedToolCallIndexes.size,
     streamedCallsDone: options.capture.streamedCompletedToolCallIndexes.size,
@@ -265,6 +267,12 @@ export function terminalReason(terminalState: CodexTerminalState): string | unde
 }
 
 export function terminalErrorMessage(disposition: CodexPostToolDisposition): string {
+  if (disposition.terminalType === "websocket_connection_limit_reached") {
+    return (
+      disposition.errorMessage ??
+      "Codex WebSocket reached its connection age limit before tool outputs were recorded"
+    );
+  }
   if (disposition.terminalType === "response.failed") {
     const error = isObject(disposition.response?.["error"])
       ? disposition.response["error"]

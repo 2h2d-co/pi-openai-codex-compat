@@ -88,6 +88,10 @@ export {
   getOpenAICodexWebSocketDebugStats,
   resetOpenAICodexWebSocketDebugStats,
 } from "./codex-transport/codex-transport-websocket-pool.ts";
+export {
+  WEBSOCKET_CONNECTION_LIMIT_REACHED_CODE,
+  isWebSocketConnectionLimitReachedError,
+} from "./codex-transport/codex-transport-errors.ts";
 
 /**
  * Focused adaptation of @earendil-works/pi-ai@0.84.1
@@ -379,8 +383,14 @@ export class CodexTransport {
           return;
         } catch (error) {
           const aborted = options.signal?.aborted;
+          const connectionLimitReached = isWebSocketConnectionLimitReachedError(error);
+          if (!aborted && options.requestKind === "turn" && connectionLimitReached) {
+            // A turn may already have committed output items. Its provider-owned
+            // response loop must decide what to carry forward before resampling.
+            throw error;
+          }
           const connectionLimitBeforeVisibleOutput =
-            !visibleOutputEmitted && isWebSocketConnectionLimitReachedError(error);
+            !visibleOutputEmitted && connectionLimitReached;
           if (!aborted && isPreviousResponseNotFoundError(error) && !retriedMissingContinuation) {
             retriedMissingContinuation = true;
             if (attempt) {

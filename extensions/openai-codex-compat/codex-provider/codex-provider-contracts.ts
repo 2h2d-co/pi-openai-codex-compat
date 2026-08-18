@@ -68,10 +68,11 @@ export type CodexToolCallAssessment = {
 
 export type CodexPostToolDisposition = {
   callIds: string[];
+  errorMessage?: string;
   response?: JsonRecord;
   retryAttempt: number;
   sessionId?: string;
-  terminalType: "response.incomplete" | "response.failed";
+  terminalType: "response.incomplete" | "response.failed" | "websocket_connection_limit_reached";
   turnId: string;
   type: "error" | "retry";
 };

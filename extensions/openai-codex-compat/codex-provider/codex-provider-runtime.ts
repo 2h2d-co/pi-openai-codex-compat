@@ -52,6 +52,8 @@ import { processCodexStream, type CodexStreamAttemptState } from "../codex-strea
 import {
   CodexTransport,
   CodexTurnState,
+  WEBSOCKET_CONNECTION_LIMIT_REACHED_CODE,
+  isWebSocketConnectionLimitReachedError,
   validateCodexAuthentication,
   type CodexContinuationHandle,
   type CodexTransportDiagnostic,
@@ -918,6 +920,7 @@ export class CodexProviderRuntime {
           };
           const usageBeforeAttempt = structuredClone(output.usage);
           output.usage = emptyUsage();
+          let connectionLimitError: Error | undefined;
           try {
             await processCodexStream(
               startOnFirstEvent(
@@ -946,12 +949,18 @@ export class CodexProviderRuntime {
             );
           } catch (error) {
             output.usage = usageBeforeAttempt;
-            if (!requestOptions.signal?.aborted) {
-              webSocketResponseHandle?.failParsing(error);
+            if (isWebSocketConnectionLimitReachedError(error)) {
+              connectionLimitError = error;
+            } else {
+              if (!requestOptions.signal?.aborted) {
+                webSocketResponseHandle?.failParsing(error);
+              }
+              throw error;
             }
-            throw error;
           }
-          output.usage = accumulateUsage(usageBeforeAttempt, output.usage);
+          if (!connectionLimitError) {
+            output.usage = accumulateUsage(usageBeforeAttempt, output.usage);
+          }
           // `response.output_item.done` is Codex's item-level commit point. Terminal
           // response.output snapshots are deliberately ignored.
           const attemptItems = attemptCapture.streamedItems;
@@ -983,6 +992,9 @@ export class CodexProviderRuntime {
               terminalState,
               toolCalls,
             };
+            if (connectionLimitError) {
+              diagnosticOptions.failureReason = WEBSOCKET_CONNECTION_LIMIT_REACHED_CODE;
+            }
             if (incompleteReason) diagnosticOptions.incompleteReason = incompleteReason;
             if (postToolDisposition) {
               diagnosticOptions.postToolDisposition = postToolDisposition;
@@ -1000,7 +1012,17 @@ export class CodexProviderRuntime {
               throw new Error("Codex completed tool-call items could not be mapped to Pi calls.");
             }
             let postToolDisposition: "continue" | "error" | "retry" = "continue";
-            if (
+            if (connectionLimitError) {
+              postToolDisposition = "retry";
+              registeredPostToolDisposition = {
+                callIds,
+                errorMessage: formatProviderError(connectionLimitError),
+                retryAttempt: responseRetries + 1,
+                terminalType: WEBSOCKET_CONNECTION_LIMIT_REACHED_CODE,
+                turnId: agentTurn.turnId,
+                type: "retry",
+              };
+            } else if (
               terminalState.type === "response.incomplete" ||
               terminalState.type === "response.failed"
             ) {
@@ -1018,6 +1040,8 @@ export class CodexProviderRuntime {
               if (terminalState.response) {
                 registeredPostToolDisposition.response = structuredClone(terminalState.response);
               }
+            }
+            if (registeredPostToolDisposition) {
               if (runtimeSessionId) {
                 registeredPostToolDisposition.sessionId = runtimeSessionId;
               }
@@ -1041,7 +1065,7 @@ export class CodexProviderRuntime {
             (terminalState.type === "response.failed" &&
               retryableResponseFailure(terminalState.response));
           if (
-            retryableTerminal &&
+            (connectionLimitError || retryableTerminal) &&
             nextBody &&
             responseRetries < this.responseRetryPolicy.maxRetries
           ) {
@@ -1051,6 +1075,7 @@ export class CodexProviderRuntime {
             output.stopReason = "pending";
             delete output.errorMessage;
             delete output.rawStopReason;
+            delete output.responseId;
             recordDecision(
               attemptItems.length === 0 ? "retry_original_input" : "continue_no_tools",
             );
@@ -1059,6 +1084,10 @@ export class CodexProviderRuntime {
               requestOptions.signal,
             );
             continue;
+          }
+          if (connectionLimitError) {
+            recordDecision("return_terminal");
+            throw connectionLimitError;
           }
 
           if (

@@ -4,7 +4,7 @@
 
 ### Fixed
 
-- Reconnect expired 60-minute Codex WebSockets transparently when lifecycle events precede the connection-limit response.
+- Recover expired 60-minute Codex WebSockets in the provider response loop, retaining committed items, discarding provisional output, and waiting for Pi to record completed tool outputs before continuing.
 
 ### Changed
 

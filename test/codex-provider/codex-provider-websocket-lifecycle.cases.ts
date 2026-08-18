@@ -1,4 +1,8 @@
 import {
+  requireJsonRecord,
+  requireJsonRecords,
+} from "../../extensions/openai-codex-compat/codex-protocol.ts";
+import {
   assert,
   test,
   Type,
@@ -8,9 +12,353 @@ import {
   textEvents,
   responseDecisions,
   accessToken,
+  appendToolExchange,
   createHarness,
+  DEFAULT_CONFIG,
+  REPORT_TOOL,
   type Context,
+  type JsonRecord,
 } from "./codex-provider-harness.ts";
+
+void test("recovers an age-limited turn from done items while discarding provisional output", async (t) => {
+  const previousWebSocket = globalThis.WebSocket;
+  const sentBodies: JsonRecord[] = [];
+  const committedItem = {
+    type: "message",
+    id: "message-committed",
+    role: "assistant",
+    status: "completed",
+    content: [{ type: "output_text", text: "committed before reconnect", annotations: [] }],
+  };
+  let connections = 0;
+
+  class AgeLimitedTextWebSocket {
+    readyState = 1;
+    private readonly connectionId = ++connections;
+    private readonly listeners = new Map<string, Set<(event: unknown) => void>>();
+
+    constructor() {
+      queueMicrotask(() => this.dispatch("open", {}));
+    }
+
+    addEventListener(type: string, listener: (event: unknown) => void): void {
+      const listeners = this.listeners.get(type) ?? new Set();
+      listeners.add(listener);
+      this.listeners.set(type, listeners);
+    }
+
+    removeEventListener(type: string, listener: (event: unknown) => void): void {
+      this.listeners.get(type)?.delete(listener);
+    }
+
+    send(data: string): void {
+      const parsed: unknown = JSON.parse(data);
+      sentBodies.push(requireJsonRecord(parsed));
+      const responseEvents =
+        this.connectionId === 1
+          ? [
+              { type: "response.created", response: { id: "response-age-limited" } },
+              {
+                type: "response.output_item.added",
+                output_index: 0,
+                item: { ...committedItem, status: "in_progress", content: [] },
+              },
+              {
+                type: "response.content_part.added",
+                output_index: 0,
+                part: { type: "output_text", text: "", annotations: [] },
+              },
+              {
+                type: "response.output_text.delta",
+                output_index: 0,
+                delta: "committed before reconnect",
+              },
+              {
+                type: "response.output_item.done",
+                output_index: 0,
+                item: committedItem,
+              },
+              {
+                type: "response.output_item.added",
+                output_index: 1,
+                item: {
+                  type: "message",
+                  id: "message-provisional",
+                  role: "assistant",
+                  status: "in_progress",
+                  content: [],
+                },
+              },
+              {
+                type: "response.content_part.added",
+                output_index: 1,
+                part: { type: "output_text", text: "", annotations: [] },
+              },
+              {
+                type: "response.output_text.delta",
+                output_index: 1,
+                delta: "discard this provisional text",
+              },
+              {
+                type: "error",
+                error: {
+                  code: "websocket_connection_limit_reached",
+                  message:
+                    "Responses websocket connection limit reached (60 minutes). Create a new websocket connection to continue.",
+                },
+              },
+            ]
+          : textEvents("recovered after reconnect", "response-recovered");
+      queueMicrotask(() => {
+        for (const event of responseEvents) {
+          this.dispatch("message", { data: JSON.stringify(event) });
+        }
+      });
+    }
+
+    close(): void {
+      this.readyState = 3;
+    }
+
+    private dispatch(type: string, event: unknown): void {
+      for (const listener of this.listeners.get(type) ?? []) listener(event);
+    }
+  }
+
+  Object.defineProperty(globalThis, "WebSocket", {
+    configurable: true,
+    writable: true,
+    value: AgeLimitedTextWebSocket,
+  });
+  t.after(() => {
+    Object.defineProperty(globalThis, "WebSocket", {
+      configurable: true,
+      writable: true,
+      value: previousWebSocket,
+    });
+  });
+
+  const sessionId = "provider-age-limited-text";
+  const user = userEntry("user-1", "continue through the reconnect");
+  const harness = createHarness([user], DEFAULT_CONFIG, sessionId, {
+    maxRetries: 1,
+    baseDelayMs: 0,
+  });
+  t.after(() => harness.runtime.transport.close(sessionId));
+
+  const message = await harness.runtime
+    .streamSimple(
+      codexModel(),
+      { messages: [user.message] },
+      {
+        apiKey: accessToken(),
+        sessionId,
+        transport: "websocket-cached",
+      },
+    )
+    .result();
+
+  assert.equal(message.stopReason, "stop", message.errorMessage);
+  assert.equal(connections, 2);
+  assert.equal(sentBodies.length, 2);
+  assert.deepEqual(
+    message.content.filter((block) => block.type === "text").map((block) => block.text),
+    ["committed before reconnect", "recovered after reconnect"],
+  );
+  assert.doesNotMatch(JSON.stringify(message.content), /discard this provisional text/);
+
+  const firstBody = sentBodies[0];
+  const secondBody = sentBodies[1];
+  assert.ok(firstBody);
+  assert.ok(secondBody);
+  const firstInput = requireJsonRecords(firstBody.input);
+  const secondInput = requireJsonRecords(secondBody.input);
+  assert.deepEqual(secondInput.slice(0, firstInput.length), firstInput);
+  assert.deepEqual(secondInput.slice(firstInput.length), [committedItem]);
+  assert.equal(secondBody.previous_response_id, undefined);
+  assert.doesNotMatch(JSON.stringify(secondBody), /discard this provisional text/);
+
+  const decisions = responseDecisions(message);
+  assert.equal(decisions[0]?.["terminalType"], "websocket_connection_limit_reached");
+  assert.equal(decisions[0]?.["decision"], "continue_no_tools");
+  assert.equal(decisions[1]?.["decision"], "return_terminal");
+});
+
+void test("defers done tool calls across an age-limit reconnect until Pi records output", async (t) => {
+  const previousWebSocket = globalThis.WebSocket;
+  const sentBodies: JsonRecord[] = [];
+  const doneCall = {
+    type: "function_call",
+    id: "function-complete",
+    call_id: "call-complete",
+    name: "report",
+    status: "completed",
+    arguments: '{"value":"complete"}',
+  };
+  let connections = 0;
+
+  class AgeLimitedToolWebSocket {
+    readyState = 1;
+    private readonly connectionId = ++connections;
+    private readonly listeners = new Map<string, Set<(event: unknown) => void>>();
+
+    constructor() {
+      queueMicrotask(() => this.dispatch("open", {}));
+    }
+
+    addEventListener(type: string, listener: (event: unknown) => void): void {
+      const listeners = this.listeners.get(type) ?? new Set();
+      listeners.add(listener);
+      this.listeners.set(type, listeners);
+    }
+
+    removeEventListener(type: string, listener: (event: unknown) => void): void {
+      this.listeners.get(type)?.delete(listener);
+    }
+
+    send(data: string): void {
+      const parsed: unknown = JSON.parse(data);
+      sentBodies.push(requireJsonRecord(parsed));
+      const responseEvents =
+        this.connectionId === 1
+          ? [
+              { type: "response.created", response: { id: "response-tool-age-limited" } },
+              {
+                type: "response.output_item.added",
+                output_index: 0,
+                item: { ...doneCall, status: "in_progress", arguments: "" },
+              },
+              {
+                type: "response.function_call_arguments.delta",
+                output_index: 0,
+                delta: doneCall.arguments,
+              },
+              {
+                type: "response.output_item.done",
+                output_index: 0,
+                item: doneCall,
+              },
+              {
+                type: "response.output_item.added",
+                output_index: 1,
+                item: {
+                  type: "function_call",
+                  id: "function-partial",
+                  call_id: "call-partial",
+                  name: "report",
+                  status: "in_progress",
+                  arguments: "",
+                },
+              },
+              {
+                type: "response.function_call_arguments.delta",
+                output_index: 1,
+                delta: '{"value":',
+              },
+              {
+                type: "error",
+                error: {
+                  code: "websocket_connection_limit_reached",
+                  message:
+                    "Responses websocket connection limit reached (60 minutes). Create a new websocket connection to continue.",
+                },
+              },
+            ]
+          : textEvents("continued after tool output", "response-after-tool");
+      queueMicrotask(() => {
+        for (const event of responseEvents) {
+          this.dispatch("message", { data: JSON.stringify(event) });
+        }
+      });
+    }
+
+    close(): void {
+      this.readyState = 3;
+    }
+
+    private dispatch(type: string, event: unknown): void {
+      for (const listener of this.listeners.get(type) ?? []) listener(event);
+    }
+  }
+
+  Object.defineProperty(globalThis, "WebSocket", {
+    configurable: true,
+    writable: true,
+    value: AgeLimitedToolWebSocket,
+  });
+  t.after(() => {
+    Object.defineProperty(globalThis, "WebSocket", {
+      configurable: true,
+      writable: true,
+      value: previousWebSocket,
+    });
+  });
+
+  const sessionId = "provider-age-limited-tool";
+  const user = userEntry("user-1", "call the tool and continue");
+  const harness = createHarness([user], DEFAULT_CONFIG, sessionId, {
+    maxRetries: 1,
+    baseDelayMs: 0,
+  });
+  t.after(() => harness.runtime.transport.close(sessionId));
+  const firstContext: Context = {
+    messages: [user.message],
+    tools: [REPORT_TOOL],
+  };
+
+  const toolMessage = await harness.runtime
+    .streamSimple(codexModel(), firstContext, {
+      apiKey: accessToken(),
+      sessionId,
+      transport: "websocket-cached",
+    })
+    .result();
+
+  assert.equal(toolMessage.stopReason, "toolUse", toolMessage.errorMessage);
+  assert.deepEqual(
+    toolMessage.content
+      .filter((block) => block.type === "toolCall")
+      .map((block) => ({ id: block.id, arguments: block.arguments })),
+    [{ id: "call-complete|function-complete", arguments: { value: "complete" } }],
+  );
+  assert.doesNotMatch(JSON.stringify(toolMessage.content), /call-partial/);
+  const toolDecision = responseDecisions(toolMessage)[0];
+  assert.equal(toolDecision?.["terminalType"], "websocket_connection_limit_reached");
+  assert.equal(toolDecision?.["postToolDisposition"], "retry");
+  assert.equal(toolDecision?.["discardedPartialCalls"], 1);
+
+  const toolResult = appendToolExchange(harness, toolMessage);
+  const continued = await harness.runtime
+    .streamSimple(
+      codexModel(),
+      {
+        messages: [user.message, toolMessage, toolResult],
+        tools: [REPORT_TOOL],
+      },
+      {
+        apiKey: accessToken(),
+        sessionId,
+        transport: "websocket-cached",
+      },
+    )
+    .result();
+
+  assert.equal(continued.stopReason, "stop", continued.errorMessage);
+  assert.equal(
+    continued.content.find((block) => block.type === "text")?.text,
+    "continued after tool output",
+  );
+  assert.equal(connections, 2);
+  assert.equal(sentBodies.length, 2);
+  const retryBody = sentBodies[1];
+  assert.ok(retryBody);
+  assert.equal(retryBody.previous_response_id, undefined);
+  const retryInput = requireJsonRecords(retryBody.input);
+  assert.equal(retryInput.filter((item) => item.type === "function_call").length, 1);
+  assert.equal(retryInput.filter((item) => item.type === "function_call_output").length, 1);
+  assert.match(JSON.stringify(retryInput), /call-complete/);
+  assert.doesNotMatch(JSON.stringify(retryInput), /call-partial/);
+});
 
 void test("discards downstream-failed WebSockets without activating SSE fallback", async (t) => {
   const previousWebSocket = globalThis.WebSocket;

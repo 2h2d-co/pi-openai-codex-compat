@@ -110,7 +110,7 @@ export function isCodexNonTransportError(error: unknown): boolean {
   );
 }
 
-export function isWebSocketConnectionLimitReachedError(error: unknown): boolean {
+export function isWebSocketConnectionLimitReachedError(error: unknown): error is CodexApiError {
   return error instanceof CodexApiError && error.code === WEBSOCKET_CONNECTION_LIMIT_REACHED_CODE;
 }
 
