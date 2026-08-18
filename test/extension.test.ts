@@ -1,6 +1,6 @@
+import { extensionApiFixture } from "./support/pi-fixtures.ts";
 import assert from "node:assert/strict";
 import test from "node:test";
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import extension from "../extensions/index.ts";
 
 void test("registers the combined Codex compatibility extension", () => {
@@ -8,7 +8,7 @@ void test("registers the combined Codex compatibility extension", () => {
   const providers: string[] = [];
   const tools: string[] = [];
   const events: string[] = [];
-  const pi = {
+  const pi = extensionApiFixture({
     registerCommand(name: string) {
       commands.push(name);
     },
@@ -24,7 +24,7 @@ void test("registers the combined Codex compatibility extension", () => {
     getAllTools: () => [],
     getActiveTools: () => [],
     setActiveTools() {},
-  } as unknown as ExtensionAPI;
+  });
 
   extension(pi);
 

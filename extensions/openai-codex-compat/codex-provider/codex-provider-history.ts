@@ -6,10 +6,12 @@ import type { ResponsesItem } from "../codex-protocol.ts";
 import { normalizeReplayItem, stableResponsesJson } from "../responses-replay.ts";
 import type { ResponsesItem as SerializedResponsesItem } from "../vendor/pi-ai/openai-responses-serialization.ts";
 
-export function splitDeferredTools(
-  context: Context,
-  enabled: boolean,
-): { immediate: Tool[]; deferred: Map<string, Tool> } {
+export interface DeferredToolGroups {
+  immediate: Tool[];
+  deferred: Map<string, Tool>;
+}
+
+export function splitDeferredTools(context: Context, enabled: boolean): DeferredToolGroups {
   const unique = new Map((context.tools ?? []).map((tool) => [tool.name, tool]));
   if (!enabled) return { immediate: [...unique.values()], deferred: new Map() };
 
@@ -41,10 +43,13 @@ export function nativeOverrideRequired(
   canonicalItems: readonly SerializedResponsesItem[],
 ): boolean {
   if (rawItems.length !== canonicalItems.length) return true;
-  return rawItems.some(
-    (item, index) =>
-      stableResponsesJson(normalizeReplayItem(item)) !== stableResponsesJson(canonicalItems[index]),
-  );
+  return rawItems.some((item, index) => {
+    const canonicalItem = canonicalItems[index];
+    return (
+      canonicalItem === undefined ||
+      stableResponsesJson(normalizeReplayItem(item)) !== stableResponsesJson(canonicalItem)
+    );
+  });
 }
 
 export function userEntryAfterLastSampled(

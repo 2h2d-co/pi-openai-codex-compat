@@ -1,3 +1,7 @@
+import {
+  requireJsonRecord,
+  requireJsonRecords,
+} from "../extensions/openai-codex-compat/codex-protocol.ts";
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
@@ -74,7 +78,7 @@ void test("builds the Responses Lite instruction and tool prefix", () => {
     [RESPONSES_LITE_WS_METADATA_KEY]: "true",
   });
 
-  const input = payload.input as Record<string, unknown>[];
+  const input = requireJsonRecords(payload.input);
   assert.deepEqual(input.slice(0, 2), [
     {
       type: "additional_tools",
@@ -127,14 +131,11 @@ void test("builds the Responses Lite instruction and tool prefix", () => {
 
   const ssePayload = responsesLiteSsePayload(payload);
   assert.equal(
-    (ssePayload.client_metadata as Record<string, unknown>)[RESPONSES_LITE_WS_METADATA_KEY],
+    requireJsonRecord(ssePayload.client_metadata)[RESPONSES_LITE_WS_METADATA_KEY],
     undefined,
   );
-  assert.equal((ssePayload.client_metadata as Record<string, unknown>)["retained"], "value");
-  assert.equal(
-    (payload.client_metadata as Record<string, unknown>)[RESPONSES_LITE_WS_METADATA_KEY],
-    "true",
-  );
+  assert.equal(requireJsonRecord(ssePayload.client_metadata)["retained"], "value");
+  assert.equal(requireJsonRecord(payload.client_metadata)[RESPONSES_LITE_WS_METADATA_KEY], "true");
 });
 
 void test("matches upstream default-namespace grouping and ordering", () => {
@@ -168,10 +169,8 @@ void test("matches upstream default-namespace grouping and ordering", () => {
     "gpt-5.6-sol",
   );
 
-  const additionalTools = (payload.input as Record<string, unknown>[])[0] as Record<
-    string,
-    unknown
-  >;
+  const additionalTools = requireJsonRecords(payload.input)[0];
+  assert.ok(additionalTools);
   assert.deepEqual(additionalTools["tools"], [
     { type: "tool_search", execution: "client", description: "Search", parameters: {} },
     {
@@ -214,7 +213,7 @@ void test("omits an empty default namespace and rejects invalid members", () => 
     },
     "gpt-5.6-sol",
   );
-  assert.deepEqual((payload.input as Record<string, unknown>[])[0]?.["tools"], []);
+  assert.deepEqual(requireJsonRecords(payload.input)[0]?.["tools"], []);
 
   assert.throws(
     () =>

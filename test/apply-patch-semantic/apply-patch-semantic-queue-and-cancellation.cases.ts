@@ -314,12 +314,15 @@ void test("honors cancellation before, during, and between apply_patch phases", 
   await writeFile(join(cwd, "matcher-cancel.js"), "const result = combine(alpha, beta);\n");
   let signalReads = 0;
   let matcherExecutionStarted = false;
-  const matcherSignal = {
-    get aborted() {
-      signalReads += 1;
-      return signalReads >= 6;
+  const matcherSignal = new Proxy(new AbortController().signal, {
+    get(target, property) {
+      if (property === "aborted") {
+        signalReads += 1;
+        return signalReads >= 6;
+      }
+      return Reflect.get(target, property, target);
     },
-  } as AbortSignal;
+  });
   await assert.rejects(
     applyPatch(
       cwd,

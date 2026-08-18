@@ -1,10 +1,12 @@
-import type { Theme } from "@earendil-works/pi-coding-agent";
+import { isString } from "./value-contracts.ts";
 import { Container, type Component, Text, wrapTextWithAnsi } from "@earendil-works/pi-tui";
 import {
   CodexToolSurfaceComponent,
   type CodexToolBackgroundResolver,
+  type RenderTheme,
 } from "./codex-tool-surface.ts";
 import { DEFAULT_CONFIG } from "./config.ts";
+import { isObject } from "./codex-protocol.ts";
 import { IMAGE_GENERATION_TOOL_NAME } from "./namespaced-tools.ts";
 
 export type ImageGenerationDetails = {
@@ -53,19 +55,19 @@ function describeImageCall(args: ImageGenerationArgs): string {
 }
 
 function isImageGenerationDetails(value: unknown): value is ImageGenerationDetails {
-  if (value === null || typeof value !== "object" || Array.isArray(value)) return false;
-  const details = value as Partial<ImageGenerationDetails>;
+  if (!isObject(value)) return false;
+  const details = value;
   return (
-    (details.operation === "generate" || details.operation === "edit") &&
-    typeof details.revisedPrompt === "string" &&
-    (details.savedPath === undefined || typeof details.savedPath === "string") &&
-    (details.saveError === undefined || typeof details.saveError === "string")
+    (details["operation"] === "generate" || details["operation"] === "edit") &&
+    typeof details["revisedPrompt"] === "string" &&
+    (details["savedPath"] === undefined || typeof details["savedPath"] === "string") &&
+    (details["saveError"] === undefined || typeof details["saveError"] === "string")
   );
 }
 
 function textOutput(result: ImageGenerationResult): string {
   return result.content
-    .filter((item) => item.type === "text" && typeof item.text === "string")
+    .filter((item) => item.type === "text" && isString(item.text))
     .map((item) => item.text)
     .join("\n");
 }
@@ -77,10 +79,15 @@ function wrapLines(lines: readonly string[], width: number): string[] {
 class ImageGenerationResultComponent implements Component {
   private readonly result: ImageGenerationResult;
   private readonly expanded: boolean;
-  private readonly theme: Theme;
+  private readonly theme: RenderTheme;
   private readonly isError: boolean;
 
-  constructor(result: ImageGenerationResult, expanded: boolean, theme: Theme, isError: boolean) {
+  constructor(
+    result: ImageGenerationResult,
+    expanded: boolean,
+    theme: RenderTheme,
+    isError: boolean,
+  ) {
     this.result = result;
     this.expanded = expanded;
     this.theme = theme;
@@ -129,7 +136,7 @@ class ImageGenerationResultComponent implements Component {
 
 export function renderImageGenerationCall(
   args: ImageGenerationArgs,
-  theme: Theme,
+  theme: RenderTheme,
   context: ImageGenerationRenderContext,
   resolveBackground: CodexToolBackgroundResolver = () => DEFAULT_CONFIG.toolBackground,
 ): Component {
@@ -146,7 +153,7 @@ export function renderImageGenerationCall(
 export function renderImageGenerationResult(
   result: ImageGenerationResult,
   options: { expanded: boolean; isPartial: boolean },
-  theme: Theme,
+  theme: RenderTheme,
   context: ImageGenerationRenderContext,
   resolveBackground: CodexToolBackgroundResolver = () => DEFAULT_CONFIG.toolBackground,
 ): Component {

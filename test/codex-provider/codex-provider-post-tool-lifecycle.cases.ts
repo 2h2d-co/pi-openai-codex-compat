@@ -1,4 +1,8 @@
 import {
+  requireJsonRecord,
+  requireJsonRecords,
+} from "../../extensions/openai-codex-compat/codex-protocol.ts";
+import {
   assert,
   test,
   DEFAULT_CONFIG,
@@ -22,7 +26,7 @@ void test("preserves retryable post-tool handling without session affinity or ag
   });
   const requests: JsonRecord[] = [];
   harness.runtime.transport.request = async function* (_model, body) {
-    requests.push(structuredClone(body));
+    requests.push(structuredClone(requireJsonRecord(body)));
     if (requests.length === 2) {
       yield* textEvents("recovered", "resp_done_call_recovered");
       return;
@@ -50,7 +54,7 @@ void test("preserves retryable post-tool handling without session affinity or ag
     };
   };
   const initialContext: Context = {
-    messages: [user.message as Context["messages"][number]],
+    messages: [user.message],
     tools: [REPORT_TOOL],
   };
   const options = {
@@ -77,7 +81,7 @@ void test("preserves retryable post-tool handling without session affinity or ag
   assert.equal(responseDecisions(callMessage)[0]?.["postToolDisposition"], "retry");
   assert.equal(finalMessage.stopReason, "stop");
   assert.equal(requests.length, 2);
-  const retryInput = requests[1]?.input as JsonRecord[];
+  const retryInput = requireJsonRecords(requests[1]?.input);
   assert.equal(retryInput.filter((item) => item.type === "function_call").length, 1);
   assert.equal(retryInput.filter((item) => item.type === "function_call_output").length, 1);
   assert.match(JSON.stringify(retryInput), /call_failed_done|completed/);
@@ -114,7 +118,7 @@ void test("preserves response retry budgets across linked tool execution", async
     };
   };
   const initialContext: Context = {
-    messages: [user.message as Context["messages"][number]],
+    messages: [user.message],
     tools: [REPORT_TOOL],
   };
   const options = {
@@ -174,7 +178,7 @@ void test("does not retry an unsuccessful response before linked tool output exi
     };
   };
   const initialContext: Context = {
-    messages: [user.message as Context["messages"][number]],
+    messages: [user.message],
     tools: [REPORT_TOOL],
   };
   const options = {
@@ -240,7 +244,7 @@ void test("clears abandoned post-tool handling at lifecycle boundaries", async (
         };
       };
       const initialContext: Context = {
-        messages: [user.message as Context["messages"][number]],
+        messages: [user.message],
         tools: [REPORT_TOOL],
       };
       const options = {
@@ -310,7 +314,7 @@ void test("preserves fatal post-tool handling without session affinity or agent 
     };
   };
   const initialContext: Context = {
-    messages: [user.message as Context["messages"][number]],
+    messages: [user.message],
     tools: [REPORT_TOOL],
   };
   const options = {
@@ -372,7 +376,7 @@ void test("ignores terminal-only calls in non-retryable failed responses", async
     .streamSimple(
       codexModel(),
       {
-        messages: [user.message as Context["messages"][number]],
+        messages: [user.message],
         tools: [REPORT_TOOL],
       },
       {
@@ -415,7 +419,7 @@ void test("does not resample official fatal response.failed codes", async () => 
   const message = await harness.runtime
     .streamSimple(
       codexModel(),
-      { messages: [user.message as Context["messages"][number]] },
+      { messages: [user.message] },
       {
         apiKey: accessToken(),
         sessionId: "session-fatal-response",

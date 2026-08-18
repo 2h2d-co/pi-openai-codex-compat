@@ -22,7 +22,7 @@ void test("persists native response overrides on the active session branch", () 
       customType: NATIVE_RESPONSE_ENTRY_TYPE,
       data,
     },
-  ] as SessionEntry[];
+  ] satisfies SessionEntry[];
 
   assert.deepEqual(parseNativeResponse(data), data);
   assert.deepEqual(nativeResponseOverrides(branch, "gpt-test").get("resp_1"), data.items);
@@ -39,7 +39,7 @@ void test("fails closed on corrupt native response entries", () => {
       customType: NATIVE_RESPONSE_ENTRY_TYPE,
       data: { kind: NATIVE_RESPONSE_ENTRY_TYPE, version: 1 },
     },
-  ] as SessionEntry[];
+  ] satisfies SessionEntry[];
 
   assert.throws(() => nativeResponseOverrides(branch, "gpt-test"), /corrupt/);
 });
@@ -72,7 +72,7 @@ void test("recovers only done prefixes with linked tool outputs before overflow"
       customType: NATIVE_RESPONSE_ENTRY_TYPE,
       data: nativeResponseData("gpt-test", "resp_safe", [committed], attempts),
     },
-  ] as SessionEntry[];
+  ] satisfies SessionEntry[];
 
   assert.deepEqual(nativeCommittedPrefixBeforeOverflow(safeBranch, "gpt-test", "resp_safe"), [
     committed,
@@ -94,7 +94,7 @@ void test("recovers only done prefixes with linked tool outputs before overflow"
       customType: NATIVE_RESPONSE_ENTRY_TYPE,
       data: nativeResponseData("gpt-test", "resp_unsafe", [unresolvedCall], attempts),
     },
-  ] as SessionEntry[];
+  ] satisfies SessionEntry[];
   assert.equal(
     nativeCommittedPrefixBeforeOverflow(unsafeBranch, "gpt-test", "resp_unsafe"),
     undefined,
@@ -115,7 +115,7 @@ void test("recovers only done prefixes with linked tool outputs before overflow"
         items: [committed],
       },
     },
-  ] as SessionEntry[];
+  ] satisfies SessionEntry[];
   assert.equal(
     nativeCommittedPrefixBeforeOverflow(legacyBranch, "gpt-test", "resp_legacy"),
     undefined,

@@ -1,13 +1,12 @@
+import { extensionCommandContextFixture } from "./support/pi-fixtures.ts";
+import { extensionApiFixture } from "./support/pi-fixtures.ts";
+import { requireJsonRecord } from "../extensions/openai-codex-compat/codex-protocol.ts";
 import assert from "node:assert/strict";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-import {
-  initTheme,
-  type ExtensionAPI,
-  type ExtensionCommandContext,
-} from "@earendil-works/pi-coding-agent";
+import { initTheme, type ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
 import type { Model } from "@earendil-works/pi-ai";
 import {
   CONFIG_ENVIRONMENT_VARIABLES,
@@ -55,7 +54,7 @@ void test("persists dedicated settings without discarding unknown configuration"
     webRun: false,
     reasoningMode: "pro",
   });
-  const stored = JSON.parse(await readFile(savedPath, "utf8")) as Record<string, unknown>;
+  const stored = requireJsonRecord(JSON.parse(await readFile(savedPath, "utf8")));
 
   assert.deepEqual(stored["customFutureSetting"], { keep: true });
   assert.equal(stored["fastMode"], true);
@@ -214,7 +213,7 @@ void test("saves on Enter or Ctrl+S and discards unsaved changes on Escape", asy
 
   let sessionConfig = loadConfig(cwd, false);
   let command: ((args: string, ctx: ExtensionCommandContext) => Promise<void>) | undefined;
-  const pi = {
+  const pi = extensionApiFixture({
     registerCommand(
       _name: string,
       options: {
@@ -223,7 +222,7 @@ void test("saves on Enter or Ctrl+S and discards unsaved changes on Escape", asy
     ) {
       command = options.handler;
     },
-  } as unknown as ExtensionAPI;
+  });
   registerCodexSettings(pi, {
     getConfig: () => sessionConfig,
     onChange: (config) => {
@@ -234,7 +233,7 @@ void test("saves on Enter or Ctrl+S and discards unsaved changes on Escape", asy
 
   const runSettings = async (inputs: string[]) => {
     let closeCount = 0;
-    const context = {
+    const context = extensionCommandContextFixture({
       cwd,
       mode: "tui",
       isProjectTrusted: () => false,
@@ -264,7 +263,7 @@ void test("saves on Enter or Ctrl+S and discards unsaved changes on Escape", asy
           await closed;
         },
       },
-    } as unknown as ExtensionCommandContext;
+    });
     await command!("", context);
     return closeCount;
   };
@@ -284,12 +283,12 @@ void test("saves on Enter or Ctrl+S and discards unsaved changes on Escape", asy
 
 void test("uses apply_patch instead of Pi's active edit and write tools", () => {
   let active = ["read", "edit", "write"];
-  const pi = {
+  const pi = extensionApiFixture({
     getActiveTools: () => active,
     setActiveTools(names: string[]) {
       active = names;
     },
-  } as unknown as ExtensionAPI;
+  });
 
   setApplyPatchEnabled(pi, true);
   assert.deepEqual(active, ["read", "apply_patch"]);
@@ -301,12 +300,12 @@ void test("uses apply_patch instead of Pi's active edit and write tools", () => 
 
 void test("does not restore Pi edit tools that were inactive before apply_patch", () => {
   let active = ["read"];
-  const pi = {
+  const pi = extensionApiFixture({
     getActiveTools: () => active,
     setActiveTools(names: string[]) {
       active = names;
     },
-  } as unknown as ExtensionAPI;
+  });
 
   setApplyPatchEnabled(pi, true);
   assert.deepEqual(active, ["read", "apply_patch"]);
@@ -316,12 +315,12 @@ void test("does not restore Pi edit tools that were inactive before apply_patch"
 
 void test("toggles image_gen.imagegen and web.run independently on Codex models", () => {
   let active = ["read", "edit", "write"];
-  const pi = {
+  const pi = extensionApiFixture({
     getActiveTools: () => active,
     setActiveTools(names: string[]) {
       active = names;
     },
-  } as unknown as ExtensionAPI;
+  });
   const model = {
     id: "gpt-test",
     name: "GPT Test",
@@ -333,7 +332,7 @@ void test("toggles image_gen.imagegen and web.run independently on Codex models"
     cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
     contextWindow: 100_000,
     maxTokens: 10_000,
-  } as Model<any>;
+  } satisfies Model<any>;
 
   syncCodexTools(pi, model, {
     ...DEFAULT_CONFIG,

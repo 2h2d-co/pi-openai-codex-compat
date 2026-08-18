@@ -1,3 +1,4 @@
+import { isString } from "../value-contracts.ts";
 import { isObject, type JsonRecord } from "../codex-protocol.ts";
 import { stableResponsesJson } from "../responses-replay.ts";
 import type { CachedRequestDecision, CachedWebSocket } from "./codex-transport-contracts.ts";
@@ -25,7 +26,7 @@ export function responseItemsMatch(previous: unknown, current: unknown): boolean
 }
 
 export function jsonWireRequestBody(body: JsonRecord): JsonRecord {
-  const snapshot = JSON.parse(JSON.stringify(body)) as unknown;
+  const snapshot: unknown = JSON.parse(JSON.stringify(body));
   if (!isObject(snapshot)) {
     throw new Error("Codex request body must serialize to a JSON object");
   }
@@ -70,20 +71,21 @@ export function cachedRequestBody(entry: CachedWebSocket, body: JsonRecord): Cac
   );
   if (mismatchIndex >= 0) {
     delete entry.continuation;
+    const historyMismatch: NonNullable<CachedRequestDecision["historyMismatch"]> = {
+      index: mismatchIndex,
+      baselineInputItems: baseline.length,
+      currentInputItems: currentInput.length,
+      baselineItem: structuredClone(baseline[mismatchIndex]),
+    };
+    if (mismatchIndex < currentInput.length) {
+      historyMismatch.currentItem = structuredClone(currentInput[mismatchIndex]);
+    }
     return {
       body,
       contextMode: "full",
       previousResponseId,
       bypassReason: "history_prefix_changed",
-      historyMismatch: {
-        index: mismatchIndex,
-        baselineInputItems: baseline.length,
-        currentInputItems: currentInput.length,
-        baselineItem: structuredClone(baseline[mismatchIndex]),
-        ...(mismatchIndex < currentInput.length
-          ? { currentItem: structuredClone(currentInput[mismatchIndex]) }
-          : {}),
-      },
+      historyMismatch,
       cacheIdentityPreserved,
     };
   }
@@ -101,5 +103,5 @@ export function cachedRequestBody(entry: CachedWebSocket, body: JsonRecord): Cac
 }
 
 export function requestInputLength(body: JsonRecord): number {
-  return typeof body.input === "string" || Array.isArray(body.input) ? body.input.length : 0;
+  return isString(body.input) || Array.isArray(body.input) ? body.input.length : 0;
 }

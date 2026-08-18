@@ -1,4 +1,8 @@
 import {
+  requireJsonRecord,
+  requireJsonRecords,
+} from "../../extensions/openai-codex-compat/codex-protocol.ts";
+import {
   assert,
   test,
   DEFAULT_CONFIG,
@@ -11,7 +15,6 @@ import {
   SAMPLE_GRAMMAR_TOOL,
   accessToken,
   createHarness,
-  type Context,
   type JsonRecord,
 } from "./codex-provider-harness.ts";
 import { responseRetryDelayMs } from "../../extensions/openai-codex-compat/codex-provider/codex-provider-response-attempts.ts";
@@ -30,7 +33,7 @@ void test("continues response.completed end_turn false without synthetic input",
   const harness = createHarness([user]);
   const requests: JsonRecord[] = [];
   harness.runtime.transport.request = async function* (_model, body) {
-    requests.push(structuredClone(body));
+    requests.push(structuredClone(requireJsonRecord(body)));
     const responseNumber = requests.length;
     const responseEvents = textEvents(
       responseNumber === 1 ? "first phase" : "second phase",
@@ -47,7 +50,7 @@ void test("continues response.completed end_turn false without synthetic input",
   const message = await harness.runtime
     .streamSimple(
       codexModel(),
-      { messages: [user.message as Context["messages"][number]] },
+      { messages: [user.message] },
       {
         apiKey: accessToken(),
         sessionId: "session-1",
@@ -76,15 +79,15 @@ void test("continues response.completed end_turn false without synthetic input",
   const secondRequest = requests[1];
   assert.ok(firstRequest);
   assert.ok(secondRequest);
-  const firstInput = firstRequest.input as JsonRecord[];
-  const secondInput = secondRequest.input as JsonRecord[];
+  const firstInput = requireJsonRecords(firstRequest.input);
+  const secondInput = requireJsonRecords(secondRequest.input);
   assert.deepEqual(secondInput.slice(0, firstInput.length), firstInput);
   assert.equal(secondInput.at(-1)?.type, "message");
   assert.equal(secondInput.at(-1)?.role, "assistant");
   assert.match(JSON.stringify(secondInput.at(-1)), /first phase/);
   assert.equal(
-    (firstRequest["client_metadata"] as JsonRecord)["turn_id"],
-    (secondRequest["client_metadata"] as JsonRecord)["turn_id"],
+    requireJsonRecord(firstRequest["client_metadata"])["turn_id"],
+    requireJsonRecord(secondRequest["client_metadata"])["turn_id"],
   );
   assert.equal(harness.customEntries.length, 1);
   assert.match(JSON.stringify(harness.customEntries[0]?.data), /first phase.*second phase/);
@@ -98,7 +101,7 @@ void test("returns a Pi compaction boundary when end_turn false crosses the thre
   });
   const requests: JsonRecord[] = [];
   harness.runtime.transport.request = async function* (_model, body) {
-    requests.push(structuredClone(body));
+    requests.push(structuredClone(requireJsonRecord(body)));
     const responseEvents = textEvents("first phase", "resp_boundary");
     const terminal = responseEvents.at(-1);
     assert.ok(terminal && isObject(terminal.response));
@@ -114,7 +117,7 @@ void test("returns a Pi compaction boundary when end_turn false crosses the thre
   const message = await harness.runtime
     .streamSimple(
       codexModel(),
-      { messages: [user.message as Context["messages"][number]] },
+      { messages: [user.message] },
       {
         apiKey: accessToken(),
         sessionId: "session-1",
@@ -143,7 +146,7 @@ void test("resamples retryable failed and incomplete responses from completed ou
     });
     const requests: JsonRecord[] = [];
     harness.runtime.transport.request = async function* (_model, body) {
-      requests.push(structuredClone(body));
+      requests.push(structuredClone(requireJsonRecord(body)));
       if (requests.length === 2) {
         yield* textEvents("after retry", "resp_recovered");
         return;
@@ -176,7 +179,7 @@ void test("resamples retryable failed and incomplete responses from completed ou
     const message = await harness.runtime
       .streamSimple(
         codexModel(),
-        { messages: [user.message as Context["messages"][number]] },
+        { messages: [user.message] },
         {
           apiKey: accessToken(),
           sessionId: `session-${firstTerminal}`,
@@ -194,8 +197,8 @@ void test("resamples retryable failed and incomplete responses from completed ou
     );
     assert.equal(message.usage.input, 14);
     assert.equal(message.usage.output, 7);
-    const firstInput = requests[0]?.input as JsonRecord[];
-    const secondInput = requests[1]?.input as JsonRecord[];
+    const firstInput = requireJsonRecords(requests[0]?.input);
+    const secondInput = requireJsonRecords(requests[1]?.input);
     assert.deepEqual(secondInput.slice(0, firstInput.length), firstInput);
     assert.match(JSON.stringify(secondInput.slice(firstInput.length)), /before retry/);
     assert.equal(harness.customEntries.length, 1);
@@ -245,7 +248,7 @@ void test("uses done calls and ignores conflicting terminal output", async () =>
     .streamSimple(
       codexModel(),
       {
-        messages: [user.message as Context["messages"][number]],
+        messages: [user.message],
         tools: [REPORT_TOOL],
       },
       {
@@ -301,7 +304,7 @@ void test("returns complete function call batches at the output limit without pr
   ];
   const requests: JsonRecord[] = [];
   harness.runtime.transport.request = async function* (_model, body) {
-    requests.push(structuredClone(body));
+    requests.push(structuredClone(requireJsonRecord(body)));
     for (const [outputIndex, item] of calls.entries()) {
       yield { type: "response.output_item.done", output_index: outputIndex, item };
     }
@@ -320,7 +323,7 @@ void test("returns complete function call batches at the output limit without pr
     .streamSimple(
       codexModel(),
       {
-        messages: [user.message as Context["messages"][number]],
+        messages: [user.message],
         tools: [REPORT_TOOL],
       },
       {
@@ -362,7 +365,7 @@ void test("ignores terminal-only calls while retrying the original input", async
   });
   const requests: JsonRecord[] = [];
   harness.runtime.transport.request = async function* (_model, body) {
-    requests.push(structuredClone(body));
+    requests.push(structuredClone(requireJsonRecord(body)));
     if (requests.length === 2) {
       yield* textEvents("recovered", "resp_terminal_custom_recovered");
       return;
@@ -391,7 +394,7 @@ void test("ignores terminal-only calls while retrying the original input", async
     .streamSimple(
       codexModel(),
       {
-        messages: [user.message as Context["messages"][number]],
+        messages: [user.message],
         tools: [SAMPLE_GRAMMAR_TOOL],
       },
       {
@@ -476,7 +479,7 @@ void test("returns the completed subset of a mixed done and partial call batch",
     .streamSimple(
       codexModel(),
       {
-        messages: [user.message as Context["messages"][number]],
+        messages: [user.message],
         tools: [REPORT_TOOL],
       },
       {
@@ -541,7 +544,7 @@ void test("returns done calls omitted from incomplete terminal output", async ()
     .streamSimple(
       codexModel(),
       {
-        messages: [user.message as Context["messages"][number]],
+        messages: [user.message],
         tools: [REPORT_TOOL],
       },
       {
@@ -569,7 +572,7 @@ void test("ignores terminal-only calls while retrying failed responses", async (
   });
   const requests: JsonRecord[] = [];
   harness.runtime.transport.request = async function* (_model, body) {
-    requests.push(structuredClone(body));
+    requests.push(structuredClone(requireJsonRecord(body)));
     if (requests.length > 1) {
       yield* textEvents("recovered", "resp_recovered_call");
       return;
@@ -598,7 +601,7 @@ void test("ignores terminal-only calls while retrying failed responses", async (
     .streamSimple(
       codexModel(),
       {
-        messages: [user.message as Context["messages"][number]],
+        messages: [user.message],
         tools: [REPORT_TOOL],
       },
       {

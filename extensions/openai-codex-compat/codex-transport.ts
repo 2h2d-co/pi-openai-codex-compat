@@ -1,12 +1,15 @@
+import { isString } from "./value-contracts.ts";
 import { registerSessionResourceCleanup, type Model, uuidv7 } from "@earendil-works/pi-ai";
 import { codexCacheKey } from "./codex-cache-key.ts";
-import { isObject, type JsonRecord } from "./codex-protocol.ts";
+import { isJsonValue, isObject, type JsonRecord, type JsonValue } from "./codex-protocol.ts";
 import { responsesLiteSsePayload } from "./responses-lite.ts";
 import type {
   CacheIdentitySnapshot,
   CodexCacheUsageDiagnostic,
   CodexContinuationHandle,
   CodexJsonRequestOptions,
+  CodexTransportPrewarmDiagnostic,
+  CodexTransportRecoveryAttempt,
   CodexTransportOptions,
   CodexWebSocketAttempt,
 } from "./codex-transport/codex-transport-contracts.ts";
@@ -96,7 +99,7 @@ export async function requestCodexJson(
   path: string,
   body: JsonRecord,
   options: CodexJsonRequestOptions,
-): Promise<unknown> {
+): Promise<JsonValue> {
   const headers = jsonHeaders(
     model.headers,
     options.headers,
@@ -104,21 +107,26 @@ export async function requestCodexJson(
     validateCodexAuthentication(model, options.apiKey),
     options.apiKey,
   );
+  const init: RequestInit = {
+    method: "POST",
+    headers,
+    body: JSON.stringify(body),
+  };
+  if (options.signal) init.signal = options.signal;
   const response = await (options.fetch ?? globalThis.fetch)(
     resolveCodexApiUrl(model.baseUrl, path),
-    {
-      method: "POST",
-      headers,
-      body: JSON.stringify(body),
-      ...(options.signal ? { signal: options.signal } : {}),
-    },
+    init,
   );
   const responseText = await response.text();
   if (!response.ok) {
     throw codexHttpError(response.status, response.statusText, responseText);
   }
   try {
-    return JSON.parse(responseText) as unknown;
+    const value: unknown = JSON.parse(responseText);
+    if (!isJsonValue(value)) {
+      throw new Error(`Codex returned a non-JSON value from ${path}.`);
+    }
+    return value;
   } catch (error) {
     throw new Error(
       `Codex returned invalid JSON from ${path}: ${
@@ -138,21 +146,29 @@ export class CodexTransport {
     const turnStateAvailableAtStart = options.turnState?.available ?? false;
     const turnStateRevisionAtStart = options.turnState?.revision ?? 0;
     const turnStateValueAtStart = options.turnState?.replayValue();
-    const diagnosticDetails = () => {
+    type PrewarmDiagnosticContext = Pick<
+      CodexTransportPrewarmDiagnostic["details"],
+      | "cache"
+      | "turnStateAvailableAtStart"
+      | "turnStateReceived"
+      | "turnStateAtStart"
+      | "turnStateReceivedValue"
+    >;
+    const diagnosticDetails = (): PrewarmDiagnosticContext => {
       const turnStateReceived =
         (options.turnState?.revision ?? turnStateRevisionAtStart) > turnStateRevisionAtStart;
       const turnStateReceivedValue = options.turnState?.replayValue();
-      return {
-        ...(options.cacheDiagnostics ? { cache: options.cacheDiagnostics } : {}),
-        ...(options.turnState
-          ? {
-              turnStateAvailableAtStart,
-              turnStateReceived,
-              ...(turnStateValueAtStart ? { turnStateAtStart: turnStateValueAtStart } : {}),
-              ...(turnStateReceived && turnStateReceivedValue ? { turnStateReceivedValue } : {}),
-            }
-          : {}),
-      };
+      const details: PrewarmDiagnosticContext = {};
+      if (options.cacheDiagnostics) details.cache = options.cacheDiagnostics;
+      if (options.turnState) {
+        details.turnStateAvailableAtStart = turnStateAvailableAtStart;
+        details.turnStateReceived = turnStateReceived;
+        if (turnStateValueAtStart) details.turnStateAtStart = turnStateValueAtStart;
+        if (turnStateReceived && turnStateReceivedValue) {
+          details.turnStateReceivedValue = turnStateReceivedValue;
+        }
+      }
+      return details;
     };
     if (transport === "sse") {
       options.onTransportDiagnostic?.({
@@ -224,14 +240,16 @@ export class CodexTransport {
 
   async *request(
     model: Model<any>,
-    body: JsonRecord,
+    body: JsonRecord | JsonValue[],
     options: CodexTransportOptions,
   ): AsyncGenerator<JsonRecord> {
     if (!options.apiKey) throw new Error(`No API key for provider: ${model.provider}`);
     const timeoutMs = normalizeTimeoutMs(options.timeoutMs);
     const connectTimeoutMs =
       normalizeTimeoutMs(options.websocketConnectTimeoutMs) ?? DEFAULT_WEBSOCKET_CONNECT_TIMEOUT_MS;
-    const sseBody = responsesLiteSsePayload(body);
+    const objectBody: JsonRecord = Array.isArray(body) ? {} : body;
+    const sseBody = Array.isArray(body) ? body : responsesLiteSsePayload(body);
+    const objectSseBody: JsonRecord = Array.isArray(sseBody) ? {} : sseBody;
     const accountId = options.accountId ?? validateCodexAuthentication(model, options.apiKey);
     const cacheSessionId = options.cacheRetention === "none" ? undefined : options.sessionId;
     const requestId = codexCacheKey(cacheSessionId);
@@ -275,7 +293,7 @@ export class CodexTransport {
       };
     }
     if (websocketDisabled) recordWebSocketSseFallback(cacheSessionId);
-    if (transport !== "sse" && !websocketDisabled) {
+    if (transport !== "sse" && !websocketDisabled && !Array.isArray(body)) {
       const websocketRequestBytes = serializedBytes(JSON.stringify(body));
       const headers = websocketHeaders(
         model.headers,
@@ -310,25 +328,24 @@ export class CodexTransport {
             (currentAttempt) => {
               attempt = currentAttempt;
               if (!currentAttempt.bypassReason) return;
-              options.onTransportDiagnostic?.(
-                transportRecoveryDiagnostic({
-                  trigger: "local_continuation_bypass",
-                  configuredTransport: transport,
-                  attempts: [webSocketRecoveryAttempt(currentAttempt, "selected")],
-                  cacheIdentity: webSocketCacheIdentity,
-                  ...(currentAttempt.previousResponseId
-                    ? { previousResponseId: currentAttempt.previousResponseId }
-                    : {}),
-                  continuationBypassReason: currentAttempt.bypassReason,
-                  ...(currentAttempt.historyMismatch
-                    ? { historyMismatch: currentAttempt.historyMismatch }
-                    : {}),
-                  ...(currentAttempt.cacheIdentityPreserved === undefined
-                    ? {}
-                    : { cacheIdentityPreserved: currentAttempt.cacheIdentityPreserved }),
-                  accountIdentityPreserved: true,
-                }),
-              );
+              const recoveryOptions: Parameters<typeof transportRecoveryDiagnostic>[0] = {
+                trigger: "local_continuation_bypass",
+                configuredTransport: transport,
+                attempts: [webSocketRecoveryAttempt(currentAttempt, "selected")],
+                cacheIdentity: webSocketCacheIdentity,
+                continuationBypassReason: currentAttempt.bypassReason,
+                accountIdentityPreserved: true,
+              };
+              if (currentAttempt.previousResponseId) {
+                recoveryOptions.previousResponseId = currentAttempt.previousResponseId;
+              }
+              if (currentAttempt.historyMismatch) {
+                recoveryOptions.historyMismatch = currentAttempt.historyMismatch;
+              }
+              if (currentAttempt.cacheIdentityPreserved !== undefined) {
+                recoveryOptions.cacheIdentityPreserved = currentAttempt.cacheIdentityPreserved;
+              }
+              options.onTransportDiagnostic?.(transportRecoveryDiagnostic(recoveryOptions));
             },
           )) {
             if (!emitted) options.onTransportStart?.();
@@ -336,27 +353,28 @@ export class CodexTransport {
             anyEventEmitted = true;
             if (webSocketEventStartsVisibleOutput(event)) visibleOutputEmitted = true;
             usage = cacheUsageDiagnostic(event) ?? usage;
-            if (isObject(event.response) && typeof event.response.id === "string") {
+            if (isObject(event.response) && isString(event.response.id)) {
               responseId = event.response.id;
             }
             yield event;
           }
           if (attempt && shouldReportRequestDiagnostic(options)) {
-            options.onTransportDiagnostic?.(
-              transportRequestDiagnostic({
-                requestOptions: options,
-                body,
-                configuredTransport: transport,
-                selectedTransport: "websocket",
-                attempt,
-                cacheIdentity: webSocketCacheIdentity,
-                turnStateAvailableAtStart,
-                turnStateRevisionAtStart,
-                ...(turnStateValueAtStart ? { turnStateValueAtStart } : {}),
-                ...(responseId ? { responseId } : {}),
-                ...(usage ? { usage } : {}),
-              }),
-            );
+            const requestDiagnosticOptions: Parameters<typeof transportRequestDiagnostic>[0] = {
+              requestOptions: options,
+              body,
+              configuredTransport: transport,
+              selectedTransport: "websocket",
+              attempt,
+              cacheIdentity: webSocketCacheIdentity,
+              turnStateAvailableAtStart,
+              turnStateRevisionAtStart,
+            };
+            if (turnStateValueAtStart) {
+              requestDiagnosticOptions.turnStateValueAtStart = turnStateValueAtStart;
+            }
+            if (responseId) requestDiagnosticOptions.responseId = responseId;
+            if (usage) requestDiagnosticOptions.usage = usage;
+            options.onTransportDiagnostic?.(transportRequestDiagnostic(requestDiagnosticOptions));
           }
           return;
         } catch (error) {
@@ -367,40 +385,38 @@ export class CodexTransport {
             retriedMissingContinuation = true;
             if (attempt) {
               const retryTurnStateValue = options.turnState?.replayValue();
-              options.onTransportDiagnostic?.(
-                transportRecoveryDiagnostic({
-                  trigger: "previous_response_not_found",
-                  configuredTransport: transport,
-                  attempts: [
-                    webSocketRecoveryAttempt(attempt, "previous_response_not_found"),
-                    {
-                      transport: "websocket",
-                      connection: "new",
-                      contextMode: "full",
-                      inputItems: attempt.fullInputItems,
-                      fullInputItems: attempt.fullInputItems,
-                      fullRequestBytes: attempt.fullRequestBytes,
-                      wireRequestBytes: attempt.fullRequestBytes,
-                      outcome: "retry_scheduled",
-                      ...(options.turnState
-                        ? {
-                            turnStateReplayed: options.turnState.available,
-                            ...(retryTurnStateValue
-                              ? { turnStateReplayedValue: retryTurnStateValue }
-                              : {}),
-                          }
-                        : {}),
-                    },
-                  ],
-                  cacheIdentity: webSocketCacheIdentity,
-                  error,
-                  ...(attempt.previousResponseId
-                    ? { previousResponseId: attempt.previousResponseId }
-                    : {}),
-                  cacheIdentityPreserved: true,
-                  accountIdentityPreserved: true,
-                }),
-              );
+              const retryAttempt: CodexTransportRecoveryAttempt = {
+                transport: "websocket",
+                connection: "new",
+                contextMode: "full",
+                inputItems: attempt.fullInputItems,
+                fullInputItems: attempt.fullInputItems,
+                fullRequestBytes: attempt.fullRequestBytes,
+                wireRequestBytes: attempt.fullRequestBytes,
+                outcome: "retry_scheduled",
+              };
+              if (options.turnState) {
+                retryAttempt.turnStateReplayed = options.turnState.available;
+                if (retryTurnStateValue) {
+                  retryAttempt.turnStateReplayedValue = retryTurnStateValue;
+                }
+              }
+              const recoveryOptions: Parameters<typeof transportRecoveryDiagnostic>[0] = {
+                trigger: "previous_response_not_found",
+                configuredTransport: transport,
+                attempts: [
+                  webSocketRecoveryAttempt(attempt, "previous_response_not_found"),
+                  retryAttempt,
+                ],
+                cacheIdentity: webSocketCacheIdentity,
+                error,
+                cacheIdentityPreserved: true,
+                accountIdentityPreserved: true,
+              };
+              if (attempt.previousResponseId) {
+                recoveryOptions.previousResponseId = attempt.previousResponseId;
+              }
+              options.onTransportDiagnostic?.(transportRecoveryDiagnostic(recoveryOptions));
             }
             continue;
           }
@@ -468,23 +484,23 @@ export class CodexTransport {
       accountId,
       options.apiKey,
       requestId,
-      body,
+      objectBody,
     );
     if (sseRecovery) {
-      const sseCacheIdentity = cacheIdentitySnapshot(sseBody, headers, accountId);
+      const sseCacheIdentity = cacheIdentitySnapshot(objectSseBody, headers, accountId);
       options.onTransportDiagnostic?.(
         transportRecoveryDiagnostic({
           trigger: sseRecovery.trigger,
           configuredTransport: transport,
           attempts: [
-            sseRecoveryAttempt(sseBody, sseRequestBytes, options.turnState?.replayValue()),
+            sseRecoveryAttempt(objectSseBody, sseRequestBytes, options.turnState?.replayValue()),
           ],
           cacheIdentity: sseCacheIdentity,
           previousCacheIdentity: sseRecovery.previousCacheIdentity,
         }),
       );
     }
-    const sseCacheIdentity = cacheIdentitySnapshot(sseBody, headers, accountId);
+    const sseCacheIdentity = cacheIdentitySnapshot(objectSseBody, headers, accountId);
     let sseTurnStateReplayedValue: string | undefined;
     let usage: CodexCacheUsageDiagnostic | undefined;
     let responseId: string | undefined;
@@ -504,7 +520,7 @@ export class CodexTransport {
         )) {
           if (webSocketEventStartsVisibleOutput(event)) visibleOutputEmitted = true;
           usage = cacheUsageDiagnostic(event) ?? usage;
-          if (isObject(event.response) && typeof event.response.id === "string") {
+          if (isObject(event.response) && isString(event.response.id)) {
             responseId = event.response.id;
           }
           yield event;
@@ -527,7 +543,7 @@ export class CodexTransport {
             configuredTransport: transport,
             attempts: [
               {
-                ...sseRecoveryAttempt(sseBody, sseRequestBytes, sseTurnStateReplayedValue),
+                ...sseRecoveryAttempt(objectSseBody, sseRequestBytes, sseTurnStateReplayedValue),
                 outcome: "retry_scheduled",
               },
             ],
@@ -543,32 +559,37 @@ export class CodexTransport {
       }
     }
     if (shouldReportRequestDiagnostic(options)) {
-      const inputItems = requestInputLength(sseBody);
-      options.onTransportDiagnostic?.(
-        transportRequestDiagnostic({
-          requestOptions: options,
-          body: sseBody,
-          configuredTransport: transport,
-          selectedTransport: "sse",
-          attempt: {
-            contextMode: "full",
-            inputItems,
-            fullInputItems: inputItems,
-            fullRequestBytes: sseRequestBytes,
-            wireRequestBytes: sseRequestBytes,
-            turnStateReplayed: sseTurnStateReplayedValue !== undefined,
-            ...(sseTurnStateReplayedValue
-              ? { turnStateReplayedValue: sseTurnStateReplayedValue }
-              : {}),
-          },
-          cacheIdentity: sseCacheIdentity,
-          turnStateAvailableAtStart,
-          turnStateRevisionAtStart,
-          ...(turnStateValueAtStart ? { turnStateValueAtStart } : {}),
-          ...(responseId ? { responseId } : {}),
-          ...(usage ? { usage } : {}),
-        }),
-      );
+      const inputItems = requestInputLength(objectSseBody);
+      const sseAttempt: Exclude<
+        Parameters<typeof transportRequestDiagnostic>[0]["attempt"],
+        CodexWebSocketAttempt
+      > = {
+        contextMode: "full",
+        inputItems,
+        fullInputItems: inputItems,
+        fullRequestBytes: sseRequestBytes,
+        wireRequestBytes: sseRequestBytes,
+        turnStateReplayed: sseTurnStateReplayedValue !== undefined,
+      };
+      if (sseTurnStateReplayedValue) {
+        sseAttempt.turnStateReplayedValue = sseTurnStateReplayedValue;
+      }
+      const requestDiagnosticOptions: Parameters<typeof transportRequestDiagnostic>[0] = {
+        requestOptions: options,
+        body: objectSseBody,
+        configuredTransport: transport,
+        selectedTransport: "sse",
+        attempt: sseAttempt,
+        cacheIdentity: sseCacheIdentity,
+        turnStateAvailableAtStart,
+        turnStateRevisionAtStart,
+      };
+      if (turnStateValueAtStart) {
+        requestDiagnosticOptions.turnStateValueAtStart = turnStateValueAtStart;
+      }
+      if (responseId) requestDiagnosticOptions.responseId = responseId;
+      if (usage) requestDiagnosticOptions.usage = usage;
+      options.onTransportDiagnostic?.(transportRequestDiagnostic(requestDiagnosticOptions));
     }
   }
 

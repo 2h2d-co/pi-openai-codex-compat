@@ -1,3 +1,6 @@
+import { tuiFixture } from "../support/pi-fixtures.ts";
+import { extensionContextFixture } from "../support/pi-fixtures.ts";
+import { extensionApiFixture } from "../support/pi-fixtures.ts";
 import {
   assert,
   writeFileSync,
@@ -14,9 +17,9 @@ import {
   formatApplyPatchRenderText,
   ANSI_BACKGROUND_PATTERN,
   stripAnsi,
+  testTheme,
+  requireApplyPatchDetails,
   workspace,
-  type ExtensionAPI,
-  type Theme,
   type ToolDefinition,
   type ApplyPatchDetails,
   type CodexToolBackground,
@@ -32,14 +35,14 @@ void test("registers the Codex freeform tool with model, UI, and failed-history 
         toolCallId: string;
       }) => { details: ApplyPatchDetails } | undefined)
     | undefined;
-  const pi = {
+  const pi = extensionApiFixture({
     registerTool(tool: ToolDefinition) {
       registered = tool;
     },
     on(event: string, handler: typeof toolResultHandler) {
       if (event === "tool_result") toolResultHandler = handler;
     },
-  } as unknown as ExtensionAPI;
+  });
 
   let toolBackground: CodexToolBackground = "subtle";
   let applyPatchDebug = false;
@@ -70,23 +73,16 @@ void test("registers the Codex freeform tool with model, UI, and failed-history 
     { patch: "*** Begin Patch\n*** Add File: rendered.txt\n+hello\n*** End Patch" },
     undefined,
     undefined,
-    { cwd } as never,
+    extensionContextFixture({ cwd }),
   );
   const resultText = result.content[0]?.type === "text" ? result.content[0].text : "";
   assert.match(
     resultText,
     /^Exit code: 0\nWall time: \d+(?:\.\d+)? seconds\nOutput:\nSuccess\. Updated the following files:\nA rendered\.txt\n$/,
   );
-  assert.equal((result.details as ApplyPatchDetails).changes[0]?.kind, "add");
+  assert.equal(requireApplyPatchDetails(result.details).changes[0]?.kind, "add");
 
-  const theme = {
-    fg: (_color: string, text: string) => text,
-    bold: (text: string) => text,
-    getBgAnsi: (color: string) =>
-      color === "toolPendingBg" ? "\u001b[48;2;40;40;50m" : "\u001b[48;2;40;50;40m",
-    getColorMode: () => "truecolor",
-    name: "dark",
-  } as unknown as Theme;
+  const theme = testTheme();
   const callComponent = registered!.renderCall!(
     { patch: "*** Begin Patch\n*** Add File: rendered.txt\n+hello\n*** End Patch" },
     theme,
@@ -151,7 +147,7 @@ void test("registers the Codex freeform tool with model, UI, and failed-history 
     { patch: "*** Begin Patch\n*** Add File: rendered.txt\n+hello\n*** End Patch" },
     { showImages: false },
     registered,
-    { requestRender() {} } as never,
+    tuiFixture({ requestRender() {} }),
     cwd,
   );
   shellComponent.markExecutionStarted();
@@ -328,9 +324,9 @@ void test("registers the Codex freeform tool with model, UI, and failed-history 
     },
     undefined,
     undefined,
-    { cwd } as never,
+    extensionContextFixture({ cwd }),
   );
-  assert.equal((failedResult.details as ApplyPatchDetails).status, "completed");
+  assert.equal(requireApplyPatchDetails(failedResult.details).status, "completed");
   await writeFile(join(cwd, "partial-first.txt"), "before\n");
   await writeFile(join(cwd, "partial-second.txt"), "before\n");
   let failedModelFeedback = "";
@@ -342,11 +338,11 @@ void test("registers the Codex freeform tool with model, UI, and failed-history 
       },
       undefined,
       (partial) => {
-        if ((partial.details as ApplyPatchDetails).changes.length === 1) {
+        if (requireApplyPatchDetails(partial.details).changes.length === 1) {
           writeFileSync(join(cwd, "partial-second.txt"), "external\n");
         }
       },
-      { cwd } as never,
+      extensionContextFixture({ cwd }),
     ),
     (error: unknown) => {
       assert.ok(error instanceof Error);
@@ -461,11 +457,11 @@ void test("registers the Codex freeform tool with model, UI, and failed-history 
       { patch: cancellationPatch },
       cancellationController.signal,
       (partial) => {
-        if ((partial.details as ApplyPatchDetails).changes.length === 1) {
+        if (requireApplyPatchDetails(partial.details).changes.length === 1) {
           cancellationController.abort();
         }
       },
-      { cwd } as never,
+      extensionContextFixture({ cwd }),
     ),
     (error: unknown) => {
       assert.ok(error instanceof Error);
@@ -501,9 +497,15 @@ void test("registers the Codex freeform tool with model, UI, and failed-history 
 *** Delete File: verification-existing.txt
 *** End Patch`;
   await assert.rejects(
-    registered!.execute("verification-call", { patch: verificationPatch }, undefined, undefined, {
-      cwd,
-    } as never),
+    registered!.execute(
+      "verification-call",
+      { patch: verificationPatch },
+      undefined,
+      undefined,
+      extensionContextFixture({
+        cwd,
+      }),
+    ),
     /Patch failed at instruction 2 of 3/,
   );
   const verificationResult = toolResultHandler?.({
@@ -596,9 +598,15 @@ void test("registers the Codex freeform tool with model, UI, and failed-history 
 +Earlier addition.
 *** End Patch`;
   await assert.rejects(
-    registered!.execute("matcher-call", { patch: reverseOrderedPatch }, undefined, undefined, {
-      cwd,
-    } as never),
+    registered!.execute(
+      "matcher-call",
+      { patch: reverseOrderedPatch },
+      undefined,
+      undefined,
+      extensionContextFixture({
+        cwd,
+      }),
+    ),
     (error: unknown) => {
       assert.ok(error instanceof Error);
       assert.match(error.message, /Patch failed at instruction 1 of 1\./u);

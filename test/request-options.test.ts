@@ -1,3 +1,4 @@
+import { requireJsonRecords } from "../extensions/openai-codex-compat/codex-protocol.ts";
 import assert from "node:assert/strict";
 import test from "node:test";
 import type { AssistantMessage, Model } from "@earendil-works/pi-ai";
@@ -199,7 +200,7 @@ void test("applies priority, GPT-5.6 reasoning mode, and native request controls
     },
     { modelId: "gpt-5.6-sol", supportsImageSearch: true },
   );
-  const tools = result.tools as JsonRecord[];
+  const tools = requireJsonRecords(result.tools);
 
   assert.equal(result.service_tier, "priority");
   assert.deepEqual(result.text, {
@@ -251,7 +252,7 @@ void test("disables request tools and omits unsupported reasoning mode and summa
     { ...DEFAULT_CONFIG, webSearch: "indexed", textVerbosity: "medium" },
     { modelId: "gpt-5.6-terra", supportsImageSearch: false },
   );
-  assert.deepEqual((indexed.tools as JsonRecord[]).at(-1), {
+  assert.deepEqual(requireJsonRecords(indexed.tools).at(-1), {
     type: "web_search",
     external_web_access: true,
     indexed_web_access: true,
@@ -289,8 +290,16 @@ void test("uses standalone web.run instead of hosted web_search when available",
 void test("recomputes canonical priority-tier costs after payload modification", () => {
   const model = {
     id: "gpt-5.5",
+    name: "GPT-5.5",
+    api: "openai-codex-responses",
+    provider: "openai-codex",
+    baseUrl: "https://chatgpt.com/backend-api",
+    reasoning: true,
+    input: ["text"],
     cost: { input: 5, output: 30, cacheRead: 0.5, cacheWrite: 0 },
-  } as Model<any>;
+    contextWindow: 100_000,
+    maxTokens: 10_000,
+  } satisfies Model<any>;
   const message = {
     role: "assistant",
     content: [],
@@ -307,7 +316,7 @@ void test("recomputes canonical priority-tier costs after payload modification",
     },
     stopReason: "stop",
     timestamp: Date.now(),
-  } as AssistantMessage;
+  } satisfies AssistantMessage;
 
   const priced = applyPriorityPricing(message, model);
   assert.equal(priced.usage.cost.total, 0.0005);

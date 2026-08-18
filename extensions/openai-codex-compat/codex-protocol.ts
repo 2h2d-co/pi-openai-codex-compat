@@ -1,3 +1,4 @@
+import { isBoolean, isNonNullObject, isNumber, isString } from "./value-contracts.ts";
 import { calculateCost, type Model, type ProviderHeaders, type Usage } from "@earendil-works/pi-ai";
 
 export const REMOTE_COMPACTION_BETA = "remote_compaction_v2";
@@ -7,55 +8,58 @@ const DEFAULT_BASE_URL = "https://chatgpt.com/backend-api";
 const REQUEST_RETRIES = 2;
 const UTF8_BYTES_PER_TOKEN = 4;
 
+export type JsonPrimitive = boolean | null | number | string;
+export type JsonValue = JsonPrimitive | JsonRecord | JsonValue[];
+
 export interface JsonRecord {
-  [key: string]: unknown;
-  type?: unknown;
-  role?: unknown;
-  content?: unknown;
-  text?: unknown;
-  verbosity?: unknown;
-  encrypted_content?: unknown;
-  input?: unknown;
-  messages?: unknown;
-  previous_response_id?: unknown;
-  include?: unknown;
-  model?: unknown;
-  store?: unknown;
-  stream?: unknown;
-  instructions?: unknown;
-  parallel_tool_calls?: unknown;
-  tool_choice?: unknown;
-  prompt_cache_key?: unknown;
-  tools?: unknown;
-  service_tier?: unknown;
-  client_metadata?: unknown;
-  chatgpt_account_id?: unknown;
-  message?: unknown;
-  item?: unknown;
-  response?: unknown;
-  usage?: unknown;
-  input_tokens?: unknown;
-  output_tokens?: unknown;
-  input_tokens_details?: unknown;
-  cached_tokens?: unknown;
-  cache_write_tokens?: unknown;
-  total_tokens?: unknown;
-  v?: unknown;
-  id?: unknown;
-  phase?: unknown;
-  data?: unknown;
-  mimeType?: unknown;
-  stopReason?: unknown;
-  thinkingSignature?: unknown;
-  textSignature?: unknown;
-  name?: unknown;
-  arguments?: unknown;
-  toolCallId?: unknown;
-  addedToolNames?: unknown;
-  kind?: unknown;
-  version?: unknown;
-  modelId?: unknown;
-  history?: unknown;
+  [key: string]: JsonValue | undefined;
+  type?: JsonValue;
+  role?: JsonValue;
+  content?: JsonValue;
+  text?: JsonValue;
+  verbosity?: JsonValue;
+  encrypted_content?: JsonValue;
+  input?: JsonValue;
+  messages?: JsonValue;
+  previous_response_id?: JsonValue;
+  include?: JsonValue;
+  model?: JsonValue;
+  store?: JsonValue;
+  stream?: JsonValue;
+  instructions?: JsonValue;
+  parallel_tool_calls?: JsonValue;
+  tool_choice?: JsonValue;
+  prompt_cache_key?: JsonValue;
+  tools?: JsonValue;
+  service_tier?: JsonValue;
+  client_metadata?: JsonValue;
+  chatgpt_account_id?: JsonValue;
+  message?: JsonValue;
+  item?: JsonValue;
+  response?: JsonValue;
+  usage?: JsonValue;
+  input_tokens?: JsonValue;
+  output_tokens?: JsonValue;
+  input_tokens_details?: JsonValue;
+  cached_tokens?: JsonValue;
+  cache_write_tokens?: JsonValue;
+  total_tokens?: JsonValue;
+  v?: JsonValue;
+  id?: JsonValue;
+  phase?: JsonValue;
+  data?: JsonValue;
+  mimeType?: JsonValue;
+  stopReason?: JsonValue;
+  thinkingSignature?: JsonValue;
+  textSignature?: JsonValue;
+  name?: JsonValue;
+  arguments?: JsonValue;
+  toolCallId?: JsonValue;
+  addedToolNames?: JsonValue;
+  kind?: JsonValue;
+  version?: JsonValue;
+  modelId?: JsonValue;
+  history?: JsonValue;
 }
 
 export interface ResponsesItem extends JsonRecord {
@@ -67,8 +71,51 @@ export type RemoteCompactionResponse = {
   usage?: Usage;
 };
 
+export function isJsonValue(value: unknown): value is JsonValue {
+  if (value === null || isBoolean(value) || isNumber(value) || isString(value)) {
+    return true;
+  }
+  if (Array.isArray(value)) return value.every(isJsonValue);
+  return (
+    isNonNullObject(value) &&
+    Object.values(value).every((entry) => entry === undefined || isJsonValue(entry))
+  );
+}
+
 export function isObject(value: unknown): value is JsonRecord {
-  return value !== null && typeof value === "object" && !Array.isArray(value);
+  return (
+    isNonNullObject(value) &&
+    !Array.isArray(value) &&
+    Object.values(value).every((entry) => entry === undefined || isJsonValue(entry))
+  );
+}
+
+export function requireJsonRecord(value: unknown, label = "value"): JsonRecord {
+  if (!isObject(value)) throw new Error(`${label} must be a JSON object.`);
+  return value;
+}
+
+export function optionalJsonRecord(value: unknown, label = "value"): JsonRecord | undefined {
+  return value === undefined ? undefined : requireJsonRecord(value, label);
+}
+
+export function requireJsonRecords(value: unknown, label = "value"): JsonRecord[] {
+  if (!Array.isArray(value) || !value.every(isObject)) {
+    throw new Error(`${label} must be an array of JSON objects.`);
+  }
+  return value;
+}
+
+export function requireJsonValues(value: unknown, label = "value"): JsonValue[] {
+  if (!Array.isArray(value) || !value.every(isJsonValue)) {
+    throw new Error(`${label} must be an array of JSON values.`);
+  }
+  return value;
+}
+
+export function parseJsonRecord(value: string, label = "value"): JsonRecord {
+  const parsed: unknown = JSON.parse(value);
+  return requireJsonRecord(parsed, label);
 }
 
 export function isResponsesItem(value: unknown): value is ResponsesItem {
@@ -80,18 +127,25 @@ export function isResponsesItem(value: unknown): value is ResponsesItem {
   );
 }
 
+export function requireResponsesItems(value: unknown, label = "value"): ResponsesItem[] {
+  if (!Array.isArray(value) || !value.every(isResponsesItem)) {
+    throw new Error(`${label} must be an array of Responses items.`);
+  }
+  return value;
+}
+
 export function approximateTokens(text: string): number {
   return Math.ceil(new TextEncoder().encode(text).byteLength / UTF8_BYTES_PER_TOKEN);
 }
 
 export function messageTextTokens(item: ResponsesItem): number {
   if (item.type !== undefined && item.type !== "message") return 0;
-  if (typeof item.content === "string") return approximateTokens(item.content);
+  if (isString(item.content)) return approximateTokens(item.content);
   if (!Array.isArray(item.content)) return 0;
 
   let tokens = 0;
   for (const part of item.content) {
-    if (!isObject(part) || typeof part.text !== "string") continue;
+    if (!isObject(part) || !isString(part.text)) continue;
     if (part.type === "input_text" || part.type === "output_text") {
       tokens += approximateTokens(part.text);
     }
@@ -99,11 +153,13 @@ export function messageTextTokens(item: ResponsesItem): number {
   return tokens;
 }
 
-function splitUtf8Bytes(
-  text: string,
-  beginningBytes: number,
-  endBytes: number,
-): { removedCharacters: number; prefix: string; suffix: string } {
+interface Utf8Split {
+  removedCharacters: number;
+  prefix: string;
+  suffix: string;
+}
+
+function splitUtf8Bytes(text: string, beginningBytes: number, endBytes: number): Utf8Split {
   const encodedLength = new TextEncoder().encode(text).byteLength;
   const tailStartTarget = Math.max(0, encodedLength - endBytes);
   let currentByte = 0;
@@ -156,18 +212,18 @@ function shortenMessage(item: ResponsesItem, tokenLimit: number): ResponsesItem 
   if (tokenLimit <= 0 || (item.type !== undefined && item.type !== "message")) return undefined;
   const result = structuredClone(item);
 
-  if (typeof result.content === "string") {
+  if (isString(result.content)) {
     result.content = truncateMiddleWithTokenBudget(result.content, tokenLimit);
     return result.content ? result : undefined;
   }
   if (!Array.isArray(result.content)) return result;
 
   let remaining = tokenLimit;
-  const content: unknown[] = [];
+  const content: JsonValue[] = [];
   for (const part of result.content) {
     if (
       !isObject(part) ||
-      typeof part.text !== "string" ||
+      !isString(part.text) ||
       (part.type !== "input_text" && part.type !== "output_text")
     ) {
       content.push(part);
@@ -232,10 +288,7 @@ export function installCompactionItem(
   previousHistory: readonly ResponsesItem[],
   compactionItem: ResponsesItem,
 ): ResponsesItem[] {
-  if (
-    compactionItem.type !== "compaction" ||
-    typeof compactionItem.encrypted_content !== "string"
-  ) {
+  if (compactionItem.type !== "compaction" || !isString(compactionItem.encrypted_content)) {
     throw new Error("Codex returned an invalid remote compaction item.");
   }
   return [...selectRetainedContext(previousHistory), structuredClone(compactionItem)];
@@ -271,7 +324,7 @@ export function remoteCompactionPayload(options: {
   history: readonly ResponsesItem[];
   instructions: string;
   sessionId?: string | undefined;
-  fallbackTools?: unknown[] | undefined;
+  fallbackTools?: JsonValue[] | undefined;
   priority: boolean;
 }): JsonRecord {
   const payload = options.template ? structuredClone(options.template) : {};
@@ -287,14 +340,15 @@ export function remoteCompactionPayload(options: {
     ...options.history.map((item) => structuredClone(item)),
     { type: "compaction_trigger" },
   ];
-  payload.parallel_tool_calls =
-    typeof payload.parallel_tool_calls === "boolean" ? payload.parallel_tool_calls : true;
+  payload.parallel_tool_calls = isBoolean(payload.parallel_tool_calls)
+    ? payload.parallel_tool_calls
+    : true;
   payload.tool_choice ??= "auto";
   payload.include = [...new Set([...include, "reasoning.encrypted_content"])];
   if (options.sessionId) payload.prompt_cache_key = options.sessionId;
   else delete payload.prompt_cache_key;
   payload.text =
-    isObject(payload.text) && typeof payload.text.verbosity === "string"
+    isObject(payload.text) && isString(payload.text.verbosity)
       ? { verbosity: payload.text.verbosity }
       : { verbosity: "low" };
 
@@ -314,9 +368,11 @@ function accountIdFromToken(token: string): string {
   try {
     const pieces = token.split(".");
     if (pieces.length !== 3) throw new Error("not a JWT");
-    const claims = JSON.parse(Buffer.from(pieces[1]!, "base64url").toString("utf8")) as JsonRecord;
+    const claims = requireJsonRecord(
+      JSON.parse(Buffer.from(pieces[1]!, "base64url").toString("utf8")),
+    );
     const openAIClaims = claims["https://api.openai.com/auth"];
-    if (!isObject(openAIClaims) || typeof openAIClaims.chatgpt_account_id !== "string") {
+    if (!isObject(openAIClaims) || !isString(openAIClaims.chatgpt_account_id)) {
       throw new Error("account id missing");
     }
     return openAIClaims.chatgpt_account_id;
@@ -417,7 +473,7 @@ async function readCompactionStream(
     if (!isObject(event)) return;
 
     if (event.type === "error") {
-      if (typeof event.message === "string" && event.message.trim()) {
+      if (isString(event.message) && event.message.trim()) {
         throw new PermanentRemoteError(event.message);
       }
       throw new IncompleteRemoteStream("Codex reported an unspecified compaction error.");
@@ -456,7 +512,7 @@ async function readCompactionStream(
       `Codex returned ${compacted.length} compaction items; exactly one is required.`,
     );
   }
-  if (typeof compacted[0]!.encrypted_content !== "string") {
+  if (!isString(compacted[0]!.encrypted_content)) {
     throw new PermanentRemoteError("Codex compaction output did not contain encrypted_content.");
   }
 
@@ -469,21 +525,21 @@ export function responseUsage(
   priority: boolean,
 ): Usage | undefined {
   if (!isObject(value)) return undefined;
-  const totalInput = typeof value.input_tokens === "number" ? value.input_tokens : 0;
-  const output = typeof value.output_tokens === "number" ? value.output_tokens : 0;
+  const totalInput = isNumber(value.input_tokens) ? value.input_tokens : 0;
+  const output = isNumber(value.output_tokens) ? value.output_tokens : 0;
   const inputDetails = isObject(value.input_tokens_details)
     ? value.input_tokens_details
     : undefined;
-  const cacheRead =
-    typeof inputDetails?.cached_tokens === "number" ? inputDetails.cached_tokens : 0;
-  const cacheWrite =
-    typeof inputDetails?.cache_write_tokens === "number" ? inputDetails.cache_write_tokens : 0;
+  const cacheRead = isNumber(inputDetails?.cached_tokens) ? inputDetails.cached_tokens : 0;
+  const cacheWrite = isNumber(inputDetails?.cache_write_tokens)
+    ? inputDetails.cache_write_tokens
+    : 0;
   const usage: Usage = {
     input: Math.max(0, totalInput - cacheRead - cacheWrite),
     output,
     cacheRead,
     cacheWrite,
-    totalTokens: typeof value.total_tokens === "number" ? value.total_tokens : totalInput + output,
+    totalTokens: isNumber(value.total_tokens) ? value.total_tokens : totalInput + output,
     cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
   };
   calculateCost(model, usage);
@@ -524,9 +580,7 @@ export async function collectRemoteCompaction(
               item.type === "compaction" &&
               !compacted.some(
                 (existing) =>
-                  (typeof existing.id === "string" &&
-                    typeof item.id === "string" &&
-                    existing.id === item.id) ||
+                  (isString(existing.id) && isString(item.id) && existing.id === item.id) ||
                   JSON.stringify(existing) === JSON.stringify(item),
               )
             ) {
@@ -544,15 +598,14 @@ export async function collectRemoteCompaction(
       `Codex returned ${compacted.length} compaction items; exactly one is required.`,
     );
   }
-  if (typeof compacted[0]!.encrypted_content !== "string") {
+  if (!isString(compacted[0]!.encrypted_content)) {
     throw new Error("Codex compaction output did not contain encrypted_content.");
   }
 
   const usage = responseUsage(accountingModel, usageValue, priority);
-  return {
-    item: compacted[0]!,
-    ...(usage ? { usage } : {}),
-  };
+  const result: RemoteCompactionResponse = { item: compacted[0]! };
+  if (usage) result.usage = usage;
+  return result;
 }
 
 export async function requestRemoteCompaction(options: {
@@ -565,16 +618,17 @@ export async function requestRemoteCompaction(options: {
   fetcher?: typeof fetch | undefined;
 }): Promise<RemoteCompactionResponse> {
   const fetcher = options.fetcher ?? fetch;
-  let lastFailure: unknown;
+  let lastFailure: Error | undefined;
 
   for (let attempt = 0; attempt <= REQUEST_RETRIES; attempt++) {
     try {
-      const response = await fetcher(options.endpoint, {
+      const init: RequestInit = {
         method: "POST",
         headers: options.headers,
         body: JSON.stringify(options.payload),
-        ...(options.signal ? { signal: options.signal } : {}),
-      });
+      };
+      if (options.signal) init.signal = options.signal;
+      const response = await fetcher(options.endpoint, init);
 
       if (!response.ok) {
         const body = await response.text().catch(() => "");
@@ -588,17 +642,16 @@ export async function requestRemoteCompaction(options: {
 
       const result = await readCompactionStream(response);
       const usage = responseUsage(options.accountingModel, result.usage, options.priority);
-      return {
-        item: result.item,
-        ...(usage ? { usage } : {}),
-      };
+      const compacted: RemoteCompactionResponse = { item: result.item };
+      if (usage) compacted.usage = usage;
+      return compacted;
     } catch (error) {
       if (options.signal?.aborted || error instanceof PermanentRemoteError) throw error;
-      lastFailure = error;
+      lastFailure = error instanceof Error ? error : new Error(String(error));
       if (attempt === REQUEST_RETRIES) throw error;
       await wait(1000 * 2 ** attempt, options.signal);
     }
   }
 
-  throw lastFailure instanceof Error ? lastFailure : new Error("Codex remote compaction failed.");
+  throw lastFailure ?? new Error("Codex remote compaction failed.");
 }

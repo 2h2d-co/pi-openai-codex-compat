@@ -1,10 +1,12 @@
-import type { Theme } from "@earendil-works/pi-coding-agent";
+import { isBoolean, isNumber, isString } from "./value-contracts.ts";
 import { Container, type Component, Text, wrapTextWithAnsi } from "@earendil-works/pi-tui";
 import {
   CodexToolSurfaceComponent,
   type CodexToolBackgroundResolver,
+  type RenderTheme,
 } from "./codex-tool-surface.ts";
 import { DEFAULT_CONFIG } from "./config.ts";
+import { isObject, type JsonRecord, type JsonValue } from "./codex-protocol.ts";
 import { WEB_RUN_TOOL_NAME } from "./namespaced-tools.ts";
 import {
   blockPlainText,
@@ -17,7 +19,7 @@ import {
 import type { WebRunCommands } from "./web-run-schema.ts";
 
 export type WebRunDetails = {
-  results?: unknown[];
+  results?: JsonValue[];
 };
 
 type WebRunRenderContext = {
@@ -32,7 +34,6 @@ type WebRunResult = {
   details?: unknown;
 };
 
-type JsonRecord = Record<string, unknown>;
 type WebRunAction =
   | "search"
   | "image"
@@ -64,12 +65,12 @@ const STRUCTURED_RESULT_KEYS = new Set([
 ]);
 
 function isRecord(value: unknown): value is JsonRecord {
-  return value !== null && typeof value === "object" && !Array.isArray(value);
+  return isObject(value);
 }
 
 function stringField(record: JsonRecord, key: string): string | undefined {
   const value = record[key];
-  return typeof value === "string" && value.length > 0 ? value : undefined;
+  return isString(value) && value.length > 0 ? value : undefined;
 }
 
 function quotePreview(value: string, maximum = 90): string {
@@ -165,7 +166,7 @@ export function describeWebRunCall(args: WebRunCommands): string {
 
 function textOutput(result: WebRunResult): string {
   return result.content
-    .filter((item) => item.type === "text" && typeof item.text === "string")
+    .filter((item) => item.type === "text" && isString(item.text))
     .map((item) => item.text)
     .join("\n");
 }
@@ -410,8 +411,8 @@ function humanizeKey(key: string): string {
 }
 
 function scalarText(value: unknown): string | undefined {
-  if (typeof value === "string") return value;
-  if (typeof value === "number" || typeof value === "boolean") return String(value);
+  if (isString(value)) return value;
+  if (isNumber(value) || isBoolean(value)) return String(value);
   if (value === null) return "null";
   return undefined;
 }
@@ -454,7 +455,7 @@ function additionalFields(result: JsonRecord): Array<{ label: string; value: str
   return fields;
 }
 
-function formatStructuredResult(result: JsonRecord, index: number, theme: Theme): string[] {
+function formatStructuredResult(result: JsonRecord, index: number, theme: RenderTheme): string[] {
   const type = stringField(result, "type");
   const title =
     stringField(result, "title") ??
@@ -471,8 +472,7 @@ function formatStructuredResult(result: JsonRecord, index: number, theme: Theme)
     stringField(result, "caption");
   const width = result["width"];
   const height = result["height"];
-  const dimensions =
-    typeof width === "number" && typeof height === "number" ? `${width}×${height}` : undefined;
+  const dimensions = isNumber(width) && isNumber(height) ? `${width}×${height}` : undefined;
   const lines = [`${theme.fg("dim", `${index + 1}.`)} ${theme.bold(title)}`];
   const metadata = detailLine([domain, reference, dimensions, type?.replaceAll("_", " ")]);
   if (metadata) lines.push(`   ${theme.fg("muted", metadata)}`);
@@ -526,7 +526,7 @@ function operationLabel(
   }
 }
 
-function sourceGutter(line: WebRunOutputLine, width: number, theme: Theme): string {
+function sourceGutter(line: WebRunOutputLine, width: number, theme: RenderTheme): string {
   if (line.line === undefined) return "";
   const page =
     line.page === undefined
@@ -537,7 +537,7 @@ function sourceGutter(line: WebRunOutputLine, width: number, theme: Theme): stri
   return theme.fg("dim", `${`L${line.line}${page}`.padStart(width)} │ `);
 }
 
-function formatOutputLine(line: WebRunOutputLine, gutterWidth: number, theme: Theme): string {
+function formatOutputLine(line: WebRunOutputLine, gutterWidth: number, theme: RenderTheme): string {
   const gutter =
     line.line === undefined
       ? " ".repeat(gutterWidth + (gutterWidth > 0 ? 3 : 0))
@@ -555,7 +555,7 @@ function formatOutputBlock(
   block: WebRunOutputBlock,
   index: number,
   label: string,
-  theme: Theme,
+  theme: RenderTheme,
 ): string[] {
   const title = block.title ?? label;
   const domain = domainFromUrl(block.url);
@@ -586,14 +586,14 @@ class WebRunResultComponent implements Component {
   private readonly args: WebRunCommands;
   private readonly result: WebRunResult;
   private readonly expanded: boolean;
-  private readonly theme: Theme;
+  private readonly theme: RenderTheme;
   private readonly isError: boolean;
 
   constructor(
     args: WebRunCommands,
     result: WebRunResult,
     expanded: boolean,
-    theme: Theme,
+    theme: RenderTheme,
     isError: boolean,
   ) {
     this.args = args;
@@ -646,7 +646,7 @@ class WebRunResultComponent implements Component {
 
 export function renderWebRunCall(
   args: WebRunCommands,
-  theme: Theme,
+  theme: RenderTheme,
   context: WebRunRenderContext,
   resolveBackground: CodexToolBackgroundResolver = () => DEFAULT_CONFIG.toolBackground,
 ): Component {
@@ -663,7 +663,7 @@ export function renderWebRunCall(
 export function renderWebRunResult(
   result: WebRunResult,
   options: { expanded: boolean; isPartial: boolean },
-  theme: Theme,
+  theme: RenderTheme,
   context: WebRunRenderContext,
   resolveBackground: CodexToolBackgroundResolver = () => DEFAULT_CONFIG.toolBackground,
 ): Component {

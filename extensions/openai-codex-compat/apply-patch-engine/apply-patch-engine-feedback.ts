@@ -290,11 +290,13 @@ export function formatApplyPatchInstructionResult(
   return feedback ? `${result} - ${feedback}` : result;
 }
 
-export function applyPatchSummaryPaths(details: ApplyPatchDetails): {
+export interface ApplyPatchSummaryPaths {
   added: string[];
   modified: string[];
   deleted: string[];
-} {
+}
+
+export function applyPatchSummaryPaths(details: ApplyPatchDetails): ApplyPatchSummaryPaths {
   const added = new Set(details.added);
   const modified = new Set(details.modified);
   const deleted = new Set(details.deleted);

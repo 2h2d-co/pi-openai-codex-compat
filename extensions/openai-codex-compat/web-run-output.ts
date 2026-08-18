@@ -74,17 +74,18 @@ function parseOutputLine(value: string, references: string[]): WebRunOutputLine 
   if (pageLine) {
     const text = pageLine[4] ?? "";
     const heading = text.match(/^(#{1,6})\s+(.+)$/u);
-    return {
+    const line: WebRunOutputLine = {
       line: Number(pageLine[1]),
-      ...(pageLine[2] === undefined ? {} : { page: Number(pageLine[2]) }),
-      ...(pageLine[3] === undefined ? {} : { pageEnd: Number(pageLine[3]) }),
       text: heading?.[2] ?? text,
-      ...(heading ? { heading: heading[1]!.length } : {}),
     };
+    if (pageLine[2] !== undefined) line.page = Number(pageLine[2]);
+    if (pageLine[3] !== undefined) line.pageEnd = Number(pageLine[3]);
+    if (heading?.[1]) line.heading = heading[1].length;
+    return line;
   }
   const heading = clean.match(/^(#{1,6})\s+(.+)$/u);
   if (heading) {
-    return { text: heading[2]!, heading: heading[1]!.length };
+    return { text: heading[2] ?? "", heading: heading[1]?.length ?? 0 };
   }
   return { text: clean };
 }
@@ -126,13 +127,14 @@ function parseBlock(value: string): WebRunOutputBlock | undefined {
       title = url;
     }
   }
-  return {
-    ...(title ? { title } : {}),
-    ...(url ? { url } : {}),
+  const block: WebRunOutputBlock = {
     references,
     metadata,
     lines,
   };
+  if (title) block.title = title;
+  if (url) block.url = url;
+  return block;
 }
 
 export function parseWebRunOutput(output: string): WebRunOutputBlock[] {

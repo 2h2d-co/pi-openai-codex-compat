@@ -1,6 +1,7 @@
+import { hasObjectType, isFunction, isNumber, isString } from "./value-contracts.ts";
 const MAX_PROVIDER_ERROR_BODY_CHARS = 4_000;
 
-type ProviderErrorShape = Error & {
+type ProviderErrorDetails = Error & {
   statusCode?: unknown;
   status?: unknown;
   body?: unknown;
@@ -26,36 +27,31 @@ function truncateErrorText(text: string): string {
       } chars]`;
 }
 
-function isPlainNonEmptyObject(value: unknown): value is Record<string, unknown> {
+function isPlainNonEmptyObject(value: unknown): value is object {
   if (typeof value !== "object" || value === null) return false;
   const prototype = Object.getPrototypeOf(value);
   return (prototype === Object.prototype || prototype === null) && Object.keys(value).length > 0;
 }
 
 function isReadableStreamLike(value: unknown): boolean {
-  return (
-    typeof value === "object" &&
-    value !== null &&
-    "pipe" in value &&
-    typeof value.pipe === "function"
-  );
+  return hasObjectType(value) && value !== null && "pipe" in value && isFunction(value.pipe);
 }
 
-function errorStatus(error: ProviderErrorShape): number | undefined {
-  if (typeof error.statusCode === "number") return error.statusCode;
-  if (typeof error.status === "number") return error.status;
-  if (typeof error.$metadata?.httpStatusCode === "number") {
+function errorStatus(error: ProviderErrorDetails): number | undefined {
+  if (isNumber(error.statusCode)) return error.statusCode;
+  if (isNumber(error.status)) return error.status;
+  if (isNumber(error.$metadata?.httpStatusCode)) {
     return error.$metadata.httpStatusCode;
   }
-  if (typeof error.$response?.statusCode === "number") return error.$response.statusCode;
+  if (isNumber(error.$response?.statusCode)) return error.$response.statusCode;
   return undefined;
 }
 
-function errorBody(error: ProviderErrorShape): string | undefined {
+function errorBody(error: ProviderErrorDetails): string | undefined {
   let body: string | undefined;
-  if (typeof error.body === "string") body = error.body;
+  if (isString(error.body)) body = error.body;
   else if (isPlainNonEmptyObject(error.error)) body = safeJsonStringify(error.error);
-  else if (typeof error.$response?.body === "string") body = error.$response.body;
+  else if (isString(error.$response?.body)) body = error.$response.body;
   else if (
     !isReadableStreamLike(error.$response?.body) &&
     isPlainNonEmptyObject(error.$response?.body)
@@ -69,7 +65,7 @@ function errorBody(error: ProviderErrorShape): string | undefined {
 /** Match Pi AI's provider error normalization without importing a private package subpath. */
 export function formatProviderError(error: unknown): string {
   if (!(error instanceof Error)) return safeJsonStringify(error);
-  const providerError = error as ProviderErrorShape;
+  const providerError: ProviderErrorDetails = error;
   const status = errorStatus(providerError);
   const body = errorBody(providerError);
   if (status !== undefined && body !== undefined && !error.message.includes(body)) {

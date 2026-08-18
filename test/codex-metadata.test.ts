@@ -1,3 +1,5 @@
+import { requireJsonRecord } from "../extensions/openai-codex-compat/codex-protocol.ts";
+import { hasObjectType, requireString } from "../extensions/openai-codex-compat/value-contracts.ts";
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
@@ -25,8 +27,8 @@ void test("adds Codex session, thread, turn, and request-kind metadata", () => {
     },
   );
   const candidate = payload["client_metadata"];
-  assert.ok(candidate && typeof candidate === "object" && !Array.isArray(candidate));
-  const metadata = candidate as Record<string, unknown>;
+  assert.ok(candidate && hasObjectType(candidate) && !Array.isArray(candidate));
+  const metadata = requireJsonRecord(candidate);
   assert.equal(metadata["retained"], "value");
   assert.equal(metadata["session_id"], "session-1");
   assert.equal(metadata["thread_id"], "session-1");
@@ -34,7 +36,9 @@ void test("adds Codex session, thread, turn, and request-kind metadata", () => {
   assert.equal(metadata[CODEX_INSTALLATION_ID_METADATA_KEY], installationId);
   assert.equal(metadata[CODEX_WINDOW_ID_HEADER], "session-1:2");
 
-  const turn = JSON.parse(String(metadata[CODEX_TURN_METADATA_HEADER])) as Record<string, unknown>;
+  const turn = requireJsonRecord(
+    JSON.parse(requireString(metadata[CODEX_TURN_METADATA_HEADER], "turn metadata")),
+  );
   assert.equal(turn["installation_id"], installationId);
   assert.equal(turn["session_id"], "session-1");
   assert.equal(turn["thread_id"], "session-1");
@@ -61,8 +65,10 @@ void test("adds the official nested metadata to compaction requests only", () =>
     "turn-1",
     { installationId: "11111111-1111-4111-8111-111111111111" },
   );
-  const metadata = payload["client_metadata"] as Record<string, unknown>;
-  const turn = JSON.parse(String(metadata[CODEX_TURN_METADATA_HEADER])) as Record<string, unknown>;
+  const metadata = requireJsonRecord(payload["client_metadata"]);
+  const turn = requireJsonRecord(
+    JSON.parse(requireString(metadata[CODEX_TURN_METADATA_HEADER], "turn metadata")),
+  );
   assert.equal(turn["request_kind"], "compaction");
   assert.deepEqual(turn["compaction"], {
     trigger: "auto",
@@ -79,11 +85,12 @@ void test("adds the official nested metadata to compaction requests only", () =>
     "turn-2",
     { installationId: "11111111-1111-4111-8111-111111111111" },
   );
-  const ordinaryMetadata = ordinary["client_metadata"] as Record<string, unknown>;
-  const ordinaryTurn = JSON.parse(String(ordinaryMetadata[CODEX_TURN_METADATA_HEADER])) as Record<
-    string,
-    unknown
-  >;
+  const ordinaryMetadata = requireJsonRecord(ordinary["client_metadata"]);
+  const ordinaryTurn = requireJsonRecord(
+    JSON.parse(
+      requireString(ordinaryMetadata[CODEX_TURN_METADATA_HEADER], "ordinary turn metadata"),
+    ),
+  );
   assert.equal(ordinaryTurn["compaction"], undefined);
 });
 
@@ -94,11 +101,13 @@ void test("projects branch thread and fork lineage without changing session iden
     forkedFromThreadId: "thread-1",
     windowNumber: 3,
   });
-  const metadata = payload["client_metadata"] as Record<string, unknown>;
+  const metadata = requireJsonRecord(payload["client_metadata"]);
   assert.equal(metadata["session_id"], "session-1");
   assert.equal(metadata["thread_id"], "thread-2");
   assert.equal(metadata[CODEX_WINDOW_ID_HEADER], "thread-2:3");
-  const turn = JSON.parse(String(metadata[CODEX_TURN_METADATA_HEADER])) as Record<string, unknown>;
+  const turn = requireJsonRecord(
+    JSON.parse(requireString(metadata[CODEX_TURN_METADATA_HEADER], "turn metadata")),
+  );
   assert.equal(turn["session_id"], "session-1");
   assert.equal(turn["thread_id"], "thread-2");
   assert.equal(turn["forked_from_thread_id"], "thread-1");
@@ -120,9 +129,11 @@ void test("omits a prewarm start timestamp when the startup turn has not begun",
     threadSource: "user",
     sandbox: "none",
   });
-  const metadata = payload["client_metadata"] as Record<string, unknown>;
+  const metadata = requireJsonRecord(payload["client_metadata"]);
   assert.equal(metadata["turn_id"], "");
-  const turn = JSON.parse(String(metadata[CODEX_TURN_METADATA_HEADER])) as Record<string, unknown>;
+  const turn = requireJsonRecord(
+    JSON.parse(requireString(metadata[CODEX_TURN_METADATA_HEADER], "turn metadata")),
+  );
   assert.equal(turn["turn_id"], "");
   assert.equal(turn["request_kind"], "prewarm");
   assert.equal(turn["turn_started_at_unix_ms"], undefined);

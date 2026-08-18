@@ -1,18 +1,17 @@
+import { extensionContextFixture } from "./support/pi-fixtures.ts";
+import { extensionApiFixture } from "./support/pi-fixtures.ts";
+import { requireJsonRecord } from "../extensions/openai-codex-compat/codex-protocol.ts";
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import test from "node:test";
-import type {
-  ExtensionAPI,
-  ExtensionContext,
-  SessionEntry,
-  Theme,
-} from "@earendil-works/pi-coding-agent";
+import type { SessionEntry } from "@earendil-works/pi-coding-agent";
 import type { Model } from "@earendil-works/pi-ai";
 import { DEFAULT_CONFIG, type WebSearchMode } from "../extensions/openai-codex-compat/config.ts";
-import type { JsonRecord } from "../extensions/openai-codex-compat/codex-protocol.ts";
+import { isObject, type JsonRecord } from "../extensions/openai-codex-compat/codex-protocol.ts";
 import { CODEX_NAMESPACED_TOOL_NAMES } from "../extensions/openai-codex-compat/namespaced-tools.ts";
 import { convertResponsesTools } from "../extensions/openai-codex-compat/vendor/pi-ai/openai-responses-serialization.ts";
 import registerWebRun, { recentSearchInput } from "../extensions/openai-codex-compat/web-run.ts";
+import type { CodexJsonRequestOptions } from "../extensions/openai-codex-compat/codex-transport.ts";
 
 const ANSI_SEQUENCE_PATTERN = new RegExp(String.raw`\u001b\[[0-?]*[ -/]*[@-~]`, "gu");
 
@@ -32,7 +31,7 @@ function codexModel(): Model<any> {
     cost: { input: 1, output: 2, cacheRead: 0.1, cacheWrite: 1.25 },
     contextWindow: 100_000,
     maxTokens: 10_000,
-  } as Model<any>;
+  } satisfies Model<any>;
 }
 
 function userEntry(id: string, text: string, parentId: string | null = null): SessionEntry {
@@ -42,7 +41,7 @@ function userEntry(id: string, text: string, parentId: string | null = null): Se
     parentId,
     timestamp: new Date().toISOString(),
     message: { role: "user", content: [{ type: "text", text }], timestamp: Date.now() },
-  } as SessionEntry;
+  } satisfies SessionEntry;
 }
 
 void test("retains only the latest two visible user turns for standalone search", () => {
@@ -104,15 +103,15 @@ void test("registers the complete reserved web.run schema and executes alpha/sea
   const requests: Array<{
     path: string;
     body: JsonRecord;
-    options: Record<string, unknown>;
+    options: CodexJsonRequestOptions;
   }> = [];
   const branch = [userEntry("user-1", "Find current Pi documentation.")];
-  const pi = {
+  const pi = extensionApiFixture({
     registerTool(definition: unknown) {
       tool = definition;
     },
     getAllTools: () => [],
-  } as unknown as ExtensionAPI;
+  });
   registerWebRun(
     pi,
     () => ({ ...DEFAULT_CONFIG, webSearch }),
@@ -143,7 +142,7 @@ void test("registers the complete reserved web.run schema and executes alpha/sea
     "For technical research, prefer primary sources; for OpenAI product questions, inspect local code first and restrict fallback browsing to official OpenAI sites.",
     "Cite supported claims with direct Markdown links near the relevant text, never expose internal reference IDs, and respect the description's quotation and source word limits.",
   ]);
-  const properties = tool.parameters.properties as Record<string, unknown>;
+  const properties = requireJsonRecord(tool.parameters.properties);
   assert.deepEqual(Object.keys(properties), [
     "click",
     "finance",
@@ -173,14 +172,16 @@ void test("registers the complete reserved web.run schema and executes alpha/sea
   assert.equal(wireTools[0]?.["name"], "web");
   const namespaceTools = wireTools[0]?.["tools"];
   assert.ok(Array.isArray(namespaceTools));
-  assert.equal(namespaceTools[0]?.["name"], "run");
-  assert.equal(namespaceTools[0]?.["strict"], false);
+  const namespaceTool = namespaceTools.find(isObject);
+  assert.ok(namespaceTool);
+  assert.equal(namespaceTool["name"], "run");
+  assert.equal(namespaceTool["strict"], false);
   assert.equal(
-    createHash("sha256").update(JSON.stringify(namespaceTools[0]?.["parameters"])).digest("hex"),
+    createHash("sha256").update(JSON.stringify(namespaceTool["parameters"])).digest("hex"),
     "cee1fb436b2d198ef7d8d2883cb3161d75f31c10fe40249480031ca2673b364c",
   );
 
-  const context = {
+  const context = extensionContextFixture({
     model: codexModel(),
     sessionManager: {
       getSessionId: () => "session-1",
@@ -193,7 +194,7 @@ void test("registers the complete reserved web.run schema and executes alpha/sea
         headers: { "x-remove": null, "x-test": "value" },
       }),
     },
-  } as unknown as ExtensionContext;
+  });
   const commands = {
     search_query: [{ q: "Pi" }],
     finance: [{ ticker: "AMD", type: "equity", market: "USA" }],
@@ -247,7 +248,7 @@ void test("registers the complete reserved web.run schema and executes alpha/sea
       color === "toolPendingBg" ? "\u001b[48;2;40;40;50m" : "\u001b[48;2;40;50;40m",
     getColorMode: () => "truecolor",
     name: "dark",
-  } as unknown as Theme;
+  };
   const renderContext = {
     args: commands,
     toolCallId: "call-web|fc-web",

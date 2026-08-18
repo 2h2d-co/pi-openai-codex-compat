@@ -1,3 +1,4 @@
+import { isString } from "./value-contracts.ts";
 import { uuidv7 } from "@earendil-works/pi-ai";
 import { isObject, type JsonRecord } from "./codex-protocol.ts";
 
@@ -58,6 +59,20 @@ function windowId(sessionId: string, identity: CodexMetadataIdentity): string {
   return `${identity.threadId ?? sessionId}:${identity.windowNumber ?? 0}`;
 }
 
+interface TurnMetadata {
+  installation_id: string;
+  session_id: string;
+  thread_id: string;
+  turn_id: string;
+  window_id: string;
+  request_kind: CodexMetadataRequest["kind"];
+  forked_from_thread_id?: string;
+  thread_source?: string;
+  sandbox?: string;
+  turn_started_at_unix_ms?: number;
+  compaction?: CodexCompactionMetadata;
+}
+
 function turnMetadata(
   sessionId: string,
   turnId: string,
@@ -65,21 +80,24 @@ function turnMetadata(
   identity: CodexMetadataIdentity,
 ): string {
   const threadId = identity.threadId ?? sessionId;
-  return JSON.stringify({
+  const metadata: TurnMetadata = {
     installation_id: identity.installationId,
     session_id: sessionId,
     thread_id: threadId,
     turn_id: turnId,
     window_id: windowId(sessionId, identity),
     request_kind: request.kind,
-    ...(identity.forkedFromThreadId ? { forked_from_thread_id: identity.forkedFromThreadId } : {}),
-    ...(identity.threadSource ? { thread_source: identity.threadSource } : {}),
-    ...(identity.sandbox ? { sandbox: identity.sandbox } : {}),
-    ...(identity.turnStartedAtUnixMs === undefined
-      ? {}
-      : { turn_started_at_unix_ms: identity.turnStartedAtUnixMs }),
-    ...(request.kind === "compaction" ? { compaction: request.compaction } : {}),
-  });
+  };
+  if (identity.forkedFromThreadId) {
+    metadata.forked_from_thread_id = identity.forkedFromThreadId;
+  }
+  if (identity.threadSource) metadata.thread_source = identity.threadSource;
+  if (identity.sandbox) metadata.sandbox = identity.sandbox;
+  if (identity.turnStartedAtUnixMs !== undefined) {
+    metadata.turn_started_at_unix_ms = identity.turnStartedAtUnixMs;
+  }
+  if (request.kind === "compaction") metadata.compaction = request.compaction;
+  return JSON.stringify(metadata);
 }
 
 export function codexClientMetadata(
@@ -127,13 +145,13 @@ export function applyCodexMetadataHeaders(headers: Headers, payload: JsonRecord)
   const metadata = payload["client_metadata"];
   if (!isObject(metadata)) return;
 
-  if (typeof metadata["thread_id"] === "string") {
+  if (isString(metadata["thread_id"])) {
     headers.set("thread-id", metadata["thread_id"]);
   }
-  if (typeof metadata[CODEX_WINDOW_ID_HEADER] === "string") {
+  if (isString(metadata[CODEX_WINDOW_ID_HEADER])) {
     headers.set(CODEX_WINDOW_ID_HEADER, metadata[CODEX_WINDOW_ID_HEADER]);
   }
-  if (typeof metadata[CODEX_TURN_METADATA_HEADER] === "string") {
+  if (isString(metadata[CODEX_TURN_METADATA_HEADER])) {
     headers.set(CODEX_TURN_METADATA_HEADER, metadata[CODEX_TURN_METADATA_HEADER]);
   }
 }

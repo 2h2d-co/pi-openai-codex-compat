@@ -3,11 +3,11 @@ import test from "node:test";
 import {
   createAssistantMessageEventStream,
   type AssistantMessage,
-  type AssistantMessageEventStream,
   type Model,
 } from "@earendil-works/pi-ai";
 import { processCodexStream } from "../extensions/openai-codex-compat/codex-stream.ts";
 import type { JsonRecord } from "../extensions/openai-codex-compat/codex-protocol.ts";
+import { assistantMessageEventStreamFixture } from "./support/pi-fixtures.ts";
 
 const model = {
   id: "gpt-test",
@@ -20,7 +20,7 @@ const model = {
   cost: { input: 1, output: 2, cacheRead: 0.1, cacheWrite: 1.25 },
   contextWindow: 100_000,
   maxTokens: 10_000,
-} as Model<any>;
+} satisfies Model<any>;
 
 function output(): AssistantMessage {
   return {
@@ -396,15 +396,14 @@ void test("maps default-namespaced custom calls to bare Pi tool names", async ()
 void test("matches Pi AI phase, reasoning, and final tool-delta events", async () => {
   const message = output();
   const pushed: Array<{ type: string; delta?: string; stopReason?: string }> = [];
-  const stream = {
+  const stream = assistantMessageEventStreamFixture({
     push(event: { type: string; delta?: string; partial?: AssistantMessage }) {
-      pushed.push({
-        type: event.type,
-        ...(event.delta === undefined ? {} : { delta: event.delta }),
-        ...(event.partial ? { stopReason: event.partial.stopReason } : {}),
-      });
+      const pushedEvent: (typeof pushed)[number] = { type: event.type };
+      if (event.delta !== undefined) pushedEvent.delta = event.delta;
+      if (event.partial) pushedEvent.stopReason = event.partial.stopReason;
+      pushed.push(pushedEvent);
     },
-  } as AssistantMessageEventStream;
+  });
 
   await processCodexStream(
     events([
@@ -554,16 +553,19 @@ void test("distinguishes token limits from other incomplete responses", async ()
     },
   ] as const) {
     const message = output();
+    const response: JsonRecord = {
+      id: "resp_incomplete",
+      status: "incomplete",
+      usage: { input_tokens: 10, output_tokens: 5, total_tokens: 15 },
+    };
+    if (scenario.reason) {
+      response["incomplete_details"] = { reason: scenario.reason };
+    }
     await processCodexStream(
       events([
         {
           type: "response.incomplete",
-          response: {
-            id: "resp_incomplete",
-            status: "incomplete",
-            ...(scenario.reason ? { incomplete_details: { reason: scenario.reason } } : {}),
-            usage: { input_tokens: 10, output_tokens: 5, total_tokens: 15 },
-          },
+          response,
         },
       ]),
       message,

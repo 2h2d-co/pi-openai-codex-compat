@@ -1,4 +1,8 @@
 import {
+  requireJsonRecord,
+  requireJsonRecords,
+} from "../../extensions/openai-codex-compat/codex-protocol.ts";
+import {
   assert,
   test,
   Type,
@@ -9,7 +13,6 @@ import {
   userEntry,
   accessToken,
   createHarness,
-  type Context,
   type Tool,
   type JsonRecord,
 } from "./codex-provider-harness.ts";
@@ -19,7 +22,7 @@ void test("transports dotted Pi tools as native Responses namespaces", async () 
   const harness = createHarness([user]);
   const requests: JsonRecord[] = [];
   harness.runtime.transport.request = async function* (_model, body) {
-    requests.push(structuredClone(body));
+    requests.push(structuredClone(requireJsonRecord(body)));
     yield { type: "response.created", response: { id: "resp_web" } };
     yield {
       type: "response.output_item.added",
@@ -71,7 +74,7 @@ void test("transports dotted Pi tools as native Responses namespaces", async () 
     .streamSimple(
       codexModel(),
       {
-        messages: [user.message as Context["messages"][number]],
+        messages: [user.message],
         tools: [webRun, imageGeneration],
       },
       {
@@ -84,7 +87,7 @@ void test("transports dotted Pi tools as native Responses namespaces", async () 
 
   const firstRequest = requests[0];
   assert.ok(firstRequest);
-  assert.deepEqual((firstRequest.tools as JsonRecord[])[0], {
+  assert.deepEqual(requireJsonRecords(firstRequest.tools)[0], {
     type: "namespace",
     name: "web",
     description: "Tools in the web namespace.",
@@ -98,7 +101,7 @@ void test("transports dotted Pi tools as native Responses namespaces", async () 
       },
     ],
   });
-  assert.deepEqual((firstRequest.tools as JsonRecord[])[1], {
+  assert.deepEqual(requireJsonRecords(firstRequest.tools)[1], {
     type: "namespace",
     name: "image_gen",
     description: "Tools in the image_gen namespace.",
@@ -153,7 +156,7 @@ void test("persists native output only when Pi cannot round-trip it", async () =
   const message = await harness.runtime
     .streamSimple(
       codexModel(),
-      { messages: [user.message as Context["messages"][number]] },
+      { messages: [user.message] },
       {
         apiKey: accessToken(),
         sessionId: "session-1",

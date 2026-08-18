@@ -13,7 +13,6 @@ import {
   ApplyPatchDiffComponent,
   workspace,
   patch,
-  type Theme,
   type ApplyPatchDetails,
   type FormatterMatchFailureDetails,
 } from "./apply-patch-semantic-harness.ts";
@@ -225,7 +224,7 @@ void test("explains every no-op and dead operation to the model and TUI", async 
   const theme = {
     fg: (_color: string, text: string) => text,
     bold: (text: string) => text,
-  } as unknown as Theme;
+  };
   const collapsed = new ApplyPatchDiffComponent(details, theme, cwd, false).render(140).join("\n");
   assert.match(collapsed, /Patch instruction results:/u);
   assert.match(
@@ -397,7 +396,7 @@ void test("reports every instruction to the model and TUI without a limit", asyn
   const theme = {
     fg: (_color: string, text: string) => text,
     bold: (text: string) => text,
-  } as unknown as Theme;
+  };
   const collapsed = new ApplyPatchDiffComponent(details, theme, cwd, false).render(120).join("\n");
   assert.equal((collapsed.match(/^\s*\d+\. \[NO CHANGE\] Delete/gmu) ?? []).length, 11);
   assert.doesNotMatch(collapsed, /more instruction explanations/u);
@@ -471,13 +470,16 @@ void test("reports every instruction to the model and TUI without a limit", asyn
     added: [],
     modified: [],
     deleted: [],
-    instructions: Array.from({ length: 500 }, (_, offset) => ({
-      index: offset + 1,
-      kind: "delete" as const,
-      path: `failed-large-${offset + 1}.txt`,
-      status: offset + 1 === failedInstruction ? ("failed" as const) : ("not-run" as const),
-      ...(offset + 1 === failedInstruction ? { error: "injected failure" } : {}),
-    })),
+    instructions: Array.from({ length: 500 }, (_, offset) => {
+      const instruction: NonNullable<ApplyPatchDetails["instructions"]>[number] = {
+        index: offset + 1,
+        kind: "delete",
+        path: `failed-large-${offset + 1}.txt`,
+        status: offset + 1 === failedInstruction ? "failed" : "not-run",
+      };
+      if (offset + 1 === failedInstruction) instruction.error = "injected failure";
+      return instruction;
+    }),
     failure: {
       phase: "execution",
       message: "injected failure",

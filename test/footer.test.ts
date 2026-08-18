@@ -1,10 +1,8 @@
+import { tuiFixture } from "./support/pi-fixtures.ts";
+import { extensionContextFixture } from "./support/pi-fixtures.ts";
 import assert from "node:assert/strict";
 import test from "node:test";
-import {
-  initTheme,
-  type ExtensionContext,
-  type ReadonlyFooterDataProvider,
-} from "@earendil-works/pi-coding-agent";
+import { initTheme, type ReadonlyFooterDataProvider } from "@earendil-works/pi-coding-agent";
 import type { Component, TUI } from "@earendil-works/pi-tui";
 import { DEFAULT_CONFIG } from "../extensions/openai-codex-compat/config.ts";
 import { installCodexFooter } from "../extensions/openai-codex-compat/footer.ts";
@@ -30,7 +28,7 @@ void test("appends non-default Codex settings to the default second footer line"
     contextWindow: 100_000,
     maxTokens: 10_000,
   } as const;
-  const context = {
+  const context = extensionContextFixture({
     mode: "tui",
     model,
     thinkingLevel: "xhigh",
@@ -55,7 +53,7 @@ void test("appends non-default Codex settings to the default second footer line"
         footerFactory = factory;
       },
     },
-  } as unknown as ExtensionContext;
+  });
 
   installCodexFooter(context, () => ({
     ...DEFAULT_CONFIG,
@@ -76,7 +74,7 @@ void test("appends non-default Codex settings to the default second footer line"
       return () => {};
     },
   } satisfies ReadonlyFooterDataProvider;
-  const footer = footerFactory({ requestRender() {} } as unknown as TUI, {}, footerData);
+  const footer = footerFactory(tuiFixture({ requestRender() {} }), {}, footerData);
   const lines = footer.render(160);
 
   assert.equal(branchSubscriptions, 0);

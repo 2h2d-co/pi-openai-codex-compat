@@ -1,4 +1,9 @@
 import {
+  requireJsonRecord,
+  requireJsonRecords,
+} from "../../extensions/openai-codex-compat/codex-protocol.ts";
+import { requireString } from "../../extensions/openai-codex-compat/value-contracts.ts";
+import {
   assert,
   test,
   Type,
@@ -25,10 +30,10 @@ void test("streams ordinary responses without persisting redundant native data",
   const harness = createHarness([user]);
   const requests: JsonRecord[] = [];
   harness.runtime.transport.request = async function* (_model, body) {
-    requests.push(structuredClone(body));
+    requests.push(structuredClone(requireJsonRecord(body)));
     yield* textEvents("hello back");
   };
-  const context: Context = { messages: [user.message as Context["messages"][number]] };
+  const context: Context = { messages: [user.message] };
 
   const message = await harness.runtime
     .streamSimple(codexModel(), context, {
@@ -52,18 +57,18 @@ void test("prewarms only the static prefix before its first WebSocket turn", asy
   const requests: JsonRecord[] = [];
   harness.runtime.transport.prewarm = async (_model, body, options) => {
     prewarms.push(structuredClone(body));
-    prewarmCacheDiagnostics = options.cacheDiagnostics as unknown as JsonRecord;
+    prewarmCacheDiagnostics = requireJsonRecord(options.cacheDiagnostics);
     return true;
   };
   harness.runtime.transport.request = async function* (_model, body) {
-    requests.push(structuredClone(body));
+    requests.push(structuredClone(requireJsonRecord(body)));
     yield* textEvents("hello back");
   };
 
   await harness.runtime
     .streamSimple(
       codexModel(),
-      { messages: [user.message as Context["messages"][number]] },
+      { messages: [user.message] },
       {
         apiKey: accessToken(),
         sessionId: "session-1",
@@ -75,16 +80,22 @@ void test("prewarms only the static prefix before its first WebSocket turn", asy
   assert.equal(prewarms.length, 1);
   const prewarm = prewarms[0];
   assert.ok(prewarm);
-  assert.equal((prewarm.input as unknown[]).length, 0);
-  const prewarmMetadata = prewarm["client_metadata"] as JsonRecord;
-  assert.match(String(prewarmMetadata["x-codex-turn-metadata"]), /"request_kind":"prewarm"/);
+  assert.ok(Array.isArray(prewarm.input));
+  assert.equal(prewarm.input.length, 0);
+  const prewarmMetadata = requireJsonRecord(prewarm["client_metadata"]);
+  const prewarmTurnMetadata = requireString(
+    prewarmMetadata["x-codex-turn-metadata"],
+    "prewarm turn metadata",
+  );
+  assert.match(prewarmTurnMetadata, /"request_kind":"prewarm"/);
   assert.equal(prewarmMetadata["turn_id"], "");
-  assert.doesNotMatch(String(prewarmMetadata["x-codex-turn-metadata"]), /turn_started_at_unix_ms/);
+  assert.doesNotMatch(prewarmTurnMetadata, /turn_started_at_unix_ms/);
   assert.equal(requests.length, 1);
   const request = requests[0];
   assert.ok(request);
-  assert.equal((request.input as unknown[]).length, 1);
-  const requestMetadata = request["client_metadata"] as JsonRecord;
+  assert.ok(Array.isArray(request.input));
+  assert.equal(request.input.length, 1);
+  const requestMetadata = requireJsonRecord(request["client_metadata"]);
   assert.notEqual(requestMetadata["turn_id"], "");
   assert.equal(prewarmCacheDiagnostics?.["prewarmMode"], "static");
   assert.equal(prewarmCacheDiagnostics?.["staticInputItems"], 0);
@@ -101,11 +112,11 @@ void test("sends GPT-5.6 requests through the Responses Lite envelope", async ()
   let request: JsonRecord | undefined;
   harness.runtime.transport.prewarm = async (_model, body, options) => {
     prewarm = structuredClone(body);
-    prewarmCacheDiagnostics = options.cacheDiagnostics as unknown as JsonRecord;
+    prewarmCacheDiagnostics = requireJsonRecord(options.cacheDiagnostics);
     return true;
   };
   harness.runtime.transport.request = async function* (_model, body) {
-    request = structuredClone(body);
+    request = structuredClone(requireJsonRecord(body));
     yield* textEvents("hello back");
   };
 
@@ -114,7 +125,7 @@ void test("sends GPT-5.6 requests through the Responses Lite envelope", async ()
       codexModel("gpt-5.6-sol"),
       {
         systemPrompt: "Stable instructions",
-        messages: [user.message as Context["messages"][number]],
+        messages: [user.message],
       },
       {
         apiKey: accessToken(),
@@ -128,8 +139,8 @@ void test("sends GPT-5.6 requests through the Responses Lite envelope", async ()
   assert.equal(request.instructions, undefined);
   assert.equal(request.tools, undefined);
   assert.equal(request.parallel_tool_calls, false);
-  assert.equal((request["reasoning"] as JsonRecord)["context"], "all_turns");
-  const input = request.input as JsonRecord[];
+  assert.equal(requireJsonRecord(request["reasoning"])["context"], "all_turns");
+  const input = requireJsonRecords(request.input);
   assert.equal(input[0]?.type, "additional_tools");
   assert.deepEqual(input[1], {
     type: "message",
@@ -158,8 +169,8 @@ void test("uses ordinary Responses when Responses Lite is disabled", async () =>
   let request: JsonRecord | undefined;
   let cacheDiagnostics: JsonRecord | undefined;
   harness.runtime.transport.request = async function* (_model, body, options) {
-    request = structuredClone(body);
-    cacheDiagnostics = options.cacheDiagnostics as unknown as JsonRecord;
+    request = structuredClone(requireJsonRecord(body));
+    cacheDiagnostics = requireJsonRecord(options.cacheDiagnostics);
     yield* textEvents("hello back");
   };
 
@@ -168,7 +179,7 @@ void test("uses ordinary Responses when Responses Lite is disabled", async () =>
       codexModel("gpt-5.6-sol"),
       {
         systemPrompt: "Stable instructions",
-        messages: [user.message as Context["messages"][number]],
+        messages: [user.message],
         tools: [report],
       },
       {
@@ -193,9 +204,9 @@ void test("uses ordinary Responses when Responses Lite is disabled", async () =>
   ]);
   assert.equal(request["temperature"], undefined);
   assert.equal(request.parallel_tool_calls, true);
-  assert.equal((request.input as JsonRecord[])[0]?.role, "user");
+  assert.equal(requireJsonRecords(request.input)[0]?.role, "user");
   assert.equal(
-    (request["client_metadata"] as JsonRecord)[
+    requireJsonRecord(request["client_metadata"])[
       "ws_request_header_x_openai_internal_codex_responses_lite"
     ],
     undefined,
@@ -209,11 +220,11 @@ void test("reuses one turn id throughout an agent run", async () => {
   const harness = createHarness([user]);
   const turnIds: string[] = [];
   harness.runtime.transport.request = async function* (_model, body) {
-    const metadata = body["client_metadata"] as JsonRecord;
-    turnIds.push(String(metadata["turn_id"]));
+    const metadata = requireJsonRecord(requireJsonRecord(body)["client_metadata"]);
+    turnIds.push(requireString(metadata["turn_id"], "turn id"));
     yield* textEvents("hello back", `response-${String(turnIds.length)}`);
   };
-  const context = { messages: [user.message as Context["messages"][number]] };
+  const context = { messages: [user.message] };
   const options = {
     apiKey: accessToken(),
     sessionId: "session-1",
@@ -242,10 +253,11 @@ void test("switches branch thread metadata while preserving prompt-cache identit
     closedSessions.push(sessionId);
   };
   harness.runtime.transport.request = async function* (_model, body) {
-    requests.push(structuredClone(body));
+    const requestBody = requireJsonRecord(body);
+    requests.push(structuredClone(requestBody));
     if (
-      Array.isArray(body.input) &&
-      body.input.some((item) => isObject(item) && item.type === "compaction_trigger")
+      Array.isArray(requestBody.input) &&
+      requestBody.input.some((item) => isObject(item) && item.type === "compaction_trigger")
     ) {
       yield* compactionEvents();
       return;
@@ -258,13 +270,7 @@ void test("switches branch thread metadata while preserving prompt-cache identit
     transport: "sse" as const,
   };
 
-  await harness.runtime
-    .streamSimple(
-      codexModel(),
-      { messages: [root.message as Context["messages"][number]] },
-      options,
-    )
-    .result();
+  await harness.runtime.streamSimple(codexModel(), { messages: [root.message] }, options).result();
   await harness.runtime.compact({
     model: codexModel(),
     requestOptions: {
@@ -295,7 +301,7 @@ void test("switches branch thread metadata while preserving prompt-cache identit
     timestamp: new Date().toISOString(),
     customType: CODEX_THREAD_MARKER_ENTRY_TYPE,
     data: markerData,
-  } as SessionEntry);
+  } satisfies SessionEntry);
   const branchUser = userEntry("user-2", "branch", "thread-marker");
   harness.branch().push(branchUser);
   harness.runtime.captureScope(harness.extensionContext);
@@ -304,10 +310,7 @@ void test("switches branch thread metadata while preserving prompt-cache identit
     .streamSimple(
       codexModel(),
       {
-        messages: [
-          root.message as Context["messages"][number],
-          branchUser.message as Context["messages"][number],
-        ],
+        messages: [root.message, branchUser.message],
       },
       options,
     )
@@ -315,27 +318,21 @@ void test("switches branch thread metadata while preserving prompt-cache identit
 
   harness.branch().splice(1);
   harness.runtime.captureScope(harness.extensionContext);
-  await harness.runtime
-    .streamSimple(
-      codexModel(),
-      { messages: [root.message as Context["messages"][number]] },
-      options,
-    )
-    .result();
+  await harness.runtime.streamSimple(codexModel(), { messages: [root.message] }, options).result();
 
   assert.deepEqual(closedSessions, ["session-1", "session-1"]);
   assert.equal(requests[0]?.prompt_cache_key, "session-1");
   assert.equal(requests[2]?.prompt_cache_key, "session-1");
   assert.equal(requests[3]?.prompt_cache_key, "session-1");
-  const rootMetadata = requests[0]?.["client_metadata"] as JsonRecord;
-  const branchMetadata = requests[2]?.["client_metadata"] as JsonRecord;
-  const resumedRootMetadata = requests[3]?.["client_metadata"] as JsonRecord;
+  const rootMetadata = requireJsonRecord(requests[0]?.["client_metadata"]);
+  const branchMetadata = requireJsonRecord(requests[2]?.["client_metadata"]);
+  const resumedRootMetadata = requireJsonRecord(requests[3]?.["client_metadata"]);
   assert.equal(rootMetadata["thread_id"], "session-1");
   assert.equal(branchMetadata["thread_id"], markerData.threadId);
   assert.equal(branchMetadata["x-codex-window-id"], `${markerData.threadId}:0`);
   assert.equal(resumedRootMetadata["x-codex-window-id"], "session-1:1");
-  const branchTurnMetadata = JSON.parse(
-    String(branchMetadata[CODEX_TURN_METADATA_HEADER]),
-  ) as JsonRecord;
+  const branchTurnMetadata = requireJsonRecord(
+    JSON.parse(requireString(branchMetadata[CODEX_TURN_METADATA_HEADER], "branch turn metadata")),
+  );
   assert.equal(branchTurnMetadata["forked_from_thread_id"], "session-1");
 });

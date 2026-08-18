@@ -1,20 +1,65 @@
+import { extensionContextFixture } from "./support/pi-fixtures.ts";
+import { extensionApiFixture } from "./support/pi-fixtures.ts";
+import {
+  isJsonValue,
+  isObject,
+  requireJsonRecord,
+  requireJsonRecords,
+  type JsonRecord,
+  type JsonValue,
+} from "../extensions/openai-codex-compat/codex-protocol.ts";
+import { isString, requireString } from "../extensions/openai-codex-compat/value-contracts.ts";
 import assert from "node:assert/strict";
 import test from "node:test";
-import type { ExtensionAPI, ExtensionContext, SessionEntry } from "@earendil-works/pi-coding-agent";
-import type { Model, OpenAICodexResponsesOptions, ProviderHeaders } from "@earendil-works/pi-ai";
+import type { SessionEntry } from "@earendil-works/pi-coding-agent";
+import type { Model, ProviderHeaders } from "@earendil-works/pi-ai";
 import {
   CHECKPOINT_ENTRY_TYPE,
   parseCheckpoint,
 } from "../extensions/openai-codex-compat/compaction-checkpoint.ts";
 import { CodexProviderRuntime } from "../extensions/openai-codex-compat/codex-provider.ts";
 import { DEFAULT_CONFIG } from "../extensions/openai-codex-compat/config.ts";
-import type { JsonRecord } from "../extensions/openai-codex-compat/codex-protocol.ts";
 import { CODEX_TURN_METADATA_HEADER } from "../extensions/openai-codex-compat/codex-metadata.ts";
 import {
   nativeResponseData,
   NATIVE_RESPONSE_ENTRY_TYPE,
 } from "../extensions/openai-codex-compat/native-history.ts";
 import registerRemoteCompaction from "../extensions/openai-codex-compat/remote-compaction.ts";
+
+interface TestCompactionResult {
+  compaction: {
+    details: JsonRecord;
+    usage?: JsonValue;
+  };
+}
+
+interface TestContextResult {
+  messages: Array<{ role: string }>;
+}
+
+function requireCompactionResult(value: unknown): TestCompactionResult {
+  if (!isObject(value) || !isObject(value["compaction"])) {
+    throw new Error("Expected a compaction result.");
+  }
+  const details = requireJsonRecord(value["compaction"]["details"], "compaction details");
+  const result: TestCompactionResult = { compaction: { details } };
+  const usage = value["compaction"]["usage"];
+  if (isJsonValue(usage)) result.compaction.usage = usage;
+  return result;
+}
+
+function requireContextResult(value: unknown): TestContextResult {
+  if (!isObject(value) || !Array.isArray(value["messages"])) {
+    throw new Error("Expected a context result.");
+  }
+  const messages = value["messages"].flatMap((message) =>
+    isObject(message) && isString(message.role) ? [{ role: message.role }] : [],
+  );
+  if (messages.length !== value["messages"].length) {
+    throw new Error("Expected context messages with string roles.");
+  }
+  return { messages };
+}
 
 function codexModel(): Model<any> {
   return {
@@ -29,7 +74,7 @@ function codexModel(): Model<any> {
     contextWindow: 100_000,
     maxTokens: 10_000,
     compat: { supportsOpenAIGrammarTools: true },
-  } as Model<any>;
+  } satisfies Model<any>;
 }
 
 function userEntry(id: string, text: string, parentId: string | null = null): SessionEntry {
@@ -39,7 +84,7 @@ function userEntry(id: string, text: string, parentId: string | null = null): Se
     parentId,
     timestamp: new Date().toISOString(),
     message: { role: "user", content: [{ type: "text", text }], timestamp: Date.now() },
-  } as SessionEntry;
+  } satisfies SessionEntry;
 }
 
 function compactionEvents(encryptedContent = "opaque-state"): JsonRecord[] {
@@ -71,20 +116,20 @@ function createHarness(branch: SessionEntry[]) {
   const handlers = new Map<string, (...args: any[]) => any>();
   const selected = codexModel();
   const notices: string[] = [];
-  const pi = {
+  const pi = extensionApiFixture({
     on(event: string, handler: (...args: any[]) => any) {
       handlers.set(event, handler);
     },
     getAllTools: () => [],
     getActiveTools: () => [],
     appendEntry() {},
-  } as unknown as ExtensionAPI;
+  });
   const runtime = new CodexProviderRuntime(pi, () => DEFAULT_CONFIG);
   const requests: JsonRecord[] = [];
   const requestHeaders: Array<ProviderHeaders | undefined> = [];
   runtime.transport.request = async function* (_model, body, options) {
-    requests.push(structuredClone(body));
-    requestHeaders.push((options as OpenAICodexResponsesOptions).headers);
+    requests.push(structuredClone(requireJsonRecord(body)));
+    requestHeaders.push(options.headers);
     yield* compactionEvents();
   };
 
@@ -92,8 +137,9 @@ function createHarness(branch: SessionEntry[]) {
     getSessionId: () => "session-1",
     getBranch: () => branch,
     getLeafId: () => branch.at(-1)?.id ?? null,
+    appendCompaction: () => "",
   };
-  const context = {
+  const context = extensionContextFixture({
     model: selected,
     cwd: process.cwd(),
     mode: "tui",
@@ -117,7 +163,7 @@ function createHarness(branch: SessionEntry[]) {
     isProjectTrusted: () => true,
     getContextUsage: () => ({ tokens: 50_000, contextWindow: 100_000, percent: 50 }),
     getSystemPrompt: () => "system prompt",
-  } as unknown as ExtensionContext;
+  });
 
   registerRemoteCompaction(pi, runtime, () => DEFAULT_CONFIG);
   return { handlers, runtime, context, requests, requestHeaders, notices };
@@ -129,29 +175,33 @@ void test("routes manual compaction through the custom provider runtime", async 
   const handler = harness.handlers.get("session_before_compact");
   assert.ok(handler);
 
-  const result = (await handler(
-    {
-      branchEntries: [user],
-      preparation: { firstKeptEntryId: "user-1", tokensBefore: 50_000 },
-      reason: "manual",
-      willRetry: false,
-      signal: new AbortController().signal,
-    },
-    harness.context,
-  )) as { compaction: { details: JsonRecord; usage?: unknown } };
+  const result = requireCompactionResult(
+    await handler(
+      {
+        branchEntries: [user],
+        preparation: { firstKeptEntryId: "user-1", tokensBefore: 50_000 },
+        reason: "manual",
+        willRetry: false,
+        signal: new AbortController().signal,
+      },
+      harness.context,
+    ),
+  );
 
   assert.equal(harness.requests.length, 1);
   const request = harness.requests[0]!;
   assert.match(JSON.stringify(request.input), /Remember BLUE-42/);
-  assert.deepEqual((request.input as JsonRecord[]).at(-1), {
+  assert.deepEqual(requireJsonRecords(request.input).at(-1), {
     type: "compaction_trigger",
   });
   assert.deepEqual(harness.requestHeaders[0], {
     "x-codex-beta-features": "remote_compaction_v2",
     "x-remove": null,
   });
-  const metadata = request.client_metadata as JsonRecord;
-  const turnMetadata = JSON.parse(String(metadata[CODEX_TURN_METADATA_HEADER])) as JsonRecord;
+  const metadata = requireJsonRecord(request.client_metadata);
+  const turnMetadata = requireJsonRecord(
+    JSON.parse(requireString(metadata[CODEX_TURN_METADATA_HEADER], "turn metadata")),
+  );
   assert.deepEqual(turnMetadata["compaction"], {
     trigger: "manual",
     reason: "user_requested",
@@ -165,7 +215,7 @@ void test("routes manual compaction through the custom provider runtime", async 
     willRetry: false,
   });
   assert.equal(
-    (result.compaction.details.history as JsonRecord[]).at(-1)?.encrypted_content,
+    requireJsonRecords(result.compaction.details.history).at(-1)?.encrypted_content,
     "opaque-state",
   );
   assert.ok(result.compaction.usage);
@@ -214,19 +264,23 @@ void test("classifies every Pi compaction lifecycle in official Codex metadata",
       const harness = createHarness([user]);
       const handler = harness.handlers.get("session_before_compact");
       assert.ok(handler);
-      const result = (await handler(
-        {
-          branchEntries: [user],
-          preparation: { firstKeptEntryId: "user-1", tokensBefore: 50_000 },
-          reason: candidate.reason,
-          willRetry: candidate.willRetry,
-          signal: new AbortController().signal,
-        },
-        harness.context,
-      )) as { compaction: { details: JsonRecord } };
+      const result = requireCompactionResult(
+        await handler(
+          {
+            branchEntries: [user],
+            preparation: { firstKeptEntryId: "user-1", tokensBefore: 50_000 },
+            reason: candidate.reason,
+            willRetry: candidate.willRetry,
+            signal: new AbortController().signal,
+          },
+          harness.context,
+        ),
+      );
 
-      const metadata = harness.requests[0]?.client_metadata as JsonRecord;
-      const turnMetadata = JSON.parse(String(metadata[CODEX_TURN_METADATA_HEADER])) as JsonRecord;
+      const metadata = requireJsonRecord(harness.requests[0]?.client_metadata);
+      const turnMetadata = requireJsonRecord(
+        JSON.parse(requireString(metadata[CODEX_TURN_METADATA_HEADER], "turn metadata")),
+      );
       assert.deepEqual(turnMetadata["compaction"], candidate.expected);
       assert.deepEqual(result.compaction.details["compactionDecision"], {
         reason: candidate.reason,
@@ -268,7 +322,7 @@ void test("preserves a proven committed prefix in overflow compaction", async ()
         },
       ],
     ),
-  } as SessionEntry;
+  } satisfies SessionEntry;
   const failed = {
     type: "message",
     id: "assistant-error",
@@ -293,25 +347,27 @@ void test("preserves a proven committed prefix in overflow compaction", async ()
       errorMessage: "context_length_exceeded",
       timestamp: Date.now(),
     },
-  } as SessionEntry;
+  } satisfies SessionEntry;
   const branch = [user, native, failed];
   const harness = createHarness(branch);
   const handler = harness.handlers.get("session_before_compact");
   assert.ok(handler);
 
-  const result = (await handler(
-    {
-      branchEntries: branch,
-      preparation: { firstKeptEntryId: "user-1", tokensBefore: 100_005 },
-      reason: "overflow",
-      willRetry: true,
-      signal: new AbortController().signal,
-    },
-    harness.context,
-  )) as { compaction: { details: JsonRecord } };
+  const result = requireCompactionResult(
+    await handler(
+      {
+        branchEntries: branch,
+        preparation: { firstKeptEntryId: "user-1", tokensBefore: 100_005 },
+        reason: "overflow",
+        willRetry: true,
+        signal: new AbortController().signal,
+      },
+      harness.context,
+    ),
+  );
 
   assert.equal(harness.requests.length, 1);
-  const input = harness.requests[0]?.input as JsonRecord[];
+  const input = requireJsonRecords(harness.requests[0]?.input);
   assert.match(JSON.stringify(input), /finish this task.*committed progress/);
   assert.deepEqual(input.at(-1), { type: "compaction_trigger" });
   assert.doesNotMatch(JSON.stringify(input), /context_length_exceeded/);
@@ -340,20 +396,22 @@ void test("captures session scope and suppresses Pi's marker summary", () => {
         { type: "compaction", encrypted_content: "opaque-state" },
       ],
     },
-  } as SessionEntry;
+  } satisfies SessionEntry;
   const harness = createHarness([user, checkpoint]);
   const handler = harness.handlers.get("context");
   assert.ok(handler);
 
-  const result = handler(
-    {
-      messages: [
-        { role: "compactionSummary", content: "marker" },
-        { role: "user", content: "next", timestamp: Date.now() },
-      ],
-    },
-    harness.context,
-  ) as { messages: Array<{ role: string }> };
+  const result = requireContextResult(
+    handler(
+      {
+        messages: [
+          { role: "compactionSummary", content: "marker" },
+          { role: "user", content: "next", timestamp: Date.now() },
+        ],
+      },
+      harness.context,
+    ),
+  );
 
   assert.deepEqual(
     result.messages.map((message) => message.role),

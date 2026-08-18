@@ -24,6 +24,7 @@ import {
   samePhysicalEntry,
   type ContentCell,
   type ParentPlan,
+  type PlannedEntryMutation,
   type PhysicalFileState,
   type PlannedMutation,
   type SemanticPlan,
@@ -313,12 +314,11 @@ export class SemanticPlanner {
 
   private snapshot<T extends VirtualEntry>(entry: T): T {
     if (entry.kind !== "regular" && entry.kind !== "symlink") return { ...entry };
+    const content: ContentCell = { planned: entry.content.planned };
+    if (entry.content.value) content.value = entry.content.value;
     return {
       ...entry,
-      content: {
-        ...(entry.content.value ? { value: entry.content.value } : {}),
-        planned: entry.content.planned,
-      },
+      content,
     };
   }
 
@@ -782,33 +782,33 @@ export class SemanticPlanner {
       kind: "add",
       path: operation.path,
       content: operation.content,
-      ...(overwrittenContent !== undefined ? { overwrittenContent } : {}),
       ...diffDetails("", operation.content),
     };
+    if (overwrittenContent !== undefined) change.overwrittenContent = overwrittenContent;
     const targetKey = await this.pathKey(operation.absolutePath);
-    this.mutations.push({
+    const entryMutation: PlannedEntryMutation = {
+      path: operation.absolutePath,
+      key: targetKey,
+      kind: "regular",
+    };
+    if ((target.kind === "regular" || target.kind === "symlink") && target.fingerprint) {
+      entryMutation.releasedFingerprint = target.fingerprint;
+    }
+    const mutation: Extract<PlannedMutation, { kind: "add" }> = {
       instructionIndex,
       kind: "add",
       operation,
       expectedTarget,
       parents,
       content,
-      ...(target.kind === "regular" && target.fingerprint
-        ? { replacementMode: target.fingerprint.mode }
-        : {}),
       targetKey,
-      entryMutations: [
-        {
-          path: operation.absolutePath,
-          key: targetKey,
-          kind: "regular",
-          ...((target.kind === "regular" || target.kind === "symlink") && target.fingerprint
-            ? { releasedFingerprint: target.fingerprint }
-            : {}),
-        },
-      ],
+      entryMutations: [entryMutation],
       change,
-    });
+    };
+    if (target.kind === "regular" && target.fingerprint) {
+      mutation.replacementMode = target.fingerprint.mode;
+    }
+    this.mutations.push(mutation);
     this.releasePhysicalLink(target);
     await this.setState(operation.absolutePath, {
       kind: "regular",
@@ -849,28 +849,28 @@ export class SemanticPlanner {
       kind: "delete",
       path: operation.path,
       entryType: target.kind === "regular" ? "regular-file" : "symlink",
-      ...(content !== undefined ? { content } : {}),
-      ...(content === undefined
-        ? { displayDiff: "", additions: 0, deletions: 0 }
-        : diffDetails(content, "")),
+      displayDiff: "",
+      additions: 0,
+      deletions: 0,
     };
+    if (content !== undefined) {
+      change.content = content;
+      Object.assign(change, diffDetails(content, ""));
+    }
     const targetKey = await this.pathKey(operation.absolutePath);
+    const entryMutation: PlannedEntryMutation = {
+      path: operation.absolutePath,
+      key: targetKey,
+      kind: "absent",
+    };
+    if (target.fingerprint) entryMutation.releasedFingerprint = target.fingerprint;
     this.mutations.push({
       instructionIndex: index,
       kind: "delete",
       operation,
       expectedTarget,
       targetKey,
-      entryMutations: [
-        {
-          path: operation.absolutePath,
-          key: targetKey,
-          kind: "absent",
-          ...((target.kind === "regular" || target.kind === "symlink") && target.fingerprint
-            ? { releasedFingerprint: target.fingerprint }
-            : {}),
-        },
-      ],
+      entryMutations: [entryMutation],
       change,
     });
     this.releasePhysicalLink(target);
@@ -940,10 +940,7 @@ export class SemanticPlanner {
     }
 
     if (!semanticMove) {
-      const expectedSource = this.snapshot(source) as Extract<
-        VirtualEntry,
-        { kind: "regular" | "symlink" }
-      >;
+      const expectedSource = this.snapshot(source);
       expectedSource.content.planned = true;
       const change: Extract<AppliedPatchChange, { kind: "update" }> = {
         kind: "update",
@@ -970,14 +967,17 @@ export class SemanticPlanner {
           ...source,
         });
       } else {
-        await this.setState(operation.absolutePath, {
+        const resultingEntry: Extract<VirtualEntry, { kind: "regular" }> = {
           kind: "regular",
           id: this.newEntryId(),
           entryPath: operation.absolutePath,
-          ...(source.fingerprint?.linkCount === 1 ? {} : { sourcePath: source.sourcePath }),
           content: source.content,
-          ...(source.physical ? { physical: source.physical } : {}),
-        });
+        };
+        if (source.fingerprint?.linkCount !== 1 && source.sourcePath !== undefined) {
+          resultingEntry.sourcePath = source.sourcePath;
+        }
+        if (source.physical) resultingEntry.physical = source.physical;
+        await this.setState(operation.absolutePath, resultingEntry);
       }
       return;
     }
@@ -985,10 +985,7 @@ export class SemanticPlanner {
     const destinationPath = operation.moveAbsolutePath!;
     const destinationKey = await this.pathKey(destinationPath);
     if (sourceKey === destinationKey) {
-      const expectedSource = this.snapshot(source) as Extract<
-        VirtualEntry,
-        { kind: "regular" | "symlink" }
-      >;
+      const expectedSource = this.snapshot(source);
       expectedSource.content.planned = true;
       const sameEntryMove = await this.sameEntryMoveEffect(operation.absolutePath, destinationPath);
       const change: Extract<AppliedPatchChange, { kind: "update" }> = {
@@ -999,7 +996,13 @@ export class SemanticPlanner {
         newContent,
         ...diffDetails(oldContent, newContent),
       };
-      this.mutations.push({
+      const entryMutation: PlannedEntryMutation = {
+        path: destinationPath,
+        key: destinationKey,
+        kind: "regular",
+      };
+      if (source.fingerprint) entryMutation.releasedFingerprint = source.fingerprint;
+      const mutation: Extract<PlannedMutation, { kind: "text-update" }> = {
         instructionIndex,
         kind: "text-update",
         operation,
@@ -1007,20 +1010,10 @@ export class SemanticPlanner {
         expectedDestination: expectedSource,
         parents: { createdPaths: [], expectations: [] },
         content,
-        ...(source.kind === "regular" && source.fingerprint
-          ? { replacementMode: source.fingerprint.mode }
-          : {}),
         sourceKey,
         destinationKey,
         sameEntryMove,
-        entryMutations: [
-          {
-            path: destinationPath,
-            key: destinationKey,
-            kind: "regular",
-            ...(source.fingerprint ? { releasedFingerprint: source.fingerprint } : {}),
-          },
-        ],
+        entryMutations: [entryMutation],
         change,
         provisionalChange: {
           kind: "update",
@@ -1029,7 +1022,11 @@ export class SemanticPlanner {
           newContent,
           ...diffDetails(oldContent, newContent),
         },
-      });
+      };
+      if (source.kind === "regular" && source.fingerprint) {
+        mutation.replacementMode = source.fingerprint.mode;
+      }
+      this.mutations.push(mutation);
       this.releasePhysicalLink(source);
       const resultingEntry: Extract<VirtualEntry, { kind: "regular" }> = {
         kind: "regular",
@@ -1064,10 +1061,7 @@ export class SemanticPlanner {
       destination.kind === "regular" || destination.kind === "symlink"
         ? await this.optionalText(destination, destinationPath)
         : undefined;
-    const expectedSource = this.snapshot(source) as Extract<
-      VirtualEntry,
-      { kind: "regular" | "symlink" }
-    >;
+    const expectedSource = this.snapshot(source);
     expectedSource.content.planned = true;
     const expectedDestination = this.snapshot(destination);
     const change: Extract<AppliedPatchChange, { kind: "update" }> = {
@@ -1076,19 +1070,38 @@ export class SemanticPlanner {
       moveTo: operation.moveTo!,
       oldContent,
       newContent,
-      ...(overwrittenMoveContent !== undefined ? { overwrittenMoveContent } : {}),
       ...diffDetails(oldContent, newContent),
     };
+    if (overwrittenMoveContent !== undefined) {
+      change.overwrittenMoveContent = overwrittenMoveContent;
+    }
     const provisionalChange: Extract<AppliedPatchChange, { kind: "add" }> = {
       kind: "add",
       path: operation.moveTo!,
       content: newContent,
-      ...(overwrittenMoveContent !== undefined
-        ? { overwrittenContent: overwrittenMoveContent }
-        : {}),
       ...diffDetails("", newContent),
     };
-    this.mutations.push({
+    if (overwrittenMoveContent !== undefined) {
+      provisionalChange.overwrittenContent = overwrittenMoveContent;
+    }
+    const sourceEntryMutation: PlannedEntryMutation = {
+      path: operation.absolutePath,
+      key: sourceKey,
+      kind: "absent",
+    };
+    if (source.fingerprint) sourceEntryMutation.releasedFingerprint = source.fingerprint;
+    const destinationEntryMutation: PlannedEntryMutation = {
+      path: destinationPath,
+      key: destinationKey,
+      kind: "regular",
+    };
+    if (
+      (destination.kind === "regular" || destination.kind === "symlink") &&
+      destination.fingerprint
+    ) {
+      destinationEntryMutation.releasedFingerprint = destination.fingerprint;
+    }
+    const mutation: Extract<PlannedMutation, { kind: "text-update" }> = {
       instructionIndex,
       kind: "text-update",
       operation,
@@ -1096,31 +1109,16 @@ export class SemanticPlanner {
       expectedDestination,
       parents,
       content,
-      ...(source.kind === "regular" && source.fingerprint
-        ? { replacementMode: source.fingerprint.mode }
-        : {}),
       sourceKey,
       destinationKey,
-      entryMutations: [
-        {
-          path: operation.absolutePath,
-          key: sourceKey,
-          kind: "absent",
-          ...(source.fingerprint ? { releasedFingerprint: source.fingerprint } : {}),
-        },
-        {
-          path: destinationPath,
-          key: destinationKey,
-          kind: "regular",
-          ...((destination.kind === "regular" || destination.kind === "symlink") &&
-          destination.fingerprint
-            ? { releasedFingerprint: destination.fingerprint }
-            : {}),
-        },
-      ],
+      entryMutations: [sourceEntryMutation, destinationEntryMutation],
       change,
       provisionalChange,
-    });
+    };
+    if (source.kind === "regular" && source.fingerprint) {
+      mutation.replacementMode = source.fingerprint.mode;
+    }
+    this.mutations.push(mutation);
     this.releasePhysicalLink(source);
     this.releasePhysicalLink(destination);
     await this.setState(operation.absolutePath, ABSENT_ENTRY);
@@ -1168,10 +1166,7 @@ export class SemanticPlanner {
             `Failed to move ${operation.absolutePath}: source is ${source.kind === "directory" ? "a directory" : source.kind === "absent" ? "absent" : `a ${source.entryType}`}`,
           );
         }
-        const expectedSource = this.snapshot(source) as Extract<
-          VirtualEntry,
-          { kind: "regular" | "symlink" }
-        >;
+        const expectedSource = this.snapshot(source);
         const change: Extract<AppliedPatchChange, { kind: "move" }> = {
           kind: "move",
           sourcePath: operation.path,
@@ -1252,10 +1247,7 @@ export class SemanticPlanner {
       ? await this.selectMoveStrategy(operation.absolutePath, destinationPath, detectedMoveStrategy)
       : detectedMoveStrategy;
     const replacedDestination = expectedDestination.kind !== "absent";
-    const expectedSource = this.snapshot(source) as Extract<
-      VirtualEntry,
-      { kind: "regular" | "symlink" }
-    >;
+    const expectedSource = this.snapshot(source);
     const destinationSnapshot = this.snapshot(expectedDestination);
     const change: Extract<AppliedPatchChange, { kind: "move" }> = {
       kind: "move",
@@ -1268,6 +1260,23 @@ export class SemanticPlanner {
       additions: 0,
       deletions: 0,
     };
+    const sourceEntryMutation: PlannedEntryMutation = {
+      path: operation.absolutePath,
+      key: sourceKey,
+      kind: "absent",
+    };
+    if (source.fingerprint) sourceEntryMutation.releasedFingerprint = source.fingerprint;
+    const destinationEntryMutation: PlannedEntryMutation = {
+      path: destinationPath,
+      key: destinationKey,
+      kind: expectedSource.kind === "regular" ? "regular" : "symlink",
+    };
+    if (
+      (expectedDestination.kind === "regular" || expectedDestination.kind === "symlink") &&
+      expectedDestination.fingerprint
+    ) {
+      destinationEntryMutation.releasedFingerprint = expectedDestination.fingerprint;
+    }
     this.mutations.push({
       instructionIndex,
       kind: "move",
@@ -1278,23 +1287,7 @@ export class SemanticPlanner {
       sourceKey,
       destinationKey,
       moveStrategy,
-      entryMutations: [
-        {
-          path: operation.absolutePath,
-          key: sourceKey,
-          kind: "absent",
-          ...(source.fingerprint ? { releasedFingerprint: source.fingerprint } : {}),
-        },
-        {
-          path: destinationPath,
-          key: destinationKey,
-          kind: expectedSource.kind === "regular" ? "regular" : "symlink",
-          ...((expectedDestination.kind === "regular" || expectedDestination.kind === "symlink") &&
-          expectedDestination.fingerprint
-            ? { releasedFingerprint: expectedDestination.fingerprint }
-            : {}),
-        },
-      ],
+      entryMutations: [sourceEntryMutation, destinationEntryMutation],
       change,
     });
     this.releasePhysicalLink(expectedDestination);
@@ -1302,10 +1295,8 @@ export class SemanticPlanner {
     await this.setState(operation.absolutePath, ABSENT_ENTRY);
     let resultingEntry: Extract<VirtualEntry, { kind: "regular" | "symlink" }>;
     if (moveStrategy === "copy-unlink" && source.kind === "regular") {
-      const content: ContentCell = {
-        ...(source.content.value ? { value: source.content.value } : {}),
-        planned: source.content.planned,
-      };
+      const content: ContentCell = { planned: source.content.planned };
+      if (source.content.value) content.value = source.content.value;
       resultingEntry = {
         kind: "regular",
         id: this.newEntryId(),
@@ -1328,11 +1319,11 @@ export class SemanticPlanner {
         kind: "symlink",
         id: source.id,
         entryPath: destinationPath,
-        ...(source.fingerprint ? { fingerprint: source.fingerprint } : {}),
         target: source.target,
         targetPath: resolve(dirname(destinationPath), source.target),
         content: { planned: false },
       };
+      if (source.fingerprint) resultingEntry.fingerprint = source.fingerprint;
     } else {
       resultingEntry = { ...source, entryPath: destinationPath };
     }

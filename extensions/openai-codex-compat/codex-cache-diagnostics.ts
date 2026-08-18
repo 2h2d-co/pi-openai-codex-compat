@@ -1,5 +1,6 @@
+import { isString } from "./value-contracts.ts";
 import { createHash } from "node:crypto";
-import { type JsonRecord } from "./codex-protocol.ts";
+import { type JsonRecord, type JsonValue } from "./codex-protocol.ts";
 import { usesResponsesLite } from "./responses-lite.ts";
 
 type Fingerprint = {
@@ -56,23 +57,25 @@ export function codexCacheDiagnosticContext(
   responsesLiteEnabled = true,
 ): CodexCacheDiagnosticContext {
   const lite = usesResponsesLite(modelId, responsesLiteEnabled);
-  const staticPrefix = lite
-    ? (staticWireBody.input ?? [])
-    : {
-        ...("instructions" in ordinaryBody ? { instructions: ordinaryBody.instructions } : {}),
-        ...("tools" in ordinaryBody ? { tools: ordinaryBody.tools } : {}),
-      };
+  let staticPrefix: JsonValue;
+  if (lite) {
+    staticPrefix = staticWireBody.input ?? [];
+  } else {
+    const prefix: JsonRecord = {};
+    if ("instructions" in ordinaryBody) prefix.instructions = ordinaryBody.instructions;
+    if ("tools" in ordinaryBody) prefix.tools = ordinaryBody.tools;
+    staticPrefix = prefix;
+  }
   const prefixFingerprint = jsonFingerprint(staticPrefix);
   const requestFingerprint = jsonFingerprint(staticRequest(staticWireBody));
-  const instructionFingerprint =
-    typeof ordinaryBody.instructions === "string"
-      ? textFingerprint(ordinaryBody.instructions)
-      : undefined;
+  const instructionFingerprint = isString(ordinaryBody.instructions)
+    ? textFingerprint(ordinaryBody.instructions)
+    : undefined;
   const toolsFingerprint = Array.isArray(ordinaryBody.tools)
     ? jsonFingerprint(ordinaryBody.tools)
     : undefined;
 
-  return {
+  const context: CodexCacheDiagnosticContext = {
     envelope: lite ? "responses_lite" : "responses",
     prewarmMode: "static",
     fullInputItems: inputLength(fullWireBody),
@@ -81,17 +84,14 @@ export function codexCacheDiagnosticContext(
     staticPrefixSha256: prefixFingerprint.sha256,
     staticRequestBytes: requestFingerprint.bytes,
     staticRequestSha256: requestFingerprint.sha256,
-    ...(instructionFingerprint
-      ? {
-          instructionsBytes: instructionFingerprint.bytes,
-          instructionsSha256: instructionFingerprint.sha256,
-        }
-      : {}),
-    ...(toolsFingerprint
-      ? {
-          toolsBytes: toolsFingerprint.bytes,
-          toolsSha256: toolsFingerprint.sha256,
-        }
-      : {}),
   };
+  if (instructionFingerprint) {
+    context.instructionsBytes = instructionFingerprint.bytes;
+    context.instructionsSha256 = instructionFingerprint.sha256;
+  }
+  if (toolsFingerprint) {
+    context.toolsBytes = toolsFingerprint.bytes;
+    context.toolsSha256 = toolsFingerprint.sha256;
+  }
+  return context;
 }

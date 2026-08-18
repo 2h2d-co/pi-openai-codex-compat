@@ -1,11 +1,11 @@
+import { isNumber, isString } from "../extensions/openai-codex-compat/value-contracts.ts";
+import { isObject, parseJsonRecord } from "../extensions/openai-codex-compat/codex-protocol.ts";
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { mkdir, mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-
-type JsonRecord = Record<string, unknown>;
 
 type PackFile = {
   path: string;
@@ -188,8 +188,8 @@ async function validatePackage(
 
   const manifestPath = join(source, packageDirectory, "package.json");
   const manifest = parseJsonRecord(await readFile(manifestPath, "utf8"));
-  const scripts = isJsonRecord(manifest["scripts"]) ? manifest["scripts"] : {};
-  const forbidden = forbiddenInstallScripts.filter((script) => typeof scripts[script] === "string");
+  const scripts = isObject(manifest["scripts"]) ? manifest["scripts"] : {};
+  const forbidden = forbiddenInstallScripts.filter((script) => isString(scripts[script]));
   if (forbidden.length > 0) {
     throw new Error(`Install lifecycle scripts are forbidden: ${forbidden.join(", ")}`);
   }
@@ -216,24 +216,20 @@ async function readExpectedPackageFiles(): Promise<string[]> {
 
 function parsePackResult(output: string): PackResult {
   const parsed: unknown = JSON.parse(output);
-  if (!Array.isArray(parsed) || parsed.length !== 1 || !isJsonRecord(parsed[0])) {
+  if (!Array.isArray(parsed) || parsed.length !== 1 || !isObject(parsed[0])) {
     throw new Error("npm pack did not report exactly one package.");
   }
   const result = parsed[0];
   if (
-    typeof result["filename"] !== "string" ||
-    typeof result["name"] !== "string" ||
-    typeof result["version"] !== "string" ||
+    !isString(result["filename"]) ||
+    !isString(result["name"]) ||
+    !isString(result["version"]) ||
     !Array.isArray(result["files"])
   ) {
     throw new Error("npm pack returned invalid package metadata.");
   }
   const files = result["files"].map((value) => {
-    if (
-      !isJsonRecord(value) ||
-      typeof value["path"] !== "string" ||
-      typeof value["mode"] !== "number"
-    ) {
+    if (!isObject(value) || !isString(value["path"]) || !isNumber(value["mode"])) {
       throw new Error("npm pack returned invalid file metadata.");
     }
     return { path: value["path"], mode: value["mode"] };
@@ -310,18 +306,6 @@ function run(command: string, args: string[], cwd: string, capture: boolean): st
     throw new Error(`${command} ${args.join(" ")} exited with ${result.status ?? "no status"}.`);
   }
   return capture ? result.stdout.trim() : "";
-}
-
-function parseJsonRecord(value: string): JsonRecord {
-  const parsed: unknown = JSON.parse(value);
-  if (!isJsonRecord(parsed)) {
-    throw new Error("Expected a JSON object.");
-  }
-  return parsed;
-}
-
-function isJsonRecord(value: unknown): value is JsonRecord {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 function isSemver(value: string): boolean {

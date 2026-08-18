@@ -1,3 +1,4 @@
+import { requireJsonRecord } from "../../extensions/openai-codex-compat/codex-protocol.ts";
 import {
   assert,
   test,
@@ -8,7 +9,6 @@ import {
   textEvents,
   accessToken,
   createHarness,
-  type Context,
   type Tool,
   type JsonRecord,
   type CodexTransportDiagnostic,
@@ -32,7 +32,7 @@ void test("commits canonical assistant items for WebSocket continuation", async 
   await harness.runtime
     .streamSimple(
       codexModel(),
-      { messages: [user.message as Context["messages"][number]] },
+      { messages: [user.message] },
       {
         apiKey: accessToken(),
         sessionId: "session-1",
@@ -96,12 +96,12 @@ void test("preserves flat default tool calls in Responses Lite continuations", a
     name: "report",
     description: "Report",
     parameters: Type.Object({}),
-  } as Tool;
+  } satisfies Tool;
   const message = await harness.runtime
     .streamSimple(
       codexModel("gpt-5.6-sol"),
       {
-        messages: [user.message as Context["messages"][number]],
+        messages: [user.message],
         tools: [tool],
       },
       {
@@ -130,14 +130,14 @@ void test("honors disabled cache retention when building provider payloads", asy
   const harness = createHarness([user]);
   const requests: JsonRecord[] = [];
   harness.runtime.transport.request = async function* (_model, body) {
-    requests.push(structuredClone(body));
+    requests.push(structuredClone(requireJsonRecord(body)));
     yield* textEvents("hello back");
   };
 
   await harness.runtime
     .streamSimple(
       codexModel(),
-      { messages: [user.message as Context["messages"][number]] },
+      { messages: [user.message] },
       {
         apiKey: accessToken(),
         sessionId: "session-with-cache-disabled",
@@ -173,7 +173,7 @@ void test("retains recovered transport diagnostics on assistant messages", async
   const message = await harness.runtime
     .streamSimple(
       codexModel(),
-      { messages: [user.message as Context["messages"][number]] },
+      { messages: [user.message] },
       {
         apiKey: accessToken(),
         sessionId: "session-1",
@@ -239,7 +239,7 @@ void test("persists transparent Codex recovery diagnostics on successful assista
   const message = await harness.runtime
     .streamSimple(
       codexModel(),
-      { messages: [user.message as Context["messages"][number]] },
+      { messages: [user.message] },
       {
         apiKey: accessToken(),
         sessionId: "session-1",

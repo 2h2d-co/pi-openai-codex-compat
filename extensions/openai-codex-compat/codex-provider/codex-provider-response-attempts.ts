@@ -1,3 +1,4 @@
+import { isBoolean, isNumber, isString } from "../value-contracts.ts";
 import type {
   AssistantMessage,
   AssistantMessageDiagnostic,
@@ -33,7 +34,7 @@ export function isToolCallItem(item: ResponsesItem): boolean {
 }
 
 export function eventOutputIndex(event: JsonRecord): number {
-  return typeof event["output_index"] === "number" ? event["output_index"] : 0;
+  return isNumber(event["output_index"]) ? event["output_index"] : 0;
 }
 
 export function assessAttemptToolCalls(
@@ -51,8 +52,12 @@ export function assessAttemptToolCalls(
   };
 }
 
-export function outputItemTypeCounts(items: readonly ResponsesItem[]): Record<string, number> {
-  const counts: Record<string, number> = {};
+export interface OutputItemTypeCounts {
+  [type: string]: number | undefined;
+}
+
+export function outputItemTypeCounts(items: readonly ResponsesItem[]): OutputItemTypeCounts {
+  const counts: OutputItemTypeCounts = {};
   for (const item of items) {
     const type = item.type ?? "message";
     counts[type] = (counts[type] ?? 0) + 1;
@@ -70,10 +75,9 @@ export function responseDecisionDiagnostic(options: {
   terminalState: CodexTerminalState;
   toolCalls: CodexToolCallAssessment;
 }): AssistantMessageDiagnostic | undefined {
-  const endTurn =
-    typeof options.terminalState.response?.["end_turn"] === "boolean"
-      ? options.terminalState.response["end_turn"]
-      : undefined;
+  const endTurn = isBoolean(options.terminalState.response?.["end_turn"])
+    ? options.terminalState.response["end_turn"]
+    : undefined;
   const nontrivial =
     options.attempt > 1 ||
     options.terminalState.type !== "response.completed" ||
@@ -81,22 +85,25 @@ export function responseDecisionDiagnostic(options: {
     options.capture.streamedToolCallIndexes.size > 0;
   if (!nontrivial) return undefined;
 
+  const details: JsonRecord = {
+    attempt: options.attempt,
+    terminalType: options.terminalState.type ?? "missing",
+    outputItemTypes: outputItemTypeCounts(options.attemptItems),
+    streamedCallsStarted: options.capture.streamedToolCallIndexes.size,
+    streamedCallsDone: options.capture.streamedCompletedToolCallIndexes.size,
+    returnedCalls: options.toolCalls.completedCount,
+    discardedPartialCalls: options.toolCalls.discardedPartialCount,
+    decision: options.decision,
+  };
+  if (options.incompleteReason) details["incompleteReason"] = options.incompleteReason;
+  if (endTurn !== undefined) details["endTurn"] = endTurn;
+  if (options.postToolDisposition) {
+    details["postToolDisposition"] = options.postToolDisposition;
+  }
   return {
     type: "codex_response_decision",
     timestamp: Date.now(),
-    details: {
-      attempt: options.attempt,
-      terminalType: options.terminalState.type ?? "missing",
-      ...(options.incompleteReason ? { incompleteReason: options.incompleteReason } : {}),
-      ...(endTurn === undefined ? {} : { endTurn }),
-      outputItemTypes: outputItemTypeCounts(options.attemptItems),
-      streamedCallsStarted: options.capture.streamedToolCallIndexes.size,
-      streamedCallsDone: options.capture.streamedCompletedToolCallIndexes.size,
-      returnedCalls: options.toolCalls.completedCount,
-      discardedPartialCalls: options.toolCalls.discardedPartialCount,
-      ...(options.postToolDisposition ? { postToolDisposition: options.postToolDisposition } : {}),
-      decision: options.decision,
-    },
+    details,
   };
 }
 
@@ -163,8 +170,8 @@ export function startOnFirstEvent(
 
 export function clearStreamingScratchState(message: AssistantMessage): void {
   for (const block of message.content) {
-    delete (block as { partialJson?: string }).partialJson;
-    delete (block as { customInput?: unknown }).customInput;
+    Reflect.deleteProperty(block, "partialJson");
+    Reflect.deleteProperty(block, "customInput");
   }
 }
 
@@ -192,14 +199,11 @@ export function discardIncompleteAttemptContent(
 export function accumulateUsage(previous: Usage, current: Usage): Usage {
   const previousReasoning = previous.reasoning;
   const currentReasoning = current.reasoning;
-  return {
+  const usage: Usage = {
     input: previous.input + current.input,
     output: previous.output + current.output,
     cacheRead: previous.cacheRead + current.cacheRead,
     cacheWrite: previous.cacheWrite + current.cacheWrite,
-    ...(previousReasoning === undefined && currentReasoning === undefined
-      ? {}
-      : { reasoning: (previousReasoning ?? 0) + (currentReasoning ?? 0) }),
     totalTokens: previous.totalTokens + current.totalTokens,
     cost: {
       input: previous.cost.input + current.cost.input,
@@ -209,6 +213,10 @@ export function accumulateUsage(previous: Usage, current: Usage): Usage {
       total: previous.cost.total + current.cost.total,
     },
   };
+  if (previousReasoning !== undefined || currentReasoning !== undefined) {
+    usage.reasoning = (previousReasoning ?? 0) + (currentReasoning ?? 0);
+  }
+  return usage;
 }
 
 export function reachedProviderCompactionThreshold(
@@ -229,7 +237,7 @@ export function reachedProviderCompactionThreshold(
 
 export function retryableResponseFailure(response: JsonRecord | undefined): boolean {
   const error = isObject(response?.["error"]) ? response["error"] : undefined;
-  const code = typeof error?.["code"] === "string" ? error["code"].toLowerCase() : "";
+  const code = isString(error?.["code"]) ? error["code"].toLowerCase() : "";
   return !(
     code === "context_length_exceeded" ||
     code === "insufficient_quota" ||
@@ -245,13 +253,13 @@ export function terminalReason(terminalState: CodexTerminalState): string | unde
     const error = isObject(terminalState.response?.["error"])
       ? terminalState.response["error"]
       : undefined;
-    return typeof error?.["code"] === "string" ? error["code"] : undefined;
+    return isString(error?.["code"]) ? error["code"] : undefined;
   }
   if (terminalState.type === "response.incomplete") {
     const details = isObject(terminalState.response?.["incomplete_details"])
       ? terminalState.response["incomplete_details"]
       : undefined;
-    return typeof details?.["reason"] === "string" ? details["reason"] : undefined;
+    return isString(details?.["reason"]) ? details["reason"] : undefined;
   }
   return undefined;
 }
@@ -261,12 +269,12 @@ export function terminalErrorMessage(disposition: CodexPostToolDisposition): str
     const error = isObject(disposition.response?.["error"])
       ? disposition.response["error"]
       : undefined;
-    return typeof error?.["message"] === "string" ? error["message"] : "Codex response failed";
+    return isString(error?.["message"]) ? error["message"] : "Codex response failed";
   }
   const details = isObject(disposition.response?.["incomplete_details"])
     ? disposition.response["incomplete_details"]
     : undefined;
-  const reason = typeof details?.["reason"] === "string" ? details["reason"] : undefined;
+  const reason = isString(details?.["reason"]) ? details["reason"] : undefined;
   return reason
     ? `Response incomplete: ${reason}`
     : "Response incomplete without a provider reason";

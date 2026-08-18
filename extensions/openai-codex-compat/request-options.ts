@@ -32,12 +32,13 @@ function isWebRunNamespace(value: unknown): boolean {
 }
 
 function webSearchTool(mode: Exclude<WebSearchMode, "disabled">, images: boolean): JsonRecord {
-  return {
+  const tool: JsonRecord = {
     type: "web_search",
     external_web_access: mode !== "cached",
-    ...(mode === "indexed" ? { indexed_web_access: true } : {}),
-    ...(images ? { search_content_types: ["text", "image"] } : {}),
   };
+  if (mode === "indexed") tool["indexed_web_access"] = true;
+  if (images) tool["search_content_types"] = ["text", "image"];
+  return tool;
 }
 
 export function applyCodexRequestOptions(

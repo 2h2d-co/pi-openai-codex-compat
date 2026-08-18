@@ -1,3 +1,5 @@
+import { requireJsonRecord } from "../../extensions/openai-codex-compat/codex-protocol.ts";
+import { hasObjectType } from "../../extensions/openai-codex-compat/value-contracts.ts";
 import {
   assert,
   test,
@@ -27,7 +29,7 @@ void test("uses UUIDv7 for empty session IDs and WebSocket connection-limit retr
       protocols?: string | string[] | { headers?: Record<string, string> },
     ) {
       const headers =
-        protocols && typeof protocols === "object" && !Array.isArray(protocols)
+        protocols && hasObjectType(protocols) && !Array.isArray(protocols)
           ? protocols.headers
           : undefined;
       requestIds.push(headers?.["session-id"] ?? "");
@@ -118,7 +120,7 @@ void test("reconnects an expired cached WebSocket after lifecycle events without
     }
 
     send(data: string): void {
-      sentBodies.push(JSON.parse(data) as JsonRecord);
+      sentBodies.push(requireJsonRecord(JSON.parse(data)));
       const events =
         this.connection === 1 && sentBodies.length === 1
           ? [
@@ -315,7 +317,7 @@ void test("recovers when a cached WebSocket continuation expires", async (t) => 
     }
 
     send(data: string): void {
-      const body = JSON.parse(data) as JsonRecord;
+      const body = requireJsonRecord(JSON.parse(data));
       sentBodies.push(body);
       const events =
         sentBodies.length === 2
@@ -681,7 +683,7 @@ void test("scopes cached WebSockets to the authenticated account", async (t) => 
     ) {
       this.connectionId = connectedAccounts.length + 1;
       const headers =
-        protocols && typeof protocols === "object" && !Array.isArray(protocols)
+        protocols && hasObjectType(protocols) && !Array.isArray(protocols)
           ? protocols.headers
           : undefined;
       connectedAccounts.push(headers?.["chatgpt-account-id"] ?? "");
@@ -782,16 +784,16 @@ void test("reuses one WebSocket for compaction and continuation requests", async
     }
 
     send(data: string): void {
-      const request = JSON.parse(data) as JsonRecord;
+      const request = requireJsonRecord(JSON.parse(data));
       sent.push(request);
       const compacting =
         Array.isArray(request.input) &&
         request.input.some(
           (item) =>
-            typeof item === "object" &&
+            hasObjectType(item) &&
             item !== null &&
             !Array.isArray(item) &&
-            (item as JsonRecord).type === "compaction_trigger",
+            requireJsonRecord(item).type === "compaction_trigger",
         );
       const events: JsonRecord[] = compacting
         ? [

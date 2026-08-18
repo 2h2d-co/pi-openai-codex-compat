@@ -1,10 +1,11 @@
-import type { Theme } from "@earendil-works/pi-coding-agent";
+import { isString } from "./value-contracts.ts";
 import { type Component, Container, Text } from "@earendil-works/pi-tui";
 import { type ApplyPatchDetails, previewPatch } from "./apply-patch-engine.ts";
 import { ApplyPatchDiffComponent, isApplyPatchDetails } from "./apply-patch-diff-render.ts";
 import {
   CodexToolSurfaceComponent,
   type CodexToolBackgroundResolver,
+  type RenderTheme,
 } from "./codex-tool-surface.ts";
 import { DEFAULT_CONFIG } from "./config.ts";
 
@@ -44,10 +45,10 @@ export type ApplyPatchDebugResolver = () => boolean;
 
 class ApplyPatchTitleComponent implements Component {
   private readonly text = new Text("", 0, 0);
-  private readonly theme: Theme;
+  private readonly theme: RenderTheme;
   private readonly resolveDebug: ApplyPatchDebugResolver;
 
-  constructor(theme: Theme, resolveDebug: ApplyPatchDebugResolver) {
+  constructor(theme: RenderTheme, resolveDebug: ApplyPatchDebugResolver) {
     this.theme = theme;
     this.resolveDebug = resolveDebug;
   }
@@ -65,7 +66,7 @@ class ApplyPatchTitleComponent implements Component {
 
 function modelFeedback(result: ApplyPatchResult): string | undefined {
   const text = result.content.flatMap((item) =>
-    item.type === "text" && typeof item.text === "string" ? [item.text] : [],
+    item.type === "text" && isString(item.text) ? [item.text] : [],
   );
   return text.length > 0 ? text.join("\n") : undefined;
 }
@@ -106,7 +107,7 @@ class ApplyPatchResultComponent implements Component {
 
 export function renderApplyPatchCall(
   args: ApplyPatchArgs,
-  theme: Theme,
+  theme: RenderTheme,
   context: ApplyPatchRenderContext,
   resolveBackground: CodexToolBackgroundResolver = () => DEFAULT_CONFIG.toolBackground,
   resolveDebug: ApplyPatchDebugResolver = () => DEFAULT_CONFIG.applyPatchDebug,
@@ -116,7 +117,7 @@ export function renderApplyPatchCall(
 
   if (context.isPartial) {
     const state = context.state;
-    const patch = typeof args.patch === "string" ? args.patch : "";
+    const patch = isString(args.patch) ? args.patch : "";
     if (context.argsComplete && patch) {
       const previewKey = `${context.cwd}\0${patch}`;
       if (state.previewKey !== previewKey) {
@@ -158,7 +159,7 @@ export function renderApplyPatchCall(
 export function renderApplyPatchResult(
   result: ApplyPatchResult,
   options: { isPartial: boolean },
-  theme: Theme,
+  theme: RenderTheme,
   context: ApplyPatchRenderContext,
   resolveBackground: CodexToolBackgroundResolver = () => DEFAULT_CONFIG.toolBackground,
   resolveDebug: ApplyPatchDebugResolver = () => DEFAULT_CONFIG.applyPatchDebug,

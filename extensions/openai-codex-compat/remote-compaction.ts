@@ -1,16 +1,17 @@
+import { isString } from "./value-contracts.ts";
 import { randomUUID } from "node:crypto";
 import type {
   ExtensionAPI,
   ExtensionContext,
   SessionBeforeCompactEvent,
-  SessionEntry,
   ToolInfo,
 } from "@earendil-works/pi-coding-agent";
 import type { Model, OpenAICodexResponsesOptions, ProviderHeaders } from "@earendil-works/pi-ai";
-import { addRemoteCompactionFeature, type JsonRecord } from "./codex-protocol.ts";
+import { addRemoteCompactionFeature, isObject, type JsonRecord } from "./codex-protocol.ts";
 import {
   activeResponsesTools,
   providerHistory,
+  responsesCompatibility,
   searchCheckpoint,
   type GrammarToolInputProperties,
 } from "./compaction-checkpoint.ts";
@@ -59,16 +60,13 @@ function instructionsForCompaction(systemPrompt: string, customInstructions?: st
 
 function toolInputProperty(tool: ToolInfo | undefined): string | undefined {
   if (tool?.name === APPLY_PATCH_TOOL_NAME) return APPLY_PATCH_INPUT_PROPERTY;
-  if (!tool || typeof tool.parameters !== "object" || tool.parameters === null) return undefined;
-  const schema = tool.parameters as {
-    required?: unknown;
-    properties?: Record<string, { type?: unknown } | undefined>;
-  };
-  const required = Array.isArray(schema.required)
-    ? schema.required.filter((name): name is string => typeof name === "string")
+  if (!tool || !isObject(tool.parameters)) return undefined;
+  const required = Array.isArray(tool.parameters["required"])
+    ? tool.parameters["required"].filter((name): name is string => typeof name === "string")
     : [];
-  if (required.length !== 1 || !schema.properties) return undefined;
-  return schema.properties[required[0]!]?.type === "string" ? required[0] : undefined;
+  if (required.length !== 1 || !isObject(tool.parameters["properties"])) return undefined;
+  const property = tool.parameters["properties"][required[0]!];
+  return isObject(property) && property.type === "string" ? required[0] : undefined;
 }
 
 function requestGrammarToolInputProperties(
@@ -80,11 +78,9 @@ function requestGrammarToolInputProperties(
   if (!Array.isArray(payload.tools)) return properties;
 
   for (const declaration of payload.tools) {
-    if (typeof declaration !== "object" || declaration === null || Array.isArray(declaration)) {
-      continue;
-    }
-    const tool = declaration as JsonRecord;
-    if (tool.type !== "custom" || typeof tool.name !== "string") continue;
+    if (!isObject(declaration)) continue;
+    const tool = declaration;
+    if (tool.type !== "custom" || !isString(tool.name)) continue;
     const property = toolInputProperty(byName.get(tool.name));
     if (property) properties.set(tool.name, property);
   }
@@ -95,7 +91,7 @@ function fallbackGrammarToolInputProperties(
   activeNames: readonly string[],
   model: Model<any>,
 ): GrammarToolInputProperties {
-  const compat = model.compat as { supportsOpenAIGrammarTools?: boolean } | undefined;
+  const compat = responsesCompatibility(model.compat);
   return activeNames.includes(APPLY_PATCH_TOOL_NAME) && compat?.supportsOpenAIGrammarTools
     ? new Map([[APPLY_PATCH_TOOL_NAME, APPLY_PATCH_INPUT_PROPERTY]])
     : new Map();
@@ -128,7 +124,7 @@ export default function registerRemoteCompaction(
 
   pi.on("context", (event, ctx) => {
     runtime.captureScope(ctx);
-    const checkpoint = searchCheckpoint(ctx.sessionManager.getBranch() as SessionEntry[]);
+    const checkpoint = searchCheckpoint(ctx.sessionManager.getBranch());
     if (checkpoint.kind === "absent") return undefined;
     return {
       messages: event.messages.filter((message) => message.role !== "compactionSummary"),
@@ -158,18 +154,23 @@ export default function registerRemoteCompaction(
         matching?.grammarToolInputProperties ??
         fallbackGrammarToolInputProperties(pi.getActiveTools(), ctx.model);
       const history = providerHistory({
-        branch: event.branchEntries as SessionEntry[],
+        branch: event.branchEntries,
         wireModel: ctx.model,
         allTools,
         grammarToolInputProperties,
         imageDetail: config.imageDetail,
         recoverLatestOverflowPrefix: event.reason === "overflow" && event.willRetry,
       });
-      const template =
-        matching?.payload ??
-        ({
-          tools: activeResponsesTools(allTools, pi.getActiveTools(), grammarToolInputProperties),
-        } satisfies JsonRecord);
+      let template = matching?.payload;
+      if (!template) {
+        template = {};
+        const tools = activeResponsesTools(
+          allTools,
+          pi.getActiveTools(),
+          grammarToolInputProperties,
+        );
+        if (tools) template.tools = tools;
+      }
       const requestOptions: OpenAICodexResponsesOptions = {
         ...matching?.requestOptions,
         apiKey: authentication.apiKey,
@@ -194,15 +195,16 @@ export default function registerRemoteCompaction(
         },
       });
 
-      return {
+      const result = {
         compaction: {
           summary: markerSummary(),
           firstKeptEntryId: event.preparation.firstKeptEntryId,
           tokensBefore: event.preparation.tokensBefore,
-          ...(compacted.usage ? { usage: compacted.usage } : {}),
           details: compacted.checkpoint,
         },
       };
+      if (compacted.usage) Object.assign(result.compaction, { usage: compacted.usage });
+      return result;
     } catch (error) {
       if (!event.signal.aborted && ctx.hasUI) {
         ctx.ui.notify(`OpenAI Codex native compaction failed: ${explain(error)}`, "error");

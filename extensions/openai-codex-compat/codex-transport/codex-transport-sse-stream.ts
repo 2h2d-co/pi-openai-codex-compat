@@ -59,7 +59,7 @@ export async function* parseSse(
         if (data && data !== "[DONE]") {
           let parsed: unknown;
           try {
-            parsed = JSON.parse(data) as unknown;
+            parsed = JSON.parse(data);
           } catch (error) {
             throw new CodexProtocolError(
               `Invalid Codex SSE JSON: ${thrownMessage(error)}`,
@@ -106,12 +106,16 @@ export async function* requestSse(
       const combined = combineAbortSignals([options.signal, timeoutSignal]);
       try {
         try {
-          response = await (options.fetch ?? globalThis.fetch)(resolveCodexUrl(model.baseUrl), {
+          const init: RequestInit = {
             method: "POST",
             headers,
             body: requestBody,
-            ...(combined.signal ? { signal: combined.signal } : {}),
-          });
+          };
+          if (combined.signal) init.signal = combined.signal;
+          response = await (options.fetch ?? globalThis.fetch)(
+            resolveCodexUrl(model.baseUrl),
+            init,
+          );
         } catch (error) {
           if (timeoutSignal?.aborted && !options.signal?.aborted) {
             throw new Error(`Codex SSE response headers timed out after ${String(timeoutMs)}ms`);

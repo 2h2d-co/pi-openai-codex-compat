@@ -1,3 +1,4 @@
+import { isString } from "../../extensions/openai-codex-compat/value-contracts.ts";
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { writeFileSync } from "node:fs";
@@ -58,7 +59,12 @@ export function patch(...operations: string[]): string {
   return `*** Begin Patch\n${operations.join("")}*** End Patch`;
 }
 
-export function deferred(): { promise: Promise<void>; resolve: () => void } {
+export interface DeferredSignal {
+  promise: Promise<void>;
+  resolve(): void;
+}
+
+export function deferred(): DeferredSignal {
   let resolve!: () => void;
   const promise = new Promise<void>((resolvePromise) => {
     resolve = resolvePromise;
@@ -71,7 +77,7 @@ export function filesystemError(code: string, message: string): NodeJS.ErrnoExce
 }
 
 export function pathLikeBasename(path: unknown): string {
-  if (typeof path === "string") return basename(path);
+  if (isString(path)) return basename(path);
   if (Buffer.isBuffer(path)) return basename(path.toString());
   if (path instanceof URL) return basename(path.pathname);
   return "";

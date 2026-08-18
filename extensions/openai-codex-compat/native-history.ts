@@ -1,3 +1,4 @@
+import { isNumber, isString } from "./value-contracts.ts";
 import type { SessionEntry } from "@earendil-works/pi-coding-agent";
 import { isObject, isResponsesItem, type ResponsesItem } from "./codex-protocol.ts";
 
@@ -27,21 +28,16 @@ export function nativeResponseData(
   items: readonly ResponsesItem[],
   attempts?: readonly NativeResponseAttempt[],
 ): NativeResponseData {
-  return {
+  const data: NativeResponseData = {
     kind: NATIVE_RESPONSE_ENTRY_TYPE,
     version: NATIVE_RESPONSE_FORMAT_VERSION,
     modelId,
     responseId,
     items: items.map((item) => structuredClone(item)),
     itemCommit: NATIVE_RESPONSE_ITEM_COMMIT,
-    ...(attempts
-      ? {
-          attempts: attempts.map((attempt) => ({
-            ...attempt,
-          })),
-        }
-      : {}),
   };
+  if (attempts) data.attempts = attempts.map((attempt) => ({ ...attempt }));
+  return data;
 }
 
 export function parseNativeResponse(value: unknown): NativeResponseData | undefined {
@@ -49,8 +45,8 @@ export function parseNativeResponse(value: unknown): NativeResponseData | undefi
   if (
     value.kind !== NATIVE_RESPONSE_ENTRY_TYPE ||
     value.version !== NATIVE_RESPONSE_FORMAT_VERSION ||
-    typeof value.modelId !== "string" ||
-    typeof value["responseId"] !== "string" ||
+    !isString(value.modelId) ||
+    !isString(value["responseId"]) ||
     !Array.isArray(value["items"])
   ) {
     return undefined;
@@ -73,51 +69,54 @@ export function parseNativeResponse(value: unknown): NativeResponseData | undefi
     if (!Array.isArray(rawAttempts)) return undefined;
     attempts = [];
     for (const rawAttempt of rawAttempts) {
+      if (!isObject(rawAttempt)) return undefined;
+      const itemCount = rawAttempt["itemCount"];
       if (
-        !isObject(rawAttempt) ||
-        !Number.isSafeInteger(rawAttempt["itemCount"]) ||
-        (rawAttempt["itemCount"] as number) < 0 ||
+        !isNumber(itemCount) ||
+        !Number.isSafeInteger(itemCount) ||
+        itemCount < 0 ||
         (rawAttempt["terminalType"] !== "response.completed" &&
           rawAttempt["terminalType"] !== "response.incomplete" &&
           rawAttempt["terminalType"] !== "response.failed") ||
-        (rawAttempt["terminalReason"] !== undefined &&
-          typeof rawAttempt["terminalReason"] !== "string")
+        (rawAttempt["terminalReason"] !== undefined && !isString(rawAttempt["terminalReason"]))
       ) {
         return undefined;
       }
-      attempts.push({
-        itemCount: rawAttempt["itemCount"] as number,
+      const attempt: NativeResponseAttempt = {
+        itemCount,
         terminalType: rawAttempt["terminalType"],
-        ...(typeof rawAttempt["terminalReason"] === "string"
-          ? { terminalReason: rawAttempt["terminalReason"] }
-          : {}),
-      });
+      };
+      if (isString(rawAttempt["terminalReason"])) {
+        attempt.terminalReason = rawAttempt["terminalReason"];
+      }
+      attempts.push(attempt);
     }
   }
 
-  return {
+  const data: NativeResponseData = {
     kind: NATIVE_RESPONSE_ENTRY_TYPE,
     version: NATIVE_RESPONSE_FORMAT_VERSION,
     modelId: value.modelId,
     responseId: value["responseId"],
     items,
-    ...(rawItemCommit === NATIVE_RESPONSE_ITEM_COMMIT
-      ? { itemCommit: NATIVE_RESPONSE_ITEM_COMMIT }
-      : {}),
-    ...(attempts ? { attempts } : {}),
   };
+  if (rawItemCommit === NATIVE_RESPONSE_ITEM_COMMIT) {
+    data.itemCommit = NATIVE_RESPONSE_ITEM_COMMIT;
+  }
+  if (attempts) data.attempts = attempts;
+  return data;
 }
 
 function linkedToolCalls(items: readonly ResponsesItem[]): boolean {
   const unresolved = new Set<string>();
   for (const item of items) {
     if (item.type === "function_call" || item.type === "custom_tool_call") {
-      if (typeof item["call_id"] !== "string" || unresolved.has(item["call_id"])) return false;
+      if (!isString(item["call_id"]) || unresolved.has(item["call_id"])) return false;
       unresolved.add(item["call_id"]);
       continue;
     }
     if (item.type === "function_call_output" || item.type === "custom_tool_call_output") {
-      if (typeof item["call_id"] !== "string" || !unresolved.delete(item["call_id"])) {
+      if (!isString(item["call_id"]) || !unresolved.delete(item["call_id"])) {
         return false;
       }
     }

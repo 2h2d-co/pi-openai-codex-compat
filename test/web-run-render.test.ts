@@ -1,6 +1,5 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import type { Theme } from "@earendil-works/pi-coding-agent";
 import {
   describeWebRunCall,
   renderWebRunResult,
@@ -15,9 +14,9 @@ const theme = {
   fg: (_color: string, text: string) => text,
   bold: (text: string) => text,
   getBgAnsi: () => "\u001b[48;2;40;50;40m",
-  getColorMode: () => "truecolor",
+  getColorMode: () => "truecolor" as const,
   name: "dark",
-} as unknown as Theme;
+};
 
 function stripAnsi(value: string): string {
   return value.replace(ANSI_SEQUENCE_PATTERN, "");

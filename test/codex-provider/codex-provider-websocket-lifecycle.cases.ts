@@ -108,7 +108,7 @@ void test("discards downstream-failed WebSockets without activating SSE fallback
   const user = userEntry("user-1", "hello");
   const harness = createHarness([user]);
   const context: Context = {
-    messages: [user.message as Context["messages"][number]],
+    messages: [user.message],
     tools: [
       {
         name: "sample_tool",
@@ -179,7 +179,7 @@ void test("discards downstream-failed WebSockets without activating SSE fallback
 
 void test("honors aborts after terminal processing and while waiting for a session request", async () => {
   const user = userEntry("user-1", "hello");
-  const context: Context = { messages: [user.message as Context["messages"][number]] };
+  const context: Context = { messages: [user.message] };
 
   const terminalHarness = createHarness([user]);
   const terminalAbort = new AbortController();

@@ -1,3 +1,5 @@
+import { requireJsonRecord } from "../../extensions/openai-codex-compat/codex-protocol.ts";
+import { requireString } from "../../extensions/openai-codex-compat/value-contracts.ts";
 import {
   assert,
   test,
@@ -493,7 +495,7 @@ void test("replays WebSocket turn state on a fresh retry after metadata", async 
     }
 
     send(data: string): void {
-      sentBodies.push(JSON.parse(data) as JsonRecord);
+      sentBodies.push(requireJsonRecord(JSON.parse(data)));
       if (this.connection === 1) {
         queueMicrotask(() => {
           this.dispatch("message", {
@@ -570,29 +572,35 @@ void test("replays WebSocket turn state on a fresh retry after metadata", async 
   const secondBody = sentBodies[1];
   assert.ok(firstBody);
   assert.ok(secondBody);
-  assert.equal((firstBody["client_metadata"] as JsonRecord)["x-codex-turn-state"], undefined);
+  assert.equal(requireJsonRecord(firstBody["client_metadata"])["x-codex-turn-state"], undefined);
   assert.equal(
-    (secondBody["client_metadata"] as JsonRecord)["x-codex-turn-state"],
+    requireJsonRecord(secondBody["client_metadata"])["x-codex-turn-state"],
     "opaque-ws-state",
   );
   assert.equal(
-    (firstBody["client_metadata"] as JsonRecord)[
+    requireJsonRecord(firstBody["client_metadata"])[
       "ws_request_header_x_openai_internal_codex_responses_lite"
     ],
     "true",
   );
   assert.equal(
-    (secondBody["client_metadata"] as JsonRecord)[
+    requireJsonRecord(secondBody["client_metadata"])[
       "ws_request_header_x_openai_internal_codex_responses_lite"
     ],
     "true",
   );
   assert.match(
-    String((firstBody["client_metadata"] as JsonRecord)[CODEX_WS_REQUEST_START_METADATA_KEY]),
+    requireString(
+      requireJsonRecord(firstBody["client_metadata"])[CODEX_WS_REQUEST_START_METADATA_KEY],
+      "first request start timestamp",
+    ),
     /^\d+$/,
   );
   assert.match(
-    String((secondBody["client_metadata"] as JsonRecord)[CODEX_WS_REQUEST_START_METADATA_KEY]),
+    requireString(
+      requireJsonRecord(secondBody["client_metadata"])[CODEX_WS_REQUEST_START_METADATA_KEY],
+      "second request start timestamp",
+    ),
     /^\d+$/,
   );
   assert.equal(handshakeHeaders[0]?.get("x-openai-internal-codex-responses-lite"), null);

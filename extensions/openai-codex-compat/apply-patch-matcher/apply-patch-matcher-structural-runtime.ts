@@ -376,7 +376,7 @@ export function tokenSignatureMatches(
   );
 }
 
-export function relativeShape(tokens: readonly SyntaxToken[]): string {
+export function relativeSyntaxPath(tokens: readonly SyntaxToken[]): string {
   if (tokens.length === 0) return "";
   let common = tokens[0]!.path.length;
   for (const token of tokens.slice(1)) {
@@ -390,27 +390,25 @@ export function relativeShape(tokens: readonly SyntaxToken[]): string {
     }
     common = index;
   }
-  const shapeStart = Math.max(0, common - 1);
+  const pathStart = Math.max(0, common - 1);
   return tokens
     .map((token) =>
       token.path
-        .slice(shapeStart)
+        .slice(pathStart)
         .map((entry) => entry.type)
         .join(">"),
     )
     .join("\u0000");
 }
 
-export function lineBounds(
-  source: Buffer,
-  start: number,
-  end: number,
-): {
+export interface SyntaxLineBounds {
   lineStart: number;
   lineEnd: number;
   afterLine: number;
   fullLines: boolean;
-} {
+}
+
+export function lineBounds(source: Buffer, start: number, end: number): SyntaxLineBounds {
   const previousNewline = source.lastIndexOf(0x0a, Math.max(0, start - 1));
   const lineStart = previousNewline < 0 ? 0 : previousNewline + 1;
   const nextNewline = source.indexOf(0x0a, end);

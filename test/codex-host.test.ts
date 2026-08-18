@@ -1,3 +1,8 @@
+import {
+  requireJsonRecord,
+  requireJsonRecords,
+} from "../extensions/openai-codex-compat/codex-protocol.ts";
+import { isString } from "../extensions/openai-codex-compat/value-contracts.ts";
 import assert from "node:assert/strict";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -80,16 +85,15 @@ void test("Pi executes only done calls from mixed partial Codex batches", async 
   globalThis.fetch = async (_input, init) => {
     const requestBody = init?.body;
     const compressed = new Headers(init?.headers).get("content-encoding") === "zstd";
-    const requestText =
-      typeof requestBody === "string"
-        ? requestBody
-        : requestBody instanceof Uint8Array
-          ? compressed
-            ? zstdDecompressSync(requestBody).toString("utf8")
-            : new TextDecoder().decode(requestBody)
-          : undefined;
+    const requestText = isString(requestBody)
+      ? requestBody
+      : requestBody instanceof Uint8Array
+        ? compressed
+          ? zstdDecompressSync(requestBody).toString("utf8")
+          : new TextDecoder().decode(requestBody)
+        : undefined;
     if (!requestText) throw new Error("Codex request body was not JSON text");
-    requests.push(JSON.parse(requestText) as JsonRecord);
+    requests.push(requireJsonRecord(JSON.parse(requestText)));
     if (requests.length === 1) {
       const completeCall = {
         type: "function_call",
@@ -231,7 +235,7 @@ void test("Pi executes only done calls from mixed partial Codex batches", async 
 
   assert.deepEqual(reports, ["complete"]);
   assert.equal(requests.length, 2);
-  const secondInput = requests[1]?.input as JsonRecord[];
+  const secondInput = requireJsonRecords(requests[1]?.input);
   assert.equal(secondInput.filter((item) => item.type === "function_call").length, 1);
   assert.equal(secondInput.filter((item) => item.type === "function_call_output").length, 1);
   assert.match(JSON.stringify(secondInput), /call_complete|completed/);

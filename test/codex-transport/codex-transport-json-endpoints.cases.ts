@@ -1,3 +1,4 @@
+import { isString } from "../../extensions/openai-codex-compat/value-contracts.ts";
 import {
   assert,
   test,
@@ -19,8 +20,7 @@ void test("posts authenticated JSON requests to sibling Codex endpoints", async 
       headers: { "x-provider": "provider" },
       extraHeaders: { "x-codex-turn-metadata": "turn" },
       fetch: async (input, init) => {
-        requestUrl =
-          typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+        requestUrl = isString(input) ? input : input instanceof URL ? input.href : input.url;
         requestInit = init;
         return new Response(JSON.stringify({ output: "result" }), {
           status: 200,
@@ -41,7 +41,7 @@ void test("posts authenticated JSON requests to sibling Codex endpoints", async 
   assert.equal(headers.get("x-provider"), "provider");
   assert.equal(headers.get("x-codex-turn-metadata"), "turn");
   const requestBody = requestInit?.body;
-  if (typeof requestBody !== "string") throw new Error("expected a JSON request body");
+  if (!isString(requestBody)) throw new Error("expected a JSON request body");
   assert.deepEqual(JSON.parse(requestBody), { id: "session-1" });
   assert.deepEqual(result, { output: "result" });
 });

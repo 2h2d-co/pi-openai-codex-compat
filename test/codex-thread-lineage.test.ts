@@ -1,45 +1,62 @@
+import { extensionContextFixture } from "./support/pi-fixtures.ts";
+import { extensionApiFixture } from "./support/pi-fixtures.ts";
 import assert from "node:assert/strict";
 import test from "node:test";
-import type { ExtensionAPI, ExtensionContext, SessionEntry } from "@earendil-works/pi-coding-agent";
+import type { ExtensionContext, SessionEntry } from "@earendil-works/pi-coding-agent";
 import { codexCacheKey } from "../extensions/openai-codex-compat/codex-cache-key.ts";
 import registerCodexThreadLineage, {
   CODEX_THREAD_MARKER_ENTRY_TYPE,
+  isCodexThreadMarkerData,
   resolveCodexThreadIdentity,
   type CodexThreadMarkerData,
 } from "../extensions/openai-codex-compat/codex-thread-lineage.ts";
+
+type CustomSessionEntry = Extract<SessionEntry, { type: "custom" }>;
+type ThreadMarkerEntry = Omit<CustomSessionEntry, "data"> & {
+  data: CodexThreadMarkerData;
+};
 
 function entry(
   id: string,
   parentId: string | null,
   role: "user" | "assistant" = "assistant",
 ): SessionEntry {
+  if (role === "user") {
+    return {
+      type: "message",
+      id,
+      parentId,
+      timestamp: new Date().toISOString(),
+      message: {
+        role: "user",
+        content: [{ type: "text", text: id }],
+        timestamp: Date.now(),
+      },
+    };
+  }
   return {
     type: "message",
     id,
     parentId,
     timestamp: new Date().toISOString(),
     message: {
-      role,
+      role: "assistant",
       content: [{ type: "text", text: id }],
       timestamp: Date.now(),
-      ...(role === "assistant"
-        ? {
-            api: "openai-codex-responses",
-            provider: "openai-codex",
-            model: "gpt-test",
-            usage: {
-              input: 0,
-              output: 0,
-              cacheRead: 0,
-              cacheWrite: 0,
-              totalTokens: 0,
-              cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
-            },
-            stopReason: "stop",
-          }
-        : {}),
+      api: "openai-codex-responses",
+      provider: "openai-codex",
+      model: "gpt-test",
+      usage: {
+        input: 0,
+        output: 0,
+        cacheRead: 0,
+        cacheWrite: 0,
+        totalTokens: 0,
+        cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+      },
+      stopReason: "stop",
     },
-  } as SessionEntry;
+  } satisfies SessionEntry;
 }
 
 function marker(
@@ -47,7 +64,7 @@ function marker(
   parentId: string | null,
   threadId: string,
   forkedFromThreadId: string,
-): SessionEntry {
+): ThreadMarkerEntry {
   return {
     type: "custom",
     id,
@@ -61,11 +78,14 @@ function marker(
       forkedFromThreadId,
       branchParentEntryId: parentId,
     } satisfies CodexThreadMarkerData,
-  } as SessionEntry;
+  };
 }
 
 function createHarness(initialEntries: SessionEntry[], initialLeafId: string | null) {
-  const handlers = new Map<string, Array<(event: any, ctx: ExtensionContext) => unknown>>();
+  const handlers = new Map<
+    string,
+    Array<(event: any, ctx: ExtensionContext) => void | Promise<void>>
+  >();
   const entries = [...initialEntries];
   let leafId = initialLeafId;
 
@@ -86,11 +106,11 @@ function createHarness(initialEntries: SessionEntry[], initialLeafId: string | n
     getBranch: branch,
     getLeafId: () => leafId,
   };
-  const context = {
+  const context = extensionContextFixture({
     sessionManager: manager,
-  } as unknown as ExtensionContext;
-  const pi = {
-    on(eventName: string, handler: (event: any, ctx: ExtensionContext) => unknown) {
+  });
+  const pi = extensionApiFixture({
+    on(eventName: string, handler: (event: any, ctx: ExtensionContext) => void | Promise<void>) {
       const registered = handlers.get(eventName) ?? [];
       registered.push(handler);
       handlers.set(eventName, registered);
@@ -104,10 +124,10 @@ function createHarness(initialEntries: SessionEntry[], initialLeafId: string | n
         timestamp: new Date().toISOString(),
         customType,
         data,
-      } as SessionEntry);
+      } satisfies SessionEntry);
       leafId = id;
     },
-  } as unknown as ExtensionAPI;
+  });
 
   registerCodexThreadLineage(pi);
   const emit = async (eventName: string, event: unknown) => {
@@ -151,12 +171,8 @@ void test("writes no marker during navigation and makes the finalized user its c
   const storedMarker = harness.entries.at(-1);
   assert.equal(storedMarker?.type, "custom");
   assert.equal(storedMarker?.parentId, "parent");
-  assert.equal(
-    storedMarker?.type === "custom"
-      ? (storedMarker.data as CodexThreadMarkerData).forkedFromThreadId
-      : undefined,
-    codexCacheKey("session-1"),
-  );
+  assert.ok(storedMarker?.type === "custom" && isCodexThreadMarkerData(storedMarker.data));
+  assert.equal(storedMarker.data.forkedFromThreadId, codexCacheKey("session-1"));
 
   harness.appendUser("new-user");
   assert.equal(harness.entries.at(-1)?.parentId, storedMarker?.id);
@@ -227,12 +243,8 @@ void test("forks from the nearest existing branch thread when editing its first 
 
   const secondMarker = harness.entries.at(-1);
   assert.equal(secondMarker?.parentId, "marker-a");
-  assert.equal(
-    secondMarker?.type === "custom"
-      ? (secondMarker.data as CodexThreadMarkerData).forkedFromThreadId
-      : undefined,
-    "thread-a",
-  );
+  assert.ok(secondMarker?.type === "custom" && isCodexThreadMarkerData(secondMarker.data));
+  assert.equal(secondMarker.data.forkedFromThreadId, "thread-a");
 });
 
 void test("restores an unmarked summarized branch without transient tree state", async () => {
@@ -245,7 +257,7 @@ void test("restores an unmarked summarized branch without transient tree state",
     timestamp: new Date().toISOString(),
     fromId: "root",
     summary: "alternate",
-  } as SessionEntry;
+  } satisfies SessionEntry;
   const harness = createHarness([root, old, summary], "summary");
 
   await harness.emit("session_start", { type: "session_start", reason: "resume" });
@@ -268,18 +280,15 @@ void test("fails closed on malformed or misplaced active thread markers", () => 
     timestamp: new Date().toISOString(),
     customType: CODEX_THREAD_MARKER_ENTRY_TYPE,
     data: { version: 1 },
-  } as SessionEntry;
+  } satisfies SessionEntry;
   assert.throws(
     () => resolveCodexThreadIdentity("session-1", [root, malformed]),
     /invalid OpenAI Codex thread marker/,
   );
 
-  const misplaced = marker("misplaced", "root", "thread", "root-thread") as Extract<
-    SessionEntry,
-    { type: "custom" }
-  >;
+  const misplaced = marker("misplaced", "root", "thread", "root-thread");
   misplaced.data = {
-    ...(misplaced.data as CodexThreadMarkerData),
+    ...misplaced.data,
     branchParentEntryId: "different",
   };
   assert.throws(
@@ -290,12 +299,9 @@ void test("fails closed on malformed or misplaced active thread markers", () => 
 
 void test("ignores copied thread markers from a different Pi session", () => {
   const root = entry("root", null);
-  const copiedMarker = marker("copied", "root", "old-thread", "old-root") as Extract<
-    SessionEntry,
-    { type: "custom" }
-  >;
+  const copiedMarker = marker("copied", "root", "old-thread", "old-root");
   copiedMarker.data = {
-    ...(copiedMarker.data as CodexThreadMarkerData),
+    ...copiedMarker.data,
     sessionId: "old-session",
   };
   const user = entry("user", "copied", "user");

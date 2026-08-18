@@ -1,3 +1,9 @@
+import {
+  requireJsonRecord,
+  requireJsonRecords,
+} from "../../extensions/openai-codex-compat/codex-protocol.ts";
+import { hasObjectType } from "../../extensions/openai-codex-compat/value-contracts.ts";
+import { requireBuiltinModelsModule } from "../support/pi-fixtures.ts";
 import assert from "node:assert/strict";
 import { createServer } from "node:http";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
@@ -164,8 +170,8 @@ export function textEvents(text: string): JsonRecord[] {
 export function followUpEvents(text: string): JsonRecord[] {
   const events = textEvents(text);
   const terminal = events.at(-1);
-  assert.ok(terminal && typeof terminal["response"] === "object" && terminal["response"] !== null);
-  (terminal["response"] as JsonRecord)["end_turn"] = false;
+  assert.ok(terminal && hasObjectType(terminal["response"]) && terminal["response"] !== null);
+  requireJsonRecord(terminal["response"])["end_turn"] = false;
   return events;
 }
 
@@ -187,10 +193,10 @@ export async function startCodexServer(
     const rawBody = compressed
       ? zstdDecompressSync(bodyBuffer).toString("utf8")
       : bodyBuffer.toString("utf8");
-    const body = JSON.parse(rawBody) as JsonRecord;
+    const body = requireJsonRecord(JSON.parse(rawBody));
     requests.push(body);
 
-    const input = Array.isArray(body["input"]) ? (body["input"] as JsonRecord[]) : [];
+    const input = Array.isArray(body["input"]) ? requireJsonRecords(body["input"]) : [];
     const compacting = input.some((item) => item["type"] === "compaction_trigger");
     const events = responseEvents
       ? responseEvents(requests.length, body)
@@ -211,7 +217,7 @@ export async function startCodexServer(
       }),
   );
   const address = server.address();
-  assert.ok(address && typeof address === "object");
+  assert.ok(address && hasObjectType(address));
   return { baseUrl: `http://127.0.0.1:${address.port}`, requests };
 }
 
@@ -224,11 +230,10 @@ export async function pointBuiltInCodexAt(baseUrl: string, t: TestContext): Prom
   );
 
   try {
-    const nestedPiAi = (await import(pathToFileURL(nestedPiAiPath).href)) as {
-      getBuiltinModels?: (provider: typeof CODEX_PROVIDER) => Model<typeof CODEX_API>[];
-    };
-    if (nestedPiAi.getBuiltinModels) {
-      modelSources.push(() => nestedPiAi.getBuiltinModels!(CODEX_PROVIDER));
+    const nestedPiAi = requireBuiltinModelsModule(await import(pathToFileURL(nestedPiAiPath).href));
+    const getNestedModels = nestedPiAi.getBuiltinModels?.bind(nestedPiAi);
+    if (getNestedModels) {
+      modelSources.push(() => getNestedModels(CODEX_PROVIDER));
     }
   } catch {
     // This dependency layout has no nested Pi AI copy.
@@ -307,7 +312,7 @@ export async function createTestSession(
 
   const model = modelRuntime.getModel(CODEX_PROVIDER, MODEL_ID);
   assert.ok(model);
-  const result = await createAgentSession({
+  const sessionOptions: Parameters<typeof createAgentSession>[0] = {
     cwd,
     agentDir,
     modelRuntime,
@@ -316,8 +321,9 @@ export async function createTestSession(
     resourceLoader,
     model,
     thinkingLevel: "low",
-    ...(options?.tools ? {} : { noTools: "all" as const }),
-  });
+  };
+  if (!options?.tools) sessionOptions.noTools = "all";
+  const result = await createAgentSession(sessionOptions);
   t.after(() => result.session.dispose());
   await result.session.bindExtensions({});
   return { cwd, session: result.session };

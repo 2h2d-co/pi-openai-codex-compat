@@ -1,3 +1,4 @@
+import { isString } from "./value-contracts.ts";
 import { readFileSync } from "node:fs";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import type { Model } from "@earendil-works/pi-ai";
@@ -6,6 +7,7 @@ import {
   isObject,
   truncateMiddleWithTokenBudget,
   type JsonRecord,
+  type JsonValue,
   type ResponsesItem,
 } from "./codex-protocol.ts";
 import { requestCodexJson, type CodexJsonRequestOptions } from "./codex-transport.ts";
@@ -35,20 +37,20 @@ type JsonRequester = (
   path: string,
   body: JsonRecord,
   options: CodexJsonRequestOptions,
-) => Promise<unknown>;
+) => Promise<JsonValue>;
 
 function visibleMessage(item: ResponsesItem): JsonRecord | undefined {
   if (item.type !== undefined && item.type !== "message") return undefined;
   if (item.role !== "user" && item.role !== "assistant") return undefined;
   if (!Array.isArray(item.content)) return undefined;
 
-  const content = item.content
-    .filter(isObject)
-    .filter((part) =>
-      item.role === "user" ? part.type === "input_text" : part.type === "output_text",
-    )
-    .filter((part) => typeof part.text === "string")
-    .map((part) => ({ type: part.type, text: part.text }));
+  const content: JsonRecord[] = [];
+  const expectedType = item.role === "user" ? "input_text" : "output_text";
+  for (const part of item.content) {
+    if (isObject(part) && part.type === expectedType && isString(part.text)) {
+      content.push({ type: expectedType, text: part.text });
+    }
+  }
   if (content.length === 0) return undefined;
   return { type: "message", role: item.role, content };
 }
@@ -65,7 +67,7 @@ function truncateAssistantMessages(messages: JsonRecord[]): JsonRecord[] {
 
     const content: JsonRecord[] = [];
     for (const part of message.content.filter(isObject)) {
-      if (part.type !== "output_text" || typeof part.text !== "string" || remaining === 0) {
+      if (part.type !== "output_text" || !isString(part.text) || remaining === 0) {
         continue;
       }
       const tokens = approximateTokens(part.text);
@@ -138,7 +140,6 @@ export default function registerWebRun(
       const body: JsonRecord = {
         id: ctx.sessionManager.getSessionId(),
         model: model.id,
-        ...(input ? { input } : {}),
         commands: params,
         settings: {
           allowed_callers: ["direct"],
@@ -146,19 +147,21 @@ export default function registerWebRun(
         },
         max_output_tokens: SEARCH_OUTPUT_TOKEN_BUDGET,
       };
-      const response = await requestJson(model, SEARCH_ENDPOINT, body, {
-        ...authentication,
-        ...(signal ? { signal } : {}),
-      });
-      if (!isObject(response) || typeof response["output"] !== "string") {
+      if (input) body.input = input;
+      const requestOptions = { ...authentication };
+      if (signal) Object.assign(requestOptions, { signal });
+      const response = await requestJson(model, SEARCH_ENDPOINT, body, requestOptions);
+      if (!isObject(response) || !isString(response["output"])) {
         throw new Error("OpenAI Codex returned an invalid standalone web-search response.");
       }
       const results = Array.isArray(response["results"])
         ? response["results"].map((result) => structuredClone(result))
         : undefined;
+      const details: WebRunDetails = {};
+      if (results) details.results = results;
       return {
         content: [{ type: "text", text: response["output"] }],
-        details: (results ? { results } : {}) satisfies WebRunDetails,
+        details,
       };
     },
     renderCall(args, theme, context) {

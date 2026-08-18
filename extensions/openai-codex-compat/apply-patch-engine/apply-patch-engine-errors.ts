@@ -1,3 +1,4 @@
+import { hasObjectType } from "../value-contracts.ts";
 import type { ApplyPatchDetails } from "./apply-patch-engine-contracts.ts";
 
 export class ApplyPatchParseError extends Error {
@@ -43,7 +44,7 @@ export class ApplyPatchExecutionError extends Error {
 }
 
 export function hasErrorCode(error: unknown, code: string): boolean {
-  return typeof error === "object" && error !== null && "code" in error && error.code === code;
+  return hasObjectType(error) && error !== null && "code" in error && error.code === code;
 }
 
 export function isNotFound(error: unknown): boolean {

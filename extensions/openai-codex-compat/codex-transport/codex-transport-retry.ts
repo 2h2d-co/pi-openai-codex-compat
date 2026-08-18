@@ -87,10 +87,14 @@ export function validateRetryDelay(delayMs: number, options: CodexTransportOptio
   return delayMs;
 }
 
-export function combineAbortSignals(signals: readonly (AbortSignal | undefined)[]): {
+export interface CombinedAbortSignals {
   signal?: AbortSignal;
   cleanup(): void;
-} {
+}
+
+export function combineAbortSignals(
+  signals: readonly (AbortSignal | undefined)[],
+): CombinedAbortSignals {
   const active = signals.filter((signal): signal is AbortSignal => signal !== undefined);
   if (active.length === 0) return { cleanup() {} };
   if (active.length === 1) {

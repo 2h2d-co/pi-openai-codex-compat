@@ -1,4 +1,4 @@
-import type { ExtensionAPI, ExtensionContext, SessionEntry } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import type { CodexCompatConfig } from "./config.ts";
 import { hasNativeCheckpointEntry } from "./compaction-checkpoint.ts";
 import { syncCodexTools } from "./tools.ts";
@@ -6,7 +6,7 @@ import { syncCodexTools } from "./tools.ts";
 type ConfigResolver = (ctx: ExtensionContext) => CodexCompatConfig;
 
 function activeBranchHasCheckpoint(ctx: ExtensionContext): boolean {
-  return hasNativeCheckpointEntry(ctx.sessionManager.getBranch() as SessionEntry[]);
+  return hasNativeCheckpointEntry(ctx.sessionManager.getBranch());
 }
 
 export default function registerCodexModelPolicy(

@@ -22,7 +22,6 @@ import {
   patch,
   filesystemError,
   pathLikeBasename,
-  type Theme,
 } from "./apply-patch-semantic-harness.ts";
 
 void test(
@@ -191,7 +190,7 @@ void test("executes planned move strategies and reports every injected failure p
       const theme = {
         fg: (_color: string, text: string) => text,
         bold: (text: string) => text,
-      } as unknown as Theme;
+      };
       const tui = new ApplyPatchDiffComponent(error.details, theme, cwd, true)
         .render(120)
         .join("\n");
@@ -255,12 +254,12 @@ void test("executes planned move strategies and reports every injected failure p
             }
             await unlink(path);
           },
-          lstat: (async (path) => {
+          async lstat(path) {
             if (path === join(cwd, "unverified-move-destination.txt")) {
               throw filesystemError("EIO", "injected final-state inspection failure");
             }
             return lstat(path);
-          }) as typeof lstat,
+          },
         },
       },
     ),
@@ -412,7 +411,7 @@ void test("reports deterministic file states after write failures", async (t) =>
   const theme = {
     fg: (_color: string, text: string) => text,
     bold: (text: string) => text,
-  } as unknown as Theme;
+  };
   const cases = [
     {
       name: "unchanged",
@@ -496,12 +495,12 @@ void test("reports deterministic file states after write failures", async (t) =>
             }
             await writeFile(target, data, options);
           },
-          readFile: (async (target, options) => {
+          async readFile(target) {
             if (target === unverifiedPath) {
               throw filesystemError("EIO", "injected final-state read failure");
             }
-            return readFile(target, options);
-          }) as typeof readFile,
+            return readFile(target);
+          },
         },
       },
     ),
@@ -592,7 +591,7 @@ void test("reports parent, temporary, and post-operation failure effects", async
   const theme = {
     fg: (_color: string, text: string) => text,
     bold: (text: string) => text,
-  } as unknown as Theme;
+  };
 
   await assert.rejects(
     applyPatch(cwd, patch("*** Add File: created-parent/file.txt\n+content\n"), undefined, {

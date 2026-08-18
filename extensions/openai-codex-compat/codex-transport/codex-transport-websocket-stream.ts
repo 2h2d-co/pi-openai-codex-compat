@@ -1,3 +1,4 @@
+import { isString } from "../value-contracts.ts";
 import type { Model } from "@earendil-works/pi-ai";
 import { isObject, type JsonRecord } from "../codex-protocol.ts";
 import { normalizeReplayItem } from "../responses-replay.ts";
@@ -57,7 +58,7 @@ export async function* parseWebSocket(
         if (!isObject(event)) return;
         text = await decodeWebSocketData(event["data"]);
         if (!text) return;
-        const parsed = JSON.parse(text) as unknown;
+        const parsed: unknown = JSON.parse(text);
         if (!isObject(parsed)) throw new Error("Invalid WebSocket event");
         const type = parsed.type;
         if (
@@ -182,43 +183,41 @@ export async function* requestWebSocket(
     const requestBody = decision.body;
     const warmup = options.warmup === true;
     const requestStartedAtUnixMs = String(Date.now());
-    const withRequestStart = (candidate: JsonRecord): JsonRecord => ({
-      ...candidate,
-      client_metadata: {
-        ...(isObject(candidate.client_metadata) ? candidate.client_metadata : {}),
-        [CODEX_WS_REQUEST_START_METADATA_KEY]: requestStartedAtUnixMs,
-      },
-    });
-    const fullRequestJson = JSON.stringify({
-      type: "response.create",
-      ...withRequestStart(fullBody),
-      ...(warmup ? { generate: false } : {}),
-    });
-    const wireRequestJson = JSON.stringify({
-      type: "response.create",
-      ...withRequestStart(requestBody),
-      ...(warmup ? { generate: false } : {}),
-    });
-    onAttempt({
+    const responseCreateBody = (candidate: JsonRecord): JsonRecord => {
+      const clientMetadata: JsonRecord = {};
+      if (isObject(candidate.client_metadata)) {
+        Object.assign(clientMetadata, candidate.client_metadata);
+      }
+      clientMetadata[CODEX_WS_REQUEST_START_METADATA_KEY] = requestStartedAtUnixMs;
+      const responseBody: JsonRecord = {
+        type: "response.create",
+        ...candidate,
+        client_metadata: clientMetadata,
+      };
+      if (warmup) responseBody["generate"] = false;
+      return responseBody;
+    };
+    const fullRequestJson = JSON.stringify(responseCreateBody(fullBody));
+    const wireRequestJson = JSON.stringify(responseCreateBody(requestBody));
+    const attempt: CodexWebSocketAttempt = {
       connection: acquired.reused ? "reused" : "new",
       contextMode: decision.contextMode,
       inputItems: requestInputLength(requestBody),
       fullInputItems: requestInputLength(fullBody),
       fullRequestBytes: serializedBytes(fullRequestJson),
       wireRequestBytes: serializedBytes(wireRequestJson),
-      ...(decision.previousResponseId ? { previousResponseId: decision.previousResponseId } : {}),
-      ...(decision.bypassReason ? { bypassReason: decision.bypassReason } : {}),
-      ...(decision.historyMismatch ? { historyMismatch: decision.historyMismatch } : {}),
-      ...(decision.cacheIdentityPreserved === undefined
-        ? {}
-        : { cacheIdentityPreserved: decision.cacheIdentityPreserved }),
-      ...(options.turnState
-        ? {
-            turnStateReplayed: routed.replayedValue !== undefined,
-            ...(routed.replayedValue ? { turnStateReplayedValue: routed.replayedValue } : {}),
-          }
-        : {}),
-    });
+    };
+    if (decision.previousResponseId) attempt.previousResponseId = decision.previousResponseId;
+    if (decision.bypassReason) attempt.bypassReason = decision.bypassReason;
+    if (decision.historyMismatch) attempt.historyMismatch = decision.historyMismatch;
+    if (decision.cacheIdentityPreserved !== undefined) {
+      attempt.cacheIdentityPreserved = decision.cacheIdentityPreserved;
+    }
+    if (options.turnState) {
+      attempt.turnStateReplayed = routed.replayedValue !== undefined;
+      if (routed.replayedValue) attempt.turnStateReplayedValue = routed.replayedValue;
+    }
+    onAttempt(attempt);
     const stats = sessionId ? getOrCreateWebSocketDebugStats(sessionId) : undefined;
     if (stats) {
       stats.requests += 1;
@@ -228,10 +227,10 @@ export async function* requestWebSocket(
       if (useContinuation) stats.cachedContextRequests += 1;
       if (requestBody.store === true) stats.storeTrueRequests += 1;
       stats.lastInputItems = requestInputLength(requestBody);
-      if (requestBody.previous_response_id) {
+      if (isString(requestBody.previous_response_id)) {
         stats.deltaRequests += 1;
         stats.lastDeltaInputItems = requestInputLength(requestBody);
-        stats.lastPreviousResponseId = requestBody.previous_response_id as string;
+        stats.lastPreviousResponseId = requestBody.previous_response_id;
       } else {
         stats.fullContextRequests += 1;
         delete stats.lastDeltaInputItems;
@@ -258,7 +257,7 @@ export async function* requestWebSocket(
       if (
         event.type === "response.created" &&
         isObject(event.response) &&
-        typeof event.response.id === "string"
+        isString(event.response.id)
       ) {
         responseId = event.response.id;
       }
@@ -275,7 +274,7 @@ export async function* requestWebSocket(
         if (event.type === "response.completed" || event.type === "response.done") {
           responseCompleted = true;
         }
-        if (typeof event.response.id === "string") responseId = event.response.id;
+        if (isString(event.response.id)) responseId = event.response.id;
       }
       const normalized = normalizeEvent(event);
       if (!normalized) continue;

@@ -9,6 +9,7 @@ import {
   type CodexTransportDiagnostic,
   type JsonRecord,
 } from "./codex-transport-harness.ts";
+import { responseFixture } from "../support/pi-fixtures.ts";
 
 void test("finishes SSE requests when the terminal event arrives before EOF", async () => {
   let cancelled = false;
@@ -100,7 +101,7 @@ void test("serializes SSE request payloads exactly once", async () => {
 });
 
 void test("preserves SSE read errors when reader cleanup also fails", async () => {
-  const response = {
+  const response = responseFixture({
     ok: true,
     status: 200,
     statusText: "OK",
@@ -118,7 +119,7 @@ void test("preserves SSE read errors when reader cleanup also fails", async () =
         };
       },
     },
-  } as unknown as Response;
+  });
 
   await assert.rejects(
     async () => {
@@ -255,10 +256,11 @@ void test("captures and replays SSE turn state with exact diagnostic values", as
   const fetcher: typeof fetch = async (_input, init) => {
     requests += 1;
     requestHeaders.push(new Headers(init?.headers));
-    return new Response(terminal, {
-      status: 200,
-      ...(requests === 1 ? { headers: { "x-codex-turn-state": "opaque-routing-state" } } : {}),
-    });
+    const responseInit: ResponseInit =
+      requests === 1
+        ? { status: 200, headers: { "x-codex-turn-state": "opaque-routing-state" } }
+        : { status: 200 };
+    return new Response(terminal, responseInit);
   };
   const transport = new CodexTransport();
   const options = {

@@ -1,9 +1,19 @@
-import { isObject, type JsonRecord } from "./codex-protocol.ts";
+import { isBoolean, isNonNullObject, isNumber, isString } from "./value-contracts.ts";
+import type { JsonPrimitive, JsonRecord } from "./codex-protocol.ts";
+
+type StableJsonValue = JsonPrimitive | StableJsonObject | StableJsonValue[] | undefined;
+
+interface StableJsonObject {
+  [key: string]: StableJsonValue;
+}
 
 export function stableResponsesJson(value: unknown): string {
-  const normalize = (current: unknown): unknown => {
+  const normalize = (current: unknown): StableJsonValue => {
     if (Array.isArray(current)) return current.map(normalize);
-    if (!isObject(current)) return current;
+    if (current === null || isBoolean(current) || isNumber(current) || isString(current)) {
+      return current;
+    }
+    if (!isNonNullObject(current)) return undefined;
     return Object.fromEntries(
       Object.entries(current)
         .filter(([, entry]) => entry !== undefined)
@@ -11,7 +21,11 @@ export function stableResponsesJson(value: unknown): string {
         .map(([key, entry]) => [key, normalize(entry)]),
     );
   };
-  return JSON.stringify(normalize(value));
+  const serialized = JSON.stringify(normalize(value));
+  if (!isString(serialized)) {
+    throw new Error("Responses data did not serialize to JSON.");
+  }
+  return serialized;
 }
 
 /** Normalize completed provider output into the item shape replayed on the next request. */

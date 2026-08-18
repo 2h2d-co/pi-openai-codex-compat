@@ -1,3 +1,4 @@
+import { requireJsonRecords } from "../../extensions/openai-codex-compat/codex-protocol.ts";
 import assert from "node:assert/strict";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -9,7 +10,6 @@ import {
 } from "../../extensions/openai-codex-compat/output-limit-continuation.ts";
 import { DEFAULT_RESPONSE_RETRY_POLICY } from "../../extensions/openai-codex-compat/codex-provider/codex-provider-runtime.ts";
 import { responseRetryDelayMs } from "../../extensions/openai-codex-compat/codex-provider/codex-provider-response-attempts.ts";
-import type { JsonRecord } from "./output-limit-continuation-contracts-and-builders.ts";
 import {
   incompleteEvents,
   exhaustedOutputLimitEvents,
@@ -57,11 +57,11 @@ void test("resamples a Codex output limit before returning control to Pi", async
   assert.ok(thresholdCompaction);
   assert.match(JSON.stringify(resampled["input"]), /partial progress/);
   assert.equal(
-    (resampled["input"] as JsonRecord[]).some((item) => item["type"] === "compaction_trigger"),
+    requireJsonRecords(resampled["input"]).some((item) => item["type"] === "compaction_trigger"),
     false,
   );
   assert.equal(
-    (thresholdCompaction["input"] as JsonRecord[]).some(
+    requireJsonRecords(thresholdCompaction["input"]).some(
       (item) => item["type"] === "compaction_trigger",
     ),
     true,
@@ -110,7 +110,7 @@ void test("resamples a Codex output limit before returning control to Pi", async
 
 void test("preserves committed progress across overflow compaction and automatic retry", async (t) => {
   const server = await startCodexServer(t, (requestNumber, body) => {
-    const input = body["input"] as JsonRecord[];
+    const input = requireJsonRecords(body["input"]);
     if (input.some((item) => item["type"] === "compaction_trigger")) return compactionEvents();
     if (requestNumber === 1) return incompleteEvents();
     if (requestNumber === 2) return contextOverflowEvents();
@@ -129,7 +129,7 @@ void test("preserves committed progress across overflow compaction and automatic
   assert.ok(retry);
   assert.match(JSON.stringify(overflowAttempt["input"]), /partial progress/);
   assert.match(JSON.stringify(compaction["input"]), /finish this task.*partial progress/);
-  assert.deepEqual((compaction["input"] as JsonRecord[]).at(-1), {
+  assert.deepEqual(requireJsonRecords(compaction["input"]).at(-1), {
     type: "compaction_trigger",
   });
   assert.match(JSON.stringify(retry["input"]), /opaque-state/);
@@ -169,7 +169,7 @@ void test("preserves committed progress across overflow compaction and automatic
 
 void test("compacts between successful provider follow-ups with an explicit Pi boundary", async (t) => {
   const server = await startCodexServer(t, (requestNumber, body) => {
-    const input = body["input"] as JsonRecord[];
+    const input = requireJsonRecords(body["input"]);
     if (input.some((item) => item["type"] === "compaction_trigger")) return compactionEvents();
     if (requestNumber === 1) return followUpEvents("first phase");
     return textEvents("second phase");
@@ -187,7 +187,7 @@ void test("compacts between successful provider follow-ups with an explicit Pi b
   assert.ok(compaction);
   assert.ok(continued);
   assert.match(JSON.stringify(compaction["input"]), /finish this task.*first phase/);
-  assert.deepEqual((compaction["input"] as JsonRecord[]).at(-1), {
+  assert.deepEqual(requireJsonRecords(compaction["input"]).at(-1), {
     type: "compaction_trigger",
   });
   assert.match(JSON.stringify(continued["input"]), /opaque-state/);
@@ -222,7 +222,7 @@ void test("compacts between successful provider follow-ups with an explicit Pi b
 
 void test("continues a fully exhausted output limit after successful threshold compaction", async (t) => {
   const server = await startCodexServer(t, (requestNumber, body) => {
-    const input = body["input"] as JsonRecord[];
+    const input = requireJsonRecords(body["input"]);
     if (input.some((item) => item["type"] === "compaction_trigger")) return compactionEvents();
     if (requestNumber <= 6) return exhaustedOutputLimitEvents(requestNumber);
     return textEvents("finished after hidden continuation");
@@ -242,7 +242,7 @@ void test("continues a fully exhausted output limit after successful threshold c
     JSON.stringify(compaction["input"]),
     /finish this long task.*committed output 1.*committed output 6/,
   );
-  assert.deepEqual((compaction["input"] as JsonRecord[]).at(-1), {
+  assert.deepEqual(requireJsonRecords(compaction["input"]).at(-1), {
     type: "compaction_trigger",
   });
   assert.match(JSON.stringify(continued["input"]), /opaque-state/);
@@ -314,7 +314,7 @@ void test("executes an output-limit tool call before the next provider request",
   await session.waitForIdle();
 
   assert.equal(server.requests.length, 2);
-  const followUpInput = server.requests[1]?.["input"] as JsonRecord[];
+  const followUpInput = requireJsonRecords(server.requests[1]?.["input"]);
   const toolOutput = followUpInput.find(
     (item) => item["type"] === "function_call_output" && item["call_id"] === "call_read",
   );

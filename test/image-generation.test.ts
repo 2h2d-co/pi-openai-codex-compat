@@ -1,15 +1,12 @@
+import { extensionContextFixture } from "./support/pi-fixtures.ts";
+import { extensionApiFixture } from "./support/pi-fixtures.ts";
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, sep } from "node:path";
 import test from "node:test";
-import type {
-  ExtensionAPI,
-  ExtensionContext,
-  SessionEntry,
-  Theme,
-} from "@earendil-works/pi-coding-agent";
+import type { SessionEntry } from "@earendil-works/pi-coding-agent";
 import type { Model } from "@earendil-works/pi-ai";
 import registerImageGeneration, {
   normalizeImagePath,
@@ -17,6 +14,8 @@ import registerImageGeneration, {
 } from "../extensions/openai-codex-compat/image-generation.ts";
 import { DEFAULT_CONFIG } from "../extensions/openai-codex-compat/config.ts";
 import type { JsonRecord } from "../extensions/openai-codex-compat/codex-protocol.ts";
+import type { CodexJsonRequestOptions } from "../extensions/openai-codex-compat/codex-transport.ts";
+import { isString } from "../extensions/openai-codex-compat/value-contracts.ts";
 
 const GENERATED_PNG =
   "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=";
@@ -38,7 +37,7 @@ function codexModel(): Model<any> {
     cost: { input: 1, output: 2, cacheRead: 0.1, cacheWrite: 1.25 },
     contextWindow: 100_000,
     maxTokens: 10_000,
-  } as Model<any>;
+  } satisfies Model<any>;
 }
 
 void test("selects the newest conversation images in chronological order", () => {
@@ -111,20 +110,20 @@ void test("executes generation and recent-image edits through Codex Images", asy
         ],
         timestamp: Date.now(),
       },
-    } as SessionEntry,
+    } satisfies SessionEntry,
   ];
   let tool: any;
   const requests: Array<{
     path: string;
     body: JsonRecord;
-    options: Record<string, unknown>;
+    options: CodexJsonRequestOptions;
   }> = [];
-  const pi = {
+  const pi = extensionApiFixture({
     registerTool(definition: unknown) {
       tool = definition;
     },
     getAllTools: () => [],
-  } as unknown as ExtensionAPI;
+  });
   registerImageGeneration(
     pi,
     () => DEFAULT_CONFIG,
@@ -167,7 +166,7 @@ void test("executes generation and recent-image edits through Codex Images", asy
     additionalProperties: false,
   });
 
-  const context = {
+  const context = extensionContextFixture({
     model: codexModel(),
     sessionManager: {
       getSessionId: () => "session-1",
@@ -180,7 +179,7 @@ void test("executes generation and recent-image edits through Codex Images", asy
         headers: { "x-test": "value" },
       }),
     },
-  } as unknown as ExtensionContext;
+  });
   await assert.rejects(
     tool.execute(
       "call-too-many-paths|fc-too-many-paths",
@@ -267,7 +266,8 @@ void test("executes generation and recent-image edits through Codex Images", asy
     "x-codex-image-turn-id": "call-image",
   });
 
-  const savedPath = result.details.savedPath as string;
+  const savedPath = result.details.savedPath;
+  assert.ok(isString(savedPath));
   assert.equal(savedPath, join(agentDir, "generated_images", "session-1", "call-image.png"));
   assert.deepEqual(await readFile(savedPath), Buffer.from(GENERATED_PNG, "base64"));
   assert.deepEqual(result.content[0], {
@@ -285,7 +285,7 @@ void test("executes generation and recent-image edits through Codex Images", asy
       color === "toolPendingBg" ? "\u001b[48;2;40;40;50m" : "\u001b[48;2;40;50;40m",
     getColorMode: () => "truecolor",
     name: "dark",
-  } as unknown as Theme;
+  };
   const args = { prompt: "Draw a blue square." };
   const renderContext = {
     args,

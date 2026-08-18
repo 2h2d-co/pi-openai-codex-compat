@@ -1,3 +1,4 @@
+import { requireJsonRecords } from "../extensions/openai-codex-compat/codex-protocol.ts";
 import assert from "node:assert/strict";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -19,9 +20,15 @@ import {
   type AgentSession,
   type ToolDefinition,
 } from "@earendil-works/pi-coding-agent";
+import { isFunction, isString } from "../extensions/openai-codex-compat/value-contracts.ts";
 import { Type } from "typebox";
 import { CONFIG_FILE } from "../extensions/openai-codex-compat/config.ts";
-import { isObject, type JsonRecord } from "../extensions/openai-codex-compat/codex-protocol.ts";
+import {
+  isJsonValue,
+  isObject,
+  type JsonRecord,
+  type JsonValue,
+} from "../extensions/openai-codex-compat/codex-protocol.ts";
 import { NATIVE_RESPONSE_ENTRY_TYPE } from "../extensions/openai-codex-compat/native-history.ts";
 
 const LIVE_TEST_ENABLED = process.env["PI_CODEX_LIVE_TEST"] === "1";
@@ -45,6 +52,36 @@ type ObservedWebSocketTraffic = {
   connections: number;
   frames: JsonRecord[];
 };
+
+interface CacheRecoveryObservation {
+  trigger: JsonValue | undefined;
+  continuationBypassReason: JsonValue | undefined;
+  historyMismatch: JsonValue | undefined;
+}
+
+interface CacheObservation {
+  cacheRead: number;
+  diagnosticTypes: string[];
+  selectedTransport: JsonValue | undefined;
+  contextMode: JsonValue | undefined;
+  inputItems: JsonValue | undefined;
+  fullInputItems: JsonValue | undefined;
+  turnStateAvailableAtStart: JsonValue | undefined;
+  turnStateReplayed: JsonValue | undefined;
+  turnStateReceived: JsonValue | undefined;
+  cache: JsonValue | undefined;
+  usage: JsonValue | undefined;
+  prewarmUsage: JsonValue | undefined;
+  recoveries: CacheRecoveryObservation[];
+}
+
+function diagnosticValue(value: unknown): JsonValue | undefined {
+  return isJsonValue(value) ? value : undefined;
+}
+
+function isWebSocketConstructor(value: unknown): value is WebSocketConstructor {
+  return isFunction(value);
+}
 
 function liveApiKey(): string {
   const apiKey = process.env["PI_CODEX_LIVE_API_KEY"];
@@ -90,7 +127,7 @@ function latestAssistant(session: AgentSession): AssistantMessage {
   const message = assistantMessages(session).at(-1);
   assert.ok(message, "Pi did not persist an assistant message");
   assert.equal(message.errorMessage, undefined);
-  assert.equal(typeof message.responseId, "string");
+  assert.ok(isString(message.responseId));
   return message;
 }
 
@@ -109,7 +146,7 @@ function responseLines(text: string): string[] {
     .filter(Boolean);
 }
 
-function cacheObservation(message: AssistantMessage): Record<string, unknown> {
+function cacheObservation(message: AssistantMessage): CacheObservation {
   const request = message.diagnostics?.find(
     (diagnostic) =>
       diagnostic.type === "codex_transport_request" &&
@@ -124,30 +161,31 @@ function cacheObservation(message: AssistantMessage): Record<string, unknown> {
   return {
     cacheRead: message.usage.cacheRead,
     diagnosticTypes: (message.diagnostics ?? []).map((diagnostic) => diagnostic.type),
-    selectedTransport: request.details?.["selectedTransport"],
-    contextMode: request.details?.["contextMode"],
-    inputItems: request.details?.["inputItems"],
-    fullInputItems: request.details?.["fullInputItems"],
-    turnStateAvailableAtStart: request.details?.["turnStateAvailableAtStart"],
-    turnStateReplayed: request.details?.["turnStateReplayed"],
-    turnStateReceived: request.details?.["turnStateReceived"],
-    cache: request.details?.["cache"],
-    usage: request.details?.["usage"],
-    prewarmUsage: prewarm?.details?.["usage"],
+    selectedTransport: diagnosticValue(request.details?.["selectedTransport"]),
+    contextMode: diagnosticValue(request.details?.["contextMode"]),
+    inputItems: diagnosticValue(request.details?.["inputItems"]),
+    fullInputItems: diagnosticValue(request.details?.["fullInputItems"]),
+    turnStateAvailableAtStart: diagnosticValue(request.details?.["turnStateAvailableAtStart"]),
+    turnStateReplayed: diagnosticValue(request.details?.["turnStateReplayed"]),
+    turnStateReceived: diagnosticValue(request.details?.["turnStateReceived"]),
+    cache: diagnosticValue(request.details?.["cache"]),
+    usage: diagnosticValue(request.details?.["usage"]),
+    prewarmUsage: diagnosticValue(prewarm?.details?.["usage"]),
     recoveries: (message.diagnostics ?? [])
       .filter((diagnostic) => diagnostic.type === "codex_transport_recovery")
       .map((diagnostic) => ({
-        trigger: diagnostic.details?.["trigger"],
-        continuationBypassReason: diagnostic.details?.["continuationBypassReason"],
-        historyMismatch: diagnostic.details?.["historyMismatch"],
+        trigger: diagnosticValue(diagnostic.details?.["trigger"]),
+        continuationBypassReason: diagnosticValue(diagnostic.details?.["continuationBypassReason"]),
+        historyMismatch: diagnosticValue(diagnostic.details?.["historyMismatch"]),
       })),
   };
 }
 
 function observeRealWebSocketTraffic(t: TestContext): ObservedWebSocketTraffic {
   const traffic: ObservedWebSocketTraffic = { connections: 0, frames: [] };
-  const OriginalWebSocket = globalThis.WebSocket as unknown as WebSocketConstructor;
-  assert.equal(typeof OriginalWebSocket, "function", "A real WebSocket runtime is required");
+  const candidate: unknown = globalThis.WebSocket;
+  assert.ok(isWebSocketConstructor(candidate), "A real WebSocket runtime is required");
+  const OriginalWebSocket = candidate;
 
   class ObservedWebSocket extends OriginalWebSocket {
     constructor(url: string, protocols?: string | string[] | { headers?: Record<string, string> }) {
@@ -156,7 +194,7 @@ function observeRealWebSocketTraffic(t: TestContext): ObservedWebSocketTraffic {
     }
 
     override send(data: string): void {
-      const parsed = JSON.parse(data) as unknown;
+      const parsed: unknown = JSON.parse(data);
       assert.ok(isObject(parsed), "Codex WebSocket request must be a JSON object");
       traffic.frames.push(structuredClone(parsed));
       super.send(data);
@@ -183,7 +221,7 @@ function frameInput(frame: JsonRecord, expectedItems?: number): JsonRecord[] {
   assert.ok(Array.isArray(frame.input), "Codex WebSocket frame did not contain array input");
   if (expectedItems !== undefined) assert.equal(frame.input.length, expectedItems);
   assert.equal(frame.input.every(isObject), true);
-  return frame.input as JsonRecord[];
+  return requireJsonRecords(frame.input);
 }
 
 function assertCurrentMarkerOnly(
@@ -302,7 +340,7 @@ void test(
     const traffic = observeRealWebSocketTraffic(t);
     const session = await createLivePiHost(t, "text");
     const values = ["text-alpha", "text-bravo", "text-charlie"];
-    const cache: Record<string, unknown>[] = [];
+    const cache: CacheObservation[] = [];
     let previousResponseId: string | undefined;
 
     for (let index = 0; index < values.length; index++) {
@@ -337,7 +375,7 @@ void test(
           }
         }
       } else {
-        assert.equal(typeof frame.previous_response_id, "string");
+        assert.ok(isString(frame.previous_response_id));
         assertCurrentMarkerOnly(frameInput(frame, 1), values, index);
       }
       previousResponseId = assistant.responseId;
@@ -373,7 +411,7 @@ void test(
     const session = await createLivePiHost(t, "tool", [reportHistory]);
     assert.deepEqual(session.getActiveToolNames(), ["report_history"]);
     const values = ["tool-alpha", "tool-bravo", "tool-charlie"];
-    const cache: Record<string, unknown>[] = [];
+    const cache: CacheObservation[] = [];
     let previousResponseId: string | undefined;
 
     for (let index = 0; index < values.length; index++) {
@@ -425,7 +463,7 @@ void test(
           }
         }
       } else {
-        assert.equal(typeof frame.previous_response_id, "string");
+        assert.ok(isString(frame.previous_response_id));
         input = frameInput(frame, 1);
         assertCurrentMarkerOnly(input, values, index);
       }

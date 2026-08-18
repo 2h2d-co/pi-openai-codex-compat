@@ -1,3 +1,4 @@
+import { isAllowedString, isNumber, isString } from "./value-contracts.ts";
 import {
   calculateCost,
   parseStreamingJson,
@@ -38,6 +39,8 @@ type OutputSlot =
   | { type: "toolCall"; block: StreamingToolCall; contentIndex: number };
 
 type ToolCallSlot = Extract<OutputSlot, { type: "toolCall" }>;
+type ThinkingSlot = Extract<OutputSlot, { type: "thinking" }>;
+type TextSlot = Extract<OutputSlot, { type: "text" }>;
 
 type ProcessCodexStreamOptions = {
   applyServiceTierPricing?(usage: Usage, responseServiceTier: string | undefined): void;
@@ -67,11 +70,11 @@ const CODEX_RESPONSE_STATUSES = new Set<CodexResponseStatus>([
 ]);
 
 function outputIndex(event: JsonRecord): number {
-  return typeof event["output_index"] === "number" ? event["output_index"] : 0;
+  return isNumber(event["output_index"]) ? event["output_index"] : 0;
 }
 
 function stringValue(value: unknown): string {
-  return typeof value === "string" ? value : "";
+  return isString(value) ? value : "";
 }
 
 function piToolCallName(item: JsonRecord): string {
@@ -126,7 +129,7 @@ function customInput(block: StreamingToolCall): string {
   const property = block.customInput?.property;
   if (!property) return "";
   const value = block.arguments[property];
-  return typeof value === "string" ? value : "";
+  return isString(value) ? value : "";
 }
 
 function appendCustomInput(
@@ -146,9 +149,9 @@ function itemContentText(item: JsonRecord): string {
   return item.content
     .filter(isObject)
     .map((content) =>
-      typeof content.text === "string"
+      isString(content.text)
         ? content.text
-        : typeof content["refusal"] === "string"
+        : isString(content["refusal"])
           ? content["refusal"]
           : "",
     )
@@ -159,28 +162,31 @@ function reasoningText(item: JsonRecord): string {
   const summary = Array.isArray(item["summary"])
     ? item["summary"]
         .filter(isObject)
-        .map((part) => (typeof part.text === "string" ? part.text : ""))
+        .map((part) => (isString(part.text) ? part.text : ""))
         .join("\n\n")
     : "";
   if (summary) return summary;
   return Array.isArray(item.content)
     ? item.content
         .filter(isObject)
-        .map((part) => (typeof part.text === "string" ? part.text : ""))
+        .map((part) => (isString(part.text) ? part.text : ""))
         .join("\n\n")
     : "";
 }
 
 function normalizeCodexStatus(status: unknown): CodexResponseStatus | undefined {
-  return typeof status === "string" && CODEX_RESPONSE_STATUSES.has(status as CodexResponseStatus)
-    ? (status as CodexResponseStatus)
-    : undefined;
+  return isAllowedString(status, CODEX_RESPONSE_STATUSES) ? status : undefined;
+}
+
+interface CodexStopReason {
+  stopReason: AssistantMessage["stopReason"];
+  errorMessage?: string;
 }
 
 function mapStopReason(
   status: CodexResponseStatus | undefined,
   incompleteReason: string | undefined,
-): { stopReason: AssistantMessage["stopReason"]; errorMessage?: string } {
+): CodexStopReason {
   if (status === "incomplete") {
     if (incompleteReason === "max_output_tokens") return { stopReason: "length" };
     return {
@@ -212,13 +218,13 @@ export async function processCodexStream(
     }
   };
 
-  const getSlot = <TType extends OutputSlot["type"]>(
-    index: number,
-    type: TType,
-  ): Extract<OutputSlot, { type: TType }> | undefined => {
+  function getSlot(index: number, type: "thinking"): ThinkingSlot | undefined;
+  function getSlot(index: number, type: "text"): TextSlot | undefined;
+  function getSlot(index: number, type: "toolCall"): ToolCallSlot | undefined;
+  function getSlot(index: number, type: OutputSlot["type"]): OutputSlot | undefined {
     const slot = slots.get(index);
-    return slot?.type === type ? (slot as Extract<OutputSlot, { type: TType }>) : undefined;
-  };
+    return slot?.type === type ? slot : undefined;
+  }
 
   const pushToolDelta = (slot: ToolCallSlot, delta: string | undefined): void => {
     if (delta === undefined) return;
@@ -272,7 +278,7 @@ export async function processCodexStream(
         id: `${stringValue(item["call_id"])}|${stringValue(item.id)}`,
         name,
         arguments: {},
-        partialJson: typeof item.arguments === "string" ? item.arguments : "",
+        partialJson: isString(item.arguments) ? item.arguments : "",
       };
       output.content.push(block);
       const slot = trackStarted({
@@ -287,7 +293,7 @@ export async function processCodexStream(
     if (item.type === "custom_tool_call") {
       const name = piToolCallName(item);
       const property = grammarToolInputProperties.get(name) ?? "input";
-      const input = typeof item["input"] === "string" ? item["input"] : "";
+      const input = isString(item["input"]) ? item["input"] : "";
       const block: StreamingToolCall = {
         type: "toolCall",
         id: `${stringValue(item["call_id"])}|${stringValue(item.id)}`,
@@ -315,11 +321,12 @@ export async function processCodexStream(
     slots.get(index) ?? createSlot(index, item);
 
   const outputItemKey = (index: number, item: JsonRecord): string => {
-    if (typeof item.id === "string") return `id:${item.id}`;
-    if (typeof item["call_id"] === "string") {
-      return `call:${String(item.type)}:${item["call_id"]}`;
+    if (isString(item.id)) return `id:${item.id}`;
+    const itemType = isString(item.type) ? item.type : JSON.stringify(item.type);
+    if (isString(item["call_id"])) {
+      return `call:${itemType ?? "undefined"}:${item["call_id"]}`;
     }
-    return `index:${String(index)}:${String(item.type)}`;
+    return `index:${String(index)}:${itemType ?? "undefined"}`;
   };
 
   const completeOutputItem = (index: number, item: JsonRecord): void => {
@@ -341,7 +348,7 @@ export async function processCodexStream(
       slots.delete(index);
     } else if (item.type === "message" && slot?.type === "text") {
       slot.block.text = itemContentText(item);
-      if (typeof item.id === "string") {
+      if (isString(item.id)) {
         slot.block.textSignature = encodeTextSignature(item.id, item["phase"]);
       }
       stream.push({
@@ -358,8 +365,9 @@ export async function processCodexStream(
       slot.block.partialJson !== undefined
     ) {
       slot.block.name = piToolCallName(item);
-      const argumentsJson =
-        typeof item.arguments === "string" ? item.arguments : slot.block.partialJson || "{}";
+      const argumentsJson = isString(item.arguments)
+        ? item.arguments
+        : slot.block.partialJson || "{}";
       slot.block.arguments = parseStreamingJson(argumentsJson);
       delete slot.block.partialJson;
       stream.push({
@@ -373,7 +381,7 @@ export async function processCodexStream(
       slots.delete(index);
     } else if (item.type === "custom_tool_call" && slot?.type === "toolCall") {
       slot.block.name = piToolCallName(item);
-      const input = typeof item["input"] === "string" ? item["input"] : customInput(slot.block);
+      const input = isString(item["input"]) ? item["input"] : customInput(slot.block);
       pushToolDelta(slot, appendCustomInput(slot.block, input, true));
       delete slot.block.customInput;
       stream.push({
@@ -390,15 +398,14 @@ export async function processCodexStream(
 
   const finalize = (response: JsonRecord): void => {
     terminal = true;
-    if (typeof response.id === "string") output.responseId = response.id;
+    if (isString(response.id)) output.responseId = response.id;
     const usage = isObject(response.usage) ? response.usage : undefined;
     if (usage) {
       const details = isObject(usage.input_tokens_details) ? usage.input_tokens_details : undefined;
-      const cached = typeof details?.cached_tokens === "number" ? details.cached_tokens : 0;
-      const cacheWrite =
-        typeof details?.cache_write_tokens === "number" ? details.cache_write_tokens : 0;
-      const input = typeof usage.input_tokens === "number" ? usage.input_tokens : 0;
-      const outputTokens = typeof usage.output_tokens === "number" ? usage.output_tokens : 0;
+      const cached = isNumber(details?.cached_tokens) ? details.cached_tokens : 0;
+      const cacheWrite = isNumber(details?.cache_write_tokens) ? details.cache_write_tokens : 0;
+      const input = isNumber(usage.input_tokens) ? usage.input_tokens : 0;
+      const outputTokens = isNumber(usage.output_tokens) ? usage.output_tokens : 0;
       const outputDetails = isObject(usage["output_tokens_details"])
         ? usage["output_tokens_details"]
         : undefined;
@@ -407,25 +414,25 @@ export async function processCodexStream(
         output: outputTokens,
         cacheRead: cached,
         cacheWrite,
-        reasoning:
-          typeof outputDetails?.["reasoning_tokens"] === "number"
-            ? outputDetails["reasoning_tokens"]
-            : 0,
-        totalTokens: typeof usage.total_tokens === "number" ? usage.total_tokens || 0 : 0,
+        reasoning: isNumber(outputDetails?.["reasoning_tokens"])
+          ? outputDetails["reasoning_tokens"]
+          : 0,
+        totalTokens: isNumber(usage.total_tokens) ? usage.total_tokens || 0 : 0,
         cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
       };
     }
     calculateCost(model, output.usage);
     options?.applyServiceTierPricing?.(
       output.usage,
-      typeof response.service_tier === "string" ? response.service_tier : undefined,
+      isString(response.service_tier) ? response.service_tier : undefined,
     );
     const status = normalizeCodexStatus(response["status"]);
     const incompleteDetails = isObject(response["incomplete_details"])
       ? response["incomplete_details"]
       : undefined;
-    const incompleteReason =
-      typeof incompleteDetails?.["reason"] === "string" ? incompleteDetails["reason"] : undefined;
+    const incompleteReason = isString(incompleteDetails?.["reason"])
+      ? incompleteDetails["reason"]
+      : undefined;
     const rawStopReason =
       status === "incomplete" && incompleteReason ? `${status}.${incompleteReason}` : status;
     if (rawStopReason === undefined) delete output.rawStopReason;
@@ -447,7 +454,7 @@ export async function processCodexStream(
   for await (const event of events) {
     const index = outputIndex(event);
     if (event.type === "response.created" && isObject(event.response)) {
-      if (typeof event.response.id === "string") output.responseId = event.response.id;
+      if (isString(event.response.id)) output.responseId = event.response.id;
     } else if (event.type === "response.output_item.added" && isObject(event.item)) {
       createSlot(index, event.item);
     } else if (
@@ -455,7 +462,7 @@ export async function processCodexStream(
       event.type === "response.reasoning_text.delta"
     ) {
       const slot = getSlot(index, "thinking");
-      if (!slot || typeof event["delta"] !== "string") continue;
+      if (!slot || !isString(event["delta"])) continue;
       slot.block.thinking += event["delta"];
       stream.push({
         type: "thinking_delta",
@@ -478,7 +485,7 @@ export async function processCodexStream(
       event.type === "response.refusal.delta"
     ) {
       const slot = getSlot(index, "text");
-      if (!slot || typeof event["delta"] !== "string") continue;
+      if (!slot || !isString(event["delta"])) continue;
       slot.block.text += event["delta"];
       stream.push({
         type: "text_delta",
@@ -488,7 +495,7 @@ export async function processCodexStream(
       });
     } else if (event.type === "response.function_call_arguments.delta") {
       const slot = getSlot(index, "toolCall");
-      if (!slot || slot.block.partialJson === undefined || typeof event["delta"] !== "string") {
+      if (!slot || slot.block.partialJson === undefined || !isString(event["delta"])) {
         continue;
       }
       slot.block.partialJson += event["delta"];
@@ -496,7 +503,7 @@ export async function processCodexStream(
       pushToolDelta(slot, event["delta"]);
     } else if (event.type === "response.function_call_arguments.done") {
       const slot = getSlot(index, "toolCall");
-      if (!slot || slot.block.partialJson === undefined || typeof event.arguments !== "string") {
+      if (!slot || slot.block.partialJson === undefined || !isString(event.arguments)) {
         continue;
       }
       const previous = slot.block.partialJson;
@@ -508,14 +515,14 @@ export async function processCodexStream(
       }
     } else if (event.type === "response.custom_tool_call_input.delta") {
       const slot = getSlot(index, "toolCall");
-      if (!slot || typeof event["delta"] !== "string") continue;
+      if (!slot || !isString(event["delta"])) continue;
       pushToolDelta(
         slot,
         appendCustomInput(slot.block, customInput(slot.block) + event["delta"], false),
       );
     } else if (event.type === "response.custom_tool_call_input.done") {
       const slot = getSlot(index, "toolCall");
-      if (!slot || typeof event["input"] !== "string") continue;
+      if (!slot || !isString(event["input"])) continue;
       pushToolDelta(slot, appendCustomInput(slot.block, event["input"], true));
     } else if (event.type === "response.output_item.done" && isObject(event.item)) {
       completeOutputItem(index, event.item);
@@ -534,8 +541,9 @@ export async function processCodexStream(
       output.stopReason = "error";
       output.rawStopReason ??= "failed";
       const error = isObject(response?.["error"]) ? response["error"] : undefined;
-      output.errorMessage =
-        typeof error?.["message"] === "string" ? error["message"] : "Codex response failed";
+      output.errorMessage = isString(error?.["message"])
+        ? error["message"]
+        : "Codex response failed";
     }
   }
 

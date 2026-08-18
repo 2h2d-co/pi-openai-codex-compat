@@ -1,7 +1,15 @@
+import {
+  requireJsonRecord,
+  requireJsonRecords,
+} from "../extensions/openai-codex-compat/codex-protocol.ts";
 import assert from "node:assert/strict";
 import test from "node:test";
 import { Type } from "typebox";
-import type { SessionEntry, ToolInfo } from "@earendil-works/pi-coding-agent";
+import {
+  createSyntheticSourceInfo,
+  type SessionEntry,
+  type ToolInfo,
+} from "@earendil-works/pi-coding-agent";
 import type { AssistantMessage, Context, Model, Tool } from "@earendil-works/pi-ai";
 import { convertResponsesMessages as referenceConvertResponsesMessages } from "@earendil-works/pi-ai/api/openai-responses-shared";
 import {
@@ -20,7 +28,7 @@ import {
   convertResponsesTools,
 } from "../extensions/openai-codex-compat/vendor/pi-ai/openai-responses-serialization.ts";
 
-const model = {
+const model: Model<any> = {
   id: "gpt-test",
   name: "GPT Test",
   api: "openai-codex-responses",
@@ -32,7 +40,11 @@ const model = {
   contextWindow: 100_000,
   maxTokens: 10_000,
   compat: { supportsOpenAIGrammarTools: true },
-} as Model<any>;
+};
+
+const TEST_TOOL_SOURCE = createSyntheticSourceInfo("test-tool", {
+  source: "pi-ai-serialization test",
+});
 
 const applyPatchTool: Tool = {
   name: "apply_patch",
@@ -104,7 +116,7 @@ const assistantMessage = {
   },
   stopReason: "toolUse",
   timestamp: 1,
-} as AssistantMessage;
+} satisfies AssistantMessage;
 
 const context: Context = {
   messages: [
@@ -147,7 +159,7 @@ void test("copied Pi AI Responses serialization matches the dependency", () => {
 });
 
 void test("configures image detail for image tool-result history", () => {
-  const imageModel = { ...model, input: ["text", "image"] } as Model<any>;
+  const imageModel = { ...model, input: ["text", "image"] } satisfies Model<any>;
   const imageAssistant = {
     ...assistantMessage,
     content: [
@@ -158,7 +170,7 @@ void test("configures image detail for image tool-result history", () => {
         arguments: { prompt: "Draw it" },
       },
     ],
-  } as AssistantMessage;
+  } satisfies AssistantMessage;
   const imageResult = {
     role: "toolResult" as const,
     toolCallId: "call_image|fc_image",
@@ -204,11 +216,11 @@ void test("configures image detail for image tool-result history", () => {
       timestamp: new Date(2).toISOString(),
       message: imageResult,
     },
-  ] as SessionEntry[];
+  ] satisfies SessionEntry[];
   const checkpointHistory = encodeSessionEntries(imageModel, entries, [], new Map(), "low");
   const checkpointOutput = checkpointHistory[1]?.["output"];
   assert.ok(Array.isArray(checkpointOutput));
-  assert.equal((checkpointOutput[1] as Record<string, unknown>)["detail"], "low");
+  assert.equal(requireJsonRecord(checkpointOutput[1])["detail"], "low");
 });
 
 void test("replays native assistant items by response id", () => {
@@ -289,7 +301,7 @@ void test("round-trips namespaced calls and deferred namespaced definitions", ()
         arguments: { query: "Pi" },
       },
     ],
-  } as AssistantMessage;
+  } satisfies AssistantMessage;
   const namespacedContext: Context = {
     messages: [
       namespacedAssistant,
@@ -334,7 +346,7 @@ void test("round-trips namespaced calls and deferred namespaced definitions", ()
   assert.equal(converted[2]?.["type"], "tool_search_call");
   const toolSearchOutput = converted[3];
   assert.ok(toolSearchOutput);
-  assert.deepEqual((toolSearchOutput["tools"] as Record<string, unknown>[])[0], {
+  assert.deepEqual(requireJsonRecords(toolSearchOutput["tools"])[0], {
     type: "namespace",
     name: "image_gen",
     description: "Tools in the image_gen namespace.",
@@ -350,6 +362,8 @@ void test("round-trips namespaced calls and deferred namespaced definitions", ()
     ],
   });
 
+  const namespacedResult = namespacedContext.messages[1];
+  assert.ok(namespacedResult);
   const entries = [
     {
       type: "message",
@@ -363,9 +377,9 @@ void test("round-trips namespaced calls and deferred namespaced definitions", ()
       id: "result-web",
       parentId: "assistant-web",
       timestamp: new Date(2).toISOString(),
-      message: namespacedContext.messages[1],
+      message: namespacedResult,
     },
-  ] as SessionEntry[];
+  ] satisfies SessionEntry[];
   const checkpointHistory = encodeSessionEntries(
     model,
     entries,
@@ -374,7 +388,8 @@ void test("round-trips namespaced calls and deferred namespaced definitions", ()
         name: IMAGE_GENERATION_TOOL_NAME,
         description: imageGenerationTool.description,
         parameters: imageGenerationTool.parameters,
-      } as ToolInfo,
+        sourceInfo: TEST_TOOL_SOURCE,
+      } satisfies ToolInfo,
     ],
     new Map(),
   );
@@ -411,12 +426,14 @@ void test("serializes active compaction tools with the same namespace contract",
           name: WEB_RUN_TOOL_NAME,
           description: webRunTool.description,
           parameters: webRunTool.parameters,
-        } as ToolInfo,
+          sourceInfo: TEST_TOOL_SOURCE,
+        } satisfies ToolInfo,
         {
           name: IMAGE_GENERATION_TOOL_NAME,
           description: imageGenerationTool.description,
           parameters: imageGenerationTool.parameters,
-        } as ToolInfo,
+          sourceInfo: TEST_TOOL_SOURCE,
+        } satisfies ToolInfo,
       ],
       [WEB_RUN_TOOL_NAME, IMAGE_GENERATION_TOOL_NAME],
     ),

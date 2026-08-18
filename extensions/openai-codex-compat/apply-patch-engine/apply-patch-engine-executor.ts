@@ -3,6 +3,7 @@ import { dirname, resolve } from "node:path";
 import type {
   ApplyPatchDetails,
   ApplyPatchExecutionFilesystem,
+  ApplyPatchFailureDetails,
   ApplyPatchInstructionDetails,
 } from "./apply-patch-engine-contracts.ts";
 import {
@@ -174,14 +175,15 @@ export async function captureCommittedEntryMutations(
     if (expected.kind !== mutation.kind) {
       throw new Error(`Filesystem changed while committing apply_patch at ${mutation.path}`);
     }
-    committed.push({
+    const committedMutation: CommittedEntryMutation = {
       path: mutation.path,
       key: mutation.key,
       expected,
-      ...(mutation.releasedFingerprint
-        ? { releasedFingerprint: mutation.releasedFingerprint }
-        : {}),
-    });
+    };
+    if (mutation.releasedFingerprint) {
+      committedMutation.releasedFingerprint = mutation.releasedFingerprint;
+    }
+    committed.push(committedMutation);
   }
   return committed;
 }
@@ -593,11 +595,12 @@ export async function executePlan(
     }
     details.status = "failed";
     details.error = message;
-    details.failure = {
+    const failure: ApplyPatchFailureDetails = {
       phase: "execution",
       message,
-      ...(activeInstruction ? { failedInstruction: activeInstruction.index } : {}),
     };
+    if (activeInstruction) failure.failedInstruction = activeInstruction.index;
+    details.failure = failure;
     throw new ApplyPatchExecutionError(details.error, cloneApplyPatchDetails(details));
   }
 }

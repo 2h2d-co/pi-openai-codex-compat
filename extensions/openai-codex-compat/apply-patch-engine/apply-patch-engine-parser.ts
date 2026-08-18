@@ -84,11 +84,12 @@ export class PatchParser {
     if (this.mode.kind !== "ended") {
       throw new ApplyPatchParseError("patch", `The last line of the patch must be '${END_PATCH}'`);
     }
-    return {
+    const result: ParsedPatch = {
       patch,
       operations: this.operations,
-      ...(this.environmentId ? { environmentId: this.environmentId } : {}),
     };
+    if (this.environmentId) result.environmentId = this.environmentId;
+    return result;
   }
 
   private lastUpdate(): Extract<PatchOperation, { kind: "update" }> | undefined {

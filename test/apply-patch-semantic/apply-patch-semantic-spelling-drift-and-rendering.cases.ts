@@ -15,9 +15,8 @@ import {
   formatApplyPatchRenderText,
   workspace,
   assertMissing,
+  isApplyPatchDetails,
   patch,
-  type Theme,
-  type ApplyPatchDetails,
 } from "./apply-patch-semantic-harness.ts";
 
 void test(
@@ -221,8 +220,9 @@ void test("renders opaque moves as path-only structured history", async (t) => {
   const theme = {
     fg: (_color: string, text: string) => text,
     bold: (text: string) => text,
-  } as unknown as Theme;
-  const rendered = formatApplyPatchRenderText(details as ApplyPatchDetails, theme, cwd);
+  };
+  assert.ok(isApplyPatchDetails(details));
+  const rendered = formatApplyPatchRenderText(details, theme, cwd);
   assert.match(
     rendered,
     /• Moved binary\.bin → old-target\.bin \(replaced destination\) \(\+0 -0\)/,

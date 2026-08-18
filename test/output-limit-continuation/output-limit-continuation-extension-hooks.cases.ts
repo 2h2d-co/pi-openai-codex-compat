@@ -1,6 +1,6 @@
+import { extensionContextFixture } from "../support/pi-fixtures.ts";
 import assert from "node:assert/strict";
 import test from "node:test";
-import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import {
   OUTPUT_LIMIT_CONTINUATION_PROMPT,
   OUTPUT_LIMIT_CONTINUATION_TYPE,
@@ -46,7 +46,7 @@ void test("requires the exact raw stop reason and respects existing work", async
   await completed.emit("agent_settled");
   assert.deepEqual(completed.sent, []);
 
-  const otherModel = {
+  const otherModel = extensionContextFixture({
     model: { ...codexModel(), provider: "openai" },
     isIdle: () => true,
     hasPendingMessages: () => false,
@@ -54,7 +54,7 @@ void test("requires the exact raw stop reason and respects existing work", async
       getSessionId: () => "session-output-limit",
       getBranch: () => [],
     },
-  } as unknown as ExtensionContext;
+  });
   await completed.emit("agent_end", { messages: [assistant("length")] }, otherModel);
   await completed.emit("agent_settled", {}, otherModel);
   assert.deepEqual(completed.sent, []);

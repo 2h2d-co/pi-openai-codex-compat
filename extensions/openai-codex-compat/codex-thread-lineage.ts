@@ -1,3 +1,5 @@
+import { isObject } from "./codex-protocol.ts";
+import { isString } from "./value-contracts.ts";
 import type { ExtensionAPI, ExtensionContext, SessionEntry } from "@earendil-works/pi-coding-agent";
 import { uuidv7 } from "@earendil-works/pi-ai";
 import { codexCacheKey } from "./codex-cache-key.ts";
@@ -21,33 +23,33 @@ type PendingTreeFork = {
   expectedLeafId: string | null;
 };
 
+export function isCodexThreadMarkerData(value: unknown): value is CodexThreadMarkerData {
+  if (!isObject(value)) return false;
+  return (
+    value["version"] === 1 &&
+    isString(value["sessionId"]) &&
+    value["sessionId"].length > 0 &&
+    isString(value["threadId"]) &&
+    value["threadId"].length > 0 &&
+    isString(value["forkedFromThreadId"]) &&
+    value["forkedFromThreadId"].length > 0 &&
+    (value["branchParentEntryId"] === null || isString(value["branchParentEntryId"]))
+  );
+}
+
 function markerData(entry: SessionEntry, sessionId: string): CodexThreadMarkerData | undefined {
   if (entry.type !== "custom" || entry.customType !== CODEX_THREAD_MARKER_ENTRY_TYPE) {
     return undefined;
   }
-  const data = entry.data;
-  if (typeof data !== "object" || data === null || Array.isArray(data)) {
+  if (!isCodexThreadMarkerData(entry.data)) {
     throw new Error("The active Pi branch contains an invalid OpenAI Codex thread marker.");
   }
-  const candidate = data as Record<string, unknown>;
-  if (
-    candidate["version"] !== 1 ||
-    typeof candidate["sessionId"] !== "string" ||
-    candidate["sessionId"].length === 0 ||
-    typeof candidate["threadId"] !== "string" ||
-    candidate["threadId"].length === 0 ||
-    typeof candidate["forkedFromThreadId"] !== "string" ||
-    candidate["forkedFromThreadId"].length === 0 ||
-    (candidate["branchParentEntryId"] !== null &&
-      typeof candidate["branchParentEntryId"] !== "string")
-  ) {
-    throw new Error("The active Pi branch contains an invalid OpenAI Codex thread marker.");
-  }
+  const candidate = entry.data;
   if (candidate["sessionId"] !== sessionId) return undefined;
   if (entry.parentId !== candidate["branchParentEntryId"]) {
     throw new Error("The active Pi branch contains a misplaced OpenAI Codex thread marker.");
   }
-  return candidate as CodexThreadMarkerData;
+  return candidate;
 }
 
 function latestMarkerIndex(sessionId: string, branch: readonly SessionEntry[]): number {
@@ -100,8 +102,8 @@ function shouldForkOnNextAppend(
 
 function armPendingFork(pending: Map<string, PendingTreeFork>, ctx: ExtensionContext): void {
   const sessionId = ctx.sessionManager.getSessionId();
-  const branch = ctx.sessionManager.getBranch() as SessionEntry[];
-  const entries = ctx.sessionManager.getEntries() as SessionEntry[];
+  const branch = ctx.sessionManager.getBranch();
+  const entries = ctx.sessionManager.getEntries();
   if (!shouldForkOnNextAppend(sessionId, branch, entries)) {
     pending.delete(sessionId);
     return;
@@ -133,7 +135,7 @@ export default function registerCodexThreadLineage(pi: ExtensionAPI): void {
     if (!candidate) return;
     pending.delete(sessionId);
 
-    const branch = ctx.sessionManager.getBranch() as SessionEntry[];
+    const branch = ctx.sessionManager.getBranch();
     if (!pendingLeafIsActive(candidate, branch)) return;
 
     const parent = resolveCodexThreadIdentity(sessionId, branch);

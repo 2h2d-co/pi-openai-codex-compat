@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import type { AssistantMessage, Model } from "@earendil-works/pi-ai";
+import { isNonNullObject } from "./value-contracts.ts";
 
 const CODEX_PROVIDER = "openai-codex";
 const CODEX_API = "openai-codex-responses";
@@ -25,16 +26,10 @@ function isSelectedCodexModel(model: Model<any> | undefined): boolean {
   return model?.provider === CODEX_PROVIDER && model.api === CODEX_API;
 }
 
-function isObject(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
 function lastAssistant(messages: readonly unknown[]): AssistantMessage | undefined {
   return messages.findLast(
     (message): message is AssistantMessage =>
-      typeof message === "object" &&
-      message !== null &&
-      (message as { role?: unknown }).role === "assistant",
+      isNonNullObject(message) && "role" in message && message.role === "assistant",
   );
 }
 
@@ -59,8 +54,11 @@ function continuationAlreadyRecorded(ctx: ExtensionContext, hash: string | undef
     if (entry.type !== "custom_message" || entry.customType !== OUTPUT_LIMIT_CONTINUATION_TYPE) {
       return false;
     }
-    const details = isObject(entry.details) ? entry.details : undefined;
-    return details?.["responseIdHash"] === hash;
+    return (
+      isNonNullObject(entry.details) &&
+      "responseIdHash" in entry.details &&
+      entry.details.responseIdHash === hash
+    );
   });
 }
 
@@ -132,8 +130,8 @@ export default function registerOutputLimitContinuation(pi: ExtensionAPI): void 
 
     const details: OutputLimitContinuationDetails = {
       reason: "max_output_tokens",
-      ...(recovery.responseIdHash ? { responseIdHash: recovery.responseIdHash } : {}),
     };
+    if (recovery.responseIdHash) details.responseIdHash = recovery.responseIdHash;
     pi.sendMessage(
       {
         customType: OUTPUT_LIMIT_CONTINUATION_TYPE,

@@ -1,3 +1,4 @@
+import { isBoolean, isNumber, isString } from "../value-contracts.ts";
 import { isObject, type JsonRecord } from "../codex-protocol.ts";
 
 export const WEBSOCKET_CONNECTION_LIMIT_REACHED_CODE = "websocket_connection_limit_reached";
@@ -59,14 +60,14 @@ export class WebSocketCloseError extends Error {
 
 export function extractWebSocketError(event: unknown): Error {
   if (isObject(event)) {
-    if (typeof event["message"] === "string" && event["message"].length > 0) {
+    if (isString(event["message"]) && event["message"].length > 0) {
       return new Error(event["message"]);
     }
     const nestedError = event["error"];
     if (nestedError instanceof Error && nestedError.message.length > 0) return nestedError;
     if (
       isObject(nestedError) &&
-      typeof nestedError["message"] === "string" &&
+      isString(nestedError["message"]) &&
       nestedError["message"].length > 0
     ) {
       return new Error(nestedError["message"]);
@@ -79,14 +80,13 @@ export function extractWebSocketCloseError(
   event: unknown,
   context = "WebSocket closed",
 ): WebSocketCloseError {
-  const code = isObject(event) && typeof event["code"] === "number" ? event["code"] : undefined;
+  const code = isObject(event) && isNumber(event["code"]) ? event["code"] : undefined;
   let reason =
-    isObject(event) && typeof event["reason"] === "string" && event["reason"].length > 0
+    isObject(event) && isString(event["reason"]) && event["reason"].length > 0
       ? event["reason"]
       : undefined;
   if (reason === undefined && code === 1_009) reason = "message too big";
-  const wasClean =
-    isObject(event) && typeof event["wasClean"] === "boolean" ? event["wasClean"] : undefined;
+  const wasClean = isObject(event) && isBoolean(event["wasClean"]) ? event["wasClean"] : undefined;
   const details = [
     code === undefined ? undefined : `code ${code}`,
     reason === undefined ? undefined : `reason: ${reason}`,
@@ -133,30 +133,28 @@ export function codexHttpError(status: number, statusText: string, raw: string):
   let friendlyMessage: string | undefined;
   const retryable = isRetryable(status, raw);
   try {
-    const parsed = JSON.parse(raw) as {
-      error?: {
-        code?: string;
-        type?: string;
-        message?: string;
-        plan_type?: string;
-        resets_at?: number;
-      };
-    };
-    const error = parsed?.error;
+    const parsed: unknown = JSON.parse(raw);
+    if (!isObject(parsed)) return new CodexHttpError(message, retryable);
+    const error = isObject(parsed["error"]) ? parsed["error"] : undefined;
     if (!error) return new CodexHttpError(message, retryable);
-    const code = error.code || error.type || "";
+    const code =
+      (isString(error["code"]) ? error["code"] : undefined) ??
+      (isString(error["type"]) ? error["type"] : "");
     if (
       status === 429 ||
       /usage_limit_reached|usage_not_included|rate_limit_exceeded/i.test(code)
     ) {
-      const plan = error.plan_type ? ` (${error.plan_type.toLowerCase()} plan)` : "";
-      const resetMinutes = error.resets_at
-        ? Math.max(0, Math.round((error.resets_at * 1_000 - Date.now()) / 60_000))
+      const plan = isString(error["plan_type"])
+        ? ` (${error["plan_type"].toLowerCase()} plan)`
+        : "";
+      const resetMinutes = isNumber(error["resets_at"])
+        ? Math.max(0, Math.round((error["resets_at"] * 1_000 - Date.now()) / 60_000))
         : undefined;
       const reset = resetMinutes === undefined ? "" : ` Try again in ~${String(resetMinutes)} min.`;
       friendlyMessage = `You have hit your ChatGPT usage limit${plan}.${reset}`.trim();
     }
-    message = error.message || friendlyMessage || message;
+    message =
+      (isString(error["message"]) ? error["message"] : undefined) || friendlyMessage || message;
   } catch {}
   return new CodexHttpError(friendlyMessage || message, retryable);
 }

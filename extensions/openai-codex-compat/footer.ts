@@ -40,9 +40,23 @@ export function footerModel(
   return { ...model, id, reasoning: false };
 }
 
-type FooterSession = ConstructorParameters<typeof FooterComponent>[0];
+interface FooterSessionAdapter {
+  readonly state: {
+    model: Model<any> | undefined;
+    thinkingLevel: string;
+  };
+  sessionManager: Pick<
+    ExtensionContext["sessionManager"],
+    "getEntries" | "getCwd" | "getSessionName"
+  >;
+  getContextUsage(): ReturnType<ExtensionContext["getContextUsage"]>;
+  modelRuntime: {
+    isUsingOAuth(provider: string): boolean;
+    isUsingSubscription(provider: string): boolean;
+  };
+}
 
-function footerSession(ctx: ExtensionContext, resolveConfig: ConfigResolver): FooterSession {
+function footerSession(ctx: ExtensionContext, resolveConfig: ConfigResolver): FooterSessionAdapter {
   return {
     get state() {
       return {
@@ -69,7 +83,7 @@ function footerSession(ctx: ExtensionContext, resolveConfig: ConfigResolver): Fo
         );
       },
     },
-  } as unknown as FooterSession;
+  };
 }
 
 class CodexFooter implements Component {
@@ -80,7 +94,14 @@ class CodexFooter implements Component {
     ctx: ExtensionContext,
     resolveConfig: ConfigResolver,
   ) {
-    this.footer = new FooterComponent(footerSession(ctx, resolveConfig), footerData);
+    const footer: unknown = Reflect.construct(FooterComponent, [
+      footerSession(ctx, resolveConfig),
+      footerData,
+    ]);
+    if (!(footer instanceof FooterComponent)) {
+      throw new Error("Pi footer construction returned an invalid component.");
+    }
+    this.footer = footer;
     // Pi does not expose its live auto-compaction state to extension footers.
     this.footer.setAutoCompactEnabled(false);
   }

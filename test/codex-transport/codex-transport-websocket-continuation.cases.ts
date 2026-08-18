@@ -1,3 +1,4 @@
+import { requireJsonRecord } from "../../extensions/openai-codex-compat/codex-protocol.ts";
 import {
   assert,
   test,
@@ -38,7 +39,7 @@ void test("prewarms the first WebSocket request and generates from its continuat
     }
 
     send(data: string): void {
-      sentBodies.push(JSON.parse(data) as JsonRecord);
+      sentBodies.push(requireJsonRecord(JSON.parse(data)));
       const responseId = sentBodies.length === 1 ? "response-prewarm" : "response-turn";
       queueMicrotask(() => {
         this.dispatch("message", {
@@ -149,19 +150,20 @@ void test("does not treat incomplete WebSocket responses as completed continuati
     }
 
     send(data: string): void {
-      sentBodies.push(JSON.parse(data) as JsonRecord);
+      sentBodies.push(requireJsonRecord(JSON.parse(data)));
       const responseNumber = sentBodies.length;
       queueMicrotask(() => {
+        const response: JsonRecord = {
+          id: `response-${String(responseNumber)}`,
+          status: responseNumber === 1 ? "incomplete" : "completed",
+        };
+        if (responseNumber === 1) {
+          response["incomplete_details"] = { reason: "max_output_tokens" };
+        }
         this.dispatch("message", {
           data: JSON.stringify({
             type: responseNumber === 1 ? "response.incomplete" : "response.completed",
-            response: {
-              id: `response-${String(responseNumber)}`,
-              status: responseNumber === 1 ? "incomplete" : "completed",
-              ...(responseNumber === 1
-                ? { incomplete_details: { reason: "max_output_tokens" } }
-                : {}),
-            },
+            response,
           }),
         });
       });
@@ -244,7 +246,7 @@ void test("matches official Codex semantic WebSocket delta comparisons", async (
     }
 
     send(data: string): void {
-      sentBodies.push(JSON.parse(data) as JsonRecord);
+      sentBodies.push(requireJsonRecord(JSON.parse(data)));
       const events =
         sentBodies.length === 1
           ? [
@@ -305,7 +307,7 @@ void test("matches official Codex semantic WebSocket delta comparisons", async (
       instructions: "same",
       input: [firstInput],
       stream_options: { reasoning_summary_delivery: "sequential_cutoff" },
-      omittedFromJson: () => "first",
+      omittedFromJson: undefined,
     },
     options,
   )) {
@@ -324,7 +326,7 @@ void test("matches official Codex semantic WebSocket delta comparisons", async (
         nextInput,
       ],
       stream_options: { reasoning_summary_delivery: "none" },
-      omittedFromJson: () => "second",
+      omittedFromJson: undefined,
     },
     options,
   )) {
@@ -412,7 +414,7 @@ void test("sends full context when a payload hook supplies string input", async 
     }
 
     send(data: string): void {
-      sentBodies.push(JSON.parse(data) as JsonRecord);
+      sentBodies.push(requireJsonRecord(JSON.parse(data)));
       const responseNumber = sentBodies.length;
       queueMicrotask(() => {
         this.dispatch("message", {
@@ -496,7 +498,7 @@ void test("builds WebSocket continuation state only from output_item.done items"
     }
 
     send(data: string): void {
-      sentBodies.push(JSON.parse(data) as JsonRecord);
+      sentBodies.push(requireJsonRecord(JSON.parse(data)));
       const turn = sentBodies.length;
       const responseEvents =
         turn === 1
@@ -609,7 +611,7 @@ void test("continues a multi-step conversation with canonical and native replay 
     }
 
     send(data: string): void {
-      sentBodies.push(JSON.parse(data) as JsonRecord);
+      sentBodies.push(requireJsonRecord(JSON.parse(data)));
       const turn = sentBodies.length;
       const item =
         turn === 2
@@ -757,7 +759,7 @@ void test("invalidates and re-establishes continuation after a conversation bran
     }
 
     send(data: string): void {
-      sentBodies.push(JSON.parse(data) as JsonRecord);
+      sentBodies.push(requireJsonRecord(JSON.parse(data)));
       const turn = sentBodies.length;
       const events = [
         {

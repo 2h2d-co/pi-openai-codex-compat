@@ -1,4 +1,5 @@
-import { isObject, type JsonRecord } from "./codex-protocol.ts";
+import { isString } from "./value-contracts.ts";
+import { isObject, type JsonRecord, type JsonValue } from "./codex-protocol.ts";
 import { DEFAULT_FUNCTION_NAMESPACE } from "./namespaced-tools.ts";
 
 export const RESPONSES_LITE_HEADER = "x-openai-internal-codex-responses-lite";
@@ -19,13 +20,13 @@ function isHostedTool(tool: JsonRecord): boolean {
 }
 
 function responsesLiteTools(value: unknown): JsonRecord[] {
+  const functionTools: JsonRecord[] = [];
   const functions: JsonRecord = {
     type: "namespace",
     name: DEFAULT_FUNCTION_NAMESPACE,
     description: "",
-    tools: [],
+    tools: functionTools,
   };
-  const functionTools = functions["tools"] as JsonRecord[];
   const result: JsonRecord[] = [];
   let functionsIndex: number | undefined;
 
@@ -33,7 +34,7 @@ function responsesLiteTools(value: unknown): JsonRecord[] {
     if (!isObject(candidate)) throw new Error("Responses Lite received an invalid tool.");
     const tool = structuredClone(candidate);
     if (tool.type === "function" || tool.type === "custom") {
-      if (typeof tool.name !== "string") {
+      if (!isString(tool.name)) {
         throw new Error("Responses Lite received an invalid default-namespace tool.");
       }
       functionsIndex ??= result.length;
@@ -42,7 +43,7 @@ function responsesLiteTools(value: unknown): JsonRecord[] {
     }
     if (tool.type === "namespace" && tool.name === DEFAULT_FUNCTION_NAMESPACE) {
       functionsIndex ??= result.length;
-      if (typeof tool["description"] === "string" && tool["description"].trim()) {
+      if (isString(tool["description"]) && tool["description"].trim()) {
         functions["description"] = tool["description"];
       }
       if (!Array.isArray(tool.tools)) {
@@ -52,7 +53,7 @@ function responsesLiteTools(value: unknown): JsonRecord[] {
         if (
           !isObject(child) ||
           (child.type !== "function" && child.type !== "custom") ||
-          typeof child.name !== "string"
+          !isString(child.name)
         ) {
           throw new Error("Responses Lite received an invalid functions namespace tool.");
         }
@@ -70,7 +71,7 @@ function responsesLiteTools(value: unknown): JsonRecord[] {
   return result;
 }
 
-function prepareInputItem(value: unknown): unknown {
+function prepareInputItem(value: JsonValue): JsonValue {
   if (Array.isArray(value)) {
     return value.map((item) => prepareInputItem(item));
   }
@@ -79,6 +80,7 @@ function prepareInputItem(value: unknown): unknown {
   const result: JsonRecord = {};
   for (const [key, child] of Object.entries(value)) {
     if (key === "detail" && value.type === "input_image") continue;
+    if (child === undefined) continue;
     result[key] = prepareInputItem(child);
   }
   return result;
@@ -103,7 +105,7 @@ export function applyResponsesLite(
   const tools = responsesLiteTools(result.tools);
   const input = requestInput.map((item) => prepareInputItem(item));
   const prefix: JsonRecord[] = [{ type: "additional_tools", role: "developer", tools }];
-  if (typeof result.instructions === "string" && result.instructions.length > 0) {
+  if (isString(result.instructions) && result.instructions.length > 0) {
     prefix.push({
       type: "message",
       role: "developer",
@@ -114,14 +116,12 @@ export function applyResponsesLite(
   delete result.instructions;
   delete result.tools;
   result.parallel_tool_calls = false;
-  result["reasoning"] = {
-    ...(isObject(result["reasoning"]) ? result["reasoning"] : {}),
-    context: "all_turns",
-  };
-  result.client_metadata = {
-    ...(isObject(result.client_metadata) ? result.client_metadata : {}),
-    [RESPONSES_LITE_WS_METADATA_KEY]: "true",
-  };
+  const reasoning = isObject(result["reasoning"]) ? { ...result["reasoning"] } : {};
+  reasoning["context"] = "all_turns";
+  result["reasoning"] = reasoning;
+  const clientMetadata = isObject(result.client_metadata) ? { ...result.client_metadata } : {};
+  clientMetadata[RESPONSES_LITE_WS_METADATA_KEY] = "true";
+  result.client_metadata = clientMetadata;
   return result;
 }
 

@@ -1,3 +1,4 @@
+import { isBoolean, isString } from "./value-contracts.ts";
 import {
   buildSessionContext,
   convertToLlm,
@@ -5,13 +6,16 @@ import {
   type SessionEntry,
   type ToolInfo,
 } from "@earendil-works/pi-coding-agent";
-import type { Message, Model, OpenAIResponsesCompat, Tool } from "@earendil-works/pi-ai";
+import type { Message, Model, Tool } from "@earendil-works/pi-ai";
 import { APPLY_PATCH_LARK_GRAMMAR, APPLY_PATCH_TOOL_NAME } from "./apply-patch.ts";
 import type { ImageDetail } from "./config.ts";
 import {
   installCompactionItem,
+  isJsonValue,
   isObject,
   isResponsesItem,
+  requireResponsesItems,
+  type JsonValue,
   type ResponsesItem,
 } from "./codex-protocol.ts";
 import { nativeCommittedPrefixBeforeOverflow, nativeResponseOverrides } from "./native-history.ts";
@@ -45,6 +49,34 @@ export type CheckpointSearch =
 
 export type GrammarToolInputProperties = ReadonlyMap<string, string>;
 
+export interface ResponsesCompatibility {
+  supportsOpenAIGrammarTools?: boolean;
+  supportsStrictMode?: boolean;
+  supportsToolSearch?: boolean;
+}
+
+export function responsesCompatibility(value: unknown): ResponsesCompatibility {
+  const compatibility: ResponsesCompatibility = {};
+  if (!isObject(value)) return compatibility;
+  if (isBoolean(value["supportsOpenAIGrammarTools"])) {
+    compatibility.supportsOpenAIGrammarTools = value["supportsOpenAIGrammarTools"];
+  }
+  if (isBoolean(value["supportsStrictMode"])) {
+    compatibility.supportsStrictMode = value["supportsStrictMode"];
+  }
+  if (isBoolean(value["supportsToolSearch"])) {
+    compatibility.supportsToolSearch = value["supportsToolSearch"];
+  }
+  return compatibility;
+}
+
+function responsesToolParameters(tool: ToolInfo): JsonValue {
+  if (!isJsonValue(tool.parameters)) {
+    throw new Error(`Tool ${tool.name} has non-JSON parameters.`);
+  }
+  return tool.parameters;
+}
+
 function asResponsesTool(
   tool: ToolInfo,
   grammarToolInputProperties: GrammarToolInputProperties,
@@ -72,7 +104,7 @@ function asResponsesTool(
           type: "function",
           name: namespaced.name,
           description: tool.description,
-          parameters: tool.parameters as unknown,
+          parameters: responsesToolParameters(tool),
           strict: false,
         },
       ],
@@ -82,7 +114,7 @@ function asResponsesTool(
     type: "function",
     name: tool.name,
     description: tool.description,
-    parameters: tool.parameters as unknown,
+    parameters: responsesToolParameters(tool),
     strict: false,
   };
 }
@@ -91,7 +123,7 @@ export function activeResponsesTools(
   allTools: readonly ToolInfo[],
   activeNames: readonly string[],
   grammarToolInputProperties: GrammarToolInputProperties = new Map(),
-): unknown[] | undefined {
+): ResponsesItem[] | undefined {
   const enabled = new Set(activeNames);
   const tools = allTools.filter((tool) => enabled.has(tool.name));
   return tools.length > 0
@@ -106,19 +138,18 @@ const CODEX_TOOL_CALL_PROVIDERS: ReadonlySet<string> = new Set([
 ]);
 
 function asPiTool(tool: ToolInfo, grammarToolInputProperties: GrammarToolInputProperties): Tool {
-  return {
+  const piTool: Tool = {
     name: tool.name,
     description: tool.description,
     parameters: tool.parameters,
-    ...(tool.name === APPLY_PATCH_TOOL_NAME && grammarToolInputProperties.has(tool.name)
-      ? {
-          constrainedSampling: {
-            type: "grammar" as const,
-            variants: { openai_lark: APPLY_PATCH_LARK_GRAMMAR },
-          },
-        }
-      : {}),
   };
+  if (tool.name === APPLY_PATCH_TOOL_NAME && grammarToolInputProperties.has(tool.name)) {
+    piTool.constrainedSampling = {
+      type: "grammar",
+      variants: { openai_lark: APPLY_PATCH_LARK_GRAMMAR },
+    };
+  }
+  return piTool;
 }
 
 /** Encode Pi's canonical messages using Pi AI's OpenAI Responses serializer. */
@@ -131,8 +162,8 @@ function encodeMessages(
   nativeAssistantItems?: ReadonlyMap<string, readonly ResponsesItem[]>,
 ): ResponsesItem[] {
   const tools = allTools.map((tool) => asPiTool(tool, grammarToolInputProperties));
-  const compat = model.compat as OpenAIResponsesCompat | undefined;
-  return convertResponsesMessages(model, { messages, tools }, CODEX_TOOL_CALL_PROVIDERS, {
+  const compat = responsesCompatibility(model.compat);
+  const serializationOptions = {
     includeSystemPrompt: false,
     grammarToolInputProperties,
     deferredTools: new Map(tools.map((tool) => [tool.name, tool])),
@@ -144,8 +175,18 @@ function encodeMessages(
     namespacedToolNames: CODEX_NAMESPACED_TOOL_NAMES,
     textContentItemToolResultNames: CODEX_TEXT_CONTENT_ITEM_TOOL_RESULT_NAMES,
     toolResultImageDetail: imageDetail,
-    ...(nativeAssistantItems ? { nativeAssistantItems } : {}),
-  }) as unknown as ResponsesItem[];
+  };
+  if (nativeAssistantItems) {
+    Object.assign(serializationOptions, { nativeAssistantItems });
+  }
+  return requireResponsesItems(
+    convertResponsesMessages(
+      model,
+      { messages, tools },
+      CODEX_TOOL_CALL_PROVIDERS,
+      serializationOptions,
+    ),
+  );
 }
 
 export function encodeSessionEntries(
@@ -172,7 +213,7 @@ export function parseCheckpoint(value: unknown): CheckpointData | undefined {
   if (value.kind !== CHECKPOINT_ENTRY_TYPE || value.version !== CHECKPOINT_FORMAT_VERSION) {
     return undefined;
   }
-  if (typeof value.modelId !== "string" || !Array.isArray(value.history)) return undefined;
+  if (!isString(value.modelId) || !Array.isArray(value.history)) return undefined;
 
   const history: ResponsesItem[] = [];
   for (const item of value.history) {
@@ -182,7 +223,7 @@ export function parseCheckpoint(value: unknown): CheckpointData | undefined {
   if (history.length === 0) return undefined;
 
   const compactionItems = history.filter((item) => item.type === "compaction");
-  if (compactionItems.length !== 1 || typeof compactionItems[0]!.encrypted_content !== "string") {
+  if (compactionItems.length !== 1 || !isString(compactionItems[0]!.encrypted_content)) {
     return undefined;
   }
 
@@ -195,7 +236,7 @@ export function parseCheckpoint(value: unknown): CheckpointData | undefined {
         rawDecision["reason"] !== "threshold" &&
         rawDecision["reason"] !== "overflow" &&
         rawDecision["reason"] !== "provider-boundary") ||
-      typeof rawDecision["willRetry"] !== "boolean"
+      !isBoolean(rawDecision["willRetry"])
     ) {
       return undefined;
     }
@@ -205,13 +246,14 @@ export function parseCheckpoint(value: unknown): CheckpointData | undefined {
     };
   }
 
-  return {
+  const checkpoint: CheckpointData = {
     kind: CHECKPOINT_ENTRY_TYPE,
     version: CHECKPOINT_FORMAT_VERSION,
     modelId: value.modelId,
     history,
-    ...(compactionDecision ? { compactionDecision } : {}),
   };
+  if (compactionDecision) checkpoint.compactionDecision = compactionDecision;
+  return checkpoint;
 }
 
 /** Find the newest applicable checkpoint on the active branch. */
@@ -257,7 +299,7 @@ export function checkpointData(
   postCompactionTail: readonly ResponsesItem[] = [],
   compactionDecision?: CompactionDecision,
 ): CheckpointData {
-  return {
+  const checkpoint: CheckpointData = {
     kind: CHECKPOINT_ENTRY_TYPE,
     version: CHECKPOINT_FORMAT_VERSION,
     modelId,
@@ -265,8 +307,9 @@ export function checkpointData(
       ...installCompactionItem(inputHistory, compactionItem),
       ...postCompactionTail.map((item) => structuredClone(item)),
     ],
-    ...(compactionDecision ? { compactionDecision: { ...compactionDecision } } : {}),
   };
+  if (compactionDecision) checkpoint.compactionDecision = { ...compactionDecision };
+  return checkpoint;
 }
 
 /**

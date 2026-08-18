@@ -1,8 +1,10 @@
+import { extensionContextFixture } from "../support/pi-fixtures.ts";
+import { extensionApiFixture } from "../support/pi-fixtures.ts";
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import test from "node:test";
 import type { ExtensionAPI, ExtensionContext, SessionEntry } from "@earendil-works/pi-coding-agent";
-import type { AssistantMessage, Context, Model, Tool } from "@earendil-works/pi-ai";
+import type { AssistantMessage, Context, Model, Tool, Usage } from "@earendil-works/pi-ai";
 import { Type } from "typebox";
 import { CodexProviderRuntime } from "../../extensions/openai-codex-compat/codex-provider.ts";
 import {
@@ -28,6 +30,12 @@ import {
 } from "../../extensions/openai-codex-compat/codex-thread-lineage.ts";
 
 export type MessageEntry = Extract<SessionEntry, { type: "message" }>;
+export type UserMessageEntry = Omit<MessageEntry, "message"> & {
+  message: Extract<Context["messages"][number], { role: "user" }>;
+};
+export type AssistantMessageEntry = Omit<MessageEntry, "message"> & {
+  message: AssistantMessage;
+};
 export type ToolResultMessage = Extract<Context["messages"][number], { role: "toolResult" }>;
 
 export const MANUAL_COMPACTION_METADATA = responsesCompactionV2Metadata(
@@ -49,20 +57,24 @@ export function codexModel(id = "gpt-test"): Model<any> {
     contextWindow: 100_000,
     maxTokens: 10_000,
     compat: { supportsOpenAIGrammarTools: true },
-  } as Model<any>;
+  } satisfies Model<any>;
 }
 
-export function userEntry(id: string, text: string, parentId: string | null = null): MessageEntry {
+export function userEntry(
+  id: string,
+  text: string,
+  parentId: string | null = null,
+): UserMessageEntry {
   return {
     type: "message",
     id,
     parentId,
     timestamp: new Date().toISOString(),
     message: { role: "user", content: [{ type: "text", text }], timestamp: Date.now() },
-  } as MessageEntry;
+  };
 }
 
-export function assistantEntry(id: string, parentId: string, text: string): MessageEntry {
+export function assistantEntry(id: string, parentId: string, text: string): AssistantMessageEntry {
   return {
     type: "message",
     id,
@@ -86,7 +98,7 @@ export function assistantEntry(id: string, parentId: string, text: string): Mess
       stopReason: "stop",
       timestamp: Date.now(),
     },
-  } as MessageEntry;
+  };
 }
 
 export function textEvents(text: string, responseId = "resp_text"): JsonRecord[] {
@@ -125,14 +137,15 @@ export function textEvents(text: string, responseId = "resp_text"): JsonRecord[]
 export function responseDecisions(message: AssistantMessage): JsonRecord[] {
   return (message.diagnostics ?? [])
     .filter((diagnostic) => diagnostic.type === "codex_response_decision")
-    .map((diagnostic) => diagnostic.details ?? {});
+    .map((diagnostic) => diagnostic.details)
+    .filter(isObject);
 }
 
 export const REPORT_TOOL = {
   name: "report",
   description: "Report a value",
   parameters: Type.Object({ value: Type.String() }),
-} as Tool;
+} satisfies Tool;
 
 export const SAMPLE_GRAMMAR_TOOL = {
   name: "sample_tool",
@@ -142,7 +155,7 @@ export const SAMPLE_GRAMMAR_TOOL = {
     type: "grammar" as const,
     variants: { openai_lark: "start: /.+/" },
   },
-} as Tool;
+} satisfies Tool;
 
 export function compactionEvents(): JsonRecord[] {
   return [
@@ -181,7 +194,7 @@ export function createHarness(
   const customEntries: Array<{ customType: string; data: unknown }> = [];
   const compactions: Array<{ details: unknown; usage: unknown }> = [];
   const statuses: Array<{ key: string; text: string | undefined }> = [];
-  const pi = {
+  const pi = extensionApiFixture({
     getAllTools: () => [],
     getActiveTools: () => [],
     appendEntry(customType: string, data: unknown) {
@@ -193,9 +206,9 @@ export function createHarness(
         timestamp: new Date().toISOString(),
         customType,
         data,
-      } as SessionEntry);
+      } satisfies SessionEntry);
     },
-  } as unknown as ExtensionAPI;
+  });
   const runtime = new CodexProviderRuntime(
     pi,
     () => config,
@@ -213,10 +226,10 @@ export function createHarness(
       tokensBefore: number,
       details: unknown,
       fromHook: boolean,
-      usage: unknown,
+      usage: Usage | undefined,
     ) {
       const id = `compact-${branch.length}`;
-      branch.push({
+      const entry: Extract<SessionEntry, { type: "compaction" }> = {
         type: "compaction",
         id,
         parentId: branch.at(-1)?.id ?? null,
@@ -226,13 +239,14 @@ export function createHarness(
         tokensBefore,
         details,
         fromHook,
-        usage,
-      } as SessionEntry);
+      };
+      if (usage !== undefined) entry.usage = usage;
+      branch.push(entry);
       compactions.push({ details, usage });
       return id;
     },
   };
-  const extensionContext = {
+  const extensionContext = extensionContextFixture({
     model: codexModel(),
     cwd: process.cwd(),
     mode: "tui",
@@ -248,7 +262,7 @@ export function createHarness(
     },
     isProjectTrusted: () => true,
     getContextUsage: () => ({ tokens: 80_000, contextWindow: 100_000, percent: 80 }),
-  } as unknown as ExtensionContext;
+  });
   runtime.captureScope(extensionContext);
   return {
     runtime,
@@ -273,7 +287,7 @@ export function appendToolExchange(
     parentId: harness.branch().at(-1)?.id ?? null,
     timestamp: new Date().toISOString(),
     message: assistant,
-  } as MessageEntry);
+  } satisfies MessageEntry);
   const result: ToolResultMessage = {
     role: "toolResult",
     toolCallId: toolCall.id,
@@ -288,7 +302,7 @@ export function appendToolExchange(
     parentId: assistantId,
     timestamp: new Date().toISOString(),
     message: result,
-  } as MessageEntry);
+  } satisfies MessageEntry);
   harness.runtime.captureScope(harness.extensionContext);
   return result;
 }

@@ -30,7 +30,7 @@ export function codexModel(): Model<any> {
     cost: { input: 1, output: 2, cacheRead: 0.1, cacheWrite: 1.25 },
     contextWindow: 100_000,
     maxTokens: 10_000,
-  } as Model<any>;
+  } satisfies Model<any>;
 }
 
 export function accessToken(accountId = "account-1"): string {

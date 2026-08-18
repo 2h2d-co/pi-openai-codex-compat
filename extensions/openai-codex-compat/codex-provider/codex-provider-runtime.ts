@@ -1,5 +1,7 @@
+import { requireJsonRecord, requireJsonValues } from "../codex-protocol.ts";
+import { isFunction, isNonNullObject, isString } from "../value-contracts.ts";
 import { randomUUID } from "node:crypto";
-import type { ExtensionAPI, ExtensionContext, SessionEntry } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import {
   clampThinkingLevel,
   createAssistantMessageEventStream,
@@ -20,6 +22,7 @@ import {
 import {
   checkpointData,
   providerHistory,
+  responsesCompatibility,
   searchCheckpoint,
   type CheckpointData,
   type CompactionDecision,
@@ -30,8 +33,10 @@ import {
   isObject,
   isResponsesItem,
   remoteCompactionPayload,
+  requireResponsesItems,
   withoutConversationInput,
   type JsonRecord,
+  type JsonValue,
   type ResponsesItem,
 } from "../codex-protocol.ts";
 import { codexCacheKey } from "../codex-cache-key.ts";
@@ -71,7 +76,6 @@ import { formatProviderError } from "../provider-error.ts";
 import type {
   ActiveAgentTurn,
   CodexAttemptCapture,
-  CodexCompat,
   CodexPostToolDisposition,
   CodexResponseDecision,
   CodexResponseRetryPolicy,
@@ -81,6 +85,22 @@ import type {
   RequestTemplate,
   RuntimeScope,
 } from "./codex-provider-contracts.ts";
+
+function isMutableSessionManager(value: unknown): value is MutableSessionManager {
+  return (
+    isNonNullObject(value) && "appendCompaction" in value && isFunction(value.appendCompaction)
+  );
+}
+
+function codexStreamOptions(value: unknown): OpenAICodexResponsesOptions | undefined {
+  if (value === undefined) return undefined;
+  if (!isNonNullObject(value)) {
+    throw new Error("OpenAI Codex stream options must be an object.");
+  }
+  const options: OpenAICodexResponsesOptions = {};
+  Object.assign(options, value);
+  return options;
+}
 import {
   nativeOverrideRequired,
   splitDeferredTools,
@@ -121,6 +141,8 @@ export const DEFAULT_RESPONSE_RETRY_POLICY: CodexResponseRetryPolicy = {
   maxRetries: 5,
   baseDelayMs: 200,
 };
+
+type CodexCompactionResult = { checkpoint: CheckpointData; usage?: Usage };
 
 export function markerSummary(): string {
   return `OpenAI Codex remote compaction checkpoint (${randomUUID()}).`;
@@ -168,10 +190,13 @@ export class CodexProviderRuntime {
   captureScope(ctx: ExtensionContext): void {
     const sessionId = ctx.sessionManager.getSessionId();
     const usage = ctx.getContextUsage();
+    if (!isMutableSessionManager(ctx.sessionManager)) {
+      throw new Error("OpenAI Codex requires Pi's mutable session manager.");
+    }
     this.scopes.set(sessionId, {
       sessionId,
-      manager: ctx.sessionManager as MutableSessionManager,
-      branch: ctx.sessionManager.getBranch() as SessionEntry[],
+      manager: ctx.sessionManager,
+      branch: ctx.sessionManager.getBranch(),
       leafId: ctx.sessionManager.getLeafId(),
       contextTokens: usage?.tokens ?? null,
       contextPercent: usage?.percent ?? null,
@@ -274,20 +299,23 @@ export class CodexProviderRuntime {
         : {};
     const windowKey =
       runtimeSessionId && thread.threadId ? `${runtimeSessionId}\0${thread.threadId}` : undefined;
-    return {
+    const identity: CodexMetadataIdentity = {
       installationId: this.installationId,
-      ...(thread.threadId ? { threadId: thread.threadId } : {}),
-      ...(thread.forkedFromThreadId ? { forkedFromThreadId: thread.forkedFromThreadId } : {}),
       windowNumber: windowKey ? (this.windowNumbers.get(windowKey) ?? 0) : 0,
-      ...(turn ? { turnStartedAtUnixMs: turn.startedAtUnixMs } : {}),
       threadSource: "user",
       // Pi extensions execute without Codex's platform sandbox.
       sandbox: "none",
     };
+    if (thread.threadId) identity.threadId = thread.threadId;
+    if (thread.forkedFromThreadId) {
+      identity.forkedFromThreadId = thread.forkedFromThreadId;
+    }
+    if (turn) identity.turnStartedAtUnixMs = turn.startedAtUnixMs;
+    return identity;
   }
 
   private threadIdentity(sessionId: string): CodexThreadIdentity {
-    const branch = this.scopes.get(sessionId)?.manager.getBranch() as SessionEntry[] | undefined;
+    const branch = this.scopes.get(sessionId)?.manager.getBranch();
     return resolveCodexThreadIdentity(sessionId, branch ?? []);
   }
 
@@ -431,39 +459,40 @@ export class CodexProviderRuntime {
   createProvider(base: Provider): Provider {
     return {
       ...base,
-      stream: (model, context, options) =>
-        this.stream(model, context, options as OpenAICodexResponsesOptions | undefined),
+      stream: (model, context, options) => this.stream(model, context, codexStreamOptions(options)),
       streamSimple: (model, context, options) => this.streamSimple(model, context, options),
-    } as Provider;
+    };
   }
 
   private wireHistory(
     model: Model<any>,
     context: Context,
     grammarToolInputProperties: GrammarToolInputProperties,
+    sessionId: string | undefined,
   ): ResponsesItem[] {
-    const sessionId = (context as Context & { sessionId?: string }).sessionId;
     const scope = sessionId ? this.scopes.get(sessionId) : undefined;
     if (!scope) {
-      const compat = model.compat as CodexCompat | undefined;
+      const compat = responsesCompatibility(model.compat);
       const nativeItems = new Map<string, ResponsesItem[]>();
-      return convertResponsesMessages(model, context, CODEX_TOOL_CALL_PROVIDERS, {
-        includeSystemPrompt: false,
-        grammarToolInputProperties,
-        deferredTools: splitDeferredTools(context, Boolean(compat?.supportsToolSearch)).deferred,
-        toolOptions: {
-          strict: false,
-          supportsStrictMode: compat?.supportsStrictMode ?? true,
-          supportsOpenAIGrammarTools: compat?.supportsOpenAIGrammarTools ?? false,
-        },
-        namespacedToolNames: CODEX_NAMESPACED_TOOL_NAMES,
-        textContentItemToolResultNames: CODEX_TEXT_CONTENT_ITEM_TOOL_RESULT_NAMES,
-        toolResultImageDetail: "auto",
-        nativeAssistantItems: nativeItems,
-      }) as ResponsesItem[];
+      return requireResponsesItems(
+        convertResponsesMessages(model, context, CODEX_TOOL_CALL_PROVIDERS, {
+          includeSystemPrompt: false,
+          grammarToolInputProperties,
+          deferredTools: splitDeferredTools(context, Boolean(compat?.supportsToolSearch)).deferred,
+          toolOptions: {
+            strict: false,
+            supportsStrictMode: compat?.supportsStrictMode ?? true,
+            supportsOpenAIGrammarTools: compat?.supportsOpenAIGrammarTools ?? false,
+          },
+          namespacedToolNames: CODEX_NAMESPACED_TOOL_NAMES,
+          textContentItemToolResultNames: CODEX_TEXT_CONTENT_ITEM_TOOL_RESULT_NAMES,
+          toolResultImageDetail: "auto",
+          nativeAssistantItems: nativeItems,
+        }),
+      );
     }
     return providerHistory({
-      branch: scope.manager.getBranch() as SessionEntry[],
+      branch: scope.manager.getBranch(),
       wireModel: model,
       allTools: this.pi.getAllTools(),
       grammarToolInputProperties,
@@ -480,25 +509,21 @@ export class CodexProviderRuntime {
     grammarToolInputProperties: GrammarToolInputProperties,
     turnId: string,
   ): JsonRecord {
-    const compat = model.compat as CodexCompat | undefined;
+    const compat = responsesCompatibility(model.compat);
     const toolPlacement = splitDeferredTools(context, Boolean(compat?.supportsToolSearch));
     let body: JsonRecord = {
       model: model.id,
       store: false,
       stream: true,
       instructions: context.systemPrompt || "You are a helpful assistant.",
-      input: this.wireHistory(
-        model,
-        Object.assign({}, context, { sessionId: runtimeSessionId }),
-        grammarToolInputProperties,
-      ),
+      input: this.wireHistory(model, context, grammarToolInputProperties, runtimeSessionId),
       text: { verbosity: options.textVerbosity ?? "low" },
       include: ["reasoning.encrypted_content"],
-      prompt_cache_key: cacheSessionId,
       tool_choice: options.toolChoice ?? "auto",
       parallel_tool_calls: true,
       tools: [],
     };
+    if (cacheSessionId !== undefined) body.prompt_cache_key = cacheSessionId;
     body = withCodexRequestMetadata(
       body,
       cacheSessionId,
@@ -547,7 +572,7 @@ export class CodexProviderRuntime {
     compactionDecision: CompactionDecision;
     agentTurn?: ActiveAgentTurn;
     responsesLiteEnabled?: boolean;
-  }): Promise<{ checkpoint: CheckpointData; usage?: Usage }> {
+  }): Promise<CodexCompactionResult> {
     const sessionId = options.requestOptions.sessionId;
     if (!sessionId) throw new Error("Codex compaction requires a Pi session id.");
     this.activateThread(sessionId);
@@ -575,7 +600,7 @@ export class CodexProviderRuntime {
       ),
     );
     const transformed = await options.requestOptions.onPayload?.(payload, options.model);
-    const ordinaryRequest = transformed === undefined ? payload : (transformed as JsonRecord);
+    const ordinaryRequest = transformed === undefined ? payload : requireJsonRecord(transformed);
     const request = applyResponsesLite(ordinaryRequest, options.model.id, responsesLiteEnabled);
     const staticRequest = applyResponsesLite(
       updateInput(ordinaryRequest, []),
@@ -612,7 +637,7 @@ export class CodexProviderRuntime {
       }
       throw error;
     }
-    return {
+    const result: CodexCompactionResult = {
       checkpoint: checkpointData(
         options.model.id,
         options.history,
@@ -620,8 +645,9 @@ export class CodexProviderRuntime {
         options.postCompactionTail,
         options.compactionDecision,
       ),
-      ...(compacted.usage ? { usage: compacted.usage } : {}),
     };
+    if (compacted.usage) result.usage = compacted.usage;
+    return result;
   }
 
   private async maybeCompactPercentage(
@@ -648,7 +674,7 @@ export class CodexProviderRuntime {
       return body;
     }
 
-    const branch = scope.manager.getBranch() as SessionEntry[];
+    const branch = scope.manager.getBranch();
     const checkpoint = searchCheckpoint(branch);
     const hasNewAssistant =
       checkpoint.kind !== "found" ||
@@ -684,10 +710,9 @@ export class CodexProviderRuntime {
       history: split.history,
       postCompactionTail: split.tail,
       template: withoutConversationInput(body),
-      instructions:
-        typeof body.instructions === "string"
-          ? body.instructions
-          : context.systemPrompt || "You are a helpful assistant.",
+      instructions: isString(body.instructions)
+        ? body.instructions
+        : context.systemPrompt || "You are a helpful assistant.",
       grammarToolInputProperties,
       priority: scope.config.fastMode,
       compactionMetadata: responsesCompactionV2Metadata("auto", "context_limit", "pre_turn"),
@@ -696,13 +721,14 @@ export class CodexProviderRuntime {
       responsesLiteEnabled,
     });
     const firstKeptEntryId = userEntryAfterLastSampled(branch)?.id ?? scope.manager.getLeafId();
-    if (!firstKeptEntryId || typeof scope.manager.appendCompaction !== "function") {
+    const appendCompaction = scope.manager.appendCompaction?.bind(scope.manager);
+    if (!firstKeptEntryId || !appendCompaction) {
       throw new Error("Pi's mutable SessionManager is unavailable for percentage compaction.");
     }
     if (scope.manager.getLeafId() !== scope.leafId) {
       throw new Error("Pi's active session branch changed while Codex was compacting.");
     }
-    scope.manager.appendCompaction(
+    appendCompaction(
       markerSummary(),
       firstKeptEntryId,
       scope.contextTokens ?? 0,
@@ -776,7 +802,7 @@ export class CodexProviderRuntime {
         }
         const grammarToolInputProperties = createGrammarToolInputProperties(
           context.tools,
-          (model.compat as CodexCompat | undefined)?.supportsOpenAIGrammarTools ?? false,
+          responsesCompatibility(model.compat).supportsOpenAIGrammarTools ?? false,
         );
         let body = this.buildRequestBody(
           model,
@@ -788,34 +814,50 @@ export class CodexProviderRuntime {
           agentTurn.turnId,
         );
         const transformed = await requestOptions.onPayload?.(body, model);
-        if (transformed !== undefined) body = transformed as JsonRecord;
+        let replacementValues: JsonValue[] | undefined;
+        if (transformed !== undefined) {
+          if (Array.isArray(transformed)) {
+            replacementValues = requireJsonValues(transformed, "Codex payload replacement");
+          } else {
+            body = requireJsonRecord(transformed, "Codex payload replacement");
+          }
+        }
         if (runtimeSessionId) {
           this.templates.set(runtimeSessionId, {
             modelId: model.id,
-            payload: withoutConversationInput(body),
+            payload: replacementValues ? {} : withoutConversationInput(body),
             grammarToolInputProperties,
             requestOptions: { ...requestOptions },
           });
         }
-        body = await this.maybeCompactPercentage(
-          model,
-          context,
-          requestOptions,
-          body,
-          grammarToolInputProperties,
-          agentTurn,
-          responsesLiteEnabled,
-        );
+        if (!replacementValues) {
+          body = await this.maybeCompactPercentage(
+            model,
+            context,
+            requestOptions,
+            body,
+            grammarToolInputProperties,
+            agentTurn,
+            responsesLiteEnabled,
+          );
+        }
         const ordinaryBody = body;
         const staticBody = applyResponsesLite(
           updateInput(ordinaryBody, []),
           model.id,
           responsesLiteEnabled,
         );
-        body = applyResponsesLite(ordinaryBody, model.id, responsesLiteEnabled);
+        let requestBody: JsonRecord | JsonValue[];
+        if (replacementValues) {
+          applyResponsesLite({}, model.id, responsesLiteEnabled);
+          requestBody = replacementValues;
+        } else {
+          body = applyResponsesLite(ordinaryBody, model.id, responsesLiteEnabled);
+          requestBody = body;
+        }
         const cacheDiagnostics = codexCacheDiagnosticContext(
           ordinaryBody,
-          body,
+          Array.isArray(requestBody) ? {} : requestBody,
           staticBody,
           model.id,
           responsesLiteEnabled,
@@ -827,7 +869,7 @@ export class CodexProviderRuntime {
         await this.maybePrewarm({
           model,
           body: staticBody,
-          fullBody: body,
+          fullBody: Array.isArray(requestBody) ? {} : requestBody,
           requestOptions,
           accountId,
           diagnostics: prewarmDiagnostics,
@@ -880,7 +922,7 @@ export class CodexProviderRuntime {
             await processCodexStream(
               startOnFirstEvent(
                 captureRawEvents(
-                  this.transport.request(model, body, transportRequestOptions),
+                  this.transport.request(model, requestBody, transportRequestOptions),
                   attemptCapture,
                   terminalState,
                 ),
@@ -893,7 +935,12 @@ export class CodexProviderRuntime {
               {
                 attemptState,
                 applyServiceTierPricing(usage, responseServiceTier) {
-                  applyServiceTierPricing(usage, model, body.service_tier, responseServiceTier);
+                  applyServiceTierPricing(
+                    usage,
+                    model,
+                    Array.isArray(requestBody) ? undefined : requestBody.service_tier,
+                    responseServiceTier,
+                  );
                 },
               },
             );
@@ -910,34 +957,37 @@ export class CodexProviderRuntime {
           const attemptItems = attemptCapture.streamedItems;
           if (terminalState.type) {
             const reason = terminalReason(terminalState);
-            nativeAttempts.push({
+            const nativeAttempt: NativeResponseAttempt = {
               itemCount: attemptItems.length,
               terminalType: terminalState.type,
-              ...(reason ? { terminalReason: reason } : {}),
-            });
+            };
+            if (reason) nativeAttempt.terminalReason = reason;
+            nativeAttempts.push(nativeAttempt);
           }
           const toolCalls = assessAttemptToolCalls(attemptItems, attemptCapture);
           const incompleteDetails = isObject(terminalState.response?.["incomplete_details"])
             ? terminalState.response["incomplete_details"]
             : undefined;
-          const incompleteReason =
-            typeof incompleteDetails?.["reason"] === "string"
-              ? incompleteDetails["reason"]
-              : undefined;
+          const incompleteReason = isString(incompleteDetails?.["reason"])
+            ? incompleteDetails["reason"]
+            : undefined;
           const recordDecision = (
             decision: CodexResponseDecision,
             postToolDisposition?: "continue" | "error" | "retry",
           ): void => {
-            const diagnostic = responseDecisionDiagnostic({
+            const diagnosticOptions: Parameters<typeof responseDecisionDiagnostic>[0] = {
               attempt: responseRequests,
               attemptItems,
               capture: attemptCapture,
               decision,
-              ...(incompleteReason ? { incompleteReason } : {}),
-              ...(postToolDisposition ? { postToolDisposition } : {}),
               terminalState,
               toolCalls,
-            });
+            };
+            if (incompleteReason) diagnosticOptions.incompleteReason = incompleteReason;
+            if (postToolDisposition) {
+              diagnosticOptions.postToolDisposition = postToolDisposition;
+            }
+            const diagnostic = responseDecisionDiagnostic(diagnosticOptions);
             if (diagnostic) output.diagnostics = [...(output.diagnostics ?? []), diagnostic];
           };
 
@@ -960,15 +1010,17 @@ export class CodexProviderRuntime {
               postToolDisposition = retryable ? "retry" : "error";
               registeredPostToolDisposition = {
                 callIds,
-                ...(terminalState.response
-                  ? { response: structuredClone(terminalState.response) }
-                  : {}),
                 retryAttempt: retryable ? responseRetries + 1 : responseRetries,
-                ...(runtimeSessionId ? { sessionId: runtimeSessionId } : {}),
                 terminalType: terminalState.type,
                 turnId: agentTurn.turnId,
                 type: postToolDisposition,
               };
+              if (terminalState.response) {
+                registeredPostToolDisposition.response = structuredClone(terminalState.response);
+              }
+              if (runtimeSessionId) {
+                registeredPostToolDisposition.sessionId = runtimeSessionId;
+              }
               this.rememberPostToolDisposition(registeredPostToolDisposition);
             }
             discardIncompleteAttemptContent(output, attemptState);
@@ -979,7 +1031,9 @@ export class CodexProviderRuntime {
             break;
           }
 
-          const nextBody = continueResponseBody(body, attemptItems);
+          const nextBody = Array.isArray(requestBody)
+            ? undefined
+            : continueResponseBody(requestBody, attemptItems);
           rawItems.push(...attemptItems.map((item) => structuredClone(item)));
           discardIncompleteAttemptContent(output, attemptState);
           const retryableTerminal =
@@ -993,6 +1047,7 @@ export class CodexProviderRuntime {
           ) {
             responseRetries += 1;
             body = nextBody;
+            requestBody = nextBody;
             output.stopReason = "pending";
             delete output.errorMessage;
             delete output.rawStopReason;
@@ -1029,6 +1084,7 @@ export class CodexProviderRuntime {
             }
             responseRetries = 0;
             body = nextBody;
+            requestBody = nextBody;
             output.stopReason = "pending";
             delete output.errorMessage;
             delete output.rawStopReason;
@@ -1040,11 +1096,11 @@ export class CodexProviderRuntime {
         }
         if (requestOptions.signal?.aborted) throw new Error("Request was aborted");
 
-        const compat = model.compat as CodexCompat | undefined;
+        const compat = responsesCompatibility(model.compat);
         const canonicalContext: Context = {
           messages: [output],
-          ...(context.tools ? { tools: context.tools } : {}),
         };
+        if (context.tools) canonicalContext.tools = context.tools;
         const canonicalItems = convertResponsesMessages(
           model,
           canonicalContext,
@@ -1120,10 +1176,9 @@ export class CodexProviderRuntime {
   ): AssistantMessageEventStream {
     if (!options?.apiKey) throw new Error(`No API key for provider: ${model.provider}`);
     const effort = options?.reasoning ? clampThinkingLevel(model, options.reasoning) : undefined;
-    return this.stream(model, context, {
-      ...options,
-      ...(effort && effort !== "off" ? { reasoningEffort: effort } : {}),
-    });
+    const streamOptions: OpenAICodexResponsesOptions = { ...options };
+    if (effort && effort !== "off") streamOptions.reasoningEffort = effort;
+    return this.stream(model, context, streamOptions);
   }
 
   latestTemplate(sessionId: string): RequestTemplate | undefined {
@@ -1140,7 +1195,7 @@ export class CodexProviderRuntime {
     priority: boolean;
     compactionMetadata: CodexCompactionMetadata;
     compactionDecision: CompactionDecision;
-  }): Promise<{ checkpoint: CheckpointData; usage?: Usage }> {
+  }): Promise<CodexCompactionResult> {
     validateCodexAuthentication(options.model, options.requestOptions.apiKey);
     const release = await this.acquireRequest(
       options.requestOptions.sessionId,

@@ -1,3 +1,10 @@
+import {
+  optionalJsonRecord,
+  requireJsonRecord,
+  requireJsonRecords,
+  type JsonRecord,
+} from "../extensions/openai-codex-compat/codex-protocol.ts";
+import { hasObjectType, isString } from "../extensions/openai-codex-compat/value-contracts.ts";
 import assert from "node:assert/strict";
 import { createServer, type IncomingHttpHeaders } from "node:http";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
@@ -17,6 +24,7 @@ import {
 import type { AssistantMessage, Credential, Model } from "@earendil-works/pi-ai";
 import { getBuiltinModels } from "@earendil-works/pi-ai/providers/all";
 import { CONFIG_FILE } from "../extensions/openai-codex-compat/config.ts";
+import { requireBuiltinModelsModule } from "./support/pi-fixtures.ts";
 
 const rootDir = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const extensionPath = resolve(rootDir, "extensions/index.ts");
@@ -24,13 +32,13 @@ const CODEX_PROVIDER = "openai-codex";
 const MODEL_ID = "gpt-5.6-sol";
 const ACCOUNT_ID_CLAIM = "https://api.openai.com/auth";
 
-type SseEvent = Record<string, unknown>;
+type SseEvent = JsonRecord;
 
 type CapturedRequest = {
   method: string | undefined;
   url: string | undefined;
   headers: IncomingHttpHeaders;
-  body: Record<string, unknown>;
+  body: JsonRecord;
 };
 
 function base64Json(value: unknown): string {
@@ -121,7 +129,7 @@ async function startCodexServer(t: TestContext): Promise<{
       method: request.method,
       url: request.url,
       headers: request.headers,
-      body: rawBody ? (JSON.parse(rawBody) as Record<string, unknown>) : {},
+      body: rawBody ? requireJsonRecord(JSON.parse(rawBody)) : {},
     });
 
     response.writeHead(200, { "content-type": "text/event-stream" });
@@ -136,7 +144,7 @@ async function startCodexServer(t: TestContext): Promise<{
       }),
   );
   const address = server.address();
-  assert.ok(address && typeof address === "object");
+  assert.ok(address && hasObjectType(address));
   return { baseUrl: `http://127.0.0.1:${address.port}`, requests };
 }
 
@@ -149,11 +157,10 @@ async function pointBuiltInCodexAt(baseUrl: string, t: TestContext): Promise<voi
   );
 
   try {
-    const nestedPiAi = (await import(pathToFileURL(nestedPiAiPath).href)) as {
-      getBuiltinModels?: (provider: typeof CODEX_PROVIDER) => Model<"openai-codex-responses">[];
-    };
-    if (nestedPiAi.getBuiltinModels) {
-      modelSources.push(() => nestedPiAi.getBuiltinModels!(CODEX_PROVIDER));
+    const nestedPiAi = requireBuiltinModelsModule(await import(pathToFileURL(nestedPiAiPath).href));
+    const getNestedModels = nestedPiAi.getBuiltinModels?.bind(nestedPiAi);
+    if (getNestedModels) {
+      modelSources.push(() => getNestedModels(CODEX_PROVIDER));
     }
   } catch {
     // This dependency layout has no nested Pi AI copy.
@@ -271,7 +278,7 @@ void test("modifies requests on the canonical OpenAI Codex provider", async (t) 
   assert.equal(request.headers.authorization, `Bearer ${fakeCodexToken()}`);
   assert.equal(
     request.headers["x-client-request-id"],
-    (request.body["client_metadata"] as Record<string, unknown>)["thread_id"],
+    requireJsonRecord(request.body["client_metadata"])["thread_id"],
   );
   assert.equal(request.body["model"], MODEL_ID);
   assert.equal(request.body["service_tier"], "priority");
@@ -284,14 +291,14 @@ void test("modifies requests on the canonical OpenAI Codex provider", async (t) 
   });
   assert.equal(request.body["instructions"], undefined);
   assert.equal(request.body["tools"], undefined);
-  assert.deepEqual((request.body["input"] as Record<string, unknown>[])[0], {
+  assert.deepEqual(requireJsonRecords(request.body["input"])[0], {
     type: "additional_tools",
     role: "developer",
     tools: [],
   });
   assert.equal(request.headers["x-openai-internal-codex-responses-lite"], "true");
   assert.equal(
-    (request.body["client_metadata"] as Record<string, unknown>)[
+    requireJsonRecord(request.body["client_metadata"])[
       "ws_request_header_x_openai_internal_codex_responses_lite"
     ],
     undefined,
@@ -305,14 +312,14 @@ void test("modifies requests on the canonical OpenAI Codex provider", async (t) 
   const requestDiagnostic = messages[0]?.diagnostics?.find(
     (diagnostic) => diagnostic.type === "codex_transport_request",
   );
-  const requestDetails = requestDiagnostic?.details as Record<string, unknown> | undefined;
-  const cacheDetails = requestDetails?.["cache"] as Record<string, unknown> | undefined;
+  const requestDetails = optionalJsonRecord(requestDiagnostic?.details);
+  const cacheDetails = optionalJsonRecord(requestDetails?.["cache"]);
   assert.equal(requestDetails?.["selectedTransport"], "sse");
   assert.equal(requestDetails?.["accountId"], "acct_test");
   assert.equal(requestDetails?.["responseId"], "resp_text");
-  assert.equal(typeof requestDetails?.["sessionId"], "string");
-  assert.equal(typeof requestDetails?.["promptCacheKey"], "string");
-  assert.equal(typeof requestDetails?.["turnId"], "string");
+  assert.ok(isString(requestDetails?.["sessionId"]));
+  assert.ok(isString(requestDetails?.["promptCacheKey"]));
+  assert.ok(isString(requestDetails?.["turnId"]));
   assert.equal(cacheDetails?.["envelope"], "responses_lite");
   assert.equal(cacheDetails?.["staticInputItems"], 2);
   assert.deepEqual(requestDetails?.["usage"], {

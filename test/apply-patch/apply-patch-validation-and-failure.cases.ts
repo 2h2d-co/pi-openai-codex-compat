@@ -13,7 +13,6 @@ import {
   previewPatch,
   formatApplyPatchRenderText,
   workspace,
-  type Theme,
   type ApplyPatchDetails,
 } from "./apply-patch-harness.ts";
 
@@ -197,7 +196,7 @@ invalid update line
   const theme = {
     fg: (_color: string, text: string) => text,
     bold: (text: string) => text,
-  } as unknown as Theme;
+  };
   const rendered = formatApplyPatchRenderText(preflightDetails, theme, cwd);
   assert.match(rendered, /Patch failed at instruction 2 of 3\./);
   assert.match(rendered, /Patch instruction results:/);

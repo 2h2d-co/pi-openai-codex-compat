@@ -1,5 +1,14 @@
+import { isFunction, isNonNullObject, isString } from "../value-contracts.ts";
 import { isObject, type JsonRecord } from "../codex-protocol.ts";
 import { CodexApiError } from "./codex-transport-errors.ts";
+
+interface ArrayBufferProvider {
+  arrayBuffer(): Promise<ArrayBuffer>;
+}
+
+function hasArrayBuffer(value: unknown): value is ArrayBufferProvider {
+  return isNonNullObject(value) && "arrayBuffer" in value && isFunction(value.arrayBuffer);
+}
 
 export function webSocketEventStartsVisibleOutput(event: JsonRecord): boolean {
   return (
@@ -11,35 +20,33 @@ export function webSocketEventStartsVisibleOutput(event: JsonRecord): boolean {
 }
 
 export async function decodeWebSocketData(data: unknown): Promise<string | undefined> {
-  if (typeof data === "string") return data;
+  if (isString(data)) return data;
   if (data instanceof ArrayBuffer) return new TextDecoder().decode(new Uint8Array(data));
   if (ArrayBuffer.isView(data)) {
     return new TextDecoder().decode(new Uint8Array(data.buffer, data.byteOffset, data.byteLength));
   }
-  if (isObject(data) && typeof data["arrayBuffer"] === "function") {
-    const arrayBuffer = await (data["arrayBuffer"] as () => Promise<ArrayBuffer>)();
+  if (hasArrayBuffer(data)) {
+    const arrayBuffer = await data.arrayBuffer();
     return new TextDecoder().decode(new Uint8Array(arrayBuffer));
   }
   return undefined;
 }
 
 export function normalizeEvent(event: JsonRecord): JsonRecord | undefined {
-  const type = typeof event.type === "string" ? event.type : undefined;
+  const type = isString(event.type) ? event.type : undefined;
   if (!type) return undefined;
   if (type === "error") {
     const nested = isObject(event["error"]) ? event["error"] : undefined;
-    const code =
-      typeof event["code"] === "string"
-        ? event["code"]
-        : typeof nested?.["code"] === "string"
-          ? nested["code"]
-          : undefined;
-    const message =
-      typeof event["message"] === "string"
-        ? event["message"]
-        : typeof nested?.["message"] === "string"
-          ? nested["message"]
-          : undefined;
+    const code = isString(event["code"])
+      ? event["code"]
+      : isString(nested?.["code"])
+        ? nested["code"]
+        : undefined;
+    const message = isString(event["message"])
+      ? event["message"]
+      : isString(nested?.["message"])
+        ? nested["message"]
+        : undefined;
     throw new CodexApiError(
       `Codex error: ${message || code || JSON.stringify(event)}`,
       code,

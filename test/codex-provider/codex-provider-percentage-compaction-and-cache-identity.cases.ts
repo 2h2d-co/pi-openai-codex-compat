@@ -1,4 +1,9 @@
 import {
+  requireJsonRecord,
+  requireJsonRecords,
+} from "../../extensions/openai-codex-compat/codex-protocol.ts";
+import { requireString } from "../../extensions/openai-codex-compat/value-contracts.ts";
+import {
   assert,
   createHash,
   test,
@@ -14,7 +19,6 @@ import {
   accessToken,
   createHarness,
   type SessionEntry,
-  type AssistantMessage,
   type Context,
   type JsonRecord,
 } from "./codex-provider-harness.ts";
@@ -29,17 +33,13 @@ void test("performs percentage compaction before sampling the current user input
   });
   const requests: JsonRecord[] = [];
   harness.runtime.transport.request = async function* (_model, body) {
-    requests.push(structuredClone(body));
+    requests.push(structuredClone(requireJsonRecord(body)));
     if (requests.length === 1) yield* compactionEvents();
     else yield* textEvents("continued", "resp_continued");
   };
   const context: Context = {
     systemPrompt: "system prompt",
-    messages: [
-      first.message as Context["messages"][number],
-      assistant.message as AssistantMessage,
-      current.message as Context["messages"][number],
-    ],
+    messages: [first.message, assistant.message, current.message],
   };
 
   const message = await harness.runtime
@@ -55,12 +55,14 @@ void test("performs percentage compaction before sampling the current user input
   assert.doesNotMatch(JSON.stringify(requests[0]?.input), /continue/);
   assert.match(JSON.stringify(requests[1]?.input), /opaque-state/);
   assert.match(JSON.stringify(requests[1]?.input), /continue/);
-  const compactionMetadata = requests[0]?.["client_metadata"] as JsonRecord;
-  const continuedMetadata = requests[1]?.["client_metadata"] as JsonRecord;
+  const compactionMetadata = requireJsonRecord(requests[0]?.["client_metadata"]);
+  const continuedMetadata = requireJsonRecord(requests[1]?.["client_metadata"]);
   assert.equal(compactionMetadata["x-codex-window-id"], "session-1:0");
-  const compactionTurnMetadata = JSON.parse(
-    String(compactionMetadata[CODEX_TURN_METADATA_HEADER]),
-  ) as JsonRecord;
+  const compactionTurnMetadata = requireJsonRecord(
+    JSON.parse(
+      requireString(compactionMetadata[CODEX_TURN_METADATA_HEADER], "compaction turn metadata"),
+    ),
+  );
   assert.deepEqual(compactionTurnMetadata["compaction"], {
     trigger: "auto",
     reason: "context_limit",
@@ -72,7 +74,7 @@ void test("performs percentage compaction before sampling the current user input
   assert.equal(harness.compactions.length, 1);
   const recordedCompaction = harness.compactions[0];
   assert.ok(recordedCompaction?.usage);
-  assert.deepEqual((recordedCompaction.details as JsonRecord)["compactionDecision"], {
+  assert.deepEqual(requireJsonRecord(recordedCompaction.details)["compactionDecision"], {
     reason: "provider-boundary",
     willRetry: true,
   });
@@ -98,7 +100,7 @@ void test("keeps native history separate from hashed or disabled cache identity"
         { type: "compaction", encrypted_content: "checkpoint-state" },
       ],
     },
-  } as SessionEntry;
+  } satisfies SessionEntry;
   const next = userEntry("user-2", "search", "compact-1");
   const native = {
     type: "custom",
@@ -127,9 +129,9 @@ void test("keeps native history separate from hashed or disabled cache identity"
         },
       ],
     },
-  } as SessionEntry;
+  } satisfies SessionEntry;
   const assistant = assistantEntry("assistant-search", "native-1", "result");
-  (assistant.message as AssistantMessage).responseId = "resp_search";
+  assistant.message.responseId = "resp_search";
   const current = userEntry("user-3", "continue", "assistant-search");
   const sessionId = `session-${"x".repeat(80)}`;
   const cacheKey = createHash("sha256").update(sessionId, "utf8").digest("hex");
@@ -140,7 +142,7 @@ void test("keeps native history separate from hashed or disabled cache identity"
   );
   const requests: JsonRecord[] = [];
   harness.runtime.transport.request = async function* (_model, body) {
-    requests.push(structuredClone(body));
+    requests.push(structuredClone(requireJsonRecord(body)));
     yield* textEvents("done", "resp_done");
   };
 
@@ -148,12 +150,7 @@ void test("keeps native history separate from hashed or disabled cache identity"
     .streamSimple(
       codexModel(),
       {
-        messages: [
-          first.message as Context["messages"][number],
-          next.message as Context["messages"][number],
-          assistant.message as AssistantMessage,
-          current.message as Context["messages"][number],
-        ],
+        messages: [first.message, next.message, assistant.message, current.message],
       },
       {
         apiKey: accessToken(),
@@ -168,12 +165,7 @@ void test("keeps native history separate from hashed or disabled cache identity"
     .streamSimple(
       codexModel(),
       {
-        messages: [
-          first.message as Context["messages"][number],
-          next.message as Context["messages"][number],
-          assistant.message as AssistantMessage,
-          current.message as Context["messages"][number],
-        ],
+        messages: [first.message, next.message, assistant.message, current.message],
       },
       {
         apiKey: accessToken(),
@@ -186,7 +178,7 @@ void test("keeps native history separate from hashed or disabled cache identity"
   assert.equal(requests[0]?.prompt_cache_key, undefined);
   assert.equal(requests[1]?.prompt_cache_key, cacheKey);
   for (const request of requests) {
-    const input = request.input as JsonRecord[];
+    const input = requireJsonRecords(request.input);
     assert.equal(input[1]?.type, "compaction");
     assert.ok(input.some((item) => item.type === "web_search_call"));
     assert.match(JSON.stringify(input.at(-1)), /continue/);

@@ -1,3 +1,5 @@
+import { requireJsonRecord } from "../codex-protocol.ts";
+import { isFunction, isString } from "../value-contracts.ts";
 import type * as NodeOs from "node:os";
 import type * as NodeZlib from "node:zlib";
 import type { Model, ProviderHeaders } from "@earendil-works/pi-ai";
@@ -23,21 +25,12 @@ export const CODEX_TURN_STATE_HEADER = "x-codex-turn-state";
 
 export const CODEX_ROUTING_HINT_HEADER = "x-codex-routing-hint";
 
-export type ProcessWithBuiltinModules = typeof process & {
-  getBuiltinModule?: {
-    (id: "node:os"): typeof NodeOs;
-    (id: "node:zlib"): typeof NodeZlib;
-  };
-};
-
 export function nodeOs(): typeof NodeOs | undefined {
-  const currentProcess = process as ProcessWithBuiltinModules;
-  return currentProcess.getBuiltinModule?.("node:os");
+  return process.getBuiltinModule?.("node:os");
 }
 
 export function nodeZlib(): typeof NodeZlib | undefined {
-  const currentProcess = process as ProcessWithBuiltinModules;
-  return currentProcess.getBuiltinModule?.("node:zlib");
+  return process.getBuiltinModule?.("node:zlib");
 }
 
 export function headersToRecord(headers: Headers): Record<string, string> {
@@ -59,11 +52,9 @@ export function applyTurnStateHeader(
 }
 
 export function codexRoutingHint(body: JsonRecord): string | undefined {
-  if (typeof body.model !== "string" || body.model.length === 0) return undefined;
+  if (!isString(body.model) || body.model.length === 0) return undefined;
   const tier =
-    typeof body.service_tier === "string" && body.service_tier.length > 0
-      ? `;tier=${body.service_tier}`
-      : "";
+    isString(body.service_tier) && body.service_tier.length > 0 ? `;tier=${body.service_tier}` : "";
   return `model=${body.model}${tier}`;
 }
 
@@ -89,26 +80,30 @@ export function captureTurnStateEvent(
 ): boolean {
   if (event.type !== "response.metadata" || !isObject(event["headers"])) return false;
   for (const [name, value] of Object.entries(event["headers"])) {
-    if (name.toLowerCase() === CODEX_TURN_STATE_HEADER && typeof value === "string") {
+    if (name.toLowerCase() === CODEX_TURN_STATE_HEADER && isString(value)) {
       return turnState?.capture(value) ?? false;
     }
   }
   return false;
 }
 
+export interface TurnStateMetadata {
+  body: JsonRecord;
+  replayedValue?: string;
+}
+
 export function withTurnStateMetadata(
   body: JsonRecord,
   turnState: CodexTurnState | undefined,
-): { body: JsonRecord; replayedValue?: string } {
+): TurnStateMetadata {
   const value = turnState?.replayValue();
   if (!value) return { body };
+  const clientMetadata = isObject(body.client_metadata) ? { ...body.client_metadata } : {};
+  clientMetadata[CODEX_TURN_STATE_HEADER] = value;
   return {
     body: {
       ...body,
-      client_metadata: {
-        ...(isObject(body.client_metadata) ? body.client_metadata : {}),
-        [CODEX_TURN_STATE_HEADER]: value,
-      },
+      client_metadata: clientMetadata,
     },
     replayedValue: value,
   };
@@ -118,11 +113,13 @@ export function extractAccountId(token: string): string {
   try {
     const parts = token.split(".");
     if (parts.length !== 3) throw new Error("Invalid token");
-    const payload = JSON.parse(Buffer.from(parts[1]!, "base64url").toString("utf8")) as JsonRecord;
+    const payload = requireJsonRecord(
+      JSON.parse(Buffer.from(parts[1]!, "base64url").toString("utf8")),
+    );
     const authentication = payload["https://api.openai.com/auth"];
     if (
       !isObject(authentication) ||
-      typeof authentication["chatgpt_account_id"] !== "string" ||
+      !isString(authentication["chatgpt_account_id"]) ||
       authentication["chatgpt_account_id"].length === 0
     ) {
       throw new Error("No account ID");
@@ -255,20 +252,21 @@ export function cacheIdentitySnapshot(
   accountId: string,
 ): CacheIdentitySnapshot {
   const metadata = isObject(body.client_metadata) ? body.client_metadata : undefined;
-  return {
-    promptCacheKey: typeof body.prompt_cache_key === "string" ? body.prompt_cache_key : undefined,
+  const identity: CacheIdentitySnapshot = {
+    promptCacheKey: isString(body.prompt_cache_key) ? body.prompt_cache_key : undefined,
     sessionHeader: headers.get("session-id"),
     threadHeader: headers.get("thread-id"),
     clientRequestHeader: headers.get("x-client-request-id"),
-    ...(typeof metadata?.[CODEX_INSTALLATION_ID_METADATA_KEY] === "string"
-      ? { installationId: metadata[CODEX_INSTALLATION_ID_METADATA_KEY] }
-      : {}),
-    ...(typeof metadata?.[CODEX_WINDOW_ID_HEADER] === "string"
-      ? { windowId: metadata[CODEX_WINDOW_ID_HEADER] }
-      : {}),
     routingHint: headers.get(CODEX_ROUTING_HINT_HEADER),
     accountId,
   };
+  if (isString(metadata?.[CODEX_INSTALLATION_ID_METADATA_KEY])) {
+    identity.installationId = metadata[CODEX_INSTALLATION_ID_METADATA_KEY];
+  }
+  if (isString(metadata?.[CODEX_WINDOW_ID_HEADER])) {
+    identity.windowId = metadata[CODEX_WINDOW_ID_HEADER];
+  }
+  return identity;
 }
 
 export function cacheAffinityEnabled(identity: CacheIdentitySnapshot): boolean {
@@ -302,7 +300,7 @@ export function serializedBytes(value: string): number {
 
 export function compressBody(body: string): Uint8Array | undefined {
   const zlib = nodeZlib();
-  if (!zlib || typeof zlib.zstdCompressSync !== "function") return undefined;
+  if (!zlib || !isFunction(zlib.zstdCompressSync)) return undefined;
   try {
     const compressed = zlib.zstdCompressSync(body, {
       params: { [zlib.constants.ZSTD_c_compressionLevel]: REQUEST_COMPRESSION_ZSTD_LEVEL },

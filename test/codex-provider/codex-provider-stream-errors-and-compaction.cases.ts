@@ -1,3 +1,4 @@
+import { requireJsonRecord } from "../../extensions/openai-codex-compat/codex-protocol.ts";
 import {
   assert,
   test,
@@ -9,7 +10,6 @@ import {
   accessToken,
   createHarness,
   type AssistantMessage,
-  type Context,
   type JsonRecord,
   type CodexTransportDiagnostic,
 } from "./codex-provider-harness.ts";
@@ -38,7 +38,7 @@ void test("emits start only when the Codex transport starts", async () => {
   const events = [];
   const result = harness.runtime.streamSimple(
     codexModel(),
-    { messages: [user.message as Context["messages"][number]] },
+    { messages: [user.message] },
     { apiKey: accessToken(), sessionId: "session-1", transport: "auto" },
   );
   for await (const event of result) events.push(event);
@@ -59,7 +59,7 @@ void test("normalizes pre-stream failures without emitting start", async () => {
   const events = [];
   const result = harness.runtime.streamSimple(
     codexModel(),
-    { messages: [user.message as Context["messages"][number]] },
+    { messages: [user.message] },
     { apiKey: accessToken(), sessionId: "session-1", transport: "auto" },
   );
   for await (const event of result) events.push(event);
@@ -104,7 +104,7 @@ void test("cleans streaming scratch state and surfaces structured provider error
 
   const result = harness.runtime.streamSimple(
     codexModel(),
-    { messages: [user.message as Context["messages"][number]] },
+    { messages: [user.message] },
     { apiKey: accessToken(), sessionId: "session-1", transport: "auto" },
   );
   let failedMessage: AssistantMessage | undefined;
@@ -131,7 +131,7 @@ void test("honors non-object payload replacements like Pi AI", async () => {
   await harness.runtime
     .streamSimple(
       codexModel(),
-      { messages: [user.message as Context["messages"][number]] },
+      { messages: [user.message] },
       {
         apiKey: accessToken(),
         sessionId: "session-1",
@@ -165,7 +165,7 @@ void test("validates direct-stream and compaction authentication before payload 
   const streamMessage = await harness.runtime
     .stream(
       codexModel(),
-      { messages: [user.message as Context["messages"][number]] },
+      { messages: [user.message] },
       {
         sessionId: "session-1",
         onPayload(payload) {
@@ -249,7 +249,7 @@ void test("advances Codex window metadata after successful direct compaction", a
   const harness = createHarness([user]);
   const requests: JsonRecord[] = [];
   harness.runtime.transport.request = async function* (_model, body) {
-    requests.push(structuredClone(body));
+    requests.push(structuredClone(requireJsonRecord(body)));
     if (requests.length === 1) yield* compactionEvents();
     else yield* textEvents("continued", "resp_continued");
   };
@@ -272,7 +272,7 @@ void test("advances Codex window metadata after successful direct compaction", a
   await harness.runtime
     .streamSimple(
       codexModel(),
-      { messages: [user.message as Context["messages"][number]] },
+      { messages: [user.message] },
       {
         apiKey: accessToken(),
         sessionId: "session-1",
@@ -281,8 +281,8 @@ void test("advances Codex window metadata after successful direct compaction", a
     )
     .result();
 
-  const compactMetadata = requests[0]?.["client_metadata"] as JsonRecord;
-  const turnMetadata = requests[1]?.["client_metadata"] as JsonRecord;
+  const compactMetadata = requireJsonRecord(requests[0]?.["client_metadata"]);
+  const turnMetadata = requireJsonRecord(requests[1]?.["client_metadata"]);
   assert.equal(compactMetadata["x-codex-window-id"], "session-1:0");
   assert.equal(turnMetadata["x-codex-window-id"], "session-1:1");
 });
@@ -306,7 +306,7 @@ void test("prices unsuccessful terminal usage before returning the provider erro
   const message = await harness.runtime
     .stream(
       codexModel(),
-      { messages: [user.message as Context["messages"][number]] },
+      { messages: [user.message] },
       {
         apiKey: accessToken(),
         sessionId: "session-1",
@@ -337,11 +337,7 @@ void test("matches Pi AI's fallback message for terminal failures without detail
   };
 
   const message = await harness.runtime
-    .streamSimple(
-      codexModel(),
-      { messages: [user.message as Context["messages"][number]] },
-      { apiKey: accessToken() },
-    )
+    .streamSimple(codexModel(), { messages: [user.message] }, { apiKey: accessToken() })
     .result();
 
   assert.equal(message.stopReason, "error");

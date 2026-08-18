@@ -1,3 +1,4 @@
+import { isString, nodeErrorCode } from "./value-contracts.ts";
 import { readFile, mkdir, writeFile } from "node:fs/promises";
 import { dirname, isAbsolute, join, normalize } from "node:path";
 import {
@@ -9,7 +10,7 @@ import type { Model } from "@earendil-works/pi-ai";
 import type { CodexCompatConfig } from "./config.ts";
 import type { CodexToolBackgroundResolver } from "./codex-tool-surface.ts";
 import { DEFAULT_CONFIG } from "./config.ts";
-import { isObject, type JsonRecord, type ResponsesItem } from "./codex-protocol.ts";
+import { isObject, type JsonRecord, type JsonValue, type ResponsesItem } from "./codex-protocol.ts";
 import { requestCodexJson, type CodexJsonRequestOptions } from "./codex-transport.ts";
 import {
   IMAGE_GENERATION_PARAMETERS,
@@ -52,7 +53,7 @@ type JsonRequester = (
   path: string,
   body: JsonRecord,
   options: CodexJsonRequestOptions,
-) => Promise<unknown>;
+) => Promise<JsonValue>;
 type ConfigResolver = (ctx: ExtensionContext) => CodexCompatConfig;
 
 type ImageRequest = {
@@ -66,8 +67,8 @@ function imageUrlsFromContent(content: unknown): string[] {
   return content
     .filter(isObject)
     .toReversed()
-    .filter((item) => item.type === "input_image" && typeof item["image_url"] === "string")
-    .map((item) => item["image_url"] as string);
+    .filter((item) => item.type === "input_image" && isString(item["image_url"]))
+    .flatMap((item) => (isString(item["image_url"]) ? [item["image_url"]] : []));
 }
 
 /** Return recent provider-history images in chronological order. */
@@ -75,9 +76,9 @@ export function recentImageUrls(history: readonly ResponsesItem[], count: number
   const functionCallIds = new Set<string>();
   const customToolCallIds = new Set<string>();
   for (const item of history) {
-    if (item.type === "function_call" && typeof item["call_id"] === "string") {
+    if (item.type === "function_call" && isString(item["call_id"])) {
       functionCallIds.add(item["call_id"]);
-    } else if (item.type === "custom_tool_call" && typeof item["call_id"] === "string") {
+    } else if (item.type === "custom_tool_call" && isString(item["call_id"])) {
       customToolCallIds.add(item["call_id"]);
     }
   }
@@ -89,17 +90,17 @@ export function recentImageUrls(history: readonly ResponsesItem[], count: number
       imageUrls = imageUrlsFromContent(item.content);
     } else if (
       item.type === "function_call_output" &&
-      typeof item["call_id"] === "string" &&
+      isString(item["call_id"]) &&
       functionCallIds.has(item["call_id"])
     ) {
       imageUrls = imageUrlsFromContent(item["output"]);
     } else if (
       item.type === "custom_tool_call_output" &&
-      typeof item["call_id"] === "string" &&
+      isString(item["call_id"]) &&
       customToolCallIds.has(item["call_id"])
     ) {
       imageUrls = imageUrlsFromContent(item["output"]);
-    } else if (item.type === "image_generation_call" && typeof item["result"] === "string") {
+    } else if (item.type === "image_generation_call" && isString(item["result"])) {
       imageUrls = [`data:image/png;base64,${item["result"]}`];
     }
 
@@ -237,7 +238,7 @@ async function saveGeneratedImage(
       mode: 0o600,
     });
   } catch (error) {
-    if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+    if (nodeErrorCode(error) !== "EEXIST") throw error;
     const existing = await readFile(outputPath);
     if (!existing.equals(imageBytes)) throw error;
   }
@@ -284,16 +285,17 @@ export default function registerImageGeneration(
       const request = await imageRequest(params, history);
       const authentication = await codexToolAuthentication(ctx, model);
       const callId = toolCallId.split("|")[0] || toolCallId;
-      const response = await requestJson(model, request.endpoint, request.body, {
+      const requestOptions: CodexJsonRequestOptions = {
         ...authentication,
         extraHeaders: { "x-codex-image-turn-id": callId },
-        ...(signal ? { signal } : {}),
-      });
+      };
+      if (signal) requestOptions.signal = signal;
+      const response = await requestJson(model, request.endpoint, request.body, requestOptions);
       if (!isObject(response) || !Array.isArray(response["data"])) {
         throw new Error("OpenAI Codex returned an invalid image-generation response.");
       }
       const first = response["data"].find(isObject);
-      if (!first || typeof first["b64_json"] !== "string") {
+      if (!first || !isString(first["b64_json"])) {
         throw new Error("OpenAI Codex image generation returned no image data.");
       }
       const imageBase64 = normalizedBase64(first["b64_json"]);
@@ -309,18 +311,17 @@ export default function registerImageGeneration(
         saveError = error instanceof Error ? error.message : String(error);
       }
 
-      return {
-        content: [
-          { type: "image", data: imageBase64, mimeType: "image/png" },
-          ...(savedPath ? [{ type: "text" as const, text: outputHint(savedPath) }] : []),
-        ],
-        details: {
-          operation: request.operation,
-          revisedPrompt: params.prompt,
-          ...(savedPath ? { savedPath } : {}),
-          ...(saveError ? { saveError } : {}),
-        } satisfies ImageGenerationDetails,
+      const content: Array<
+        { type: "image"; data: string; mimeType: "image/png" } | { type: "text"; text: string }
+      > = [{ type: "image", data: imageBase64, mimeType: "image/png" }];
+      if (savedPath) content.push({ type: "text", text: outputHint(savedPath) });
+      const details: ImageGenerationDetails = {
+        operation: request.operation,
+        revisedPrompt: params.prompt,
       };
+      if (savedPath) details.savedPath = savedPath;
+      if (saveError) details.saveError = saveError;
+      return { content, details };
     },
     renderCall(args, theme, context) {
       return renderImageGenerationCall(args, theme, context, resolveToolBackground);

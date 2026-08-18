@@ -1,3 +1,4 @@
+import { isString } from "./value-contracts.ts";
 export const IMAGE_GENERATION_TOOL_NAME = "image_gen.imagegen";
 export const WEB_RUN_TOOL_NAME = "web.run";
 export const DEFAULT_FUNCTION_NAMESPACE = "functions";
@@ -33,7 +34,7 @@ export function splitNamespacedToolName(
 }
 
 export function namespacedToolCallName(namespace: unknown, name: unknown): string {
-  if (typeof namespace !== "string" || typeof name !== "string") {
+  if (!isString(namespace) || !isString(name)) {
     throw new Error("Codex returned a namespaced tool call without a valid namespace and name.");
   }
   if (namespace === "" || namespace === DEFAULT_FUNCTION_NAMESPACE) return name;

@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { getAgentDir } from "@earendil-works/pi-coding-agent";
+import { nodeErrorCode } from "./value-contracts.ts";
 
 export const CODEX_INSTALLATION_ID_FILE = "openai-codex-compat-installation-id";
 
@@ -20,11 +21,7 @@ export function resolveCodexInstallationId(agentDir = getAgentDir()): string {
   try {
     return readInstallationId(path);
   } catch (error) {
-    if (
-      !(error instanceof Error) ||
-      !("code" in error) ||
-      (error as NodeJS.ErrnoException).code !== "ENOENT"
-    ) {
+    if (!(error instanceof Error) || !("code" in error) || nodeErrorCode(error) !== "ENOENT") {
       throw error;
     }
   }
@@ -39,11 +36,7 @@ export function resolveCodexInstallationId(agentDir = getAgentDir()): string {
     });
     return installationId;
   } catch (error) {
-    if (
-      error instanceof Error &&
-      "code" in error &&
-      (error as NodeJS.ErrnoException).code === "EEXIST"
-    ) {
+    if (error instanceof Error && "code" in error && nodeErrorCode(error) === "EEXIST") {
       return readInstallationId(path);
     }
     throw error;

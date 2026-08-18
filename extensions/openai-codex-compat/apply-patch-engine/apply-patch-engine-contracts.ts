@@ -1,9 +1,7 @@
 import type {
   chmod,
   copyFile,
-  lstat,
   mkdir,
-  readFile,
   readdir,
   readlink,
   rename,
@@ -12,6 +10,7 @@ import type {
   utimes,
   writeFile,
 } from "node:fs/promises";
+import type { Stats } from "node:fs";
 import type { FormatterMatchFailureDetails, UpdateChunk } from "../apply-patch-matcher.ts";
 
 export type PatchOperation =
@@ -192,9 +191,9 @@ export type ApplyPatchExecutionHooks = {
 export type ApplyPatchExecutionFilesystem = {
   chmod: typeof chmod;
   copyFile: typeof copyFile;
-  lstat: typeof lstat;
+  lstat(path: string): Promise<Stats>;
   mkdir: typeof mkdir;
-  readFile: typeof readFile;
+  readFile(path: string): Promise<Buffer>;
   readlink: typeof readlink;
   readdir: typeof readdir;
   rename: typeof rename;

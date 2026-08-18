@@ -1,11 +1,8 @@
+import { extensionContextFixture } from "./support/pi-fixtures.ts";
+import { extensionApiFixture } from "./support/pi-fixtures.ts";
 import assert from "node:assert/strict";
 import test from "node:test";
-import type {
-  ExtensionAPI,
-  ExtensionContext,
-  ExtensionEvent,
-  SessionEntry,
-} from "@earendil-works/pi-coding-agent";
+import type { ExtensionEvent, SessionEntry } from "@earendil-works/pi-coding-agent";
 import type { Model } from "@earendil-works/pi-ai";
 import { CHECKPOINT_ENTRY_TYPE } from "../extensions/openai-codex-compat/compaction-checkpoint.ts";
 import { DEFAULT_CONFIG } from "../extensions/openai-codex-compat/config.ts";
@@ -25,7 +22,7 @@ function model(provider: string, id: string, api: string): Model<any> {
     cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
     contextWindow: 100_000,
     maxTokens: 10_000,
-  } as Model<any>;
+  } satisfies Model<any>;
 }
 
 const codexModel = model("openai-codex", "gpt-test", "openai-codex-responses");
@@ -46,7 +43,7 @@ function checkpointEntry(): SessionEntry {
       modelId: codexModel.id,
       history: [{ type: "compaction", encrypted_content: "opaque-state" }],
     },
-  } as SessionEntry;
+  } satisfies SessionEntry;
 }
 
 function createHarness(branch: SessionEntry[], initialModel: Model<any>) {
@@ -56,7 +53,7 @@ function createHarness(branch: SessionEntry[], initialModel: Model<any>) {
   let activeTools = ["read", "edit", "write"];
   let selectedModel = initialModel;
 
-  const context = {
+  const context = extensionContextFixture({
     get model() {
       return selectedModel;
     },
@@ -68,9 +65,9 @@ function createHarness(branch: SessionEntry[], initialModel: Model<any>) {
         notices.push({ message, level });
       },
     },
-  } as unknown as ExtensionContext;
+  });
 
-  const pi = {
+  const pi = extensionApiFixture({
     on(event: string, handler: (...args: any[]) => any) {
       handlers.set(event, handler);
     },
@@ -93,7 +90,7 @@ function createHarness(branch: SessionEntry[], initialModel: Model<any>) {
       );
       return true;
     },
-  } as unknown as ExtensionAPI;
+  });
 
   registerCodexModelPolicy(pi, () => DEFAULT_CONFIG);
 

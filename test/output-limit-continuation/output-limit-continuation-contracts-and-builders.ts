@@ -1,6 +1,7 @@
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { AssistantMessage, Credential, Model } from "@earendil-works/pi-ai";
+import type { JsonRecord } from "../../extensions/openai-codex-compat/codex-protocol.ts";
 
 export const rootDir = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 
@@ -14,7 +15,7 @@ export const MODEL_ID = "gpt-5.6-sol";
 
 export const ACCOUNT_ID_CLAIM = "https://api.openai.com/auth";
 
-export type JsonRecord = Record<string, unknown>;
+export type { JsonRecord };
 
 export function base64Json(value: unknown): string {
   return Buffer.from(JSON.stringify(value), "utf8").toString("base64");
@@ -41,9 +42,16 @@ export function codexCredential(): Credential {
 export function codexModel(): Model<any> {
   return {
     id: MODEL_ID,
+    name: "GPT Test",
     api: CODEX_API,
     provider: CODEX_PROVIDER,
-  } as Model<any>;
+    baseUrl: "https://chatgpt.com/backend-api",
+    reasoning: true,
+    input: ["text"],
+    cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+    contextWindow: 100_000,
+    maxTokens: 10_000,
+  };
 }
 
 export function assistant(

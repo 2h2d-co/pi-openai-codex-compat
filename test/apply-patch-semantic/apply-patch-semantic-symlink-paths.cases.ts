@@ -16,7 +16,6 @@ import {
   workspace,
   assertMissing,
   patch,
-  type Theme,
 } from "./apply-patch-semantic-harness.ts";
 
 void test("deletes symlink entries without deleting their targets", async (t) => {
@@ -69,7 +68,7 @@ void test("deletes symlink entries without deleting their targets", async (t) =>
   const theme = {
     fg: (_color: string, text: string) => text,
     bold: (text: string) => text,
-  } as unknown as Theme;
+  };
   const rendered = formatApplyPatchRenderText(followed, theme, cwd);
   assert.match(rendered, /followed-link\.txt \(deleted symlink\)/u);
   assert.match(

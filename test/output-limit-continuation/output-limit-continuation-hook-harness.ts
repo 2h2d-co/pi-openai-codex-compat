@@ -1,6 +1,8 @@
+import { extensionContextFixture } from "../support/pi-fixtures.ts";
+import { extensionApiFixture } from "../support/pi-fixtures.ts";
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import type { ExtensionAPI, ExtensionContext, SessionEntry } from "@earendil-works/pi-coding-agent";
+import type { ExtensionContext, SessionEntry } from "@earendil-works/pi-coding-agent";
 import registerOutputLimitContinuation from "../../extensions/openai-codex-compat/output-limit-continuation.ts";
 import { codexModel, type JsonRecord } from "./output-limit-continuation-contracts-and-builders.ts";
 
@@ -19,16 +21,16 @@ export function continuationHarness(options?: {
   const handlers = new Map<string, TestHandler>();
   const sent: Array<{ message: JsonRecord; options: JsonRecord | undefined }> = [];
   const branch = options?.branch ?? [];
-  const pi = {
+  const pi = extensionApiFixture({
     on(event: string, candidate: TestHandler) {
       handlers.set(event, candidate);
     },
     sendMessage(message: JsonRecord, options?: JsonRecord) {
       sent.push({ message, options });
     },
-  } as unknown as ExtensionAPI;
+  });
   registerOutputLimitContinuation(pi);
-  const ctx = {
+  const ctx = extensionContextFixture({
     model: codexModel(),
     isIdle: () => options?.idle ?? true,
     hasPendingMessages: () => options?.pending ?? false,
@@ -36,7 +38,7 @@ export function continuationHarness(options?: {
       getSessionId: () => "session-output-limit",
       getBranch: () => branch,
     },
-  } as unknown as ExtensionContext;
+  });
   return {
     sent,
     async emit(event: string, payload: TestEvent = {}, context = ctx) {

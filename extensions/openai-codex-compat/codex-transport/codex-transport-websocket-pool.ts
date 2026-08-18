@@ -1,3 +1,4 @@
+import { isFunction } from "../value-contracts.ts";
 import type {
   CachedWebSocket,
   CacheIdentitySnapshot,
@@ -109,9 +110,13 @@ export function recordWebSocketFailure(
   stats.websocketFallbackActive = true;
 }
 
+function isWebSocketConstructor(value: unknown): value is WebSocketConstructor {
+  return isFunction(value);
+}
+
 export function websocketConstructor(): WebSocketConstructor | undefined {
-  const candidate = (globalThis as { WebSocket?: unknown }).WebSocket;
-  return typeof candidate === "function" ? (candidate as WebSocketConstructor) : undefined;
+  const candidate: unknown = globalThis.WebSocket;
+  return isWebSocketConstructor(candidate) ? candidate : undefined;
 }
 
 export function closeSocket(socket: WebSocketLike, reason = "done"): void {

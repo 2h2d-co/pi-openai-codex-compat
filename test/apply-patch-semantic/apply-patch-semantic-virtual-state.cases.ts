@@ -17,7 +17,6 @@ import {
   workspace,
   assertMissing,
   patch,
-  type Theme,
 } from "./apply-patch-semantic-harness.ts";
 
 void test("moves opaque regular files without decoding or changing bytes", async (t) => {
@@ -100,15 +99,14 @@ void test("moves symlink entries and reports both replacement entry types", asyn
     previousEntry: { entryType: "regular-file" },
     replacementEntry: { entryType: "symlink", target: "target.txt" },
   });
-  assert.equal(isApplyPatchDetails(details), true);
-  const incompleteDetails = structuredClone(details) as unknown as {
-    instructions: Array<{ effects?: Array<Record<string, unknown>> }>;
-  };
+  assert.ok(isApplyPatchDetails(details));
+  const incompleteDetails = structuredClone(details);
+  assert.ok(incompleteDetails.instructions);
   const incompleteReplacement = incompleteDetails.instructions[2]?.effects?.find(
     (effect) => effect["kind"] === "replaced",
   );
   assert.ok(incompleteReplacement);
-  delete incompleteReplacement["replacementEntry"];
+  Reflect.deleteProperty(incompleteReplacement, "replacementEntry");
   assert.equal(isApplyPatchDetails(incompleteDetails), false);
   const feedback = formatApplyPatchSummary(details, cwd);
   assert.match(
@@ -131,7 +129,7 @@ void test("moves symlink entries and reports both replacement entry types", asyn
   const theme = {
     fg: (_color: string, text: string) => text,
     bold: (text: string) => text,
-  } as unknown as Theme;
+  };
   const rendered = new ApplyPatchDiffComponent(details, theme, cwd, false).render(240).join("\n");
   assert.match(
     rendered,

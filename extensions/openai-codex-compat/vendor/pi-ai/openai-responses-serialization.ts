@@ -1,3 +1,11 @@
+import { isString } from "../../value-contracts.ts";
+import {
+  isJsonValue,
+  isObject,
+  requireJsonRecords,
+  requireJsonRecord,
+  type JsonRecord,
+} from "../../codex-protocol.ts";
 import type {
   AssistantMessage,
   Context,
@@ -26,7 +34,7 @@ import type {
  * openai-responses-shared package subpath to extensions.
  */
 
-export type ResponsesItem = Record<string, unknown>;
+export type ResponsesItem = JsonRecord;
 export type ToolResultImageDetail = "auto" | "low" | "high" | "original";
 type ToolResultOutput =
   | string
@@ -54,12 +62,6 @@ export type ConvertResponsesToolsOptions = {
   namespacedToolNames?: ReadonlySet<string>;
 };
 
-type JsonSchemaObject = {
-  type?: unknown;
-  properties?: Record<string, JsonSchemaObject | undefined>;
-  required?: unknown;
-};
-
 function shortHash(value: string): string {
   let high = 0xdeadbeef;
   let low = 0x41c6ce57;
@@ -84,11 +86,11 @@ function sanitizeSurrogates(text: string): string {
 
 function getGrammarToolInput(
   toolName: string,
-  arguments_: Record<string, unknown>,
+  arguments_: ToolCall["arguments"],
   inputProperty: string,
 ): string {
   const input = arguments_[inputProperty];
-  if (typeof input !== "string") {
+  if (!isString(input)) {
     throw new Error(
       `Grammar tool call "${toolName}" requires argument "${inputProperty}" to be a string.`,
     );
@@ -97,25 +99,28 @@ function getGrammarToolInput(
 }
 
 function inferGrammarInputProperty(tool: Tool): string {
-  const schema = tool.parameters as JsonSchemaObject;
+  if (!isObject(tool.parameters)) {
+    throw new Error("grammar constrained sampling requires an object parameter schema");
+  }
+  const schema = tool.parameters;
   if (schema.type !== "object") {
     throw new Error("grammar constrained sampling requires an object parameter schema");
   }
   if (
-    !Array.isArray(schema.required) ||
-    schema.required.length !== 1 ||
-    typeof schema.required[0] !== "string"
+    !Array.isArray(schema["required"]) ||
+    schema["required"].length !== 1 ||
+    !isString(schema["required"][0])
   ) {
     throw new Error("grammar constrained sampling requires exactly one required string property");
   }
 
-  const inputProperty = schema.required[0];
-  if (!schema.properties?.[inputProperty]) {
+  const inputProperty = schema["required"][0];
+  if (!isObject(schema["properties"]) || !isObject(schema["properties"][inputProperty])) {
     throw new Error(
       `grammar constrained sampling requires a properties entry for ${inputProperty}`,
     );
   }
-  if (schema.properties[inputProperty]?.type !== "string") {
+  if (schema["properties"][inputProperty]?.type !== "string") {
     throw new Error(`grammar constrained sampling property ${inputProperty} must have type string`);
   }
   return inputProperty;
@@ -145,9 +150,8 @@ function resolveGrammarConstrainedSampling(
 
   const larkDefinition = config.variants.openai_lark;
   const regexDefinition = config.variants.openai_regex;
-  const hasLarkDefinition = typeof larkDefinition === "string" && larkDefinition.trim().length > 0;
-  const hasRegexDefinition =
-    typeof regexDefinition === "string" && regexDefinition.trim().length > 0;
+  const hasLarkDefinition = isString(larkDefinition) && larkDefinition.trim().length > 0;
+  const hasRegexDefinition = isString(regexDefinition) && regexDefinition.trim().length > 0;
   if (!hasLarkDefinition && !hasRegexDefinition) {
     throw new Error(
       `Tool "${tool.name}" cannot use grammar constrained sampling: no supported grammar variant was provided.`,
@@ -155,9 +159,13 @@ function resolveGrammarConstrainedSampling(
   }
 
   try {
+    const definition = hasLarkDefinition ? larkDefinition : regexDefinition;
+    if (!isString(definition)) {
+      throw new Error(`Tool "${tool.name}" has an invalid grammar definition.`);
+    }
     return {
       format: hasLarkDefinition ? "lark" : "regex",
-      definition: hasLarkDefinition ? larkDefinition : regexDefinition!,
+      definition,
       inputProperty: inferGrammarInputProperty(tool),
     };
   } catch (error) {
@@ -189,7 +197,7 @@ export function convertResponsesTools(
   const convertTool = (tool: Tool): ResponsesItem => {
     const grammar = resolveGrammarConstrainedSampling(tool, supportsOpenAIGrammarTools);
     if (grammar) {
-      return {
+      const converted: ResponsesItem = {
         type: "custom",
         name: tool.name,
         description: tool.description,
@@ -198,19 +206,24 @@ export function convertResponsesTools(
           syntax: grammar.format,
           definition: grammar.definition,
         },
-        ...(options?.deferLoading ? { defer_loading: true } : {}),
       };
+      if (options?.deferLoading) converted["defer_loading"] = true;
+      return converted;
     }
 
     const constrainedStrict = resolveJsonSchemaStrictSampling(tool, supportsStrictMode);
-    return {
+    if (!isJsonValue(tool.parameters)) {
+      throw new Error(`Tool "${tool.name}" has non-JSON parameters.`);
+    }
+    const converted: ResponsesItem = {
       type: "function",
       name: tool.name,
       description: tool.description,
       parameters: tool.parameters,
-      ...(options?.deferLoading ? { defer_loading: true } : {}),
-      ...(supportsStrictMode ? { strict: constrainedStrict ?? defaultStrict } : {}),
     };
+    if (options?.deferLoading) converted["defer_loading"] = true;
+    if (supportsStrictMode) converted["strict"] = constrainedStrict ?? defaultStrict;
+    return converted;
   };
 
   const result: ResponsesItem[] = [];
@@ -226,11 +239,11 @@ export function convertResponsesTools(
       throw new Error(`Namespaced tool "${tool.name}" must serialize as a function tool.`);
     }
 
-    const child = {
+    const child: ResponsesItem = {
       ...converted,
       name: namespaced.name,
-      ...(supportsStrictMode ? { strict: false } : {}),
     };
+    if (supportsStrictMode) child["strict"] = false;
     let namespace = namespaces.get(namespaced.namespace);
     if (!namespace) {
       namespace = {
@@ -242,7 +255,7 @@ export function convertResponsesTools(
       namespaces.set(namespaced.namespace, namespace);
       result.push(namespace);
     }
-    (namespace["tools"] as ResponsesItem[]).push(child);
+    requireJsonRecords(namespace["tools"]).push(child);
   }
   return result;
 }
@@ -323,7 +336,7 @@ function transformMessages(
         : message;
     }
 
-    const assistantMessage = message as AssistantMessage;
+    const assistantMessage = message;
     const isSameModel =
       assistantMessage.provider === model.provider &&
       assistantMessage.api === model.api &&
@@ -340,11 +353,11 @@ function transformMessages(
         return isSameModel ? block : { type: "text" as const, text: block.text };
       }
       if (block.type === "toolCall") {
-        const toolCall = block as ToolCall;
+        const toolCall = block;
         let normalizedToolCall = toolCall;
         if (!isSameModel && toolCall.thoughtSignature) {
           normalizedToolCall = { ...toolCall };
-          delete (normalizedToolCall as { thoughtSignature?: string }).thoughtSignature;
+          Reflect.deleteProperty(normalizedToolCall, "thoughtSignature");
         }
         if (!isSameModel && normalizeToolCallId) {
           const normalizedId = normalizeToolCallId(toolCall.id, model, assistantMessage);
@@ -373,7 +386,7 @@ function transformMessages(
         content: [{ type: "text", text: "No result provided" }],
         isError: true,
         timestamp: Date.now(),
-      } as ToolResultMessage);
+      } satisfies ToolResultMessage);
     }
     pendingToolCalls = [];
     existingToolResultIds = new Set();
@@ -382,7 +395,7 @@ function transformMessages(
   for (const message of transformed) {
     if (message.role === "assistant") {
       insertSyntheticToolResults();
-      const assistantMessage = message as AssistantMessage;
+      const assistantMessage = message;
       if (assistantMessage.stopReason === "error" || assistantMessage.stopReason === "aborted") {
         continue;
       }
@@ -414,8 +427,8 @@ function parseTextSignature(
   if (!signature) return undefined;
   if (signature.startsWith("{")) {
     try {
-      const parsed = JSON.parse(signature) as Partial<TextSignatureV1>;
-      if (parsed.v === 1 && typeof parsed.id === "string") {
+      const parsed: unknown = JSON.parse(signature);
+      if (isObject(parsed) && parsed.v === 1 && isString(parsed.id)) {
         if (parsed.phase === "commentary" || parsed.phase === "final_answer") {
           return { id: parsed.id, phase: parsed.phase };
         }
@@ -498,9 +511,10 @@ export function convertResponsesMessages(
   const transformedMessages = transformMessages(context.messages, model, normalizeToolCallId);
   const includeSystemPrompt = options?.includeSystemPrompt ?? true;
   if (includeSystemPrompt && context.systemPrompt) {
-    const compat = model.compat as { supportsDeveloperRole?: boolean } | undefined;
+    const supportsDeveloperRole =
+      !isObject(model.compat) || model.compat["supportsDeveloperRole"] !== false;
     messages.push({
-      role: model.reasoning && compat?.supportsDeveloperRole !== false ? "developer" : "system",
+      role: model.reasoning && supportsDeveloperRole ? "developer" : "system",
       content: sanitizeSurrogates(context.systemPrompt),
     });
   }
@@ -508,7 +522,7 @@ export function convertResponsesMessages(
   let messageIndex = 0;
   for (const message of transformedMessages) {
     if (message.role === "user") {
-      if (typeof message.content === "string") {
+      if (isString(message.content)) {
         messages.push({
           role: "user",
           content: [{ type: "input_text", text: sanitizeSurrogates(message.content) }],
@@ -537,7 +551,7 @@ export function convertResponsesMessages(
       }
 
       const output: ResponsesItem[] = [];
-      const assistantMessage = message as AssistantMessage;
+      const assistantMessage = message;
       const isDifferentModel =
         assistantMessage.model !== model.id &&
         assistantMessage.provider === model.provider &&
@@ -547,7 +561,12 @@ export function convertResponsesMessages(
       for (const block of message.content) {
         if (block.type === "thinking") {
           if (block.thinkingSignature) {
-            output.push(JSON.parse(block.thinkingSignature) as ResponsesItem);
+            output.push(
+              requireJsonRecord(
+                JSON.parse(block.thinkingSignature),
+                "assistant thinking signature",
+              ),
+            );
           }
         } else if (block.type === "text") {
           const parsedSignature = parseTextSignature(block.textSignature);
@@ -558,7 +577,7 @@ export function convertResponsesMessages(
           textBlockIndex++;
           let messageId = parsedSignature?.id ?? fallbackMessageId;
           if (messageId.length > 64) messageId = `msg_${shortHash(messageId)}`;
-          output.push({
+          const textItem: ResponsesItem = {
             type: "message",
             role: "assistant",
             content: [
@@ -566,8 +585,9 @@ export function convertResponsesMessages(
             ],
             status: "completed",
             id: messageId,
-            phase: parsedSignature?.phase,
-          });
+          };
+          if (parsedSignature?.phase !== undefined) textItem.phase = parsedSignature.phase;
+          output.push(textItem);
         } else if (block.type === "toolCall") {
           const [callId, itemIdRaw] = block.id.split("|");
           const customInputProperty = options?.grammarToolInputProperties?.get(block.name);
@@ -580,24 +600,26 @@ export function convertResponsesMessages(
             itemId = undefined;
           }
           if (customInputProperty !== undefined) {
-            output.push({
+            const customToolCall: ResponsesItem = {
               type: "custom_tool_call",
-              id: itemId,
-              call_id: callId,
               name: block.name,
               input: sanitizeSurrogates(
                 getGrammarToolInput(block.name, block.arguments, customInputProperty),
               ),
-            });
+            };
+            if (itemId !== undefined) customToolCall["id"] = itemId;
+            if (callId !== undefined) customToolCall["call_id"] = callId;
+            output.push(customToolCall);
           } else {
-            output.push({
+            const functionCall: ResponsesItem = {
               type: "function_call",
-              id: itemId,
-              call_id: callId,
               name: namespaced?.name ?? block.name,
-              ...(namespaced ? { namespace: namespaced.namespace } : {}),
               arguments: JSON.stringify(block.arguments),
-            });
+            };
+            if (itemId !== undefined) functionCall["id"] = itemId;
+            if (callId !== undefined) functionCall["call_id"] = callId;
+            if (namespaced) functionCall["namespace"] = namespaced.namespace;
+            output.push(functionCall);
           }
         }
       }
@@ -639,18 +661,19 @@ export function convertResponsesMessages(
           status: "completed",
           arguments: { query: names.join(" "), limit: names.length },
         });
+        const deferredToolOptions: ConvertResponsesToolsOptions = {
+          ...options?.toolOptions,
+          deferLoading: true,
+        };
+        if (options?.namespacedToolNames) {
+          deferredToolOptions.namespacedToolNames = options.namespacedToolNames;
+        }
         messages.push({
           type: "tool_search_output",
           call_id: searchCallId,
           execution: "client",
           status: "completed",
-          tools: convertResponsesTools(deferredTools, {
-            ...options?.toolOptions,
-            deferLoading: true,
-            ...(options?.namespacedToolNames
-              ? { namespacedToolNames: options.namespacedToolNames }
-              : {}),
-          }),
+          tools: convertResponsesTools(deferredTools, deferredToolOptions),
         });
       }
     }

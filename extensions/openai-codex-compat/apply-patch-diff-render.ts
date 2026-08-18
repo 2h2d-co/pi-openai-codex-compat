@@ -1,6 +1,8 @@
+import { isAllowedString, isNumber, isString } from "./value-contracts.ts";
+import { isObject } from "./codex-protocol.ts";
 import { homedir } from "node:os";
 import { isAbsolute, join, relative, resolve, sep } from "node:path";
-import { getLanguageFromPath, highlightCode, type Theme } from "@earendil-works/pi-coding-agent";
+import { getLanguageFromPath, highlightCode } from "@earendil-works/pi-coding-agent";
 import {
   type Component,
   truncateToWidth,
@@ -28,7 +30,7 @@ import type {
   FormatterMatchCandidateRange,
   FormatterMatchFailureDetails,
 } from "./apply-patch-matcher.ts";
-import { usesLightToolPalette } from "./codex-tool-surface.ts";
+import { usesLightToolPalette, type RenderTheme } from "./codex-tool-surface.ts";
 
 type DiffLineKind = "add" | "delete" | "context";
 
@@ -119,7 +121,7 @@ function changeListPath(change: AppliedPatchChange, cwd: string): string {
     : path;
 }
 
-function countSummary(additions: number, deletions: number, theme: Theme): string {
+function countSummary(additions: number, deletions: number, theme: RenderTheme): string {
   return `(${theme.fg("success", `+${additions}`)} ${theme.fg("error", `-${deletions}`)})`;
 }
 
@@ -129,55 +131,40 @@ function comparePaths(left: string, right: string): number {
 }
 
 function isStringArray(value: unknown): value is string[] {
-  return Array.isArray(value) && value.every((item) => typeof item === "string");
+  return Array.isArray(value) && value.every((item) => isString(item));
 }
 
 function isAppliedPatchChange(value: unknown): value is AppliedPatchChange {
-  if (typeof value !== "object" || value === null) return false;
-  const change = value as {
-    kind?: unknown;
-    path?: unknown;
-    moveTo?: unknown;
-    sourcePath?: unknown;
-    destinationPath?: unknown;
-    replacedDestination?: unknown;
-    entryType?: unknown;
-    exact?: unknown;
-    content?: unknown;
-    oldContent?: unknown;
-    newContent?: unknown;
-    displayDiff?: unknown;
-    additions?: unknown;
-    deletions?: unknown;
-  };
+  if (!isObject(value)) return false;
+  const change = value;
   if (
-    typeof change.displayDiff !== "string" ||
-    typeof change.additions !== "number" ||
-    typeof change.deletions !== "number"
+    typeof change["displayDiff"] !== "string" ||
+    typeof change["additions"] !== "number" ||
+    typeof change["deletions"] !== "number"
   ) {
     return false;
   }
-  if (change.kind === "move") {
+  if (change["kind"] === "move") {
     return (
-      typeof change.sourcePath === "string" &&
-      typeof change.destinationPath === "string" &&
-      typeof change.replacedDestination === "boolean" &&
-      (change.entryType === "regular-file" || change.entryType === "symlink") &&
-      typeof change.exact === "boolean"
+      typeof change["sourcePath"] === "string" &&
+      typeof change["destinationPath"] === "string" &&
+      typeof change["replacedDestination"] === "boolean" &&
+      (change["entryType"] === "regular-file" || change["entryType"] === "symlink") &&
+      typeof change["exact"] === "boolean"
     );
   }
-  if (typeof change.path !== "string") return false;
-  if (change.kind === "add" || change.kind === "delete") {
-    return change.kind === "delete"
-      ? (change.entryType === "regular-file" || change.entryType === "symlink") &&
-          (change.content === undefined || typeof change.content === "string")
-      : typeof change.content === "string";
+  if (typeof change["path"] !== "string") return false;
+  if (change["kind"] === "add" || change["kind"] === "delete") {
+    return change["kind"] === "delete"
+      ? (change["entryType"] === "regular-file" || change["entryType"] === "symlink") &&
+          (change["content"] === undefined || typeof change["content"] === "string")
+      : typeof change["content"] === "string";
   }
   return (
-    change.kind === "update" &&
-    typeof change.oldContent === "string" &&
-    typeof change.newContent === "string" &&
-    (change.moveTo === undefined || typeof change.moveTo === "string")
+    change["kind"] === "update" &&
+    typeof change["oldContent"] === "string" &&
+    typeof change["newContent"] === "string" &&
+    (change["moveTo"] === undefined || typeof change["moveTo"] === "string")
   );
 }
 
@@ -202,25 +189,20 @@ const INSTRUCTION_REASON_CODES = new Set<ApplyPatchInstructionReason["code"]>([
 ]);
 
 function isApplyPatchInstructionReason(value: unknown): value is ApplyPatchInstructionReason {
-  if (typeof value !== "object" || value === null) return false;
-  const reason = value as {
-    code?: unknown;
-    message?: unknown;
-    dominatingInstructions?: unknown;
-    relatedInstructions?: unknown;
-  };
+  if (!isObject(value)) return false;
+  const reason = value;
   return (
-    typeof reason.code === "string" &&
-    INSTRUCTION_REASON_CODES.has(reason.code as ApplyPatchInstructionReason["code"]) &&
-    typeof reason.message === "string" &&
-    (reason.dominatingInstructions === undefined ||
-      (Array.isArray(reason.dominatingInstructions) &&
-        reason.dominatingInstructions.every((index) => typeof index === "number"))) &&
-    (reason.relatedInstructions === undefined ||
-      (Array.isArray(reason.relatedInstructions) &&
-        reason.relatedInstructions.every((index) => typeof index === "number"))) &&
-    (reason.code !== "move-already-fulfilled" ||
-      (Array.isArray(reason.relatedInstructions) && reason.relatedInstructions.length === 1))
+    typeof reason["code"] === "string" &&
+    isAllowedString(reason["code"], INSTRUCTION_REASON_CODES) &&
+    typeof reason["message"] === "string" &&
+    (reason["dominatingInstructions"] === undefined ||
+      (Array.isArray(reason["dominatingInstructions"]) &&
+        reason["dominatingInstructions"].every((index) => isNumber(index)))) &&
+    (reason["relatedInstructions"] === undefined ||
+      (Array.isArray(reason["relatedInstructions"]) &&
+        reason["relatedInstructions"].every((index) => isNumber(index)))) &&
+    (reason["code"] !== "move-already-fulfilled" ||
+      (Array.isArray(reason["relatedInstructions"]) && reason["relatedInstructions"].length === 1))
   );
 }
 
@@ -238,38 +220,32 @@ const INSTRUCTION_EFFECT_KINDS = new Set<ApplyPatchInstructionEffect["kind"]>([
 ]);
 
 function isApplyPatchInstructionEffect(value: unknown): value is ApplyPatchInstructionEffect {
-  if (typeof value !== "object" || value === null) return false;
-  const effect = value as {
-    kind?: unknown;
-    path?: unknown;
-    previousEntry?: unknown;
-    replacementEntry?: unknown;
-    target?: unknown;
-  };
+  if (!isObject(value)) return false;
+  const effect = value;
   if (
-    typeof effect.kind !== "string" ||
-    !INSTRUCTION_EFFECT_KINDS.has(effect.kind as ApplyPatchInstructionEffect["kind"]) ||
-    typeof effect.path !== "string"
+    typeof effect["kind"] !== "string" ||
+    !isAllowedString(effect["kind"], INSTRUCTION_EFFECT_KINDS) ||
+    typeof effect["path"] !== "string"
   ) {
     return false;
   }
-  if (effect.kind === "replaced") {
+  if (effect["kind"] === "replaced") {
     const isFileEntry = (entry: unknown): boolean => {
-      if (typeof entry !== "object" || entry === null) return false;
-      const candidate = entry as { entryType?: unknown; target?: unknown };
+      if (!isObject(entry)) return false;
+      const candidate = entry;
       return (
-        candidate.entryType === "regular-file" ||
-        (candidate.entryType === "symlink" && typeof candidate.target === "string")
+        candidate["entryType"] === "regular-file" ||
+        (candidate["entryType"] === "symlink" && isString(candidate["target"]))
       );
     };
-    return isFileEntry(effect.previousEntry) && isFileEntry(effect.replacementEntry);
+    return isFileEntry(effect["previousEntry"]) && isFileEntry(effect["replacementEntry"]);
   }
   if (
-    effect.kind === "symlink-removed" ||
-    effect.kind === "symlink-moved" ||
-    effect.kind === "symlink-target-modified"
+    effect["kind"] === "symlink-removed" ||
+    effect["kind"] === "symlink-moved" ||
+    effect["kind"] === "symlink-target-modified"
   ) {
-    return typeof effect.target === "string";
+    return typeof effect["target"] === "string";
   }
   return true;
 }
@@ -291,59 +267,47 @@ const FINAL_PATH_STATES = new Set<ApplyPatchFinalPathState["state"]>([
 ]);
 
 function isApplyPatchFinalPathState(value: unknown): value is ApplyPatchFinalPathState {
-  if (typeof value !== "object" || value === null) return false;
-  const state = value as { path?: unknown; state?: unknown };
+  if (!isObject(value)) return false;
+  const state = value;
   return (
-    typeof state.path === "string" &&
-    typeof state.state === "string" &&
-    FINAL_PATH_STATES.has(state.state as ApplyPatchFinalPathState["state"])
+    typeof state["path"] === "string" &&
+    typeof state["state"] === "string" &&
+    isAllowedString(state["state"], FINAL_PATH_STATES)
   );
 }
 
 function isApplyPatchInstruction(value: unknown): value is ApplyPatchInstructionDetails {
-  if (typeof value !== "object" || value === null) return false;
-  const instruction = value as {
-    index?: unknown;
-    kind?: unknown;
-    path?: unknown;
-    moveTo?: unknown;
-    status?: unknown;
-    reason?: unknown;
-    effects?: unknown;
-    finalStates?: unknown;
-    matcher?: unknown;
-    changeIndexes?: unknown;
-    error?: unknown;
-  };
+  if (!isObject(value)) return false;
+  const instruction = value;
   return (
-    typeof instruction.index === "number" &&
-    (instruction.kind === "add" ||
-      instruction.kind === "delete" ||
-      instruction.kind === "update" ||
-      instruction.kind === "move") &&
-    typeof instruction.path === "string" &&
-    (instruction.moveTo === undefined || typeof instruction.moveTo === "string") &&
-    typeof instruction.status === "string" &&
-    INSTRUCTION_STATUSES.has(instruction.status as ApplyPatchInstructionStatus) &&
-    (instruction.reason === undefined || isApplyPatchInstructionReason(instruction.reason)) &&
-    (instruction.effects === undefined ||
-      (Array.isArray(instruction.effects) &&
-        instruction.effects.every(isApplyPatchInstructionEffect))) &&
-    (instruction.finalStates === undefined ||
-      (Array.isArray(instruction.finalStates) &&
-        instruction.finalStates.every(isApplyPatchFinalPathState))) &&
-    (instruction.matcher === undefined || isFormatterMatchFailure(instruction.matcher)) &&
-    (instruction.changeIndexes === undefined ||
-      (Array.isArray(instruction.changeIndexes) &&
-        instruction.changeIndexes.every((index) => typeof index === "number"))) &&
-    (instruction.error === undefined || typeof instruction.error === "string")
+    typeof instruction["index"] === "number" &&
+    (instruction["kind"] === "add" ||
+      instruction["kind"] === "delete" ||
+      instruction["kind"] === "update" ||
+      instruction["kind"] === "move") &&
+    typeof instruction["path"] === "string" &&
+    (instruction["moveTo"] === undefined || typeof instruction["moveTo"] === "string") &&
+    typeof instruction["status"] === "string" &&
+    isAllowedString(instruction["status"], INSTRUCTION_STATUSES) &&
+    (instruction["reason"] === undefined || isApplyPatchInstructionReason(instruction["reason"])) &&
+    (instruction["effects"] === undefined ||
+      (Array.isArray(instruction["effects"]) &&
+        instruction["effects"].every(isApplyPatchInstructionEffect))) &&
+    (instruction["finalStates"] === undefined ||
+      (Array.isArray(instruction["finalStates"]) &&
+        instruction["finalStates"].every(isApplyPatchFinalPathState))) &&
+    (instruction["matcher"] === undefined || isFormatterMatchFailure(instruction["matcher"])) &&
+    (instruction["changeIndexes"] === undefined ||
+      (Array.isArray(instruction["changeIndexes"]) &&
+        instruction["changeIndexes"].every((index) => isNumber(index)))) &&
+    (instruction["error"] === undefined || typeof instruction["error"] === "string")
   );
 }
 
 function isMatcherRange(value: unknown): value is FormatterMatchCandidateRange {
-  if (typeof value !== "object" || value === null) return false;
-  const range = value as { startLine?: unknown; endLine?: unknown };
-  return typeof range.startLine === "number" && typeof range.endLine === "number";
+  if (!isObject(value)) return false;
+  const range = value;
+  return typeof range["startLine"] === "number" && typeof range["endLine"] === "number";
 }
 
 const MATCHER_REASONS = new Set<FormatterMatchFailureDetails["reason"]>([
@@ -356,95 +320,66 @@ const MATCHER_REASONS = new Set<FormatterMatchFailureDetails["reason"]>([
 ]);
 
 function isFormatterMatchFailure(value: unknown): value is FormatterMatchFailureDetails {
-  if (typeof value !== "object" || value === null) return false;
-  const failure = value as {
-    reason?: unknown;
-    path?: unknown;
-    groupCount?: unknown;
-    groupIndex?: unknown;
-    chunkCount?: unknown;
-    chunkIndex?: unknown;
-    candidateCount?: unknown;
-    candidates?: unknown;
-    previousGroupIndex?: unknown;
-    previousCandidates?: unknown;
-    reverseOrdered?: unknown;
-    overlapping?: unknown;
-    replacementCandidateCount?: unknown;
-    replacementCandidates?: unknown;
-    oldExcerpt?: unknown;
-  };
+  if (!isObject(value)) return false;
+  const failure = value;
   return (
-    typeof failure.reason === "string" &&
-    MATCHER_REASONS.has(failure.reason as FormatterMatchFailureDetails["reason"]) &&
-    typeof failure.path === "string" &&
-    typeof failure.groupCount === "number" &&
-    (failure.groupIndex === undefined || typeof failure.groupIndex === "number") &&
-    (failure.chunkCount === undefined || typeof failure.chunkCount === "number") &&
-    (failure.chunkIndex === undefined || typeof failure.chunkIndex === "number") &&
-    typeof failure.candidateCount === "number" &&
-    Array.isArray(failure.candidates) &&
-    failure.candidates.every(isMatcherRange) &&
-    (failure.previousGroupIndex === undefined || typeof failure.previousGroupIndex === "number") &&
-    (failure.previousCandidates === undefined ||
-      (Array.isArray(failure.previousCandidates) &&
-        failure.previousCandidates.every(isMatcherRange))) &&
-    (failure.reverseOrdered === undefined || typeof failure.reverseOrdered === "boolean") &&
-    (failure.overlapping === undefined || typeof failure.overlapping === "boolean") &&
-    (failure.replacementCandidateCount === undefined ||
-      typeof failure.replacementCandidateCount === "number") &&
-    (failure.replacementCandidates === undefined ||
-      (Array.isArray(failure.replacementCandidates) &&
-        failure.replacementCandidates.every(isMatcherRange))) &&
-    (failure.oldExcerpt === undefined || typeof failure.oldExcerpt === "string")
+    typeof failure["reason"] === "string" &&
+    isAllowedString(failure["reason"], MATCHER_REASONS) &&
+    typeof failure["path"] === "string" &&
+    typeof failure["groupCount"] === "number" &&
+    (failure["groupIndex"] === undefined || typeof failure["groupIndex"] === "number") &&
+    (failure["chunkCount"] === undefined || typeof failure["chunkCount"] === "number") &&
+    (failure["chunkIndex"] === undefined || typeof failure["chunkIndex"] === "number") &&
+    typeof failure["candidateCount"] === "number" &&
+    Array.isArray(failure["candidates"]) &&
+    failure["candidates"].every(isMatcherRange) &&
+    (failure["previousGroupIndex"] === undefined ||
+      typeof failure["previousGroupIndex"] === "number") &&
+    (failure["previousCandidates"] === undefined ||
+      (Array.isArray(failure["previousCandidates"]) &&
+        failure["previousCandidates"].every(isMatcherRange))) &&
+    (failure["reverseOrdered"] === undefined || typeof failure["reverseOrdered"] === "boolean") &&
+    (failure["overlapping"] === undefined || typeof failure["overlapping"] === "boolean") &&
+    (failure["replacementCandidateCount"] === undefined ||
+      typeof failure["replacementCandidateCount"] === "number") &&
+    (failure["replacementCandidates"] === undefined ||
+      (Array.isArray(failure["replacementCandidates"]) &&
+        failure["replacementCandidates"].every(isMatcherRange))) &&
+    (failure["oldExcerpt"] === undefined || typeof failure["oldExcerpt"] === "string")
   );
 }
 
 function isApplyPatchFailure(value: unknown): value is ApplyPatchFailureDetails {
-  if (typeof value !== "object" || value === null) return false;
-  const failure = value as {
-    phase?: unknown;
-    message?: unknown;
-    failedInstruction?: unknown;
-    matcher?: unknown;
-  };
+  if (!isObject(value)) return false;
+  const failure = value;
   return (
-    (failure.phase === "input" ||
-      failure.phase === "parse" ||
-      failure.phase === "preflight" ||
-      failure.phase === "execution") &&
-    typeof failure.message === "string" &&
-    (failure.failedInstruction === undefined || typeof failure.failedInstruction === "number") &&
-    (failure.matcher === undefined || isFormatterMatchFailure(failure.matcher))
+    (failure["phase"] === "input" ||
+      failure["phase"] === "parse" ||
+      failure["phase"] === "preflight" ||
+      failure["phase"] === "execution") &&
+    typeof failure["message"] === "string" &&
+    (failure["failedInstruction"] === undefined ||
+      typeof failure["failedInstruction"] === "number") &&
+    (failure["matcher"] === undefined || isFormatterMatchFailure(failure["matcher"]))
   );
 }
 
 export function isApplyPatchDetails(value: unknown): value is ApplyPatchDetails {
-  if (typeof value !== "object" || value === null) return false;
-  const details = value as {
-    status?: unknown;
-    exact?: unknown;
-    changes?: unknown;
-    added?: unknown;
-    modified?: unknown;
-    deleted?: unknown;
-    instructions?: unknown;
-    failure?: unknown;
-    error?: unknown;
-  };
+  if (!isObject(value)) return false;
+  const details = value;
   return (
-    (details.status === "completed" || details.status === "failed") &&
-    typeof details.exact === "boolean" &&
-    Array.isArray(details.changes) &&
-    details.changes.every(isAppliedPatchChange) &&
-    isStringArray(details.added) &&
-    isStringArray(details.modified) &&
-    isStringArray(details.deleted) &&
-    (details.instructions === undefined ||
-      (Array.isArray(details.instructions) &&
-        details.instructions.every(isApplyPatchInstruction))) &&
-    (details.failure === undefined || isApplyPatchFailure(details.failure)) &&
-    (details.error === undefined || typeof details.error === "string")
+    (details["status"] === "completed" || details["status"] === "failed") &&
+    typeof details["exact"] === "boolean" &&
+    Array.isArray(details["changes"]) &&
+    details["changes"].every(isAppliedPatchChange) &&
+    isStringArray(details["added"]) &&
+    isStringArray(details["modified"]) &&
+    isStringArray(details["deleted"]) &&
+    (details["instructions"] === undefined ||
+      (Array.isArray(details["instructions"]) &&
+        details["instructions"].every(isApplyPatchInstruction))) &&
+    (details["failure"] === undefined || isApplyPatchFailure(details["failure"])) &&
+    (details["error"] === undefined || typeof details["error"] === "string")
   );
 }
 
@@ -458,7 +393,7 @@ function sortedChanges(details: ApplyPatchDetails, cwd: string): AppliedPatchCha
   );
 }
 
-function diffPalette(theme: Theme): DiffPalette {
+function diffPalette(theme: RenderTheme): DiffPalette {
   const light = usesLightToolPalette(theme);
   const truecolor = theme.getColorMode?.() !== "256color";
   if (truecolor) {
@@ -558,7 +493,7 @@ function highlightDiffLines(lines: DiffLine[], filePath: string): void {
   }
 }
 
-function styleContent(line: DiffLine, theme: Theme): string {
+function styleContent(line: DiffLine, theme: RenderTheme): string {
   const content = line.highlighted ?? line.content.replace(/\t/g, "    ");
   if (line.highlighted) {
     return line.kind === "delete" ? `${ANSI_DIM}${content}${ANSI_NORMAL_INTENSITY}` : content;
@@ -578,7 +513,7 @@ function renderDiffLine(
   line: DiffLine,
   width: number,
   lineNumberWidth: number,
-  theme: Theme,
+  theme: RenderTheme,
   palette: DiffPalette,
 ): string[] {
   const gutterWidth = Math.max(1, lineNumberWidth);
@@ -619,7 +554,11 @@ function renderDiffLine(
   });
 }
 
-function renderHeader(changes: readonly AppliedPatchChange[], theme: Theme, cwd: string): string {
+function renderHeader(
+  changes: readonly AppliedPatchChange[],
+  theme: RenderTheme,
+  cwd: string,
+): string {
   const additions = changes.reduce((total, change) => total + change.additions, 0);
   const deletions = changes.reduce((total, change) => total + change.deletions, 0);
   if (changes.length === 1) {
@@ -633,7 +572,7 @@ function renderHeader(changes: readonly AppliedPatchChange[], theme: Theme, cwd:
 function renderFailedChangeSummary(
   details: ApplyPatchDetails,
   changes: readonly AppliedPatchChange[],
-  theme: Theme,
+  theme: RenderTheme,
   cwd: string,
 ): string[] {
   const summary = applyPatchSummaryPaths(details);
@@ -673,7 +612,7 @@ function failedResultHasNoChanges(details: ApplyPatchDetails): boolean {
 function renderChange(
   change: AppliedPatchChange,
   width: number,
-  theme: Theme,
+  theme: RenderTheme,
   palette: DiffPalette,
 ): string[] {
   const lines = changeDiffLines(change);
@@ -688,7 +627,7 @@ function renderChange(
   return lines.flatMap((line) => renderDiffLine(line, width, lineNumberWidth, theme, palette));
 }
 
-function instructionStatusLabel(status: ApplyPatchInstructionStatus, theme: Theme): string {
+function instructionStatusLabel(status: ApplyPatchInstructionStatus, theme: RenderTheme): string {
   const label = `[${formatApplyPatchInstructionStatusLabel(status)}]`;
   switch (status) {
     case "applied":
@@ -736,7 +675,7 @@ function instructionChanges(
 
 function renderInstructionResults(
   details: ApplyPatchDetails,
-  theme: Theme,
+  theme: RenderTheme,
   cwd: string,
   expanded: boolean,
   width?: number,
@@ -779,7 +718,7 @@ function renderInstructionResults(
 
 export function formatApplyPatchRenderText(
   details: ApplyPatchDetails,
-  theme: Theme,
+  theme: RenderTheme,
   cwd = process.cwd(),
 ): string {
   const lines: string[] = [];
@@ -832,11 +771,11 @@ export function formatApplyPatchRenderText(
 
 export class ApplyPatchDiffComponent implements Component {
   private readonly details: ApplyPatchDetails;
-  private readonly theme: Theme;
+  private readonly theme: RenderTheme;
   private readonly cwd: string;
   private readonly expanded: boolean;
 
-  constructor(details: ApplyPatchDetails, theme: Theme, cwd: string, expanded: boolean) {
+  constructor(details: ApplyPatchDetails, theme: RenderTheme, cwd: string, expanded: boolean) {
     this.details = details;
     this.theme = theme;
     this.cwd = cwd;

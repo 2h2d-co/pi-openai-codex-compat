@@ -1,8 +1,10 @@
+import { isBoolean, isAllowedString, isNumber, nodeErrorCode } from "./value-contracts.ts";
 import { randomUUID } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
 import { mkdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
 import { CONFIG_DIR_NAME, getAgentDir } from "@earendil-works/pi-coding-agent";
+import { isObject, type JsonRecord } from "./codex-protocol.ts";
 
 export type WebSearchMode = "disabled" | "cached" | "indexed" | "live";
 export type TextVerbosity = "low" | "medium" | "high";
@@ -99,10 +101,6 @@ const CODEX_TOOL_BACKGROUNDS = new Set<CodexToolBackground>(["subtle", "status",
 
 type Environment = Readonly<Record<string, string | undefined>>;
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return value !== null && typeof value === "object" && !Array.isArray(value);
-}
-
 function invalidEnvironmentValue(name: string, value: string, expected: string): never {
   throw new Error(`Invalid ${name}=${JSON.stringify(value)}; expected ${expected}`);
 }
@@ -136,7 +134,7 @@ function environmentEnum<T extends string>(
   if (raw === undefined) return undefined;
 
   const value = raw.trim();
-  if (values.has(value as T)) return value as T;
+  if (isAllowedString(value, values)) return value;
   return invalidEnvironmentValue(name, raw, [...values].join(", "));
 }
 
@@ -237,46 +235,43 @@ export function parseEnvironmentConfig(environment: Environment = process.env): 
 }
 
 export function parseConfig(value: unknown): ConfigLayer {
-  if (!isRecord(value)) return {};
+  if (!isObject(value)) return {};
 
   const layer: ConfigLayer = {};
 
   const fastMode = value["fastMode"];
-  if (typeof fastMode === "boolean") layer.fastMode = fastMode;
+  if (isBoolean(fastMode)) layer.fastMode = fastMode;
 
   const responsesLite = value["responsesLite"];
-  if (typeof responsesLite === "boolean") layer.responsesLite = responsesLite;
+  if (isBoolean(responsesLite)) layer.responsesLite = responsesLite;
 
   const applyPatch = value["applyPatch"];
-  if (typeof applyPatch === "boolean") layer.applyPatch = applyPatch;
+  if (isBoolean(applyPatch)) layer.applyPatch = applyPatch;
 
   const applyPatchDebug = value["applyPatchDebug"];
-  if (typeof applyPatchDebug === "boolean") layer.applyPatchDebug = applyPatchDebug;
+  if (isBoolean(applyPatchDebug)) layer.applyPatchDebug = applyPatchDebug;
 
   const toolBackground = value["toolBackground"];
-  if (
-    typeof toolBackground === "string" &&
-    CODEX_TOOL_BACKGROUNDS.has(toolBackground as CodexToolBackground)
-  ) {
-    layer.toolBackground = toolBackground as CodexToolBackground;
+  if (isAllowedString(toolBackground, CODEX_TOOL_BACKGROUNDS)) {
+    layer.toolBackground = toolBackground;
   }
 
   const imageGeneration = value["imageGeneration"];
-  if (typeof imageGeneration === "boolean") layer.imageGeneration = imageGeneration;
+  if (isBoolean(imageGeneration)) layer.imageGeneration = imageGeneration;
 
   const imageDetail = value["imageDetail"];
-  if (typeof imageDetail === "string" && IMAGE_DETAILS.has(imageDetail as ImageDetail)) {
-    layer.imageDetail = imageDetail as ImageDetail;
+  if (isAllowedString(imageDetail, IMAGE_DETAILS)) {
+    layer.imageDetail = imageDetail;
   }
 
   const webRun = value["webRun"];
-  if (typeof webRun === "boolean") layer.webRun = webRun;
+  if (isBoolean(webRun)) layer.webRun = webRun;
 
   const threshold = value["autoCompactAtPercent"];
   if (threshold === null) {
     layer.autoCompactAtPercent = null;
   } else if (
-    typeof threshold === "number" &&
+    isNumber(threshold) &&
     Number.isFinite(threshold) &&
     threshold > 0 &&
     threshold <= 100
@@ -285,26 +280,23 @@ export function parseConfig(value: unknown): ConfigLayer {
   }
 
   const webSearch = value["webSearch"];
-  if (typeof webSearch === "string" && WEB_SEARCH_MODES.has(webSearch as WebSearchMode)) {
-    layer.webSearch = webSearch as WebSearchMode;
+  if (isAllowedString(webSearch, WEB_SEARCH_MODES)) {
+    layer.webSearch = webSearch;
   }
 
   const textVerbosity = value["textVerbosity"];
-  if (typeof textVerbosity === "string" && TEXT_VERBOSITIES.has(textVerbosity as TextVerbosity)) {
-    layer.textVerbosity = textVerbosity as TextVerbosity;
+  if (isAllowedString(textVerbosity, TEXT_VERBOSITIES)) {
+    layer.textVerbosity = textVerbosity;
   }
 
   const reasoningSummary = value["reasoningSummary"];
-  if (
-    typeof reasoningSummary === "string" &&
-    REASONING_SUMMARIES.has(reasoningSummary as ReasoningSummary)
-  ) {
-    layer.reasoningSummary = reasoningSummary as ReasoningSummary;
+  if (isAllowedString(reasoningSummary, REASONING_SUMMARIES)) {
+    layer.reasoningSummary = reasoningSummary;
   }
 
   const reasoningMode = value["reasoningMode"];
-  if (typeof reasoningMode === "string" && REASONING_MODES.has(reasoningMode as ReasoningMode)) {
-    layer.reasoningMode = reasoningMode as ReasoningMode;
+  if (isAllowedString(reasoningMode, REASONING_MODES)) {
+    layer.reasoningMode = reasoningMode;
   }
 
   return layer;
@@ -327,28 +319,23 @@ export function resolveConfig(
   environmentConfig: ConfigLayer = {},
 ): CodexCompatConfig {
   const merged = { ...globalConfig, ...projectConfig, ...environmentConfig };
-  return {
-    ...DEFAULT_CONFIG,
-    ...(typeof merged.fastMode === "boolean" ? { fastMode: merged.fastMode } : {}),
-    ...(typeof merged.responsesLite === "boolean" ? { responsesLite: merged.responsesLite } : {}),
-    ...(typeof merged.applyPatch === "boolean" ? { applyPatch: merged.applyPatch } : {}),
-    ...(typeof merged.applyPatchDebug === "boolean"
-      ? { applyPatchDebug: merged.applyPatchDebug }
-      : {}),
-    ...(merged.toolBackground ? { toolBackground: merged.toolBackground } : {}),
-    ...(typeof merged.imageGeneration === "boolean"
-      ? { imageGeneration: merged.imageGeneration }
-      : {}),
-    ...(merged.imageDetail ? { imageDetail: merged.imageDetail } : {}),
-    ...(typeof merged.webRun === "boolean" ? { webRun: merged.webRun } : {}),
-    ...(typeof merged.autoCompactAtPercent === "number"
-      ? { autoCompactAtPercent: merged.autoCompactAtPercent }
-      : {}),
-    ...(merged.webSearch ? { webSearch: merged.webSearch } : {}),
-    ...(merged.textVerbosity ? { textVerbosity: merged.textVerbosity } : {}),
-    ...(merged.reasoningSummary ? { reasoningSummary: merged.reasoningSummary } : {}),
-    ...(merged.reasoningMode ? { reasoningMode: merged.reasoningMode } : {}),
-  };
+  const config = { ...DEFAULT_CONFIG };
+  if (isBoolean(merged.fastMode)) config.fastMode = merged.fastMode;
+  if (isBoolean(merged.responsesLite)) config.responsesLite = merged.responsesLite;
+  if (isBoolean(merged.applyPatch)) config.applyPatch = merged.applyPatch;
+  if (isBoolean(merged.applyPatchDebug)) config.applyPatchDebug = merged.applyPatchDebug;
+  if (merged.toolBackground) config.toolBackground = merged.toolBackground;
+  if (isBoolean(merged.imageGeneration)) config.imageGeneration = merged.imageGeneration;
+  if (merged.imageDetail) config.imageDetail = merged.imageDetail;
+  if (isBoolean(merged.webRun)) config.webRun = merged.webRun;
+  if (isNumber(merged.autoCompactAtPercent)) {
+    config.autoCompactAtPercent = merged.autoCompactAtPercent;
+  }
+  if (merged.webSearch) config.webSearch = merged.webSearch;
+  if (merged.textVerbosity) config.textVerbosity = merged.textVerbosity;
+  if (merged.reasoningSummary) config.reasoningSummary = merged.reasoningSummary;
+  if (merged.reasoningMode) config.reasoningMode = merged.reasoningMode;
+  return config;
 }
 
 export function globalConfigPath(): string {
@@ -399,19 +386,19 @@ export function withoutEnvironmentOverrides(
   environmentConfig: ConfigLayer,
 ): ConfigLayer {
   const result = { ...layer };
-  for (const key of Object.keys(environmentConfig) as (keyof ConfigLayer)[]) {
-    delete result[key];
+  for (const key of Object.keys(environmentConfig)) {
+    Reflect.deleteProperty(result, key);
   }
   return result;
 }
 
-async function readWritableConfig(filePath: string): Promise<Record<string, unknown>> {
+async function readWritableConfig(filePath: string): Promise<JsonRecord> {
   try {
-    const value = JSON.parse(await readFile(filePath, "utf8")) as unknown;
-    if (!isRecord(value)) throw new Error("the root value must be a JSON object");
+    const value: unknown = JSON.parse(await readFile(filePath, "utf8"));
+    if (!isObject(value)) throw new Error("the root value must be a JSON object");
     return value;
   } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "ENOENT") return {};
+    if (nodeErrorCode(error) === "ENOENT") return {};
     const detail = error instanceof Error ? error.message : String(error);
     throw new Error(`Cannot update ${filePath}: ${detail}`);
   }

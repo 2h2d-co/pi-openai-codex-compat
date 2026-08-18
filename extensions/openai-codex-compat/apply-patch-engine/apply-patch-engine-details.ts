@@ -6,18 +6,18 @@ import type {
   ApplyPatchFailureDetails,
   ApplyPatchInstructionDetails,
   ApplyPatchInstructionEffect,
+  ApplyPatchInstructionReason,
 } from "./apply-patch-engine-contracts.ts";
 import type { SemanticPlan } from "./apply-patch-engine-filesystem-model.ts";
 import { resolvePatchPath } from "./apply-patch-engine-operation-semantics.ts";
 
-export function diffDetails(
-  oldContent: string,
-  newContent: string,
-): {
+export interface PatchDiffDetails {
   displayDiff: string;
   additions: number;
   deletions: number;
-} {
+}
+
+export function diffDetails(oldContent: string, newContent: string): PatchDiffDetails {
   const displayDiff = generateDiffString(oldContent, newContent, 1).diff;
   let additions = 0;
   let deletions = 0;
@@ -135,16 +135,19 @@ export function emptyDetails(): ApplyPatchDetails {
 }
 
 export function cloneApplyPatchDetails(details: ApplyPatchDetails): ApplyPatchDetails {
-  const cloneMatcher = (matcher: FormatterMatchFailureDetails): FormatterMatchFailureDetails => ({
-    ...matcher,
-    candidates: matcher.candidates.map((range) => ({ ...range })),
-    ...(matcher.previousCandidates
-      ? { previousCandidates: matcher.previousCandidates.map((range) => ({ ...range })) }
-      : {}),
-    ...(matcher.replacementCandidates
-      ? { replacementCandidates: matcher.replacementCandidates.map((range) => ({ ...range })) }
-      : {}),
-  });
+  const cloneMatcher = (matcher: FormatterMatchFailureDetails): FormatterMatchFailureDetails => {
+    const cloned: FormatterMatchFailureDetails = {
+      ...matcher,
+      candidates: matcher.candidates.map((range) => ({ ...range })),
+    };
+    if (matcher.previousCandidates) {
+      cloned.previousCandidates = matcher.previousCandidates.map((range) => ({ ...range }));
+    }
+    if (matcher.replacementCandidates) {
+      cloned.replacementCandidates = matcher.replacementCandidates.map((range) => ({ ...range }));
+    }
+    return cloned;
+  };
   const cloneEffect = (effect: ApplyPatchInstructionEffect): ApplyPatchInstructionEffect =>
     effect.kind === "replaced"
       ? {
@@ -153,51 +156,49 @@ export function cloneApplyPatchDetails(details: ApplyPatchDetails): ApplyPatchDe
           replacementEntry: { ...effect.replacementEntry },
         }
       : { ...effect };
-  return {
+  const cloned: ApplyPatchDetails = {
     ...details,
     changes: details.changes.map((change) => ({ ...change })),
     added: [...details.added],
     modified: [...details.modified],
     deleted: [...details.deleted],
-    ...(details.instructions
-      ? {
-          instructions: details.instructions.map((instruction) => ({
-            ...instruction,
-            ...(instruction.effects ? { effects: instruction.effects.map(cloneEffect) } : {}),
-            ...(instruction.finalStates
-              ? { finalStates: instruction.finalStates.map((state) => ({ ...state })) }
-              : {}),
-            ...(instruction.matcher ? { matcher: cloneMatcher(instruction.matcher) } : {}),
-            ...(instruction.changeIndexes ? { changeIndexes: [...instruction.changeIndexes] } : {}),
-            ...(instruction.reason
-              ? {
-                  reason: {
-                    ...instruction.reason,
-                    ...(instruction.reason.dominatingInstructions
-                      ? {
-                          dominatingInstructions: [...instruction.reason.dominatingInstructions],
-                        }
-                      : {}),
-                    ...(instruction.reason.relatedInstructions
-                      ? {
-                          relatedInstructions: [...instruction.reason.relatedInstructions],
-                        }
-                      : {}),
-                  },
-                }
-              : {}),
-          })),
-        }
-      : {}),
-    ...(details.failure
-      ? {
-          failure: {
-            ...details.failure,
-            ...(details.failure.matcher ? { matcher: cloneMatcher(details.failure.matcher) } : {}),
-          },
-        }
-      : {}),
   };
+  if (details.instructions) {
+    cloned.instructions = details.instructions.map((instruction) => {
+      const clonedInstruction: ApplyPatchInstructionDetails = { ...instruction };
+      if (instruction.effects) {
+        clonedInstruction.effects = instruction.effects.map(cloneEffect);
+      }
+      if (instruction.finalStates) {
+        clonedInstruction.finalStates = instruction.finalStates.map((state) => ({ ...state }));
+      }
+      if (instruction.matcher) {
+        clonedInstruction.matcher = cloneMatcher(instruction.matcher);
+      }
+      if (instruction.changeIndexes) {
+        clonedInstruction.changeIndexes = [...instruction.changeIndexes];
+      }
+      if (instruction.reason) {
+        const reason: ApplyPatchInstructionReason = { ...instruction.reason };
+        if (instruction.reason.dominatingInstructions) {
+          reason.dominatingInstructions = [...instruction.reason.dominatingInstructions];
+        }
+        if (instruction.reason.relatedInstructions) {
+          reason.relatedInstructions = [...instruction.reason.relatedInstructions];
+        }
+        clonedInstruction.reason = reason;
+      }
+      return clonedInstruction;
+    });
+  }
+  if (details.failure) {
+    const failure: ApplyPatchFailureDetails = { ...details.failure };
+    if (details.failure.matcher) {
+      failure.matcher = cloneMatcher(details.failure.matcher);
+    }
+    cloned.failure = failure;
+  }
+  return cloned;
 }
 
 export function appendChange(
@@ -265,11 +266,9 @@ export function failedApplyPatchDetails(
       failed.error = message;
     }
   }
-  details.failure = {
-    phase,
-    message,
-    ...(failedInstruction !== undefined ? { failedInstruction } : {}),
-    ...(matcher ? { matcher } : {}),
-  };
+  const failure: ApplyPatchFailureDetails = { phase, message };
+  if (failedInstruction !== undefined) failure.failedInstruction = failedInstruction;
+  if (matcher) failure.matcher = matcher;
+  details.failure = failure;
   return details;
 }

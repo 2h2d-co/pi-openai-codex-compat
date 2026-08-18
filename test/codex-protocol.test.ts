@@ -9,6 +9,7 @@ import {
   remoteCompactionHeaders,
   remoteCompactionPayload,
   requestRemoteCompaction,
+  requireResponsesItems,
   selectRetainedContext,
   truncateMiddleWithTokenBudget,
   type JsonRecord,
@@ -26,7 +27,7 @@ const codexModel = {
   cost: { input: 1, output: 2, cacheRead: 0.1, cacheWrite: 1.25 },
   contextWindow: 100_000,
   maxTokens: 10_000,
-} as Model<any>;
+} satisfies Model<any>;
 
 function user(text: string): ResponsesItem {
   return { role: "user", content: [{ type: "input_text", text }] };
@@ -57,7 +58,7 @@ void test("counts and retains context with Codex's four-byte approximation", () 
     },
     user("b".repeat(12)),
     user("c".repeat(12)),
-  ] as ResponsesItem[];
+  ] satisfies ResponsesItem[];
   assert.deepEqual(selectRetainedContext(history, 6), [user("b".repeat(12)), user("c".repeat(12))]);
 
   const boundary = selectRetainedContext([user("abcdefgh"), user("ijklmnop")], 3);
@@ -88,7 +89,7 @@ void test("builds the remote-compaction-v2 request and checkpoint history", () =
     priority: true,
   });
 
-  assert.deepEqual((payload.input as ResponsesItem[]).at(-1), {
+  assert.deepEqual(requireResponsesItems(payload.input).at(-1), {
     type: "compaction_trigger",
   });
   assert.equal(payload.service_tier, "priority");

@@ -154,10 +154,11 @@ export function finalPathInspection(
   state: ApplyPatchFinalPathState["state"],
   entry?: VirtualEntry,
 ): ApplyPatchFinalPathInspection {
-  return {
+  const inspection: ApplyPatchFinalPathInspection = {
     finalState: { path, state },
-    ...(entry ? { entry } : {}),
   };
+  if (entry) inspection.entry = entry;
+  return inspection;
 }
 
 export async function inspectFinalPath(

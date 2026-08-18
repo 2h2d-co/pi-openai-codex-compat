@@ -17,7 +17,6 @@ import {
   workspace,
   assertMissing,
   patch,
-  type Theme,
 } from "./apply-patch-semantic-harness.ts";
 
 void test("handles self moves, hard links, and proven repeated moves", async (t) => {
@@ -95,7 +94,7 @@ void test("follows symlinks for updates but replaces them for adds", async (t) =
   const theme = {
     fg: (_color: string, text: string) => text,
     bold: (text: string) => text,
-  } as unknown as Theme;
+  };
   const rendered = new ApplyPatchDiffComponent(details, theme, cwd, false).render(120).join("\n");
   assert.match(rendered, /Patch instruction results:/u);
   assert.match(

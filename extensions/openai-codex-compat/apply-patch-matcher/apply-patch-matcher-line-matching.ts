@@ -55,38 +55,40 @@ export function rustTrim(value: string): string {
 }
 
 export function normalizeFuzzyText(value: string): string {
-  const replacements: Record<string, string> = {
-    "\u2010": "-",
-    "\u2011": "-",
-    "\u2012": "-",
-    "\u2013": "-",
-    "\u2014": "-",
-    "\u2015": "-",
-    "\u2212": "-",
-    "\u2018": "'",
-    "\u2019": "'",
-    "\u201a": "'",
-    "\u201b": "'",
-    "\u201c": '"',
-    "\u201d": '"',
-    "\u201e": '"',
-    "\u201f": '"',
-    "\u00a0": " ",
-    "\u2002": " ",
-    "\u2003": " ",
-    "\u2004": " ",
-    "\u2005": " ",
-    "\u2006": " ",
-    "\u2007": " ",
-    "\u2008": " ",
-    "\u2009": " ",
-    "\u200a": " ",
-    "\u202f": " ",
-    "\u205f": " ",
-    "\u3000": " ",
-  };
+  const replacements = new Map(
+    Object.entries({
+      "\u2010": "-",
+      "\u2011": "-",
+      "\u2012": "-",
+      "\u2013": "-",
+      "\u2014": "-",
+      "\u2015": "-",
+      "\u2212": "-",
+      "\u2018": "'",
+      "\u2019": "'",
+      "\u201a": "'",
+      "\u201b": "'",
+      "\u201c": '"',
+      "\u201d": '"',
+      "\u201e": '"',
+      "\u201f": '"',
+      "\u00a0": " ",
+      "\u2002": " ",
+      "\u2003": " ",
+      "\u2004": " ",
+      "\u2005": " ",
+      "\u2006": " ",
+      "\u2007": " ",
+      "\u2008": " ",
+      "\u2009": " ",
+      "\u200a": " ",
+      "\u202f": " ",
+      "\u205f": " ",
+      "\u3000": " ",
+    } as const),
+  );
   return Array.from(rustTrim(value))
-    .map((character) => replacements[character] ?? character)
+    .map((character) => replacements.get(character) ?? character)
     .join("");
 }
 
@@ -241,24 +243,29 @@ export function replacementLines(
     : Buffer.from(`${lines.join(lineEnding)}${trailingNewline ? lineEnding : ""}`, "utf8");
 }
 
-export function fenceOpening(
-  line: string,
-): { marker: "`" | "~"; length: number; grammar?: GrammarName } | undefined {
-  const match = line.match(/^ {0,3}(`{3,}|~{3,})[\t ]*([A-Za-z0-9_+-]+)?[^\r\n]*$/u);
-  if (!match) return undefined;
-  const delimiter = match[1]!;
-  const grammar = match[2] ? GRAMMAR_BY_FENCE_INFO.get(match[2].toLowerCase()) : undefined;
-  return {
-    marker: delimiter[0] as "`" | "~",
-    length: delimiter.length,
-    ...(grammar ? { grammar } : {}),
-  };
+export interface FenceOpening {
+  marker: "`" | "~";
+  length: number;
+  grammar?: GrammarName;
 }
 
-export function fenceClosing(
-  line: string,
-  opening: { marker: "`" | "~"; length: number },
-): boolean {
+export function fenceOpening(line: string): FenceOpening | undefined {
+  const match = line.match(/^ {0,3}(`{3,}|~{3,})[\t ]*([A-Za-z0-9_+-]+)?[^\r\n]*$/u);
+  if (!match) return undefined;
+  const delimiter = match[1];
+  if (!delimiter) return undefined;
+  const marker = delimiter[0];
+  if (marker !== "`" && marker !== "~") return undefined;
+  const grammar = match[2] ? GRAMMAR_BY_FENCE_INFO.get(match[2].toLowerCase()) : undefined;
+  const opening: FenceOpening = {
+    marker,
+    length: delimiter.length,
+  };
+  if (grammar) opening.grammar = grammar;
+  return opening;
+}
+
+export function fenceClosing(line: string, opening: FenceOpening): boolean {
   const marker = opening.marker === "`" ? "`" : "~";
   const match = line.match(new RegExp(`^ {0,3}(${marker}{${opening.length},})[\\t ]*$`, "u"));
   return match !== null;

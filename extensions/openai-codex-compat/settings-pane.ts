@@ -1,3 +1,4 @@
+import { isAllowedString, isBoolean, isNumber } from "./value-contracts.ts";
 import {
   getSettingsListTheme,
   type ExtensionAPI,
@@ -40,6 +41,22 @@ type SettingId =
   | "webRun"
   | "webSearch"
   | "autoCompactAtPercent";
+
+const SETTING_IDS = new Set<SettingId>([
+  "fastMode",
+  "responsesLite",
+  "textVerbosity",
+  "reasoningSummary",
+  "reasoningMode",
+  "toolBackground",
+  "applyPatch",
+  "applyPatchDebug",
+  "imageGeneration",
+  "imageDetail",
+  "webRun",
+  "webSearch",
+  "autoCompactAtPercent",
+]);
 
 export type SettingsCallbacks = {
   getConfig?: (ctx: ExtensionCommandContext) => CodexCompatConfig;
@@ -155,7 +172,10 @@ export function settingItems(
   ];
 
   return items.map((item) => {
-    const id = item.id as SettingId;
+    if (!isAllowedString(item.id, SETTING_IDS)) {
+      throw new Error(`Unknown OpenAI Codex setting: ${item.id}`);
+    }
+    const id = item.id;
     if (!Object.hasOwn(environmentConfig, id)) return item;
 
     const variable = CONFIG_ENVIRONMENT_VARIABLES[id];
@@ -168,7 +188,8 @@ export function settingItems(
 }
 
 export function settingPatch(id: string, value: string): ConfigLayer | undefined {
-  switch (id as SettingId) {
+  if (!isAllowedString(id, SETTING_IDS)) return undefined;
+  switch (id) {
     case "fastMode":
       return value === "on" || value === "off" ? { fastMode: value === "on" } : undefined;
     case "responsesLite":
@@ -221,21 +242,21 @@ export function settingPatch(id: string, value: string): ConfigLayer | undefined
 
 function applySettingPatch(config: CodexCompatConfig, patch: ConfigLayer): CodexCompatConfig {
   const next: CodexCompatConfig = { ...config };
-  if (typeof patch.fastMode === "boolean") next.fastMode = patch.fastMode;
-  if (typeof patch.responsesLite === "boolean") next.responsesLite = patch.responsesLite;
-  if (typeof patch.applyPatch === "boolean") next.applyPatch = patch.applyPatch;
-  if (typeof patch.applyPatchDebug === "boolean") next.applyPatchDebug = patch.applyPatchDebug;
+  if (isBoolean(patch.fastMode)) next.fastMode = patch.fastMode;
+  if (isBoolean(patch.responsesLite)) next.responsesLite = patch.responsesLite;
+  if (isBoolean(patch.applyPatch)) next.applyPatch = patch.applyPatch;
+  if (isBoolean(patch.applyPatchDebug)) next.applyPatchDebug = patch.applyPatchDebug;
   if (patch.toolBackground) next.toolBackground = patch.toolBackground;
-  if (typeof patch.imageGeneration === "boolean") {
+  if (isBoolean(patch.imageGeneration)) {
     next.imageGeneration = patch.imageGeneration;
   }
   if (patch.imageDetail) next.imageDetail = patch.imageDetail;
-  if (typeof patch.webRun === "boolean") next.webRun = patch.webRun;
+  if (isBoolean(patch.webRun)) next.webRun = patch.webRun;
   if (patch.webSearch) next.webSearch = patch.webSearch;
   if (patch.textVerbosity) next.textVerbosity = patch.textVerbosity;
   if (patch.reasoningSummary) next.reasoningSummary = patch.reasoningSummary;
   if (patch.reasoningMode) next.reasoningMode = patch.reasoningMode;
-  if (typeof patch.autoCompactAtPercent === "number") {
+  if (isNumber(patch.autoCompactAtPercent)) {
     next.autoCompactAtPercent = patch.autoCompactAtPercent;
   } else if (patch.autoCompactAtPercent === null) {
     delete next.autoCompactAtPercent;

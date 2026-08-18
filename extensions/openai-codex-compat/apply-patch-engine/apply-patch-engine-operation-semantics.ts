@@ -99,13 +99,14 @@ export function instructionForOperation(
   index: number,
 ): ApplyPatchInstructionDetails {
   if (operation.kind === "update") {
-    return {
+    const instruction: ApplyPatchInstructionDetails = {
       index: index + 1,
       kind: operation.moveTo && chunksAreIdentity(operation.chunks) ? "move" : "update",
       path: operation.path,
-      ...(operation.moveTo ? { moveTo: operation.moveTo } : {}),
       status: "not-run",
     };
+    if (operation.moveTo) instruction.moveTo = operation.moveTo;
+    return instruction;
   }
   return {
     index: index + 1,

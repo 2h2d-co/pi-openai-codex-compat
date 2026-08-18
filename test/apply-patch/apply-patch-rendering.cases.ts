@@ -12,7 +12,6 @@ import {
   previewPatch,
   formatApplyPatchRenderText,
   workspace,
-  type Theme,
   type ApplyPatchDetails,
 } from "./apply-patch-harness.ts";
 
@@ -51,7 +50,7 @@ void test("renders paths relative to cwd, home-abbreviated, or absolute", async 
   const theme = {
     fg: (_color: string, text: string) => text,
     bold: (text: string) => text,
-  } as unknown as Theme;
+  };
 
   const rendered = formatApplyPatchRenderText(details, theme, cwd);
 
@@ -102,7 +101,7 @@ void test("renders repeated operations on one path as one final-state diff", asy
   const theme = {
     fg: (_color: string, text: string) => text,
     bold: (text: string) => text,
-  } as unknown as Theme;
+  };
   await writeFile(join(cwd, "replaced.txt"), "shared\nold\n");
 
   const replacementPatch = `*** Begin Patch

@@ -1,9 +1,16 @@
-import type { Theme } from "@earendil-works/pi-coding-agent";
+import type { Theme as FrameworkTheme } from "@earendil-works/pi-coding-agent";
 import { type Component, truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
 import type { CodexToolBackground } from "./config.ts";
 
 export type CodexToolSurfaceStatus = "pending" | "success" | "error";
 export type CodexToolBackgroundResolver = () => CodexToolBackground;
+export interface RenderTheme {
+  fg: FrameworkTheme["fg"];
+  bold: FrameworkTheme["bold"];
+  getBgAnsi?: FrameworkTheme["getBgAnsi"];
+  getColorMode?: FrameworkTheme["getColorMode"];
+  name?: string;
+}
 type ThemeBg =
   | "selectedBg"
   | "userMessageBg"
@@ -57,7 +64,10 @@ function xterm256ToRgb(index: number): [number, number, number] {
   return [gray, gray, gray];
 }
 
-function backgroundRgb(theme: Theme, background: ThemeBg): [number, number, number] | undefined {
+function backgroundRgb(
+  theme: RenderTheme,
+  background: ThemeBg,
+): [number, number, number] | undefined {
   const ansi = theme.getBgAnsi?.(background);
   if (!ansi) return undefined;
   const truecolor = ansi.match(TRUECOLOR_BACKGROUND_PATTERN);
@@ -68,7 +78,7 @@ function backgroundRgb(theme: Theme, background: ThemeBg): [number, number, numb
   return indexed ? xterm256ToRgb(Number(indexed[1])) : undefined;
 }
 
-export function usesLightToolPalette(theme: Theme): boolean {
+export function usesLightToolPalette(theme: RenderTheme): boolean {
   const rgb = backgroundRgb(theme, "toolSuccessBg");
   if (rgb) {
     const red = rgb[0] / 255;
@@ -92,7 +102,7 @@ function blendRgb(
   ];
 }
 
-function subtleBackground(theme: Theme): string {
+function subtleBackground(theme: RenderTheme): string {
   const light = usesLightToolPalette(theme);
   if (theme.getColorMode?.() === "256color") {
     return light ? LIGHT_256_SURFACE_BG : DARK_256_SURFACE_BG;
@@ -107,14 +117,14 @@ function subtleBackground(theme: Theme): string {
   return `\u001b[48;2;${red};${green};${blue}m`;
 }
 
-function statusBackground(theme: Theme, status: CodexToolSurfaceStatus): string {
+function statusBackground(theme: RenderTheme, status: CodexToolSurfaceStatus): string {
   const token: ThemeBg =
     status === "pending" ? "toolPendingBg" : status === "error" ? "toolErrorBg" : "toolSuccessBg";
   return theme.getBgAnsi?.(token) ?? "";
 }
 
 function surfaceBackground(
-  theme: Theme,
+  theme: RenderTheme,
   style: CodexToolBackground,
   status: CodexToolSurfaceStatus,
 ): string {
@@ -140,7 +150,7 @@ function fillLine(line: string, width: number, background: string): string {
 
 export class CodexToolSurfaceComponent implements Component {
   private readonly component: Component;
-  private readonly theme: Theme;
+  private readonly theme: RenderTheme;
   private readonly resolveBackground: CodexToolBackgroundResolver;
   private readonly status: CodexToolSurfaceStatus;
   private readonly topPadding: boolean;
@@ -148,7 +158,7 @@ export class CodexToolSurfaceComponent implements Component {
 
   constructor(
     component: Component,
-    theme: Theme,
+    theme: RenderTheme,
     options: {
       background: CodexToolBackgroundResolver;
       status: CodexToolSurfaceStatus;

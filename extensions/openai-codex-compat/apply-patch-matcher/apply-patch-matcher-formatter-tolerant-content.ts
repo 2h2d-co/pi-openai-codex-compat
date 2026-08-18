@@ -32,7 +32,7 @@ import {
   grammarForPath,
   lineBounds,
   parseFragment,
-  relativeShape,
+  relativeSyntaxPath,
   structuralDocuments,
   tokenSignatureMatches,
 } from "./apply-patch-matcher-structural-runtime.ts";
@@ -75,11 +75,13 @@ export function editGroups(chunks: readonly UpdateChunk[]): EditGroup[] {
   return groups;
 }
 
-export function normalizedSource(content: string): {
+export interface NormalizedSource {
   source: string;
   lines: string[];
   lineStarts: number[];
-} {
+}
+
+export function normalizedSource(content: string): NormalizedSource {
   const lines = content.split("\n");
   if (lines.at(-1) === "") lines.pop();
   const source = lines.length === 0 ? "" : `${lines.join("\n")}\n`;
@@ -252,14 +254,14 @@ export async function tokenCandidates(
   throwIfAborted(signal);
   const oldTokens = await parseFragment(document.grammar, group.oldLines.join("\n"));
   if (!oldTokens || oldTokens.length < 2 || oldTokens.length > document.tokens.length) return [];
-  const expectedShape = relativeShape(oldTokens);
+  const expectedPath = relativeSyntaxPath(oldTokens);
   const sourceBytes = Buffer.from(source, "utf8");
   const candidates: EditCandidate[] = [];
 
   for (let index = 0; index <= document.tokens.length - oldTokens.length; index++) {
     throwIfAborted(signal);
     const window = document.tokens.slice(index, index + oldTokens.length);
-    if (!tokenSignatureMatches(window, oldTokens) || relativeShape(window) !== expectedShape) {
+    if (!tokenSignatureMatches(window, oldTokens) || relativeSyntaxPath(window) !== expectedPath) {
       continue;
     }
     const first = window[0]!;
@@ -316,11 +318,16 @@ export function applyEdits(source: Buffer, edits: readonly ByteEdit[]): Buffer {
   return result;
 }
 
+export interface DistinctMappedOutputs {
+  outputs: Map<string, Buffer>;
+  exhaustive: boolean;
+}
+
 export function distinctMappedOutputs(
   source: string,
   candidateSets: readonly EditCandidate[][],
   signal?: AbortSignal,
-): { outputs: Map<string, Buffer>; exhaustive: boolean } {
+): DistinctMappedOutputs {
   const outputs = new Map<string, Buffer>();
   const sourceBytes = Buffer.from(source, "utf8");
   let mappings = 0;
@@ -391,10 +398,10 @@ export function noOrderedMappingDetails(
       candidates: candidateRanges(groupCandidates),
       previousGroupIndex: groupIndex,
       previousCandidates: candidateRanges(reachable),
-      ...(reverseOrdered ? { reverseOrdered: true } : {}),
-      ...(overlapping ? { overlapping: true } : {}),
-      ...(excerpt ? { oldExcerpt: excerpt } : {}),
     };
+    if (reverseOrdered) details.reverseOrdered = true;
+    if (overlapping) details.overlapping = true;
+    if (excerpt) details.oldExcerpt = excerpt;
     return new FormatterMatchError(formatFormatterMatchFailure(details), details);
   }
   const details: FormatterMatchFailureDetails = {
@@ -515,14 +522,12 @@ export async function deriveFormatterTolerantContent(
         chunkIndex: group.chunkIndex,
         candidateCount: 0,
         candidates: [],
-        ...(replacements.length > 0
-          ? {
-              replacementCandidateCount: replacements.length,
-              replacementCandidates: candidateRanges(replacements),
-            }
-          : {}),
-        ...(excerpt ? { oldExcerpt: excerpt } : {}),
       };
+      if (replacements.length > 0) {
+        details.replacementCandidateCount = replacements.length;
+        details.replacementCandidates = candidateRanges(replacements);
+      }
+      if (excerpt) details.oldExcerpt = excerpt;
       throw new FormatterMatchError(formatFormatterMatchFailure(details), details);
     }
     candidates.push(eligible);
