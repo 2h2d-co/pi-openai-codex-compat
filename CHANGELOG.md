@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Fixed
+
+- Reconnect expired 60-minute Codex WebSockets transparently when lifecycle events precede the connection-limit response.
+
 ### Changed
 
 - Run isolated test files across four workers, bypass unasserted wall-clock response-retry waits in integration coverage, and assert the retry-delay calculation directly.

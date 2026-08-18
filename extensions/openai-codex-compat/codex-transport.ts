@@ -361,8 +361,8 @@ export class CodexTransport {
           return;
         } catch (error) {
           const aborted = options.signal?.aborted;
-          const connectionLimitBeforeStart =
-            !emitted && isWebSocketConnectionLimitReachedError(error);
+          const connectionLimitBeforeVisibleOutput =
+            !visibleOutputEmitted && isWebSocketConnectionLimitReachedError(error);
           if (!aborted && isPreviousResponseNotFoundError(error) && !retriedMissingContinuation) {
             retriedMissingContinuation = true;
             if (attempt) {
@@ -404,14 +404,14 @@ export class CodexTransport {
             }
             continue;
           }
-          if (!aborted && connectionLimitBeforeStart && !retriedConnectionLimit) {
+          if (!aborted && connectionLimitBeforeVisibleOutput && !retriedConnectionLimit) {
             retriedConnectionLimit = true;
             continue;
           }
           const retryableTransportError =
             !aborted &&
             !visibleOutputEmitted &&
-            (!isCodexNonTransportError(error) || connectionLimitBeforeStart);
+            (!isCodexNonTransportError(error) || connectionLimitBeforeVisibleOutput);
           if (retryableTransportError && websocketRetries < websocketMaxRetries) {
             websocketRetries += 1;
             if (attempt) {
@@ -435,7 +435,7 @@ export class CodexTransport {
             );
             continue;
           }
-          if (aborted || (isCodexNonTransportError(error) && !connectionLimitBeforeStart)) {
+          if (aborted || (isCodexNonTransportError(error) && !connectionLimitBeforeVisibleOutput)) {
             throw error;
           }
           options.onTransportDiagnostic?.(
