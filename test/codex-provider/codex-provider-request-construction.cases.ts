@@ -25,7 +25,7 @@ import {
   type CodexThreadMarkerData,
 } from "./codex-provider-harness.ts";
 
-void test("streams ordinary responses without persisting redundant native data", async () => {
+test("streams ordinary responses without persisting redundant native data", async () => {
   const user = userEntry("user-1", "hello");
   const harness = createHarness([user]);
   const requests: JsonRecord[] = [];
@@ -49,7 +49,7 @@ void test("streams ordinary responses without persisting redundant native data",
   assert.equal(harness.customEntries.length, 0);
 });
 
-void test("prewarms only the static prefix before its first WebSocket turn", async () => {
+test("prewarms only the static prefix before its first WebSocket turn", async () => {
   const user = userEntry("user-1", "hello");
   const harness = createHarness([user]);
   const prewarms: JsonRecord[] = [];
@@ -101,7 +101,7 @@ void test("prewarms only the static prefix before its first WebSocket turn", asy
   assert.equal(prewarmCacheDiagnostics?.["staticInputItems"], 0);
 });
 
-void test("sends GPT-5.6 requests through the Responses Lite envelope", async () => {
+test("sends GPT-5.6 requests through the Responses Lite envelope", async () => {
   const user = userEntry("user-1", "hello");
   const harness = createHarness([user], {
     ...DEFAULT_CONFIG,
@@ -154,7 +154,7 @@ void test("sends GPT-5.6 requests through the Responses Lite envelope", async ()
   assert.equal(prewarmCacheDiagnostics?.["staticInputItems"], 2);
 });
 
-void test("uses ordinary Responses when Responses Lite is disabled", async () => {
+test("uses ordinary Responses when Responses Lite is disabled", async () => {
   const user = userEntry("user-1", "hello");
   const report: Tool = {
     name: "report",
@@ -215,7 +215,7 @@ void test("uses ordinary Responses when Responses Lite is disabled", async () =>
   assert.equal(cacheDiagnostics?.["staticInputItems"], 0);
 });
 
-void test("reuses one turn id throughout an agent run", async () => {
+test("reuses one turn id throughout an agent run", async () => {
   const user = userEntry("user-1", "hello");
   const harness = createHarness([user]);
   const turnIds: string[] = [];
@@ -244,7 +244,7 @@ void test("reuses one turn id throughout an agent run", async () => {
   assert.notEqual(turnIds[1], turnIds[2]);
 });
 
-void test("switches branch thread metadata while preserving prompt-cache identity", async () => {
+test("switches branch thread metadata while preserving prompt-cache identity", async () => {
   const root = userEntry("user-1", "root");
   const harness = createHarness([root]);
   const requests: JsonRecord[] = [];

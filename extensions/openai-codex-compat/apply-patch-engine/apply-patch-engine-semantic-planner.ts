@@ -127,6 +127,7 @@ export class SemanticPlanner {
           }
           instruction.status = "no-op";
         }
+        // oxlint-disable-next-line 2h2d/no-silent-error-suppression -- A proven dead operation safely dominates its planning failure; every unproven failure is preserved below.
       } catch (error) {
         if (operation.kind === "update") {
           const move = semanticMoveOperation(operation);

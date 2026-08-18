@@ -4,6 +4,7 @@
 
 ### Fixed
 
+- Preserve unexpected parser, matcher, and asynchronous transport failures instead of replacing or detaching them.
 - Recover expired 60-minute Codex WebSockets in the provider response loop, retaining committed items, discarding provisional output, and waiting for Pi to record completed tool outputs before continuing.
 
 ### Changed

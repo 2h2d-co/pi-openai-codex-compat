@@ -214,7 +214,7 @@ export async function startCodexServer(
       response.end(sse(events));
     };
     // oxlint-disable-next-line 2h2d/no-silent-error-suppression -- Destroying the response forwards request-processing failures to the test client.
-    void requestTask().catch((error: unknown) => {
+    requestTask().catch((error: unknown) => {
       response.destroy(error instanceof Error ? error : new Error(String(error)));
     });
   });

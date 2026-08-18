@@ -14,7 +14,7 @@ import {
   type ApplyPatchDetails,
 } from "./apply-patch-harness.ts";
 
-void test("renders paths relative to cwd, home-abbreviated, or absolute", async (t) => {
+test("renders paths relative to cwd, home-abbreviated, or absolute", async (t) => {
   const cwd = await workspace(t);
   const localPath = join(cwd, "nested", "local.ts");
   const homePath = join(homedir(), ".pi-codex-render-home.ts");
@@ -57,7 +57,7 @@ void test("renders paths relative to cwd, home-abbreviated, or absolute", async 
   assert.ok(rendered.includes(`${join("~", ".pi-codex-render-home.ts")} → ${externalPath}`));
 });
 
-void test("applies add, update, and delete hunks with Codex result details", async (t) => {
+test("applies add, update, and delete hunks with Codex result details", async (t) => {
   const cwd = await workspace(t);
   await mkdir(join(cwd, "src"));
   await writeFile(join(cwd, "src/current.txt"), "alpha\ntarget\nomega\n");
@@ -95,7 +95,7 @@ void test("applies add, update, and delete hunks with Codex result details", asy
   await assert.rejects(readFile(join(cwd, "obsolete.txt"), "utf8"), { code: "ENOENT" });
 });
 
-void test("renders repeated operations on one path as one final-state diff", async (t) => {
+test("renders repeated operations on one path as one final-state diff", async (t) => {
   const cwd = await workspace(t);
   const theme = {
     fg: (_color: string, text: string) => text,

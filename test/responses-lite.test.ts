@@ -13,7 +13,7 @@ import {
   usesResponsesLite,
 } from "../extensions/openai-codex-compat/responses-lite.ts";
 
-void test("selects the official GPT-5.6 Responses Lite models", () => {
+test("selects the official GPT-5.6 Responses Lite models", () => {
   assert.equal(usesResponsesLite("gpt-5.6-sol"), true);
   assert.equal(usesResponsesLite("gpt-5.6-terra"), true);
   assert.equal(usesResponsesLite("gpt-5.6-luna"), true);
@@ -21,7 +21,7 @@ void test("selects the official GPT-5.6 Responses Lite models", () => {
   assert.equal(usesResponsesLite("gpt-5.6-sol", false), false);
 });
 
-void test("builds the Responses Lite instruction and tool prefix", () => {
+test("builds the Responses Lite instruction and tool prefix", () => {
   const payload = applyResponsesLite(
     {
       model: "gpt-5.6-sol",
@@ -138,7 +138,7 @@ void test("builds the Responses Lite instruction and tool prefix", () => {
   assert.equal(requireJsonRecord(payload.client_metadata)[RESPONSES_LITE_WS_METADATA_KEY], "true");
 });
 
-void test("matches upstream default-namespace grouping and ordering", () => {
+test("matches upstream default-namespace grouping and ordering", () => {
   const payload = applyResponsesLite(
     {
       input: [],
@@ -198,7 +198,7 @@ void test("matches upstream default-namespace grouping and ordering", () => {
   ]);
 });
 
-void test("omits an empty default namespace and rejects invalid members", () => {
+test("omits an empty default namespace and rejects invalid members", () => {
   const payload = applyResponsesLite(
     {
       input: [],
@@ -246,7 +246,7 @@ void test("omits an empty default namespace and rejects invalid members", () => 
   );
 });
 
-void test("leaves ordinary Responses requests unchanged", () => {
+test("leaves ordinary Responses requests unchanged", () => {
   const payload = { input: [], instructions: "ordinary" };
   assert.equal(applyResponsesLite(payload, "gpt-5.5"), payload);
   assert.equal(applyResponsesLite(payload, "gpt-5.6-sol", false), payload);

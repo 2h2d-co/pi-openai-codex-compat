@@ -24,7 +24,7 @@ import {
   type CodexToolBackground,
 } from "./apply-patch-harness.ts";
 
-void test("registers the Codex freeform tool with model, UI, and failed-history parity", async (t) => {
+test("registers the Codex freeform tool with model, UI, and failed-history parity", async (t) => {
   initTheme("dark", false);
   const cwd = await workspace(t);
   let registered: ApplyPatchTool | undefined;

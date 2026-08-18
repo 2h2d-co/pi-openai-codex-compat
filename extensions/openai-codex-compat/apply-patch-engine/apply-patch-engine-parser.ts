@@ -312,6 +312,7 @@ export function parsePatchDocument(patch: string): ParsedPatch {
   try {
     checkBoundaries(lines);
   } catch (originalError) {
+    if (!(originalError instanceof ApplyPatchParseError)) throw originalError;
     const first = originalLines[0];
     const last = originalLines.at(-1);
     const heredocStart = first === "<<EOF" || first === "<<'EOF'" || first === '<<"EOF"';

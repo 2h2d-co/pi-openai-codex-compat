@@ -19,7 +19,7 @@ import {
   patch,
 } from "./apply-patch-semantic-harness.ts";
 
-void test("moves opaque regular files without decoding or changing bytes", async (t) => {
+test("moves opaque regular files without decoding or changing bytes", async (t) => {
   const cwd = await workspace(t);
   const fixtures = new Map<string, Buffer>([
     ["invalid.bin", Buffer.from([0xff, 0xfe, 0x00, 0x0a])],
@@ -52,7 +52,7 @@ void test("moves opaque regular files without decoding or changing bytes", async
   assert.equal((await stat(join(cwd, "moved", "invalid.bin"))).mode & 0o777, 0o755);
 });
 
-void test("moves symlink entries and reports both replacement entry types", async (t) => {
+test("moves symlink entries and reports both replacement entry types", async (t) => {
   const cwd = await workspace(t);
   await writeFile(join(cwd, "target.txt"), "target stays unchanged\n");
   await symlink("target.txt", join(cwd, "source-link"));
@@ -188,7 +188,7 @@ void test("moves symlink entries and reports both replacement entry types", asyn
   );
 });
 
-void test("evaluates repeated paths against sequential virtual state", async (t) => {
+test("evaluates repeated paths against sequential virtual state", async (t) => {
   const cwd = await workspace(t);
   await writeFile(join(cwd, "text-a.txt"), "old\n");
   await writeFile(join(cwd, "pure-a.bin"), Buffer.from([0xff]));
@@ -238,7 +238,7 @@ void test("evaluates repeated paths against sequential virtual state", async (t)
   assert.equal(await readFile(join(cwd, "back-a.txt"), "utf8"), "back\n");
 });
 
-void test("skips a failed move only when every entry effect is safely dominated", async (t) => {
+test("skips a failed move only when every entry effect is safely dominated", async (t) => {
   const cwd = await workspace(t);
   await writeFile(join(cwd, "source.txt"), "source\n");
   await writeFile(join(cwd, "destination.txt"), "destination\n");
@@ -279,7 +279,7 @@ void test("skips a failed move only when every entry effect is safely dominated"
   await assertMissing(join(cwd, "nested"));
 });
 
-void test("rejects observed unknown updates and binary text edits before any writes", async (t) => {
+test("rejects observed unknown updates and binary text edits before any writes", async (t) => {
   const cwd = await workspace(t);
   await writeFile(join(cwd, "a.txt"), "source\n");
   await assert.rejects(
@@ -314,7 +314,7 @@ void test("rejects observed unknown updates and binary text edits before any wri
   await assertMissing(join(cwd, "moved.bin"));
 });
 
-void test("keeps empty files distinct from absent paths", async (t) => {
+test("keeps empty files distinct from absent paths", async (t) => {
   const cwd = await workspace(t);
   await writeFile(join(cwd, "only-line.txt"), "only line\n");
 

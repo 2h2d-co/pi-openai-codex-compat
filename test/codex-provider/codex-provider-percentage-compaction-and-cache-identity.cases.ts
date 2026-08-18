@@ -23,7 +23,7 @@ import {
   type JsonRecord,
 } from "./codex-provider-harness.ts";
 
-void test("performs percentage compaction before sampling the current user input", async () => {
+test("performs percentage compaction before sampling the current user input", async () => {
   const first = userEntry("user-1", "old request");
   const assistant = assistantEntry("assistant-1", "user-1", "old response");
   const current = userEntry("user-2", "continue", "assistant-1");
@@ -80,7 +80,7 @@ void test("performs percentage compaction before sampling the current user input
   });
 });
 
-void test("keeps native history separate from hashed or disabled cache identity", async () => {
+test("keeps native history separate from hashed or disabled cache identity", async () => {
   const first = userEntry("user-1", "old request");
   const checkpoint = {
     type: "compaction",

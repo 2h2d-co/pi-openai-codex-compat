@@ -24,7 +24,7 @@ import {
   pathLikeBasename,
 } from "./apply-patch-semantic-harness.ts";
 
-void test(
+test(
   "plans cross-filesystem hard-link moves with independent destination identity",
   { skip: process.platform === "win32" },
   async (t) => {
@@ -71,7 +71,7 @@ void test(
   },
 );
 
-void test("executes planned move strategies and reports every injected failure prefix", async (t) => {
+test("executes planned move strategies and reports every injected failure prefix", async (t) => {
   const cwd = await workspace(t);
 
   await writeFile(join(cwd, "forced-a.txt"), "before\n");
@@ -406,7 +406,7 @@ void test("executes planned move strategies and reports every injected failure p
   assert.equal(await readFile(join(cwd, "windows-destination.txt"), "utf8"), "source\n");
 });
 
-void test("reports deterministic file states after write failures", async (t) => {
+test("reports deterministic file states after write failures", async (t) => {
   const cwd = await workspace(t);
   const theme = {
     fg: (_color: string, text: string) => text,
@@ -586,7 +586,7 @@ void test("reports deterministic file states after write failures", async (t) =>
   );
 });
 
-void test("reports parent, temporary, and post-operation failure effects", async (t) => {
+test("reports parent, temporary, and post-operation failure effects", async (t) => {
   const cwd = await workspace(t);
   const theme = {
     fg: (_color: string, text: string) => text,

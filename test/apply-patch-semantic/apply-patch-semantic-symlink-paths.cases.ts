@@ -18,7 +18,7 @@ import {
   patch,
 } from "./apply-patch-semantic-harness.ts";
 
-void test("deletes symlink entries without deleting their targets", async (t) => {
+test("deletes symlink entries without deleting their targets", async (t) => {
   const cwd = await workspace(t);
   await writeFile(join(cwd, "target.txt"), "preserved\n");
   await symlink("target.txt", join(cwd, "alias.txt"));
@@ -78,7 +78,7 @@ void test("deletes symlink entries without deleting their targets", async (t) =>
   assert.doesNotMatch(JSON.stringify(followed.changes[1]), /old target|new target/u);
 });
 
-void test("does not dereference cyclic symlinks for entry-only operations or no-ops", async (t) => {
+test("does not dereference cyclic symlinks for entry-only operations or no-ops", async (t) => {
   const cwd = await workspace(t);
   const createCycle = async (prefix: string): Promise<void> => {
     await symlink(`${prefix}-b`, join(cwd, `${prefix}-a`));
@@ -128,7 +128,7 @@ void test("does not dereference cyclic symlinks for entry-only operations or no-
   assert.equal(await readlink(join(cwd, "destination-b")), "destination-a");
 });
 
-void test("shares virtual state through a symlinked parent without moving the entry twice", async (t) => {
+test("shares virtual state through a symlinked parent without moving the entry twice", async (t) => {
   const cwd = await workspace(t);
   await mkdir(join(cwd, "real"));
   await symlink("real", join(cwd, "alias"));
@@ -148,7 +148,7 @@ void test("shares virtual state through a symlinked parent without moving the en
   assert.deepEqual(await readdir(join(cwd, "real")), ["file.txt"]);
 });
 
-void test("updates same-entry moves safely through a symlinked parent", async (t) => {
+test("updates same-entry moves safely through a symlinked parent", async (t) => {
   const cwd = await workspace(t);
   await mkdir(join(cwd, "real"));
   await symlink("real", join(cwd, "alias"));
@@ -174,7 +174,7 @@ void test("updates same-entry moves safely through a symlinked parent", async (t
   );
 });
 
-void test("replaces a destination symlink that points back to the move source", async (t) => {
+test("replaces a destination symlink that points back to the move source", async (t) => {
   const cwd = await workspace(t);
   await writeFile(join(cwd, "source.txt"), "old\n");
   await symlink("source.txt", join(cwd, "destination.txt"));

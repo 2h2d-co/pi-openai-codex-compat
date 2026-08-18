@@ -11,7 +11,7 @@ import {
   withCodexRequestMetadata,
 } from "../extensions/openai-codex-compat/codex-metadata.ts";
 
-void test("adds Codex session, thread, turn, and request-kind metadata", () => {
+test("adds Codex session, thread, turn, and request-kind metadata", () => {
   const installationId = "11111111-1111-4111-8111-111111111111";
   const payload = withCodexRequestMetadata(
     { input: [], client_metadata: { retained: "value" } },
@@ -56,7 +56,7 @@ void test("adds Codex session, thread, turn, and request-kind metadata", () => {
   assert.equal(headers.get(CODEX_TURN_METADATA_HEADER), metadata[CODEX_TURN_METADATA_HEADER]);
 });
 
-void test("adds the official nested metadata to compaction requests only", () => {
+test("adds the official nested metadata to compaction requests only", () => {
   const compaction = responsesCompactionV2Metadata("auto", "context_limit", "mid_turn");
   const payload = withCodexRequestMetadata(
     { input: [] },
@@ -94,7 +94,7 @@ void test("adds the official nested metadata to compaction requests only", () =>
   assert.equal(ordinaryTurn["compaction"], undefined);
 });
 
-void test("projects branch thread and fork lineage without changing session identity", () => {
+test("projects branch thread and fork lineage without changing session identity", () => {
   const payload = withCodexRequestMetadata({ input: [] }, "session-1", { kind: "turn" }, "turn-1", {
     installationId: "11111111-1111-4111-8111-111111111111",
     threadId: "thread-2",
@@ -114,7 +114,7 @@ void test("projects branch thread and fork lineage without changing session iden
   assert.equal(turn["window_id"], "thread-2:3");
 });
 
-void test("omits Codex metadata without session affinity", () => {
+test("omits Codex metadata without session affinity", () => {
   assert.deepEqual(
     withCodexRequestMetadata({ input: [], client_metadata: { stale: true } }, undefined, {
       kind: "turn",
@@ -123,7 +123,7 @@ void test("omits Codex metadata without session affinity", () => {
   );
 });
 
-void test("omits a prewarm start timestamp when the startup turn has not begun", () => {
+test("omits a prewarm start timestamp when the startup turn has not begun", () => {
   const payload = withCodexRequestMetadata({ input: [] }, "session-1", { kind: "prewarm" }, "", {
     installationId: "11111111-1111-4111-8111-111111111111",
     threadSource: "user",

@@ -9,7 +9,7 @@ import {
   rejectWithoutWrite,
 } from "./apply-patch-matcher-edge-cases-harness.ts";
 
-void test("ignores a stale context-only chunk when the actual insertion is unique", async (t) => {
+test("ignores a stale context-only chunk when the actual insertion is unique", async (t) => {
   const cwd = await workspace(t);
   await writeFile(
     join(cwd, "runbook.md"),
@@ -33,7 +33,7 @@ void test("ignores a stale context-only chunk when the actual insertion is uniqu
   );
 });
 
-void test("does not use contextual preference to choose among structural matches", async (t) => {
+test("does not use contextual preference to choose among structural matches", async (t) => {
   const cwd = await workspace(t);
   const content = [
     "function first() {",
@@ -66,7 +66,7 @@ void test("does not use contextual preference to choose among structural matches
   );
 });
 
-void test("does not let stronger context hide a structural decoy", async (t) => {
+test("does not let stronger context hide a structural decoy", async (t) => {
   const cwd = await workspace(t);
   await rejectWithoutWrite(
     cwd,
@@ -109,7 +109,7 @@ void test("does not let stronger context hide a structural decoy", async (t) => 
   );
 });
 
-void test("applies ordered non-overlapping structural groups against one snapshot", async (t) => {
+test("applies ordered non-overlapping structural groups against one snapshot", async (t) => {
   const cwd = await workspace(t);
   await writeFile(
     join(cwd, "groups.ts"),

@@ -19,7 +19,7 @@ import {
 } from "./codex-provider-harness.ts";
 import { responseRetryDelayMs } from "../../extensions/openai-codex-compat/codex-provider/codex-provider-response-attempts.ts";
 
-void test("calculates exponential response retry delays without waiting", (t) => {
+test("calculates exponential response retry delays without waiting", (t) => {
   t.mock.method(Math, "random", () => 0.5);
 
   assert.equal(responseRetryDelayMs(0, 1), 0);
@@ -28,7 +28,7 @@ void test("calculates exponential response retry delays without waiting", (t) =>
   assert.equal(responseRetryDelayMs(200, 5), 3_200);
 });
 
-void test("continues response.completed end_turn false without synthetic input", async () => {
+test("continues response.completed end_turn false without synthetic input", async () => {
   const user = userEntry("user-1", "finish the task");
   const harness = createHarness([user]);
   const requests: JsonRecord[] = [];
@@ -93,7 +93,7 @@ void test("continues response.completed end_turn false without synthetic input",
   assert.match(JSON.stringify(harness.customEntries[0]?.data), /first phase.*second phase/);
 });
 
-void test("returns a Pi compaction boundary when end_turn false crosses the threshold", async () => {
+test("returns a Pi compaction boundary when end_turn false crosses the threshold", async () => {
   const user = userEntry("user-1", "finish the task");
   const harness = createHarness([user], {
     ...DEFAULT_CONFIG,
@@ -137,7 +137,7 @@ void test("returns a Pi compaction boundary when end_turn false crosses the thre
   assert.equal(harness.compactions.length, 0);
 });
 
-void test("resamples retryable failed and incomplete responses from completed output history", async () => {
+test("resamples retryable failed and incomplete responses from completed output history", async () => {
   for (const firstTerminal of ["response.failed", "response.incomplete"] as const) {
     const user = userEntry("user-1", `test ${firstTerminal}`);
     const harness = createHarness([user], DEFAULT_CONFIG, `session-${firstTerminal}`, {
@@ -206,7 +206,7 @@ void test("resamples retryable failed and incomplete responses from completed ou
   }
 });
 
-void test("uses done calls and ignores conflicting terminal output", async () => {
+test("uses done calls and ignores conflicting terminal output", async () => {
   const user = userEntry("user-1", "inspect");
   const harness = createHarness([user], DEFAULT_CONFIG, "session-empty-completed-output", {
     maxRetries: 5,
@@ -278,7 +278,7 @@ void test("uses done calls and ignores conflicting terminal output", async () =>
   ]);
 });
 
-void test("returns complete function call batches at the output limit without provider continuation", async () => {
+test("returns complete function call batches at the output limit without provider continuation", async () => {
   const user = userEntry("user-1", "inspect both");
   const harness = createHarness([user], DEFAULT_CONFIG, "session-function-limit", {
     maxRetries: 5,
@@ -357,7 +357,7 @@ void test("returns complete function call batches at the output limit without pr
   assert.doesNotMatch(JSON.stringify(responseDecisions(message)), /call_one|call_two|report/);
 });
 
-void test("ignores terminal-only calls while retrying the original input", async () => {
+test("ignores terminal-only calls while retrying the original input", async () => {
   const user = userEntry("user-1", "apply the custom operation");
   const harness = createHarness([user], DEFAULT_CONFIG, "session-terminal-custom", {
     maxRetries: 1,
@@ -419,7 +419,7 @@ void test("ignores terminal-only calls while retrying the original input", async
   assert.doesNotMatch(JSON.stringify(requests), /call_custom|complete input/);
 });
 
-void test("returns the completed subset of a mixed done and partial call batch", async () => {
+test("returns the completed subset of a mixed done and partial call batch", async () => {
   const user = userEntry("user-1", "inspect both");
   const harness = createHarness([user], DEFAULT_CONFIG, "session-partial-batch", {
     maxRetries: 5,
@@ -510,7 +510,7 @@ void test("returns the completed subset of a mixed done and partial call batch",
   assert.doesNotMatch(JSON.stringify(message), /call_partial|call_terminal_only/);
 });
 
-void test("returns done calls omitted from incomplete terminal output", async () => {
+test("returns done calls omitted from incomplete terminal output", async () => {
   const user = userEntry("user-1", "inspect");
   const harness = createHarness([user], DEFAULT_CONFIG, "session-omitted-call", {
     maxRetries: 5,
@@ -564,7 +564,7 @@ void test("returns done calls omitted from incomplete terminal output", async ()
   assert.equal(responseDecisions(message)[0]?.["postToolDisposition"], "retry");
 });
 
-void test("ignores terminal-only calls while retrying failed responses", async () => {
+test("ignores terminal-only calls while retrying failed responses", async () => {
   const user = userEntry("user-1", "inspect");
   const harness = createHarness([user], DEFAULT_CONFIG, "session-failed-call-retry", {
     maxRetries: 1,

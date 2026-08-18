@@ -40,7 +40,7 @@ function renderResult(
   );
 }
 
-void test("summarizes every item in every web.run action family", () => {
+test("summarizes every item in every web.run action family", () => {
   const description = describeWebRunCall({
     search_query: [{ q: "one" }, { q: "two" }, { q: "three" }],
     image_query: [{ q: "image one" }, { q: "image two" }],
@@ -85,7 +85,7 @@ void test("summarizes every item in every web.run action family", () => {
   assert.match(description, /time \+00:00, \+03:00/);
 });
 
-void test("renders image search output as source cards instead of a text blob", () => {
+test("renders image search output as source cards instead of a text blob", () => {
   const output = [
     [
       "Blue square icon (https://www.images.example/blue)",
@@ -115,7 +115,7 @@ void test("renders image search output as source cards instead of a text blob", 
   assert.doesNotMatch(expanded, /-{20}/);
 });
 
-void test("renders open, click, and find output with page metadata and line gutters", () => {
+test("renders open, click, and find output with page metadata and line gutters", () => {
   const output = [
     "Example documentation (https://example.com/docs)",
     'citeturn3view0 [wordlim: 200] Crawled: today; Content type: text/html; Source: open({"ref_id":"turn3search0"}); Total lines: 42',
@@ -151,7 +151,7 @@ void test("renders open, click, and find output with page metadata and line gutt
   assert.doesNotMatch(expanded, /Source: open/);
 });
 
-void test("renders PDF screenshots as concise page cards", () => {
+test("renders PDF screenshots as concise page cards", () => {
   const output = [
     " (https://cdn.example/guide.pdf)",
     "citeturn4view0 ",
@@ -186,7 +186,7 @@ void test("renders PDF screenshots as concise page cards", () => {
   assert.match(expanded, /turn4pdf0 · page 3/);
 });
 
-void test("renders finance, weather, sports, and time as operation-specific cards", () => {
+test("renders finance, weather, sports, and time as operation-specific cards", () => {
   const financeOutput = [
     "citeturn5finance0 AAPL closed at $213.12, up 1.4%.",
     "citeturn5finance1 BTC is trading at $67,420.",
@@ -249,7 +249,7 @@ void test("renders finance, weather, sports, and time as operation-specific card
   assert.match(timeExpanded, /The time in UTC\+00:00/);
 });
 
-void test("renders opaque structured result fields as readable labels", () => {
+test("renders opaque structured result fields as readable labels", () => {
   const result = {
     type: "market_result",
     name: "AAPL",
@@ -273,7 +273,7 @@ void test("renders opaque structured result fields as readable labels", () => {
   assert.doesNotMatch(expanded, /"price":/);
 });
 
-void test("renders empty and unavailable operations as warnings rather than successful results", () => {
+test("renders empty and unavailable operations as warnings rather than successful results", () => {
   const empty = renderResult(
     { image_query: [{ q: "missing image" }] },
     "Empty search results\nNo results were found for the provided queries",

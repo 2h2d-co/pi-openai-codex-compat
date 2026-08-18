@@ -11,7 +11,7 @@ import {
 } from "./codex-transport-harness.ts";
 import { parseSse } from "../../extensions/openai-codex-compat/codex-transport/codex-transport-sse-stream.ts";
 
-void test("finishes SSE requests when the terminal event arrives before EOF", async () => {
+test("finishes SSE requests when the terminal event arrives before EOF", async () => {
   let cancelled = false;
   const terminalEvent = {
     type: "response.completed",
@@ -43,7 +43,7 @@ void test("finishes SSE requests when the terminal event arrives before EOF", as
   assert.equal(cancelled, true);
 });
 
-void test("delivers response.failed to the provider-owned resampling loop", async () => {
+test("delivers response.failed to the provider-owned resampling loop", async () => {
   const terminalEvent = {
     type: "response.failed",
     response: {
@@ -70,7 +70,7 @@ void test("delivers response.failed to the provider-owned resampling loop", asyn
   assert.deepEqual(events, [terminalEvent]);
 });
 
-void test("serializes SSE request payloads exactly once", async () => {
+test("serializes SSE request payloads exactly once", async () => {
   let payloadReads = 0;
   const request: JsonRecord = { input: [] };
   Object.defineProperty(request, "marker", {
@@ -100,7 +100,7 @@ void test("serializes SSE request payloads exactly once", async () => {
   assert.equal(payloadReads, 1);
 });
 
-void test("preserves SSE read errors when reader cleanup also fails", async () => {
+test("preserves SSE read errors when reader cleanup also fails", async () => {
   const response = {
     body: {
       getReader() {
@@ -127,7 +127,7 @@ void test("preserves SSE read errors when reader cleanup also fails", async () =
   );
 });
 
-void test("marks SSE transport started after successful response headers", async () => {
+test("marks SSE transport started after successful response headers", async () => {
   let starts = 0;
   const terminalEvent = {
     type: "response.completed",
@@ -154,7 +154,7 @@ void test("marks SSE transport started after successful response headers", async
   assert.deepEqual(events, [terminalEvent]);
 });
 
-void test("aligns cache-affinity headers with retention and length limits", async () => {
+test("aligns cache-affinity headers with retention and length limits", async () => {
   const requestHeaders: Headers[] = [];
   const diagnostics: CodexTransportDiagnostic[] = [];
   const terminal = `data: ${JSON.stringify({
@@ -223,7 +223,7 @@ void test("aligns cache-affinity headers with retention and length limits", asyn
   assert.equal(requestDiagnostics[1]?.details.promptKeyAndHeaderAligned, false);
 });
 
-void test("captures and replays SSE turn state with exact diagnostic values", async () => {
+test("captures and replays SSE turn state with exact diagnostic values", async () => {
   const turnState = new CodexTurnState();
   const requestHeaders: Headers[] = [];
   const diagnostics: CodexTransportDiagnostic[] = [];
@@ -294,7 +294,7 @@ void test("captures and replays SSE turn state with exact diagnostic values", as
   assert.match(JSON.stringify(diagnostics), /opaque-routing-state/);
 });
 
-void test("validates transport timeouts and reports SSE header timeouts", async () => {
+test("validates transport timeouts and reports SSE header timeouts", async () => {
   const transport = new CodexTransport();
   await assert.rejects(
     async () => {

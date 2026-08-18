@@ -53,7 +53,7 @@ function assistantMessages(branch: ReturnType<SessionManager["getBranch"]>): Ass
   );
 }
 
-void test("Pi executes only done calls from mixed partial Codex batches", async (t) => {
+test("Pi executes only done calls from mixed partial Codex batches", async (t) => {
   const tempRoot = await mkdtemp(join(tmpdir(), "pi-codex-host-"));
   const cwd = join(tempRoot, "cwd");
   const agentDir = join(tempRoot, "agent");

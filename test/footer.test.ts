@@ -5,7 +5,7 @@ import type { Api, Model } from "@earendil-works/pi-ai";
 import { DEFAULT_CONFIG } from "../extensions/openai-codex-compat/config.ts";
 import { createCodexFooter, type FooterContext } from "../extensions/openai-codex-compat/footer.ts";
 
-void test("appends non-default Codex settings to the default second footer line", () => {
+test("appends non-default Codex settings to the default second footer line", () => {
   initTheme("dark", false);
   const model = {
     id: "gpt-5.6-sol",

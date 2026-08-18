@@ -19,7 +19,7 @@ import {
   patch,
 } from "./apply-patch-semantic-harness.ts";
 
-void test("handles self moves, hard links, and proven repeated moves", async (t) => {
+test("handles self moves, hard links, and proven repeated moves", async (t) => {
   const cwd = await workspace(t);
   await writeFile(join(cwd, "self.bin"), Buffer.from([0xff]));
   await writeFile(join(cwd, "hard-a.txt"), "hard linked\n");
@@ -43,7 +43,7 @@ void test("handles self moves, hard links, and proven repeated moves", async (t)
   assert.equal(details.changes.length, 2);
 });
 
-void test("preserves hard-link observations across sequential content writes", async (t) => {
+test("preserves hard-link observations across sequential content writes", async (t) => {
   const cwd = await workspace(t);
   await writeFile(join(cwd, "alias-a.txt"), "before\n");
   await link(join(cwd, "alias-a.txt"), join(cwd, "alias-b.txt"));
@@ -60,7 +60,7 @@ void test("preserves hard-link observations across sequential content writes", a
   assert.equal(await readFile(join(cwd, "alias-b.txt"), "utf8"), "final\n");
 });
 
-void test("follows symlinks for updates but replaces them for adds", async (t) => {
+test("follows symlinks for updates but replaces them for adds", async (t) => {
   const cwd = await workspace(t);
   await writeFile(join(cwd, "target.txt"), "before\n");
   await symlink("target.txt", join(cwd, "alias.txt"));
@@ -104,7 +104,7 @@ void test("follows symlinks for updates but replaces them for adds", async (t) =
   assert.match(rendered, /2\. \[APPLIED\] Update target\.txt$/mu);
 });
 
-void test("replaces live and dangling symlinks on add without touching their targets", async (t) => {
+test("replaces live and dangling symlinks on add without touching their targets", async (t) => {
   const cwd = await workspace(t);
   await writeFile(join(cwd, "target.txt"), "same\n");
   await symlink("target.txt", join(cwd, "live.txt"));
@@ -133,7 +133,7 @@ void test("replaces live and dangling symlinks on add without touching their tar
   );
 });
 
-void test("tracks symlink chains and rejects links made dangling earlier in the patch", async (t) => {
+test("tracks symlink chains and rejects links made dangling earlier in the patch", async (t) => {
   const cwd = await workspace(t);
   await writeFile(join(cwd, "target.txt"), "before\n");
   await symlink("target.txt", join(cwd, "middle.txt"));
@@ -161,7 +161,7 @@ void test("tracks symlink chains and rejects links made dangling earlier in the 
   assert.equal(await readFile(join(cwd, "target.txt"), "utf8"), "final\n");
 });
 
-void test("proves dead updates across symlink, hard-link, and path aliases", async (t) => {
+test("proves dead updates across symlink, hard-link, and path aliases", async (t) => {
   const cwd = await workspace(t);
 
   await writeFile(join(cwd, "symlink-target.txt"), "before\n");
@@ -326,7 +326,7 @@ void test("proves dead updates across symlink, hard-link, and path aliases", asy
   await assertMissing(join(cwd, "real-parent", "file.txt"));
 });
 
-void test("materializes state-changing symlink moves without modifying either target", async (t) => {
+test("materializes state-changing symlink moves without modifying either target", async (t) => {
   const cwd = await workspace(t);
   await writeFile(join(cwd, "source-target.txt"), "source old\n");
   await writeFile(join(cwd, "destination-target.txt"), "destination old\n");
@@ -351,7 +351,7 @@ void test("materializes state-changing symlink moves without modifying either ta
   assert.equal(await readFile(join(cwd, "destination-target.txt"), "utf8"), "destination old\n");
 });
 
-void test("moves dangling symlink entries opaquely", async (t) => {
+test("moves dangling symlink entries opaquely", async (t) => {
   const cwd = await workspace(t);
   await symlink("missing-source-target", join(cwd, "source-link"));
   await symlink("missing-destination-target", join(cwd, "destination-link"));
@@ -364,7 +364,7 @@ void test("moves dangling symlink entries opaquely", async (t) => {
   await assertMissing(join(cwd, "missing-destination-target"));
 });
 
-void test("preserves hard-link semantics across replacements, moves, and planned unlinks", async (t) => {
+test("preserves hard-link semantics across replacements, moves, and planned unlinks", async (t) => {
   const cwd = await workspace(t);
   await writeFile(join(cwd, "add-a.txt"), "old add\n");
   await chmod(join(cwd, "add-a.txt"), 0o754);
@@ -415,7 +415,7 @@ void test("preserves hard-link semantics across replacements, moves, and planned
   assert.equal(await readFile(join(cwd, "delete-b.txt"), "utf8"), "updated survivor\n");
 });
 
-void test("keeps hard-link topology for no-op adds and pure native moves", async (t) => {
+test("keeps hard-link topology for no-op adds and pure native moves", async (t) => {
   const cwd = await workspace(t);
   await writeFile(join(cwd, "same-a.txt"), "same\n");
   await link(join(cwd, "same-a.txt"), join(cwd, "same-b.txt"));

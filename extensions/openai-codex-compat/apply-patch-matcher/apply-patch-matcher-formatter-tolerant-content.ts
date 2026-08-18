@@ -599,7 +599,7 @@ export async function deriveFormatterTolerantContent(
       candidates: candidateRanges(candidates.flat()),
       overlapping: true,
     };
-    throw new FormatterMatchAmbiguityError(formatFormatterMatchFailure(details), details);
+    throw new FormatterMatchAmbiguityError(formatFormatterMatchFailure(details), details, error);
   }
   if (outputs.size === 0) throw noOrderedMappingDetails(path, groups, candidates);
   if (outputs.size > 1) {

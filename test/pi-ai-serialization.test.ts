@@ -152,13 +152,13 @@ const options = {
   },
 };
 
-void test("copied Pi AI Responses serialization matches the dependency", () => {
+test("copied Pi AI Responses serialization matches the dependency", () => {
   const reference = referenceConvertResponsesMessages(model, context, allowedProviders, options);
   const copied = copiedConvertResponsesMessages(model, context, allowedProviders, options);
   assert.deepEqual(copied, reference);
 });
 
-void test("configures image detail for image tool-result history", () => {
+test("configures image detail for image tool-result history", () => {
   const imageModel = { ...model, input: ["text", "image"] } satisfies Model<Api>;
   const imageAssistant = {
     ...assistantMessage,
@@ -223,7 +223,7 @@ void test("configures image detail for image tool-result history", () => {
   assert.equal(requireJsonRecord(checkpointOutput[1])["detail"], "low");
 });
 
-void test("replays native assistant items by response id", () => {
+test("replays native assistant items by response id", () => {
   const responseId = "resp_native";
   const nativeItem = {
     type: "web_search_call",
@@ -250,7 +250,7 @@ void test("replays native assistant items by response id", () => {
   assert.deepEqual(converted, [nativeItem]);
 });
 
-void test("serializes allowlisted dotted tools as Responses namespaces", () => {
+test("serializes allowlisted dotted tools as Responses namespaces", () => {
   assert.deepEqual(
     convertResponsesTools([webRunTool, imageGenerationTool], {
       strict: null,
@@ -290,7 +290,7 @@ void test("serializes allowlisted dotted tools as Responses namespaces", () => {
   );
 });
 
-void test("round-trips namespaced calls and deferred namespaced definitions", () => {
+test("round-trips namespaced calls and deferred namespaced definitions", () => {
   const namespacedAssistant = {
     ...assistantMessage,
     content: [
@@ -418,7 +418,7 @@ void test("round-trips namespaced calls and deferred namespaced definitions", ()
   ]);
 });
 
-void test("serializes active compaction tools with the same namespace contract", () => {
+test("serializes active compaction tools with the same namespace contract", () => {
   assert.deepEqual(
     activeResponsesTools(
       [

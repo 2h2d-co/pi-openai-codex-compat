@@ -142,7 +142,7 @@ async function startCodexServer(t: TestContext): Promise<{
       response.end(sse(textResponseEvents("modified request ok")));
     };
     // oxlint-disable-next-line 2h2d/no-silent-error-suppression -- Destroying the response forwards request-processing failures to the test client.
-    void requestTask().catch((error: unknown) => {
+    requestTask().catch((error: unknown) => {
       response.destroy(error instanceof Error ? error : new Error(String(error)));
     });
   });
@@ -200,7 +200,7 @@ function assistantMessages(session: AgentSession): AssistantMessage[] {
     );
 }
 
-void test("modifies requests on the canonical OpenAI Codex provider", async (t) => {
+test("modifies requests on the canonical OpenAI Codex provider", async (t) => {
   const server = await startCodexServer(t);
   await pointBuiltInCodexAt(server.baseUrl, t);
 

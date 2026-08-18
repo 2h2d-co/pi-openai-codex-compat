@@ -10,7 +10,7 @@ import {
   rejectWithoutWrite,
 } from "./apply-patch-matcher-edge-cases-harness.ts";
 
-void test("rejects prose constructs where whitespace can be semantic", async (t) => {
+test("rejects prose constructs where whitespace can be semantic", async (t) => {
   const cwd = await workspace(t);
   const cases = [
     {
@@ -59,7 +59,7 @@ void test("rejects prose constructs where whitespace can be semantic", async (t)
   }
 });
 
-void test("rejects semantic Java drift instead of treating it as formatting", async (t) => {
+test("rejects semantic Java drift instead of treating it as formatting", async (t) => {
   const cwd = await workspace(t);
   await rejectWithoutWrite(
     cwd,
@@ -94,7 +94,7 @@ void test("rejects semantic Java drift instead of treating it as formatting", as
   );
 });
 
-void test("does not anchor an insertion to older context after nearer context changed", async (t) => {
+test("does not anchor an insertion to older context after nearer context changed", async (t) => {
   const cwd = await workspace(t);
   await rejectWithoutWrite(
     cwd,
@@ -115,7 +115,7 @@ void test("does not anchor an insertion to older context after nearer context ch
   );
 });
 
-void test("fails closed when eligible locations exceed the candidate limit", async (t) => {
+test("fails closed when eligible locations exceed the candidate limit", async (t) => {
   const cwd = await workspace(t);
   const content = `${Array.from({ length: 65 }, () => "target").join("\n")}\n`;
   await rejectWithoutWrite(
@@ -132,7 +132,7 @@ void test("fails closed when eligible locations exceed the candidate limit", asy
   );
 });
 
-void test("does not count byte-identical line and structural candidates twice", async (t) => {
+test("does not count byte-identical line and structural candidates twice", async (t) => {
   const cwd = await workspace(t);
   const exactLines = Array.from({ length: 9 }, (_, index) => `const value${index} = old${index};`);
   await writeFile(
@@ -169,7 +169,7 @@ ${exactGroups.join("\n")}
   );
 });
 
-void test("fails closed when equivalent mappings exceed the exhaustive-search limit", async (t) => {
+test("fails closed when equivalent mappings exceed the exhaustive-search limit", async (t) => {
   const cwd = await workspace(t);
   await rejectWithoutWrite(
     cwd,
@@ -188,7 +188,7 @@ void test("fails closed when equivalent mappings exceed the exhaustive-search li
   );
 });
 
-void test("bounds exhaustive mapping work at the configured limit", async (t) => {
+test("bounds exhaustive mapping work at the configured limit", async (t) => {
   const cwd = await workspace(t);
   const groups = Array.from({ length: 6 }, (_, index) => `@@ stale ${index + 1}\n-\n`).join("");
   const startedAt = performance.now();
@@ -204,7 +204,7 @@ ${groups}*** End Patch`,
   assert.ok(performance.now() - startedAt < 1_000, "mapping limit should bound traversal work");
 });
 
-void test("reports ambiguity as a preflight failure with no committed instructions", async (t) => {
+test("reports ambiguity as a preflight failure with no committed instructions", async (t) => {
   const cwd = await workspace(t);
   await writeFile(join(cwd, "ambiguous.txt"), "target\nother\ntarget\n");
   await assert.rejects(

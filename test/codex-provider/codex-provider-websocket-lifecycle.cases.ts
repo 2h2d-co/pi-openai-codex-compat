@@ -20,7 +20,7 @@ import {
   type JsonRecord,
 } from "./codex-provider-harness.ts";
 
-void test("recovers an age-limited turn from done items while discarding provisional output", async (t) => {
+test("recovers an age-limited turn from done items while discarding provisional output", async (t) => {
   const previousWebSocket = globalThis.WebSocket;
   const sentBodies: JsonRecord[] = [];
   const committedItem = {
@@ -184,7 +184,7 @@ void test("recovers an age-limited turn from done items while discarding provisi
   assert.equal(decisions[1]?.["decision"], "return_terminal");
 });
 
-void test("defers done tool calls across an age-limit reconnect until Pi records output", async (t) => {
+test("defers done tool calls across an age-limit reconnect until Pi records output", async (t) => {
   const previousWebSocket = globalThis.WebSocket;
   const sentBodies: JsonRecord[] = [];
   const doneCall = {
@@ -360,7 +360,7 @@ void test("defers done tool calls across an age-limit reconnect until Pi records
   assert.doesNotMatch(JSON.stringify(retryInput), /call-partial/);
 });
 
-void test("discards downstream-failed WebSockets without activating SSE fallback", async (t) => {
+test("discards downstream-failed WebSockets without activating SSE fallback", async (t) => {
   const previousWebSocket = globalThis.WebSocket;
   const closedConnections = new Set<number>();
   let connections = 0;
@@ -525,7 +525,7 @@ void test("discards downstream-failed WebSockets without activating SSE fallback
   harness.runtime.transport.close("downstream-failure-session");
 });
 
-void test("honors aborts after terminal processing and while waiting for a session request", async () => {
+test("honors aborts after terminal processing and while waiting for a session request", async () => {
   const user = userEntry("user-1", "hello");
   const context: Context = { messages: [user.message] };
 

@@ -9,7 +9,7 @@ import {
   rejectWithoutWrite,
 } from "./apply-patch-matcher-edge-cases-harness.ts";
 
-void test("applies structurally recovered replacement indentation exactly", async (t) => {
+test("applies structurally recovered replacement indentation exactly", async (t) => {
   const cwd = await workspace(t);
   await writeFile(
     join(cwd, "tokens.ts"),
@@ -48,7 +48,7 @@ void test("applies structurally recovered replacement indentation exactly", asyn
   );
 });
 
-void test("recovers only complete formatter-collapsed line content", async (t) => {
+test("recovers only complete formatter-collapsed line content", async (t) => {
   const cwd = await workspace(t);
   await writeFile(join(cwd, "Complete.java"), "class Complete {\n  void func() { return a; }\n}\n");
 
@@ -88,7 +88,7 @@ void test("recovers only complete formatter-collapsed line content", async (t) =
   );
 });
 
-void test("rejects structural matches that cover only part of a source line", async (t) => {
+test("rejects structural matches that cover only part of a source line", async (t) => {
   const cwd = await workspace(t);
   await rejectWithoutWrite(
     cwd,
@@ -111,7 +111,7 @@ void test("rejects structural matches that cover only part of a source line", as
   );
 });
 
-void test("rejects single-token structural recovery", async (t) => {
+test("rejects single-token structural recovery", async (t) => {
   const cwd = await workspace(t);
   await rejectWithoutWrite(
     cwd,
@@ -127,7 +127,7 @@ void test("rejects single-token structural recovery", async (t) => {
   );
 });
 
-void test("retains official first-match behavior when strict matching succeeds", async (t) => {
+test("retains official first-match behavior when strict matching succeeds", async (t) => {
   const cwd = await workspace(t);
   await writeFile(join(cwd, "strict.txt"), "target\ntarget\n");
 

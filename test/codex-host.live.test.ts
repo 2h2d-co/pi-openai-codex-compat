@@ -335,7 +335,7 @@ async function createLivePiHost(
   return result.session;
 }
 
-void test(
+test(
   "live Pi host preserves text conversation history through Codex",
   { skip: !LIVE_TEST_ENABLED, timeout: LIVE_TEST_TIMEOUT_MS },
   async (t) => {
@@ -388,7 +388,7 @@ void test(
   },
 );
 
-void test(
+test(
   "live Pi host preserves tool conversation history through Codex",
   { skip: !LIVE_TEST_ENABLED, timeout: LIVE_TEST_TIMEOUT_MS },
   async (t) => {

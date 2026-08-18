@@ -9,7 +9,7 @@ import {
   rejectWithoutWrite,
 } from "./apply-patch-matcher-edge-cases-harness.ts";
 
-void test("recovers reflowed code inside a typed Markdown fence", async (t) => {
+test("recovers reflowed code inside a typed Markdown fence", async (t) => {
   const cwd = await workspace(t);
   await writeFile(
     join(cwd, "README.md"),
@@ -50,7 +50,7 @@ void test("recovers reflowed code inside a typed Markdown fence", async (t) => {
   );
 });
 
-void test("scopes fenced recovery to the declared language", async (t) => {
+test("scopes fenced recovery to the declared language", async (t) => {
   const cwd = await workspace(t);
   await writeFile(
     join(cwd, "languages.md"),
@@ -102,7 +102,7 @@ void test("scopes fenced recovery to the declared language", async (t) => {
   );
 });
 
-void test("matches formatter-aligned Markdown table rows by cells", async (t) => {
+test("matches formatter-aligned Markdown table rows by cells", async (t) => {
   const cwd = await workspace(t);
   await writeFile(
     join(cwd, "SECURITY.md"),
@@ -136,7 +136,7 @@ void test("matches formatter-aligned Markdown table rows by cells", async (t) =>
   );
 });
 
-void test("rejects reflowed plain Markdown paragraphs", async (t) => {
+test("rejects reflowed plain Markdown paragraphs", async (t) => {
   const cwd = await workspace(t);
   await rejectWithoutWrite(
     cwd,

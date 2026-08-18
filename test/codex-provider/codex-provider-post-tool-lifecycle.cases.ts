@@ -18,7 +18,7 @@ import {
   type JsonRecord,
 } from "./codex-provider-harness.ts";
 
-void test("preserves retryable post-tool handling without session affinity or agent hooks", async () => {
+test("preserves retryable post-tool handling without session affinity or agent hooks", async () => {
   const user = userEntry("user-1", "inspect");
   const harness = createHarness([user], DEFAULT_CONFIG, "session-done-call-retry", {
     maxRetries: 1,
@@ -87,7 +87,7 @@ void test("preserves retryable post-tool handling without session affinity or ag
   assert.match(JSON.stringify(retryInput), /call_failed_done|completed/);
 });
 
-void test("preserves response retry budgets across linked tool execution", async () => {
+test("preserves response retry budgets across linked tool execution", async () => {
   const user = userEntry("user-1", "inspect");
   const harness = createHarness([user], DEFAULT_CONFIG, "session-done-call-budget", {
     maxRetries: 0,
@@ -147,7 +147,7 @@ void test("preserves response retry budgets across linked tool execution", async
   assert.equal(requests, 1);
 });
 
-void test("does not retry an unsuccessful response before linked tool output exists", async () => {
+test("does not retry an unsuccessful response before linked tool output exists", async () => {
   const user = userEntry("user-1", "inspect");
   const harness = createHarness([user], DEFAULT_CONFIG, "session-missing-linked-output", {
     maxRetries: 1,
@@ -206,7 +206,7 @@ void test("does not retry an unsuccessful response before linked tool output exi
   assert.equal(requests, 1);
 });
 
-void test("clears abandoned post-tool handling at lifecycle boundaries", async (t) => {
+test("clears abandoned post-tool handling at lifecycle boundaries", async (t) => {
   for (const cleanup of ["agent-end", "session-clear"] as const) {
     await t.test(cleanup, async () => {
       const sessionId = `session-abandoned-${cleanup}`;
@@ -283,7 +283,7 @@ void test("clears abandoned post-tool handling at lifecycle boundaries", async (
   }
 });
 
-void test("preserves fatal post-tool handling without session affinity or agent hooks", async () => {
+test("preserves fatal post-tool handling without session affinity or agent hooks", async () => {
   const user = userEntry("user-1", "invalid request");
   const harness = createHarness([user], DEFAULT_CONFIG, "session-done-call-fatal", {
     maxRetries: 1,
@@ -344,7 +344,7 @@ void test("preserves fatal post-tool handling without session affinity or agent 
   assert.equal(requests, 1);
 });
 
-void test("ignores terminal-only calls in non-retryable failed responses", async () => {
+test("ignores terminal-only calls in non-retryable failed responses", async () => {
   const user = userEntry("user-1", "invalid request");
   const harness = createHarness([user], DEFAULT_CONFIG, "session-failed-call-fatal", {
     maxRetries: 1,
@@ -397,7 +397,7 @@ void test("ignores terminal-only calls in non-retryable failed responses", async
   assert.equal(responseDecisions(message)[0]?.["decision"], "return_terminal");
 });
 
-void test("does not resample official fatal response.failed codes", async () => {
+test("does not resample official fatal response.failed codes", async () => {
   const user = userEntry("user-1", "invalid request");
   const harness = createHarness([user], DEFAULT_CONFIG, "session-fatal-response", {
     maxRetries: 1,

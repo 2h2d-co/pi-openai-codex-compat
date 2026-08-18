@@ -24,7 +24,7 @@ import {
   deferred,
 } from "./apply-patch-semantic-harness.ts";
 
-void test("does not expose missing previous-content history to the model", async (t) => {
+test("does not expose missing previous-content history to the model", async (t) => {
   const cwd = await workspace(t);
   const target = join(cwd, "unreadable.txt");
   await writeFile(target, "private\n");
@@ -39,7 +39,7 @@ void test("does not expose missing previous-content history to the model", async
   assert.doesNotMatch(feedback, /previous content|diff|history|Committed prefix|exact|inexact/u);
 });
 
-void test("serializes same-process filesystem aliases with deterministic logical keys", async (t) => {
+test("serializes same-process filesystem aliases with deterministic logical keys", async (t) => {
   const cwd = await workspace(t);
 
   const assertAliasAddsSerialize = async (firstPath: string, secondPath: string): Promise<void> => {
@@ -302,7 +302,7 @@ void test("serializes same-process filesystem aliases with deterministic logical
   assert.equal(await readFile(join(cwd, "order-b.txt"), "utf8"), "b2\n");
 });
 
-void test("honors cancellation before, during, and between apply_patch phases", async (t) => {
+test("honors cancellation before, during, and between apply_patch phases", async (t) => {
   const cwd = await workspace(t);
 
   const preAborted = new AbortController();
@@ -440,7 +440,7 @@ void test("honors cancellation before, during, and between apply_patch phases", 
   assert.equal(await readFile(join(cwd, "queue-released.txt"), "utf8"), "yes\n");
 });
 
-void test(
+test(
   "rejects directories, FIFOs, sockets, and available device entries before mutation",
   { skip: process.platform === "win32" },
   async (t) => {

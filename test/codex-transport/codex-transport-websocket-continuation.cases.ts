@@ -15,7 +15,7 @@ import {
   type JsonRecord,
 } from "./codex-transport-harness.ts";
 
-void test("prewarms the first WebSocket request and generates from its continuation", async (t) => {
+test("prewarms the first WebSocket request and generates from its continuation", async (t) => {
   const previousWebSocket = globalThis.WebSocket;
   const sentBodies: JsonRecord[] = [];
   const diagnostics: CodexTransportDiagnostic[] = [];
@@ -126,7 +126,7 @@ void test("prewarms the first WebSocket request and generates from its continuat
   transport.close("prewarm-session");
 });
 
-void test("does not treat incomplete WebSocket responses as completed continuation state", async (t) => {
+test("does not treat incomplete WebSocket responses as completed continuation state", async (t) => {
   const previousWebSocket = globalThis.WebSocket;
   const sentBodies: JsonRecord[] = [];
   let continuationReady = 0;
@@ -222,7 +222,7 @@ void test("does not treat incomplete WebSocket responses as completed continuati
   transport.close("incomplete-continuation-session");
 });
 
-void test("matches official Codex semantic WebSocket delta comparisons", async (t) => {
+test("matches official Codex semantic WebSocket delta comparisons", async (t) => {
   const previousWebSocket = globalThis.WebSocket;
   const sentBodies: JsonRecord[] = [];
   const diagnostics: CodexTransportDiagnostic[] = [];
@@ -391,7 +391,7 @@ void test("matches official Codex semantic WebSocket delta comparisons", async (
   transport.close("created-id-session");
 });
 
-void test("sends full context when a payload hook supplies string input", async (t) => {
+test("sends full context when a payload hook supplies string input", async (t) => {
   const previousWebSocket = globalThis.WebSocket;
   const sentBodies: JsonRecord[] = [];
 
@@ -473,7 +473,7 @@ void test("sends full context when a payload hook supplies string input", async 
   transport.close("string-input-session");
 });
 
-void test("builds WebSocket continuation state only from output_item.done items", async (t) => {
+test("builds WebSocket continuation state only from output_item.done items", async (t) => {
   const previousWebSocket = globalThis.WebSocket;
   const sentBodies: JsonRecord[] = [];
   const streamedItem = rawMessageItem("message-streamed", "streamed");
@@ -575,7 +575,7 @@ void test("builds WebSocket continuation state only from output_item.done items"
   transport.close("done-item-continuation-session");
 });
 
-void test("continues a multi-step conversation with canonical and native replay items", async (t) => {
+test("continues a multi-step conversation with canonical and native replay items", async (t) => {
   resetOpenAICodexWebSocketDebugStats();
   const previousWebSocket = globalThis.WebSocket;
   const sentBodies: JsonRecord[] = [];
@@ -734,7 +734,7 @@ void test("continues a multi-step conversation with canonical and native replay 
   assert.equal(closes, 1);
 });
 
-void test("invalidates and re-establishes continuation after a conversation branch", async (t) => {
+test("invalidates and re-establishes continuation after a conversation branch", async (t) => {
   const previousWebSocket = globalThis.WebSocket;
   const sentBodies: JsonRecord[] = [];
   let connections = 0;

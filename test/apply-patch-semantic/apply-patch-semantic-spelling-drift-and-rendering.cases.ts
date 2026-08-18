@@ -19,7 +19,7 @@ import {
   patch,
 } from "./apply-patch-semantic-harness.ts";
 
-void test(
+test(
   "establishes exact case-only spellings without mutating collateral hard links",
   { skip: process.platform !== "darwin" && process.platform !== "win32" },
   async (t) => {
@@ -57,7 +57,7 @@ void test(
   },
 );
 
-void test(
+test(
   "establishes exact Unicode-normalization-only spellings",
   { skip: process.platform !== "darwin" },
   async (t) => {
@@ -95,7 +95,7 @@ void test(
   },
 );
 
-void test("rejects directories and unproven missing-source moves", async (t) => {
+test("rejects directories and unproven missing-source moves", async (t) => {
   const cwd = await workspace(t);
   await mkdir(join(cwd, "directory"));
   await writeFile(join(cwd, "destination.txt"), "unrelated\n");
@@ -140,7 +140,7 @@ void test("rejects directories and unproven missing-source moves", async (t) => 
   assert.equal(await readFile(join(cwd, "destination.txt"), "utf8"), "unrelated\n");
 });
 
-void test("detects external drift after preflight and before mutation", async (t) => {
+test("detects external drift after preflight and before mutation", async (t) => {
   const cwd = await workspace(t);
   const sourcePath = join(cwd, "source.txt");
   await writeFile(sourcePath, "before\n");
@@ -166,7 +166,7 @@ void test("detects external drift after preflight and before mutation", async (t
   await assertMissing(join(cwd, "destination.txt"));
 });
 
-void test("detects external changes to text content and planned parent paths", async (t) => {
+test("detects external changes to text content and planned parent paths", async (t) => {
   const cwd = await workspace(t);
   const textPath = join(cwd, "text.txt");
   await writeFile(textPath, "before\n");
@@ -199,7 +199,7 @@ void test("detects external changes to text content and planned parent paths", a
   assert.equal(await readFile(join(cwd, "missing-parent"), "utf8"), "external file\n");
 });
 
-void test("renders opaque moves as path-only structured history", async (t) => {
+test("renders opaque moves as path-only structured history", async (t) => {
   const cwd = await workspace(t);
   await writeFile(join(cwd, "binary.bin"), Buffer.from([0xff, 0x00]));
   await writeFile(join(cwd, "old-target.bin"), Buffer.from([0x01]));

@@ -12,8 +12,8 @@ export const MAX_COMPLETE_MAPPINGS = 256;
 export class FormatterMatchError extends Error {
   readonly details: FormatterMatchFailureDetails;
 
-  constructor(message: string, details: FormatterMatchFailureDetails) {
-    super(message);
+  constructor(message: string, details: FormatterMatchFailureDetails, cause?: unknown) {
+    super(message, { cause });
     this.details = details;
   }
 }

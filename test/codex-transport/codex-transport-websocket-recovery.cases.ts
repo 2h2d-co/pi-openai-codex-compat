@@ -16,7 +16,7 @@ import {
   type JsonRecord,
 } from "./codex-transport-harness.ts";
 
-void test("reports WebSocket close details and preserves preceding errors", async (t) => {
+test("reports WebSocket close details and preserves preceding errors", async (t) => {
   const previousWebSocket = globalThis.WebSocket;
   let failureMode: "close" | "error-then-close" = "close";
 
@@ -108,7 +108,7 @@ void test("reports WebSocket close details and preserves preceding errors", asyn
   );
 });
 
-void test("stops WebSocket delivery at the terminal response event", async (t) => {
+test("stops WebSocket delivery at the terminal response event", async (t) => {
   const previousWebSocket = globalThis.WebSocket;
 
   class TerminalWebSocket {
@@ -188,7 +188,7 @@ void test("stops WebSocket delivery at the terminal response event", async (t) =
   ]);
 });
 
-void test("ignores type-less WebSocket events before selecting SSE fallback", async (t) => {
+test("ignores type-less WebSocket events before selecting SSE fallback", async (t) => {
   const previousWebSocket = globalThis.WebSocket;
 
   class TypelessWebSocket {
@@ -275,7 +275,7 @@ void test("ignores type-less WebSocket events before selecting SSE fallback", as
   assert.equal(recovery.details.cacheIdentityPreserved, false);
 });
 
-void test("matches Pi AI's recovered WebSocket failure diagnostics", async (t) => {
+test("matches Pi AI's recovered WebSocket failure diagnostics", async (t) => {
   const previousWebSocket = globalThis.WebSocket;
   t.after(() => {
     Object.defineProperty(globalThis, "WebSocket", {
@@ -364,7 +364,7 @@ void test("matches Pi AI's recovered WebSocket failure diagnostics", async (t) =
   });
 });
 
-void test("retries fresh WebSockets before selecting SSE fallback", async (t) => {
+test("retries fresh WebSockets before selecting SSE fallback", async (t) => {
   const previousWebSocket = globalThis.WebSocket;
   let connections = 0;
   let sseRequests = 0;
@@ -467,7 +467,7 @@ void test("retries fresh WebSockets before selecting SSE fallback", async (t) =>
   closeOpenAICodexWebSocketSessions("retry-session");
 });
 
-void test("replays WebSocket turn state on a fresh retry after metadata", async (t) => {
+test("replays WebSocket turn state on a fresh retry after metadata", async (t) => {
   const previousWebSocket = globalThis.WebSocket;
   const turnState = new CodexTurnState();
   const sentBodies: JsonRecord[] = [];
@@ -625,7 +625,7 @@ void test("replays WebSocket turn state on a fresh retry after metadata", async 
   closeOpenAICodexWebSocketSessions("turn-state-retry");
 });
 
-void test("replays WebSocket turn state on SSE fallback", async (t) => {
+test("replays WebSocket turn state on SSE fallback", async (t) => {
   const previousWebSocket = globalThis.WebSocket;
   const turnState = new CodexTurnState();
   let sseHeaders: Headers | undefined;

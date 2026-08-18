@@ -120,7 +120,7 @@ function createHarness(branch: SessionEntry[], initialModel: Model<Api>) {
   };
 }
 
-void test("activates extension tools only for OpenAI Codex models", async () => {
+test("activates extension tools only for OpenAI Codex models", async () => {
   const harness = createHarness([], codexModel);
   await harness.handlers.get("session_start")?.(undefined, harness.context);
   assert.deepEqual(harness.activeTools(), ["read", "apply_patch", "image_gen.imagegen"]);
@@ -132,7 +132,7 @@ void test("activates extension tools only for OpenAI Codex models", async () => 
   assert.deepEqual(harness.activeTools(), ["read", "apply_patch", "image_gen.imagegen"]);
 });
 
-void test("rejects model switches while the active branch contains a native checkpoint", async () => {
+test("rejects model switches while the active branch contains a native checkpoint", async () => {
   const harness = createHarness([checkpointEntry()], codexModel);
   await harness.handlers.get("session_start")?.(undefined, harness.context);
 

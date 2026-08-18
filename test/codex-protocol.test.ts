@@ -43,7 +43,7 @@ function accessToken(): string {
   return `${header}.${claims}.signature`;
 }
 
-void test("counts and retains context with Codex's four-byte approximation", () => {
+test("counts and retains context with Codex's four-byte approximation", () => {
   assert.equal(approximateTokens("abcd"), 1);
   assert.equal(approximateTokens("abcde"), 2);
   assert.equal(approximateTokens("😀"), 1);
@@ -67,7 +67,7 @@ void test("counts and retains context with Codex's four-byte approximation", () 
   assert.deepEqual(boundary[1], user("ijklmnop"));
 });
 
-void test("matches Codex middle truncation markers and UTF-8 boundaries", () => {
+test("matches Codex middle truncation markers and UTF-8 boundaries", () => {
   assert.equal(truncateMiddleWithTokenBudget("short output", 100), "short output");
   assert.equal(truncateMiddleWithTokenBudget("abcdef", 0), "…2 tokens truncated…");
   assert.equal(
@@ -76,7 +76,7 @@ void test("matches Codex middle truncation markers and UTF-8 boundaries", () => 
   );
 });
 
-void test("builds the remote-compaction-v2 request and checkpoint history", () => {
+test("builds the remote-compaction-v2 request and checkpoint history", () => {
   const payload = remoteCompactionPayload({
     template: {
       reasoning: { effort: "high", summary: "auto" },
@@ -117,7 +117,7 @@ void test("builds the remote-compaction-v2 request and checkpoint history", () =
   });
 });
 
-void test("authenticates and parses remote compaction streams with priority pricing", async () => {
+test("authenticates and parses remote compaction streams with priority pricing", async () => {
   const headers = remoteCompactionHeaders({
     token: accessToken(),
     sessionId: "session-1",
@@ -163,7 +163,7 @@ void test("authenticates and parses remote compaction streams with priority pric
   assert.ok(Math.abs((result.usage?.cost.total ?? 0) - 0.000204) < 1e-12);
 });
 
-void test("accepts compaction output supplied only on the terminal response", async () => {
+test("accepts compaction output supplied only on the terminal response", async () => {
   async function* terminalOnly(): AsyncGenerator<JsonRecord> {
     yield {
       type: "response.completed",

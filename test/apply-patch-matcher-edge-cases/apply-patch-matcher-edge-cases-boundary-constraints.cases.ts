@@ -9,7 +9,7 @@ import {
   rejectWithoutWrite,
 } from "./apply-patch-matcher-edge-cases-harness.ts";
 
-void test("honors explicit end-of-file constraints during recovery", async (t) => {
+test("honors explicit end-of-file constraints during recovery", async (t) => {
   const cwd = await workspace(t);
   await writeFile(join(cwd, "tail.txt"), "target\nnot-the-tail\n");
   await assert.rejects(
@@ -39,7 +39,7 @@ void test("honors explicit end-of-file constraints during recovery", async (t) =
   assert.equal(await readFile(join(cwd, "tail.txt"), "utf8"), "target\nnot-the-tail\nappended\n");
 });
 
-void test("does not invent a blank line when recovering into an empty file", async (t) => {
+test("does not invent a blank line when recovering into an empty file", async (t) => {
   const cwd = await workspace(t);
   await writeFile(join(cwd, "empty.txt"), "");
 
@@ -56,7 +56,7 @@ void test("does not invent a blank line when recovering into an empty file", asy
   assert.equal(await readFile(join(cwd, "empty.txt"), "utf8"), "first\n");
 });
 
-void test("applies end-of-file to the complete recovered chunk", async (t) => {
+test("applies end-of-file to the complete recovered chunk", async (t) => {
   const cwd = await workspace(t);
   await rejectWithoutWrite(
     cwd,
@@ -108,7 +108,7 @@ void test("applies end-of-file to the complete recovered chunk", async (t) => {
   );
 });
 
-void test("rejects tolerant candidates before a present anchor", async (t) => {
+test("rejects tolerant candidates before a present anchor", async (t) => {
   const cwd = await workspace(t);
   await rejectWithoutWrite(
     cwd,
@@ -142,7 +142,7 @@ void test("rejects tolerant candidates before a present anchor", async (t) => {
   );
 });
 
-void test("applies exact indentation and preserves CRLF for structural replacements", async (t) => {
+test("applies exact indentation and preserves CRLF for structural replacements", async (t) => {
   const cwd = await workspace(t);
   await writeFile(join(cwd, "indent.ts"), "function run() {\n  combine(alpha, beta);\n}\n");
   await applyPatch(

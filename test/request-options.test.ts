@@ -16,7 +16,7 @@ import {
   applyPriorityPricing,
 } from "../extensions/openai-codex-compat/request-options.ts";
 
-void test("validates and layers Codex compatibility configuration", () => {
+test("validates and layers Codex compatibility configuration", () => {
   assert.equal(DEFAULT_CONFIG.responsesLite, false);
   assert.equal(DEFAULT_CONFIG.applyPatchDebug, false);
   assert.equal(DEFAULT_CONFIG.imageGeneration, true);
@@ -95,7 +95,7 @@ void test("validates and layers Codex compatibility configuration", () => {
   );
 });
 
-void test("parses environment overrides with highest precedence", () => {
+test("parses environment overrides with highest precedence", () => {
   assert.equal(CONFIG_ENVIRONMENT_VARIABLES.webSearch, "PI_OPENAI_CODEX_COMPAT_WEB_SEARCH_MODE");
 
   const environmentConfig = parseEnvironmentConfig({
@@ -183,7 +183,7 @@ void test("parses environment overrides with highest precedence", () => {
   assert.equal(persisted.webSearch, "cached");
 });
 
-void test("applies priority, GPT-5.6 reasoning mode, and native request controls", () => {
+test("applies priority, GPT-5.6 reasoning mode, and native request controls", () => {
   const payload: JsonRecord = {
     model: "gpt-5.6-sol",
     text: { format: { type: "json_schema" }, verbosity: "medium" },
@@ -220,7 +220,7 @@ void test("applies priority, GPT-5.6 reasoning mode, and native request controls
   });
 });
 
-void test("omits the default GPT-5.6 reasoning mode", () => {
+test("omits the default GPT-5.6 reasoning mode", () => {
   const result = applyCodexRequestOptions(
     {
       reasoning: { effort: "high", summary: "concise", mode: "pro" },
@@ -232,7 +232,7 @@ void test("omits the default GPT-5.6 reasoning mode", () => {
   assert.deepEqual(result["reasoning"], { effort: "high", summary: "auto" });
 });
 
-void test("disables request tools and omits unsupported reasoning mode and summary", () => {
+test("disables request tools and omits unsupported reasoning mode and summary", () => {
   const disabled = applyCodexRequestOptions(
     {
       service_tier: "flex",
@@ -260,7 +260,7 @@ void test("disables request tools and omits unsupported reasoning mode and summa
   assert.deepEqual(indexed.text, { verbosity: "medium" });
 });
 
-void test("uses standalone web.run instead of hosted web_search when available", () => {
+test("uses standalone web.run instead of hosted web_search when available", () => {
   const result = applyCodexRequestOptions(
     {
       tools: [
@@ -287,7 +287,7 @@ void test("uses standalone web.run instead of hosted web_search when available",
   ]);
 });
 
-void test("recomputes canonical priority-tier costs after payload modification", () => {
+test("recomputes canonical priority-tier costs after payload modification", () => {
   const model = {
     id: "gpt-5.5",
     name: "GPT-5.5",

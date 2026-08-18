@@ -14,7 +14,7 @@ import {
   type JsonRecord,
 } from "./codex-transport-harness.ts";
 
-void test("uses UUIDv7 for empty session IDs and WebSocket connection-limit retries", async (t) => {
+test("uses UUIDv7 for empty session IDs and WebSocket connection-limit retries", async (t) => {
   const previousWebSocket = globalThis.WebSocket;
   let connections = 0;
   const requestIds: string[] = [];
@@ -95,7 +95,7 @@ void test("uses UUIDv7 for empty session IDs and WebSocket connection-limit retr
   assert.equal(events.at(-1)?.type, "response.completed");
 });
 
-void test("reconnects an expired cached WebSocket after lifecycle events without surfacing the limit", async (t) => {
+test("reconnects an expired cached WebSocket after lifecycle events without surfacing the limit", async (t) => {
   const previousWebSocket = globalThis.WebSocket;
   const sentBodies: JsonRecord[] = [];
   let connections = 0;
@@ -220,7 +220,7 @@ void test("reconnects an expired cached WebSocket after lifecycle events without
   transport.close("expired-connection-session");
 });
 
-void test("does not mask malformed WebSocket events with SSE fallback", async (t) => {
+test("does not mask malformed WebSocket events with SSE fallback", async (t) => {
   const previousWebSocket = globalThis.WebSocket;
   let fetches = 0;
 
@@ -291,7 +291,7 @@ void test("does not mask malformed WebSocket events with SSE fallback", async (t
   assert.equal(fetches, 0);
 });
 
-void test("recovers when a cached WebSocket continuation expires", async (t) => {
+test("recovers when a cached WebSocket continuation expires", async (t) => {
   const previousWebSocket = globalThis.WebSocket;
   const sentBodies: JsonRecord[] = [];
   const diagnostics: CodexTransportDiagnostic[] = [];
@@ -460,7 +460,7 @@ void test("recovers when a cached WebSocket continuation expires", async (t) => 
   transport.close("continuation-session");
 });
 
-void test("rejects a pre-aborted request before reusing a cached WebSocket", async (t) => {
+test("rejects a pre-aborted request before reusing a cached WebSocket", async (t) => {
   const previousWebSocket = globalThis.WebSocket;
   let sends = 0;
 
@@ -542,7 +542,7 @@ void test("rejects a pre-aborted request before reusing a cached WebSocket", asy
   transport.close("abort-session");
 });
 
-void test("uses sticky SSE fallback after a midstream WebSocket failure", async (t) => {
+test("uses sticky SSE fallback after a midstream WebSocket failure", async (t) => {
   resetOpenAICodexWebSocketDebugStats("fallback-session");
   const previousWebSocket = globalThis.WebSocket;
   let connections = 0;
@@ -667,7 +667,7 @@ void test("uses sticky SSE fallback after a midstream WebSocket failure", async 
   transport.close("fallback-session");
 });
 
-void test("scopes cached WebSockets to the authenticated account", async (t) => {
+test("scopes cached WebSockets to the authenticated account", async (t) => {
   const previousWebSocket = globalThis.WebSocket;
   const connectedAccounts: string[] = [];
   const sentConnectionIds: number[] = [];
@@ -759,7 +759,7 @@ void test("scopes cached WebSockets to the authenticated account", async (t) => 
   transport.close("shared-session");
 });
 
-void test("reuses one WebSocket for compaction and continuation requests", async (t) => {
+test("reuses one WebSocket for compaction and continuation requests", async (t) => {
   const previousWebSocket = globalThis.WebSocket;
   const sent: JsonRecord[] = [];
   let connections = 0;

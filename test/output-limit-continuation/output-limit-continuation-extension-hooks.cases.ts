@@ -11,7 +11,7 @@ import {
   outputLimitResponseIdHash,
 } from "./output-limit-continuation-hook-harness.ts";
 
-void test("starts one hidden continuation after an exact Codex output-limit stop", async () => {
+test("starts one hidden continuation after an exact Codex output-limit stop", async () => {
   const harness = continuationHarness();
   await harness.emit("agent_end", { messages: [assistant("stop"), assistant("length")] });
   assert.deepEqual(harness.sent, []);
@@ -33,7 +33,7 @@ void test("starts one hidden continuation after an exact Codex output-limit stop
   ]);
 });
 
-void test("requires the exact raw stop reason and respects existing work", async () => {
+test("requires the exact raw stop reason and respects existing work", async () => {
   const pending = continuationHarness({ pending: true });
   await pending.emit("agent_end", { messages: [assistant("length")] });
   await pending.emit("agent_settled");
@@ -72,7 +72,7 @@ void test("requires the exact raw stop reason and respects existing work", async
   assert.deepEqual(modelStillRunning.sent, []);
 });
 
-void test("deduplicates recovery and suppresses cancelled or failed compaction", async () => {
+test("deduplicates recovery and suppresses cancelled or failed compaction", async () => {
   const recorded = continuationHarness({
     branch: [
       {
@@ -111,7 +111,7 @@ void test("deduplicates recovery and suppresses cancelled or failed compaction",
   assert.deepEqual(failed.sent, []);
 });
 
-void test("continues after successful compaction completes", async () => {
+test("continues after successful compaction completes", async () => {
   const harness = continuationHarness();
   await harness.emit("agent_end", { messages: [assistant("length")] });
   await harness.emit("session_before_compact", {

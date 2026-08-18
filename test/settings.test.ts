@@ -30,7 +30,7 @@ import {
 } from "../extensions/openai-codex-compat/tools.ts";
 import { testTheme } from "./support/test-theme.ts";
 
-void test("persists dedicated settings without discarding unknown configuration", async (t) => {
+test("persists dedicated settings without discarding unknown configuration", async (t) => {
   const root = await mkdtemp(join(tmpdir(), "pi-codex-settings-"));
   const cwd = join(root, "project");
   const agentDir = join(root, "agent");
@@ -75,7 +75,7 @@ void test("persists dedicated settings without discarding unknown configuration"
   assert.equal(loadConfig(cwd, false).fastMode, true);
 });
 
-void test("updates an existing trusted project settings file instead of global settings", async (t) => {
+test("updates an existing trusted project settings file instead of global settings", async (t) => {
   const root = await mkdtemp(join(tmpdir(), "pi-codex-project-settings-"));
   const projectDir = join(root, ".pi");
   await mkdir(projectDir, { recursive: true });
@@ -87,7 +87,7 @@ void test("updates an existing trusted project settings file instead of global s
   assert.equal(loadConfig(root, true).webSearch, "disabled");
 });
 
-void test("exposes every request and tool control in the settings pane", () => {
+test("exposes every request and tool control in the settings pane", () => {
   const config = {
     fastMode: true,
     responsesLite: false,
@@ -175,7 +175,7 @@ void test("exposes every request and tool control in the settings pane", () => {
   );
 });
 
-void test("marks environment-controlled settings as locked", () => {
+test("marks environment-controlled settings as locked", () => {
   const items = settingItems(
     { ...DEFAULT_CONFIG, fastMode: true, applyPatchDebug: true, autoCompactAtPercent: 90 },
     { fastMode: true, applyPatchDebug: true, autoCompactAtPercent: 90 },
@@ -199,7 +199,7 @@ void test("marks environment-controlled settings as locked", () => {
   );
 });
 
-void test("saves on Enter or Ctrl+S and discards unsaved changes on Escape", async (t) => {
+test("saves on Enter or Ctrl+S and discards unsaved changes on Escape", async (t) => {
   initTheme("dark", false);
   const root = await mkdtemp(join(tmpdir(), "pi-codex-session-settings-"));
   const cwd = join(root, "project");
@@ -290,7 +290,7 @@ void test("saves on Enter or Ctrl+S and discards unsaved changes on Escape", asy
   assert.equal(loadConfig(cwd, false).fastMode, false);
 });
 
-void test("uses apply_patch instead of Pi's active edit and write tools", () => {
+test("uses apply_patch instead of Pi's active edit and write tools", () => {
   let active = ["read", "edit", "write"];
   const pi: CodexToolActivationApi = {
     getActiveTools: () => active,
@@ -307,7 +307,7 @@ void test("uses apply_patch instead of Pi's active edit and write tools", () => 
   assert.deepEqual(active, ["read", "edit", "write"]);
 });
 
-void test("does not restore Pi edit tools that were inactive before apply_patch", () => {
+test("does not restore Pi edit tools that were inactive before apply_patch", () => {
   let active = ["read"];
   const pi: CodexToolActivationApi = {
     getActiveTools: () => active,
@@ -322,7 +322,7 @@ void test("does not restore Pi edit tools that were inactive before apply_patch"
   assert.deepEqual(active, ["read"]);
 });
 
-void test("toggles image_gen.imagegen and web.run independently on Codex models", () => {
+test("toggles image_gen.imagegen and web.run independently on Codex models", () => {
   let active = ["read", "edit", "write"];
   const pi: CodexToolActivationApi = {
     getActiveTools: () => active,
@@ -370,7 +370,7 @@ void test("toggles image_gen.imagegen and web.run independently on Codex models"
   assert.deepEqual(active, ["read", "edit", "write", "web.run"]);
 });
 
-void test("refuses to replace invalid existing settings", async (t) => {
+test("refuses to replace invalid existing settings", async (t) => {
   const root = await mkdtemp(join(tmpdir(), "pi-codex-invalid-settings-"));
   const agentDir = join(root, "agent");
   await mkdir(agentDir, { recursive: true });

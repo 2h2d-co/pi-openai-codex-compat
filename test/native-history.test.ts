@@ -9,7 +9,7 @@ import {
   parseNativeResponse,
 } from "../extensions/openai-codex-compat/native-history.ts";
 
-void test("persists native response overrides on the active session branch", () => {
+test("persists native response overrides on the active session branch", () => {
   const data = nativeResponseData("gpt-test", "resp_1", [
     { type: "web_search_call", id: "ws_1", status: "completed" },
   ]);
@@ -29,7 +29,7 @@ void test("persists native response overrides on the active session branch", () 
   assert.equal(nativeResponseOverrides(branch, "other-model").size, 0);
 });
 
-void test("fails closed on corrupt native response entries", () => {
+test("fails closed on corrupt native response entries", () => {
   const branch = [
     {
       type: "custom",
@@ -44,7 +44,7 @@ void test("fails closed on corrupt native response entries", () => {
   assert.throws(() => nativeResponseOverrides(branch, "gpt-test"), /corrupt/);
 });
 
-void test("recovers only done prefixes with linked tool outputs before overflow", () => {
+test("recovers only done prefixes with linked tool outputs before overflow", () => {
   const attempts = [
     {
       itemCount: 1,

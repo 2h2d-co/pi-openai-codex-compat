@@ -17,7 +17,7 @@ import {
   type FormatterMatchFailureDetails,
 } from "./apply-patch-semantic-harness.ts";
 
-void test("accepts grammar-valid empty and identity updates as no-ops", async (t) => {
+test("accepts grammar-valid empty and identity updates as no-ops", async (t) => {
   const cwd = await workspace(t);
   await writeFile(join(cwd, "same.txt"), "same\n");
   const before = await stat(join(cwd, "same.txt"));
@@ -69,7 +69,7 @@ void test("accepts grammar-valid empty and identity updates as no-ops", async (t
   assert.equal(after.mtimeMs, before.mtimeMs);
 });
 
-void test("reports patch-level input and format failures once", async (t) => {
+test("reports patch-level input and format failures once", async (t) => {
   const cwd = await workspace(t);
 
   await assert.rejects(applyPatch(cwd, "not a patch"), (error: unknown) => {
@@ -121,7 +121,7 @@ void test("reports patch-level input and format failures once", async (t) => {
   );
 });
 
-void test("distinguishes setup failures from execution stops without an owning instruction", () => {
+test("distinguishes setup failures from execution stops without an owning instruction", () => {
   const instruction = {
     index: 1,
     kind: "add" as const,
@@ -170,7 +170,7 @@ void test("distinguishes setup failures from execution stops without an owning i
   );
 });
 
-void test("explains every no-op and dead operation to the model and TUI", async (t) => {
+test("explains every no-op and dead operation to the model and TUI", async (t) => {
   const cwd = await workspace(t);
   await writeFile(join(cwd, "same-content.txt"), "value\n");
   await writeFile(join(cwd, "move-source.txt"), "move\n");
@@ -241,7 +241,7 @@ void test("explains every no-op and dead operation to the model and TUI", async 
   assert.doesNotMatch(expanded, /Proof:/u);
 });
 
-void test("uses explicit filesystem metadata failure terminology", () => {
+test("uses explicit filesystem metadata failure terminology", () => {
   const cwd = "/workspace";
   const details: ApplyPatchDetails = {
     status: "failed",
@@ -272,7 +272,7 @@ void test("uses explicit filesystem metadata failure terminology", () => {
   );
 });
 
-void test("gives actionable guidance for every formatter matcher failure", () => {
+test("gives actionable guidance for every formatter matcher failure", () => {
   const base = {
     path: "matcher.ts",
     groupCount: 2,
@@ -384,7 +384,7 @@ void test("gives actionable guidance for every formatter matcher failure", () =>
   }
 });
 
-void test("reports every instruction to the model and TUI without a limit", async (t) => {
+test("reports every instruction to the model and TUI without a limit", async (t) => {
   const cwd = await workspace(t);
   const operations = Array.from(
     { length: 11 },

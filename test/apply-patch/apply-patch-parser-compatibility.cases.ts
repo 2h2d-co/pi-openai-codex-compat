@@ -11,7 +11,7 @@ import {
   workspace,
 } from "./apply-patch-harness.ts";
 
-void test("matches Codex overwrite semantics for add and move", async (t) => {
+test("matches Codex overwrite semantics for add and move", async (t) => {
   const cwd = await workspace(t);
   await writeFile(join(cwd, "duplicate.txt"), "old content\n");
   await mkdir(join(cwd, "old"), { recursive: true });
@@ -55,7 +55,7 @@ void test("matches Codex overwrite semantics for add and move", async (t) => {
   });
 });
 
-void test("matches Codex lenient parsing around markers, heredocs, and blank context", async (t) => {
+test("matches Codex lenient parsing around markers, heredocs, and blank context", async (t) => {
   const cwd = await workspace(t);
   await writeFile(join(cwd, "file.txt"), "one\n\ntwo\n");
 
@@ -103,7 +103,7 @@ EOF`;
   );
 });
 
-void test("matches Codex fuzzy Unicode and strict end-of-file matching", async (t) => {
+test("matches Codex fuzzy Unicode and strict end-of-file matching", async (t) => {
   const cwd = await workspace(t);
   await writeFile(join(cwd, "unicode.txt"), "“hello” — world\n");
   await applyPatch(

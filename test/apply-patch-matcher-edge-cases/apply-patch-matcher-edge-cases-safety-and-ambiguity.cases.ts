@@ -1,6 +1,6 @@
 import { test, workspace, rejectWithoutWrite } from "./apply-patch-matcher-edge-cases-harness.ts";
 
-void test("treats JavaScript array elisions as exact punctuation", async (t) => {
+test("treats JavaScript array elisions as exact punctuation", async (t) => {
   const cwd = await workspace(t);
   await rejectWithoutWrite(
     cwd,
@@ -16,7 +16,7 @@ void test("treats JavaScript array elisions as exact punctuation", async (t) => 
   );
 });
 
-void test("rejects divergent line-level and structural candidates", async (t) => {
+test("rejects divergent line-level and structural candidates", async (t) => {
   const cwd = await workspace(t);
   await rejectWithoutWrite(
     cwd,
@@ -49,7 +49,7 @@ void test("rejects divergent line-level and structural candidates", async (t) =>
   );
 });
 
-void test("keeps Markdown tolerant matching outside closed and fenced blocks", async (t) => {
+test("keeps Markdown tolerant matching outside closed and fenced blocks", async (t) => {
   const cwd = await workspace(t);
   await rejectWithoutWrite(
     cwd,
@@ -87,7 +87,7 @@ void test("keeps Markdown tolerant matching outside closed and fenced blocks", a
   );
 });
 
-void test("applies Markdown safety rules consistently to CRLF files", async (t) => {
+test("applies Markdown safety rules consistently to CRLF files", async (t) => {
   const cwd = await workspace(t);
   await rejectWithoutWrite(
     cwd,
@@ -104,7 +104,7 @@ void test("applies Markdown safety rules consistently to CRLF files", async (t) 
   );
 });
 
-void test("rejects ambiguous duplicate code blocks and full-line structural expressions", async (t) => {
+test("rejects ambiguous duplicate code blocks and full-line structural expressions", async (t) => {
   const cwd = await workspace(t);
   await rejectWithoutWrite(
     cwd,
@@ -146,7 +146,7 @@ void test("rejects ambiguous duplicate code blocks and full-line structural expr
   );
 });
 
-void test("rejects unsupported reflowed prose and ambiguous table insertion boundaries", async (t) => {
+test("rejects unsupported reflowed prose and ambiguous table insertion boundaries", async (t) => {
   const cwd = await workspace(t);
   await rejectWithoutWrite(
     cwd,
@@ -183,7 +183,7 @@ void test("rejects unsupported reflowed prose and ambiguous table insertion boun
   );
 });
 
-void test("rejects unknown, unterminated, and malformed fenced code", async (t) => {
+test("rejects unknown, unterminated, and malformed fenced code", async (t) => {
   const cwd = await workspace(t);
   const fixtures = [
     {
@@ -228,7 +228,7 @@ void test("rejects unknown, unterminated, and malformed fenced code", async (t) 
   }
 });
 
-void test("rejects overlapping edit groups even when each group is identifiable", async (t) => {
+test("rejects overlapping edit groups even when each group is identifiable", async (t) => {
   const cwd = await workspace(t);
   await rejectWithoutWrite(
     cwd,

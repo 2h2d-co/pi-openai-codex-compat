@@ -14,7 +14,7 @@ import {
   type CodexTransportDiagnostic,
 } from "./codex-provider-harness.ts";
 
-void test("commits canonical assistant items for WebSocket continuation", async () => {
+test("commits canonical assistant items for WebSocket continuation", async () => {
   const user = userEntry("user-1", "hello");
   const harness = createHarness([user]);
   let replayItems: readonly JsonRecord[] | undefined;
@@ -55,7 +55,7 @@ void test("commits canonical assistant items for WebSocket continuation", async 
   );
 });
 
-void test("preserves flat default tool calls in Responses Lite continuations", async () => {
+test("preserves flat default tool calls in Responses Lite continuations", async () => {
   const user = userEntry("user-1", "hello");
   const harness = createHarness([user], {
     ...DEFAULT_CONFIG,
@@ -125,7 +125,7 @@ void test("preserves flat default tool calls in Responses Lite continuations", a
   assert.equal(harness.customEntries.length, 0);
 });
 
-void test("honors disabled cache retention when building provider payloads", async () => {
+test("honors disabled cache retention when building provider payloads", async () => {
   const user = userEntry("user-1", "hello");
   const harness = createHarness([user]);
   const requests: JsonRecord[] = [];
@@ -150,7 +150,7 @@ void test("honors disabled cache retention when building provider payloads", asy
   assert.equal(requests[0]?.prompt_cache_key, undefined);
 });
 
-void test("retains recovered transport diagnostics on assistant messages", async () => {
+test("retains recovered transport diagnostics on assistant messages", async () => {
   const user = userEntry("user-1", "hello");
   const harness = createHarness([user]);
   const diagnostic: CodexTransportDiagnostic = {
@@ -185,7 +185,7 @@ void test("retains recovered transport diagnostics on assistant messages", async
   assert.deepEqual(message.diagnostics, [diagnostic]);
 });
 
-void test("persists transparent Codex recovery diagnostics on successful assistants", async () => {
+test("persists transparent Codex recovery diagnostics on successful assistants", async () => {
   const user = userEntry("user-1", "hello");
   const harness = createHarness([user]);
   const diagnostic: CodexTransportDiagnostic = {

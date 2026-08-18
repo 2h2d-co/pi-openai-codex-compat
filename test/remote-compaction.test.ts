@@ -195,7 +195,7 @@ function createHarness(branch: SessionEntry[]) {
   return { hooks: pi, runtime, context, requests, requestHeaders, notices };
 }
 
-void test("routes manual compaction through the custom provider runtime", async () => {
+test("routes manual compaction through the custom provider runtime", async () => {
   const user = userEntry("user-1", "Remember BLUE-42.");
   const harness = createHarness([user]);
   const handler = harness.hooks.sessionBeforeCompact;
@@ -248,7 +248,7 @@ void test("routes manual compaction through the custom provider runtime", async 
   assert.ok(result.compaction.usage);
 });
 
-void test("classifies every Pi compaction lifecycle in official Codex metadata", async (t) => {
+test("classifies every Pi compaction lifecycle in official Codex metadata", async (t) => {
   const cases = [
     {
       reason: "manual",
@@ -317,7 +317,7 @@ void test("classifies every Pi compaction lifecycle in official Codex metadata",
   }
 });
 
-void test("preserves a proven committed prefix in overflow compaction", async () => {
+test("preserves a proven committed prefix in overflow compaction", async () => {
   const user = userEntry("user-1", "finish this task");
   const committedItem = {
     type: "message",
@@ -404,7 +404,7 @@ void test("preserves a proven committed prefix in overflow compaction", async ()
   });
 });
 
-void test("captures session scope and suppresses Pi's marker summary", () => {
+test("captures session scope and suppresses Pi's marker summary", () => {
   const user = userEntry("user-1", "Remember BLUE-42.");
   const checkpoint = {
     type: "compaction",
@@ -451,7 +451,7 @@ void test("captures session scope and suppresses Pi's marker summary", () => {
   );
 });
 
-void test("preserves validated compaction decisions in checkpoint data", () => {
+test("preserves validated compaction decisions in checkpoint data", () => {
   const checkpoint = {
     kind: CHECKPOINT_ENTRY_TYPE,
     version: 1,
@@ -473,7 +473,7 @@ void test("preserves validated compaction decisions in checkpoint data", () => {
   );
 });
 
-void test("fails closed when runtime compaction fails", async () => {
+test("fails closed when runtime compaction fails", async () => {
   const user = userEntry("user-1", "hello");
   const harness = createHarness([user]);
   harness.runtime.transport.request = async function* () {
@@ -498,7 +498,7 @@ void test("fails closed when runtime compaction fails", async () => {
   assert.match(harness.notices[0] ?? "", /native compaction failed/);
 });
 
-void test("normalizes non-Error runtime compaction failures", async () => {
+test("normalizes non-Error runtime compaction failures", async () => {
   const user = userEntry("user-1", "hello");
   const harness = createHarness([user]);
   harness.runtime.transport.request = async function* () {

@@ -8,7 +8,7 @@ import {
   type JsonRecord,
 } from "./codex-transport-harness.ts";
 
-void test("disables the WebSocket connect timeout when configured as zero", async (t) => {
+test("disables the WebSocket connect timeout when configured as zero", async (t) => {
   const previousWebSocket = globalThis.WebSocket;
   let closeReason: string | undefined;
 
@@ -60,7 +60,7 @@ void test("disables the WebSocket connect timeout when configured as zero", asyn
   assert.equal(closeReason, "aborted");
 });
 
-void test("uses Codex WebSocket timeouts without proactively expiring healthy sockets", async (t) => {
+test("uses Codex WebSocket timeouts without proactively expiring healthy sockets", async (t) => {
   const previousWebSocket = globalThis.WebSocket;
   const originalDateNow = Date.now;
   let now = originalDateNow();
@@ -193,7 +193,7 @@ void test("uses Codex WebSocket timeouts without proactively expiring healthy so
   assert.equal(connections, 3);
 });
 
-void test("honors server-directed SSE retry delays and their configured cap", async () => {
+test("honors server-directed SSE retry delays and their configured cap", async () => {
   const terminal = `data: ${JSON.stringify({
     type: "response.completed",
     response: { id: "response-1", status: "completed" },
@@ -246,7 +246,7 @@ void test("honors server-directed SSE retry delays and their configured cap", as
   );
 });
 
-void test("resamples retryable SSE HTTP failures with the stream budget", async () => {
+test("resamples retryable SSE HTTP failures with the stream budget", async () => {
   const terminal = `data: ${JSON.stringify({
     type: "response.completed",
     response: { id: "response-1", status: "completed" },
@@ -284,7 +284,7 @@ void test("resamples retryable SSE HTTP failures with the stream budget", async 
   assert.match(recovery?.details.error?.message ?? "", /temporarily_unavailable/);
 });
 
-void test("does not retry non-transient SSE response errors", async () => {
+test("does not retry non-transient SSE response errors", async () => {
   let requests = 0;
   await assert.rejects(
     async () => {
@@ -312,7 +312,7 @@ void test("does not retry non-transient SSE response errors", async () => {
   assert.equal(requests, 1);
 });
 
-void test("retries transient SSE rate limits", async () => {
+test("retries transient SSE rate limits", async () => {
   const terminal = `data: ${JSON.stringify({
     type: "response.completed",
     response: { id: "response-1", status: "completed" },
@@ -345,7 +345,7 @@ void test("retries transient SSE rate limits", async () => {
   assert.equal(requests, 2);
 });
 
-void test("does not resample terminal SSE usage limits", async () => {
+test("does not resample terminal SSE usage limits", async () => {
   let requests = 0;
   await assert.rejects(
     async () => {
@@ -372,7 +372,7 @@ void test("does not resample terminal SSE usage limits", async () => {
   assert.equal(requests, 1);
 });
 
-void test("normalizes AbortError without retrying", async () => {
+test("normalizes AbortError without retrying", async () => {
   let requests = 0;
   await assert.rejects(
     async () => {
@@ -399,7 +399,7 @@ void test("normalizes AbortError without retrying", async () => {
   assert.equal(requests, 1);
 });
 
-void test("does not retry SSE protocol errors after streaming starts", async () => {
+test("does not retry SSE protocol errors after streaming starts", async () => {
   let requests = 0;
   await assert.rejects(
     async () => {
@@ -424,7 +424,7 @@ void test("does not retry SSE protocol errors after streaming starts", async () 
   assert.equal(requests, 1);
 });
 
-void test("retries dropped SSE streams before model-visible output", async () => {
+test("retries dropped SSE streams before model-visible output", async () => {
   let requests = 0;
   const diagnostics: CodexTransportDiagnostic[] = [];
   const completed = {
@@ -469,7 +469,7 @@ void test("retries dropped SSE streams before model-visible output", async () =>
   assert.equal(recovery?.details.error?.message, "Codex SSE stream ended before a terminal event");
 });
 
-void test("does not retry dropped SSE streams after model-visible output", async () => {
+test("does not retry dropped SSE streams after model-visible output", async () => {
   let requests = 0;
   await assert.rejects(
     async () => {

@@ -8,7 +8,7 @@ import {
   accessToken,
 } from "./codex-transport-harness.ts";
 
-void test("posts authenticated JSON requests to sibling Codex endpoints", async () => {
+test("posts authenticated JSON requests to sibling Codex endpoints", async () => {
   let requestUrl = "";
   let requestInit: RequestInit | undefined;
   const result = await requestCodexJson(
@@ -46,7 +46,7 @@ void test("posts authenticated JSON requests to sibling Codex endpoints", async 
   assert.deepEqual(result, { output: "result" });
 });
 
-void test("rejects an empty Codex account ID before sending", async () => {
+test("rejects an empty Codex account ID before sending", async () => {
   let fetched = false;
   await assert.rejects(
     requestCodexJson(
@@ -66,7 +66,7 @@ void test("rejects an empty Codex account ID before sending", async () => {
   assert.equal(fetched, false);
 });
 
-void test("formats structured errors from sibling Codex endpoints", async () => {
+test("formats structured errors from sibling Codex endpoints", async () => {
   await assert.rejects(
     requestCodexJson(
       codexModel(),
@@ -91,7 +91,7 @@ void test("formats structured errors from sibling Codex endpoints", async () => 
   );
 });
 
-void test("matches Pi AI's raw and untruncated HTTP error messages", async () => {
+test("matches Pi AI's raw and untruncated HTTP error messages", async () => {
   const longMessage = `upstream-${"x".repeat(4_100)}`;
   await assert.rejects(
     requestCodexJson(

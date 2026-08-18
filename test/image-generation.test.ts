@@ -44,7 +44,7 @@ function codexModel(): Model<Api> {
   } satisfies Model<Api>;
 }
 
-void test("selects the newest conversation images in chronological order", () => {
+test("selects the newest conversation images in chronological order", () => {
   assert.deepEqual(
     recentImageUrls(
       [
@@ -75,7 +75,7 @@ void test("selects the newest conversation images in chronological order", () =>
   );
 });
 
-void test("normalizes absolute referenced image paths", () => {
+test("normalizes absolute referenced image paths", () => {
   const base = join(tmpdir(), "pi-codex-images");
   assert.equal(
     normalizeImagePath(`@${join(base, "nested")}${sep}..${sep}input.png`),
@@ -87,7 +87,7 @@ void test("normalizes absolute referenced image paths", () => {
   );
 });
 
-void test("executes generation and recent-image edits through Codex Images", async (t) => {
+test("executes generation and recent-image edits through Codex Images", async (t) => {
   const agentDir = await mkdtemp(join(tmpdir(), "pi-codex-images-"));
   const previousAgentDir = process.env["PI_CODING_AGENT_DIR"];
   process.env["PI_CODING_AGENT_DIR"] = agentDir;

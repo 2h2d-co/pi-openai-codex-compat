@@ -14,7 +14,7 @@ import {
   type CodexTransportDiagnostic,
 } from "./codex-provider-harness.ts";
 
-void test("emits start only when the Codex transport starts", async () => {
+test("emits start only when the Codex transport starts", async () => {
   const user = userEntry("user-1", "hello");
   const harness = createHarness([user]);
   const diagnostic: CodexTransportDiagnostic = {
@@ -48,7 +48,7 @@ void test("emits start only when the Codex transport starts", async () => {
   assert.equal(events.at(-1)?.type, "done");
 });
 
-void test("normalizes pre-stream failures without emitting start", async () => {
+test("normalizes pre-stream failures without emitting start", async () => {
   const user = userEntry("user-1", "hello");
   const harness = createHarness([user]);
   harness.runtime.transport.request = async function* () {
@@ -73,7 +73,7 @@ void test("normalizes pre-stream failures without emitting start", async () => {
   assert.equal(errorEvent?.error.errorMessage, "The Codex provider failed with a non-Error value.");
 });
 
-void test("cleans streaming scratch state and surfaces transport error messages", async () => {
+test("cleans streaming scratch state and surfaces transport error messages", async () => {
   const user = userEntry("user-1", "hello");
   const harness = createHarness([user]);
   const failure = new Error('403: {"message":"request denied"}');
@@ -114,7 +114,7 @@ void test("cleans streaming scratch state and surfaces transport error messages"
   assert.equal("customInput" in toolCall, false);
 });
 
-void test("honors non-object payload replacements like Pi AI", async () => {
+test("honors non-object payload replacements like Pi AI", async () => {
   const user = userEntry("user-1", "hello");
   const harness = createHarness([user]);
   let request: unknown;
@@ -139,7 +139,7 @@ void test("honors non-object payload replacements like Pi AI", async () => {
   assert.deepEqual(request, []);
 });
 
-void test("rejects missing streamSimple authentication synchronously", () => {
+test("rejects missing streamSimple authentication synchronously", () => {
   const harness = createHarness([userEntry("user-1", "hello")]);
   assert.throws(
     () => harness.runtime.streamSimple(codexModel(), { messages: [] }, {}),
@@ -147,7 +147,7 @@ void test("rejects missing streamSimple authentication synchronously", () => {
   );
 });
 
-void test("validates direct-stream and compaction authentication before payload hooks", async () => {
+test("validates direct-stream and compaction authentication before payload hooks", async () => {
   const user = userEntry("user-1", "hello");
   const harness = createHarness([user]);
   let payloadHooks = 0;
@@ -198,7 +198,7 @@ void test("validates direct-stream and compaction authentication before payload 
   assert.equal(transportRequests, 0);
 });
 
-void test("discards WebSockets when compaction response validation fails", async () => {
+test("discards WebSockets when compaction response validation fails", async () => {
   const harness = createHarness([userEntry("user-1", "hello")]);
   let reportedFailure: unknown;
   harness.runtime.transport.request = async function* (_model, _body, options) {
@@ -239,7 +239,7 @@ void test("discards WebSockets when compaction response validation fails", async
   assert.match(reportedFailure.message, /exactly one is required/);
 });
 
-void test("advances Codex window metadata after successful direct compaction", async () => {
+test("advances Codex window metadata after successful direct compaction", async () => {
   const user = userEntry("user-1", "continue");
   const harness = createHarness([user]);
   const requests: JsonRecord[] = [];
@@ -282,7 +282,7 @@ void test("advances Codex window metadata after successful direct compaction", a
   assert.equal(turnMetadata["x-codex-window-id"], "session-1:1");
 });
 
-void test("prices unsuccessful terminal usage before returning the provider error", async () => {
+test("prices unsuccessful terminal usage before returning the provider error", async () => {
   const user = userEntry("user-1", "hello");
   const harness = createHarness([user]);
   harness.runtime.transport.request = async function* () {
@@ -318,7 +318,7 @@ void test("prices unsuccessful terminal usage before returning the provider erro
   assert.ok(Math.abs(message.usage.cost.total - 0.00004) < 1e-12);
 });
 
-void test("matches Pi AI's fallback message for terminal failures without details", async () => {
+test("matches Pi AI's fallback message for terminal failures without details", async () => {
   const user = userEntry("user-1", "hello");
   const harness = createHarness([user]);
   harness.runtime.transport.request = async function* () {

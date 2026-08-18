@@ -17,7 +17,7 @@ import {
   type JsonRecord,
 } from "./codex-provider-harness.ts";
 
-void test("transports dotted Pi tools as native Responses namespaces", async () => {
+test("transports dotted Pi tools as native Responses namespaces", async () => {
   const user = userEntry("user-1", "search");
   const harness = createHarness([user]);
   const requests: JsonRecord[] = [];
@@ -120,7 +120,7 @@ void test("transports dotted Pi tools as native Responses namespaces", async () 
   assert.equal(harness.customEntries.length, 0);
 });
 
-void test("persists native output only when Pi cannot round-trip it", async () => {
+test("persists native output only when Pi cannot round-trip it", async () => {
   const user = userEntry("user-1", "search");
   const harness = createHarness([user]);
   const nativeItem = {

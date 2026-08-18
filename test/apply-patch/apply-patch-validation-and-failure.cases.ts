@@ -15,7 +15,7 @@ import {
   type ApplyPatchDetails,
 } from "./apply-patch-harness.ts";
 
-void test("prevalidates all hunks but preserves committed-prefix history after runtime failure", async (t) => {
+test("prevalidates all hunks but preserves committed-prefix history after runtime failure", async (t) => {
   const cwd = await workspace(t);
   await writeFile(join(cwd, "current.txt"), "original\n");
   let executionStarted = false;
@@ -107,7 +107,7 @@ void test("prevalidates all hunks but preserves committed-prefix history after r
   assert.equal(await readFile(join(cwd, "second.txt"), "utf8"), "external change\n");
 });
 
-void test("reports parse and preflight failures by instruction", async (t) => {
+test("reports parse and preflight failures by instruction", async (t) => {
   const cwd = await workspace(t);
   await writeFile(join(cwd, "existing.txt"), "keep\n");
 
@@ -205,7 +205,7 @@ invalid update line
   assert.equal(await readFile(join(cwd, "existing.txt"), "utf8"), "keep\n");
 });
 
-void test("rejects invalid UTF-8 like Codex", async (t) => {
+test("rejects invalid UTF-8 like Codex", async (t) => {
   const cwd = await workspace(t);
   await writeFile(join(cwd, "binary.txt"), Buffer.from([0xff, 0x0a]));
   await assert.rejects(
@@ -221,7 +221,7 @@ void test("rejects invalid UTF-8 like Codex", async (t) => {
   );
 });
 
-void test("matches Codex unrestricted path and symlink semantics", async (t) => {
+test("matches Codex unrestricted path and symlink semantics", async (t) => {
   const root = await workspace(t);
   const cwd = join(root, "workspace");
   const outside = join(root, "outside");

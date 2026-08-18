@@ -8,7 +8,7 @@ import {
   resolveCodexInstallationId,
 } from "../extensions/openai-codex-compat/codex-installation.ts";
 
-void test("persists and reuses a Codex installation id", () => {
+test("persists and reuses a Codex installation id", () => {
   const agentDir = mkdtempSync(join(tmpdir(), "pi-openai-codex-compat-installation-"));
   const first = resolveCodexInstallationId(agentDir);
   const second = resolveCodexInstallationId(agentDir);

@@ -436,7 +436,7 @@ export class CodexProviderRuntime {
     };
 
     if (signal?.aborted) {
-      void previous.then(release);
+      previous.then(release, release);
       throw new Error("Request was aborted");
     }
 
@@ -454,7 +454,7 @@ export class CodexProviderRuntime {
           : []),
       ]);
     } catch (error) {
-      void previous.then(release);
+      previous.then(release, release);
       throw error;
     } finally {
       if (onAbort) signal?.removeEventListener("abort", onAbort);
@@ -769,446 +769,451 @@ export class CodexProviderRuntime {
   ): AssistantMessageEventStream {
     const stream = createAssistantMessageEventStream();
     const requestOptions = transportOptions(options);
-    void (async () => {
-      const output: AssistantMessage = {
-        role: "assistant",
-        content: [],
-        api: CODEX_API,
-        provider: model.provider,
-        model: model.id,
-        usage: emptyUsage(),
-        stopReason: "pending",
-        timestamp: Date.now(),
-      };
-      const runtimeSessionId = requestOptions.sessionId;
-      let releaseRequest = () => {};
-      let registeredPostToolDisposition: CodexPostToolDisposition | undefined;
-      try {
-        const accountId = validateCodexAuthentication(model, requestOptions.apiKey);
-        releaseRequest = await this.acquireRequest(runtimeSessionId, requestOptions.signal);
-        this.activateThread(runtimeSessionId);
-        const cacheSessionId =
-          requestOptions.cacheRetention === "none" ? undefined : codexCacheKey(runtimeSessionId);
-        const agentTurn = this.agentTurn(runtimeSessionId);
-        const responsesLiteEnabled = this.responsesLiteEnabled(runtimeSessionId);
-        let carriedResponseRetries = 0;
-        const pendingPostToolDisposition = this.findPostToolDisposition(context);
-        if (pendingPostToolDisposition) {
-          assertLinkedToolOutputs(context, pendingPostToolDisposition);
-          this.forgetPostToolDisposition(pendingPostToolDisposition);
-          if (
-            pendingPostToolDisposition.type === "error" ||
-            pendingPostToolDisposition.retryAttempt > this.responseRetryPolicy.maxRetries
-          ) {
-            throw new Error(terminalErrorMessage(pendingPostToolDisposition));
-          }
-          carriedResponseRetries = pendingPostToolDisposition.retryAttempt;
-          await waitForResponseRetry(
-            responseRetryDelayMs(
-              this.responseRetryPolicy.baseDelayMs,
-              pendingPostToolDisposition.retryAttempt,
-            ),
-            requestOptions.signal,
-          );
+    const output: AssistantMessage = {
+      role: "assistant",
+      content: [],
+      api: CODEX_API,
+      provider: model.provider,
+      model: model.id,
+      usage: emptyUsage(),
+      stopReason: "pending",
+      timestamp: Date.now(),
+    };
+    const runtimeSessionId = requestOptions.sessionId;
+    let releaseRequest = () => {};
+    let registeredPostToolDisposition: CodexPostToolDisposition | undefined;
+    const streamingTask = (async () => {
+      const accountId = validateCodexAuthentication(model, requestOptions.apiKey);
+      releaseRequest = await this.acquireRequest(runtimeSessionId, requestOptions.signal);
+      this.activateThread(runtimeSessionId);
+      const cacheSessionId =
+        requestOptions.cacheRetention === "none" ? undefined : codexCacheKey(runtimeSessionId);
+      const agentTurn = this.agentTurn(runtimeSessionId);
+      const responsesLiteEnabled = this.responsesLiteEnabled(runtimeSessionId);
+      let carriedResponseRetries = 0;
+      const pendingPostToolDisposition = this.findPostToolDisposition(context);
+      if (pendingPostToolDisposition) {
+        assertLinkedToolOutputs(context, pendingPostToolDisposition);
+        this.forgetPostToolDisposition(pendingPostToolDisposition);
+        if (
+          pendingPostToolDisposition.type === "error" ||
+          pendingPostToolDisposition.retryAttempt > this.responseRetryPolicy.maxRetries
+        ) {
+          throw new Error(terminalErrorMessage(pendingPostToolDisposition));
         }
-        const grammarToolInputProperties = createGrammarToolInputProperties(
-          context.tools,
-          responsesCompatibility(model.compat).supportsOpenAIGrammarTools ?? false,
+        carriedResponseRetries = pendingPostToolDisposition.retryAttempt;
+        await waitForResponseRetry(
+          responseRetryDelayMs(
+            this.responseRetryPolicy.baseDelayMs,
+            pendingPostToolDisposition.retryAttempt,
+          ),
+          requestOptions.signal,
         );
-        let body = this.buildRequestBody(
+      }
+      const grammarToolInputProperties = createGrammarToolInputProperties(
+        context.tools,
+        responsesCompatibility(model.compat).supportsOpenAIGrammarTools ?? false,
+      );
+      let body = this.buildRequestBody(
+        model,
+        context,
+        requestOptions,
+        runtimeSessionId,
+        cacheSessionId,
+        grammarToolInputProperties,
+        agentTurn.turnId,
+      );
+      const transformed = await requestOptions.onPayload?.(body, model);
+      let replacementValues: JsonValue[] | undefined;
+      if (transformed !== undefined) {
+        if (Array.isArray(transformed)) {
+          replacementValues = requireJsonValues(transformed, "Codex payload replacement");
+        } else {
+          body = requireJsonRecord(transformed, "Codex payload replacement");
+        }
+      }
+      if (runtimeSessionId) {
+        this.templates.set(runtimeSessionId, {
+          modelId: model.id,
+          payload: replacementValues ? {} : withoutConversationInput(body),
+          grammarToolInputProperties,
+          requestOptions: { ...requestOptions },
+        });
+      }
+      if (!replacementValues) {
+        body = await this.maybeCompactPercentage(
           model,
           context,
           requestOptions,
-          runtimeSessionId,
-          cacheSessionId,
+          body,
           grammarToolInputProperties,
-          agentTurn.turnId,
-        );
-        const transformed = await requestOptions.onPayload?.(body, model);
-        let replacementValues: JsonValue[] | undefined;
-        if (transformed !== undefined) {
-          if (Array.isArray(transformed)) {
-            replacementValues = requireJsonValues(transformed, "Codex payload replacement");
-          } else {
-            body = requireJsonRecord(transformed, "Codex payload replacement");
-          }
-        }
-        if (runtimeSessionId) {
-          this.templates.set(runtimeSessionId, {
-            modelId: model.id,
-            payload: replacementValues ? {} : withoutConversationInput(body),
-            grammarToolInputProperties,
-            requestOptions: { ...requestOptions },
-          });
-        }
-        if (!replacementValues) {
-          body = await this.maybeCompactPercentage(
-            model,
-            context,
-            requestOptions,
-            body,
-            grammarToolInputProperties,
-            agentTurn,
-            responsesLiteEnabled,
-          );
-        }
-        const ordinaryBody = body;
-        const staticBody = applyResponsesLite(
-          updateInput(ordinaryBody, []),
-          model.id,
+          agentTurn,
           responsesLiteEnabled,
         );
-        let requestBody: JsonRecord | JsonValue[];
-        if (replacementValues) {
-          applyResponsesLite({}, model.id, responsesLiteEnabled);
-          requestBody = replacementValues;
-        } else {
-          body = applyResponsesLite(ordinaryBody, model.id, responsesLiteEnabled);
-          requestBody = body;
-        }
-        const cacheDiagnostics = codexCacheDiagnosticContext(
-          ordinaryBody,
-          Array.isArray(requestBody) ? {} : requestBody,
-          staticBody,
-          model.id,
-          responsesLiteEnabled,
-        );
+      }
+      const ordinaryBody = body;
+      const staticBody = applyResponsesLite(
+        updateInput(ordinaryBody, []),
+        model.id,
+        responsesLiteEnabled,
+      );
+      let requestBody: JsonRecord | JsonValue[];
+      if (replacementValues) {
+        applyResponsesLite({}, model.id, responsesLiteEnabled);
+        requestBody = replacementValues;
+      } else {
+        body = applyResponsesLite(ordinaryBody, model.id, responsesLiteEnabled);
+        requestBody = body;
+      }
+      const cacheDiagnostics = codexCacheDiagnosticContext(
+        ordinaryBody,
+        Array.isArray(requestBody) ? {} : requestBody,
+        staticBody,
+        model.id,
+        responsesLiteEnabled,
+      );
 
-        const rawItems: ResponsesItem[] = [];
-        const nativeAttempts: NativeResponseAttempt[] = [];
-        const prewarmDiagnostics: CodexTransportDiagnostic[] = [];
-        await this.maybePrewarm({
-          model,
-          body: staticBody,
-          fullBody: Array.isArray(requestBody) ? {} : requestBody,
-          requestOptions,
-          accountId,
-          diagnostics: prewarmDiagnostics,
-          turnState: agentTurn.turnState,
-          cacheDiagnostics,
-        });
-        if (prewarmDiagnostics.length > 0) output.diagnostics = prewarmDiagnostics;
-        let continuationHandle: CodexContinuationHandle | undefined;
-        let webSocketResponseHandle: CodexWebSocketResponseHandle | undefined;
-        let startEmitted = false;
-        const emitStart = () => {
-          if (startEmitted) return;
-          startEmitted = true;
-          stream.push({ type: "start", partial: output });
+      const rawItems: ResponsesItem[] = [];
+      const nativeAttempts: NativeResponseAttempt[] = [];
+      const prewarmDiagnostics: CodexTransportDiagnostic[] = [];
+      await this.maybePrewarm({
+        model,
+        body: staticBody,
+        fullBody: Array.isArray(requestBody) ? {} : requestBody,
+        requestOptions,
+        accountId,
+        diagnostics: prewarmDiagnostics,
+        turnState: agentTurn.turnState,
+        cacheDiagnostics,
+      });
+      if (prewarmDiagnostics.length > 0) output.diagnostics = prewarmDiagnostics;
+      let continuationHandle: CodexContinuationHandle | undefined;
+      let webSocketResponseHandle: CodexWebSocketResponseHandle | undefined;
+      let startEmitted = false;
+      const emitStart = () => {
+        if (startEmitted) return;
+        startEmitted = true;
+        stream.push({ type: "start", partial: output });
+      };
+      const transportRequestOptions = {
+        ...requestOptions,
+        accountId,
+        requestKind: "turn" as const,
+        turnState: agentTurn.turnState,
+        cacheDiagnostics,
+        onContinuationReady(handle: CodexContinuationHandle) {
+          continuationHandle = handle;
+        },
+        onWebSocketResponseHandle(handle: CodexWebSocketResponseHandle) {
+          webSocketResponseHandle = handle;
+        },
+        onTransportStart: emitStart,
+        onTransportDiagnostic(diagnostic: CodexTransportDiagnostic) {
+          output.diagnostics = [...(output.diagnostics ?? []), diagnostic];
+        },
+      };
+      let responseRequests = 0;
+      let responseRetries = carriedResponseRetries;
+      while (true) {
+        responseRequests += 1;
+        const attemptCapture: CodexAttemptCapture = {
+          streamedItems: [],
+          streamedToolCallIndexes: new Set(),
+          streamedCompletedToolCallIndexes: new Set(),
         };
-        const transportRequestOptions = {
-          ...requestOptions,
-          accountId,
-          requestKind: "turn" as const,
-          turnState: agentTurn.turnState,
-          cacheDiagnostics,
-          onContinuationReady(handle: CodexContinuationHandle) {
-            continuationHandle = handle;
-          },
-          onWebSocketResponseHandle(handle: CodexWebSocketResponseHandle) {
-            webSocketResponseHandle = handle;
-          },
-          onTransportStart: emitStart,
-          onTransportDiagnostic(diagnostic: CodexTransportDiagnostic) {
-            output.diagnostics = [...(output.diagnostics ?? []), diagnostic];
-          },
+        const terminalState: CodexTerminalState = {};
+        const attemptState: CodexStreamAttemptState = {
+          startedContentIndexes: new Set(),
+          completedContentIndexes: new Set(),
         };
-        let responseRequests = 0;
-        let responseRetries = carriedResponseRetries;
-        while (true) {
-          responseRequests += 1;
-          const attemptCapture: CodexAttemptCapture = {
-            streamedItems: [],
-            streamedToolCallIndexes: new Set(),
-            streamedCompletedToolCallIndexes: new Set(),
-          };
-          const terminalState: CodexTerminalState = {};
-          const attemptState: CodexStreamAttemptState = {
-            startedContentIndexes: new Set(),
-            completedContentIndexes: new Set(),
-          };
-          const usageBeforeAttempt = structuredClone(output.usage);
-          output.usage = emptyUsage();
-          let connectionLimitError: Error | undefined;
-          try {
-            await processCodexStream(
-              startOnFirstEvent(
-                captureRawEvents(
-                  this.transport.request(model, requestBody, transportRequestOptions),
-                  attemptCapture,
-                  terminalState,
-                ),
-                emitStart,
+        const usageBeforeAttempt = structuredClone(output.usage);
+        output.usage = emptyUsage();
+        let connectionLimitError: Error | undefined;
+        try {
+          await processCodexStream(
+            startOnFirstEvent(
+              captureRawEvents(
+                this.transport.request(model, requestBody, transportRequestOptions),
+                attemptCapture,
+                terminalState,
               ),
-              output,
-              stream,
-              model,
-              grammarToolInputProperties,
-              {
-                attemptState,
-                applyServiceTierPricing(usage, responseServiceTier) {
-                  applyServiceTierPricing(
-                    usage,
-                    model,
-                    Array.isArray(requestBody) ? undefined : requestBody.service_tier,
-                    responseServiceTier,
-                  );
-                },
+              emitStart,
+            ),
+            output,
+            stream,
+            model,
+            grammarToolInputProperties,
+            {
+              attemptState,
+              applyServiceTierPricing(usage, responseServiceTier) {
+                applyServiceTierPricing(
+                  usage,
+                  model,
+                  Array.isArray(requestBody) ? undefined : requestBody.service_tier,
+                  responseServiceTier,
+                );
               },
-            );
-          } catch (error) {
-            output.usage = usageBeforeAttempt;
-            if (isWebSocketConnectionLimitReachedError(error)) {
-              connectionLimitError = error;
-            } else {
-              if (!requestOptions.signal?.aborted) {
-                webSocketResponseHandle?.failParsing(error);
-              }
-              throw error;
+            },
+          );
+        } catch (error) {
+          output.usage = usageBeforeAttempt;
+          if (isWebSocketConnectionLimitReachedError(error)) {
+            connectionLimitError = error;
+          } else {
+            if (!requestOptions.signal?.aborted) {
+              webSocketResponseHandle?.failParsing(error);
             }
+            throw error;
           }
-          if (!connectionLimitError) {
-            output.usage = accumulateUsage(usageBeforeAttempt, output.usage);
-          }
-          // `response.output_item.done` is Codex's item-level commit point. Terminal
-          // response.output snapshots are deliberately ignored.
-          const attemptItems = attemptCapture.streamedItems;
-          if (terminalState.type) {
-            const reason = terminalReason(terminalState);
-            const nativeAttempt: NativeResponseAttempt = {
-              itemCount: attemptItems.length,
-              terminalType: terminalState.type,
-            };
-            if (reason) nativeAttempt.terminalReason = reason;
-            nativeAttempts.push(nativeAttempt);
-          }
-          const toolCalls = assessAttemptToolCalls(attemptItems, attemptCapture);
-          const incompleteDetails = isObject(terminalState.response?.["incomplete_details"])
-            ? terminalState.response["incomplete_details"]
-            : undefined;
-          const incompleteReason = isString(incompleteDetails?.["reason"])
-            ? incompleteDetails["reason"]
-            : undefined;
-          const recordDecision = (
-            decision: CodexResponseDecision,
-            postToolDisposition?: "continue" | "error" | "retry",
-          ): void => {
-            const diagnosticOptions: Parameters<typeof responseDecisionDiagnostic>[0] = {
-              attempt: responseRequests,
-              attemptItems,
-              capture: attemptCapture,
-              decision,
-              terminalState,
-              toolCalls,
-            };
-            if (connectionLimitError) {
-              diagnosticOptions.failureReason = WEBSOCKET_CONNECTION_LIMIT_REACHED_CODE;
-            }
-            if (incompleteReason) diagnosticOptions.incompleteReason = incompleteReason;
-            if (postToolDisposition) {
-              diagnosticOptions.postToolDisposition = postToolDisposition;
-            }
-            const diagnostic = responseDecisionDiagnostic(diagnosticOptions);
-            if (diagnostic) output.diagnostics = [...(output.diagnostics ?? []), diagnostic];
+        }
+        if (!connectionLimitError) {
+          output.usage = accumulateUsage(usageBeforeAttempt, output.usage);
+        }
+        // `response.output_item.done` is Codex's item-level commit point. Terminal
+        // response.output snapshots are deliberately ignored.
+        const attemptItems = attemptCapture.streamedItems;
+        if (terminalState.type) {
+          const reason = terminalReason(terminalState);
+          const nativeAttempt: NativeResponseAttempt = {
+            itemCount: attemptItems.length,
+            terminalType: terminalState.type,
           };
-
-          // Return each done tool call before processing an unsuccessful response
-          // terminal. Pi will execute the completed subset; started-only siblings
-          // are discarded and never enter provider history.
-          if (toolCalls.hasCompletedCalls) {
-            const callIds = completedAttemptToolCallIds(output, attemptState);
-            if (callIds.length !== toolCalls.completedCount) {
-              throw new Error("Codex completed tool-call items could not be mapped to Pi calls.");
-            }
-            let postToolDisposition: "continue" | "error" | "retry" = "continue";
-            if (connectionLimitError) {
-              postToolDisposition = "retry";
-              registeredPostToolDisposition = {
-                callIds,
-                errorMessage: connectionLimitError.message,
-                retryAttempt: responseRetries + 1,
-                terminalType: WEBSOCKET_CONNECTION_LIMIT_REACHED_CODE,
-                turnId: agentTurn.turnId,
-                type: "retry",
-              };
-            } else if (
-              terminalState.type === "response.incomplete" ||
-              terminalState.type === "response.failed"
-            ) {
-              const retryable =
-                terminalState.type === "response.incomplete" ||
-                retryableResponseFailure(terminalState.response);
-              postToolDisposition = retryable ? "retry" : "error";
-              registeredPostToolDisposition = {
-                callIds,
-                retryAttempt: retryable ? responseRetries + 1 : responseRetries,
-                terminalType: terminalState.type,
-                turnId: agentTurn.turnId,
-                type: postToolDisposition,
-              };
-              if (terminalState.response) {
-                registeredPostToolDisposition.response = structuredClone(terminalState.response);
-              }
-            }
-            if (registeredPostToolDisposition) {
-              if (runtimeSessionId) {
-                registeredPostToolDisposition.sessionId = runtimeSessionId;
-              }
-              this.rememberPostToolDisposition(registeredPostToolDisposition);
-            }
-            discardIncompleteAttemptContent(output, attemptState);
-            rawItems.push(...attemptItems.map((item) => structuredClone(item)));
-            output.stopReason = "toolUse";
-            delete output.errorMessage;
-            recordDecision("return_tool_use", postToolDisposition);
-            break;
-          }
-
-          const nextBody = Array.isArray(requestBody)
-            ? undefined
-            : continueResponseBody(requestBody, attemptItems);
-          rawItems.push(...attemptItems.map((item) => structuredClone(item)));
-          discardIncompleteAttemptContent(output, attemptState);
-          const retryableTerminal =
-            terminalState.type === "response.incomplete" ||
-            (terminalState.type === "response.failed" &&
-              retryableResponseFailure(terminalState.response));
-          if (
-            (connectionLimitError || retryableTerminal) &&
-            nextBody &&
-            responseRetries < this.responseRetryPolicy.maxRetries
-          ) {
-            responseRetries += 1;
-            body = nextBody;
-            requestBody = nextBody;
-            output.stopReason = "pending";
-            delete output.errorMessage;
-            delete output.rawStopReason;
-            delete output.responseId;
-            recordDecision(
-              attemptItems.length === 0 ? "retry_original_input" : "continue_no_tools",
-            );
-            await waitForResponseRetry(
-              responseRetryDelayMs(this.responseRetryPolicy.baseDelayMs, responseRetries),
-              requestOptions.signal,
-            );
-            continue;
-          }
+          if (reason) nativeAttempt.terminalReason = reason;
+          nativeAttempts.push(nativeAttempt);
+        }
+        const toolCalls = assessAttemptToolCalls(attemptItems, attemptCapture);
+        const incompleteDetails = isObject(terminalState.response?.["incomplete_details"])
+          ? terminalState.response["incomplete_details"]
+          : undefined;
+        const incompleteReason = isString(incompleteDetails?.["reason"])
+          ? incompleteDetails["reason"]
+          : undefined;
+        const recordDecision = (
+          decision: CodexResponseDecision,
+          postToolDisposition?: "continue" | "error" | "retry",
+        ): void => {
+          const diagnosticOptions: Parameters<typeof responseDecisionDiagnostic>[0] = {
+            attempt: responseRequests,
+            attemptItems,
+            capture: attemptCapture,
+            decision,
+            terminalState,
+            toolCalls,
+          };
           if (connectionLimitError) {
-            recordDecision("return_terminal");
-            throw connectionLimitError;
+            diagnosticOptions.failureReason = WEBSOCKET_CONNECTION_LIMIT_REACHED_CODE;
           }
+          if (incompleteReason) diagnosticOptions.incompleteReason = incompleteReason;
+          if (postToolDisposition) {
+            diagnosticOptions.postToolDisposition = postToolDisposition;
+          }
+          const diagnostic = responseDecisionDiagnostic(diagnosticOptions);
+          if (diagnostic) output.diagnostics = [...(output.diagnostics ?? []), diagnostic];
+        };
 
-          if (
-            terminalState.type === "response.completed" &&
-            terminalState.response?.["end_turn"] === false
-          ) {
-            const scope = runtimeSessionId ? this.scopes.get(runtimeSessionId) : undefined;
-            if (reachedProviderCompactionThreshold(scope, output.usage, model)) {
-              // Pi 0.84 has no provider event that can split one stream into two
-              // assistant messages. Return the committed prefix as a recoverable
-              // length boundary so Pi persists B1, runs native overflow compaction,
-              // and continues from K without adding model-visible input.
-              output.stopReason = "length";
-              output.rawStopReason = PROVIDER_COMPACTION_BOUNDARY_STOP_REASON;
-              delete output.errorMessage;
-              recordDecision("return_compaction_boundary");
-              break;
-            }
-            if (!nextBody) {
-              throw new Error(
-                "Codex requested a follow-up response, but its completed output could not be appended to request history.",
-              );
-            }
-            responseRetries = 0;
-            body = nextBody;
-            requestBody = nextBody;
-            output.stopReason = "pending";
-            delete output.errorMessage;
-            delete output.rawStopReason;
-            recordDecision("continue_no_tools");
-            continue;
+        // Return each done tool call before processing an unsuccessful response
+        // terminal. Pi will execute the completed subset; started-only siblings
+        // are discarded and never enter provider history.
+        if (toolCalls.hasCompletedCalls) {
+          const callIds = completedAttemptToolCallIds(output, attemptState);
+          if (callIds.length !== toolCalls.completedCount) {
+            throw new Error("Codex completed tool-call items could not be mapped to Pi calls.");
           }
-          recordDecision("return_terminal");
+          let postToolDisposition: "continue" | "error" | "retry" = "continue";
+          if (connectionLimitError) {
+            postToolDisposition = "retry";
+            registeredPostToolDisposition = {
+              callIds,
+              errorMessage: connectionLimitError.message,
+              retryAttempt: responseRetries + 1,
+              terminalType: WEBSOCKET_CONNECTION_LIMIT_REACHED_CODE,
+              turnId: agentTurn.turnId,
+              type: "retry",
+            };
+          } else if (
+            terminalState.type === "response.incomplete" ||
+            terminalState.type === "response.failed"
+          ) {
+            const retryable =
+              terminalState.type === "response.incomplete" ||
+              retryableResponseFailure(terminalState.response);
+            postToolDisposition = retryable ? "retry" : "error";
+            registeredPostToolDisposition = {
+              callIds,
+              retryAttempt: retryable ? responseRetries + 1 : responseRetries,
+              terminalType: terminalState.type,
+              turnId: agentTurn.turnId,
+              type: postToolDisposition,
+            };
+            if (terminalState.response) {
+              registeredPostToolDisposition.response = structuredClone(terminalState.response);
+            }
+          }
+          if (registeredPostToolDisposition) {
+            if (runtimeSessionId) {
+              registeredPostToolDisposition.sessionId = runtimeSessionId;
+            }
+            this.rememberPostToolDisposition(registeredPostToolDisposition);
+          }
+          discardIncompleteAttemptContent(output, attemptState);
+          rawItems.push(...attemptItems.map((item) => structuredClone(item)));
+          output.stopReason = "toolUse";
+          delete output.errorMessage;
+          recordDecision("return_tool_use", postToolDisposition);
           break;
         }
-        if (requestOptions.signal?.aborted) throw new Error("Request was aborted");
 
-        const compat = responsesCompatibility(model.compat);
-        const canonicalContext: Context = {
-          messages: [output],
-        };
-        if (context.tools) canonicalContext.tools = context.tools;
-        const canonicalItems = convertResponsesMessages(
-          model,
-          canonicalContext,
-          CODEX_TOOL_CALL_PROVIDERS,
-          {
-            includeSystemPrompt: false,
-            grammarToolInputProperties,
-            deferredTools: splitDeferredTools(context, Boolean(compat?.supportsToolSearch))
-              .deferred,
-            toolOptions: {
-              strict: false,
-              supportsStrictMode: compat?.supportsStrictMode ?? true,
-              supportsOpenAIGrammarTools: compat?.supportsOpenAIGrammarTools ?? false,
-            },
-            namespacedToolNames: CODEX_NAMESPACED_TOOL_NAMES,
-            textContentItemToolResultNames: CODEX_TEXT_CONTENT_ITEM_TOOL_RESULT_NAMES,
-            toolResultImageDetail:
-              (runtimeSessionId
-                ? this.scopes.get(runtimeSessionId)?.config.imageDetail
-                : undefined) ?? "auto",
-          },
-        ).filter(
-          (item) =>
-            item["type"] !== "function_call_output" && item["type"] !== "custom_tool_call_output",
-        );
-        const persistNativeItems =
-          rawItems.length > 0 &&
-          (responseRequests > 1 || nativeOverrideRequired(rawItems, canonicalItems));
-        if (persistNativeItems) {
-          if (!output.responseId) throw new Error("Codex response is missing a response id.");
-          this.pi.appendEntry(
-            NATIVE_RESPONSE_ENTRY_TYPE,
-            nativeResponseData(model.id, output.responseId, rawItems, nativeAttempts),
-          );
-        }
-        try {
-          assertSuccessfulOutput(output);
-        } catch (error) {
-          webSocketResponseHandle?.discard();
-          throw error;
-        }
-        const readyContinuation = continuationHandle;
+        const nextBody = Array.isArray(requestBody)
+          ? undefined
+          : continueResponseBody(requestBody, attemptItems);
+        rawItems.push(...attemptItems.map((item) => structuredClone(item)));
+        discardIncompleteAttemptContent(output, attemptState);
+        const retryableTerminal =
+          terminalState.type === "response.incomplete" ||
+          (terminalState.type === "response.failed" &&
+            retryableResponseFailure(terminalState.response));
         if (
-          responseRequests === 1 &&
-          readyContinuation &&
-          readyContinuation.responseId === output.responseId
+          (connectionLimitError || retryableTerminal) &&
+          nextBody &&
+          responseRetries < this.responseRetryPolicy.maxRetries
         ) {
-          readyContinuation.replaceResponseItems(persistNativeItems ? rawItems : canonicalItems);
+          responseRetries += 1;
+          body = nextBody;
+          requestBody = nextBody;
+          output.stopReason = "pending";
+          delete output.errorMessage;
+          delete output.rawStopReason;
+          delete output.responseId;
+          recordDecision(attemptItems.length === 0 ? "retry_original_input" : "continue_no_tools");
+          await waitForResponseRetry(
+            responseRetryDelayMs(this.responseRetryPolicy.baseDelayMs, responseRetries),
+            requestOptions.signal,
+          );
+          continue;
+        }
+        if (connectionLimitError) {
+          recordDecision("return_terminal");
+          throw connectionLimitError;
         }
 
-        stream.push({ type: "done", reason: output.stopReason, message: output });
-        stream.end();
-        // oxlint-disable-next-line 2h2d/no-silent-error-suppression -- The stream protocol reports terminal failures as error events instead of rejecting a detached task.
-      } catch (error) {
-        if (registeredPostToolDisposition) {
-          this.forgetPostToolDisposition(registeredPostToolDisposition);
+        if (
+          terminalState.type === "response.completed" &&
+          terminalState.response?.["end_turn"] === false
+        ) {
+          const scope = runtimeSessionId ? this.scopes.get(runtimeSessionId) : undefined;
+          if (reachedProviderCompactionThreshold(scope, output.usage, model)) {
+            // Pi 0.84 has no provider event that can split one stream into two
+            // assistant messages. Return the committed prefix as a recoverable
+            // length boundary so Pi persists B1, runs native overflow compaction,
+            // and continues from K without adding model-visible input.
+            output.stopReason = "length";
+            output.rawStopReason = PROVIDER_COMPACTION_BOUNDARY_STOP_REASON;
+            delete output.errorMessage;
+            recordDecision("return_compaction_boundary");
+            break;
+          }
+          if (!nextBody) {
+            throw new Error(
+              "Codex requested a follow-up response, but its completed output could not be appended to request history.",
+            );
+          }
+          responseRetries = 0;
+          body = nextBody;
+          requestBody = nextBody;
+          output.stopReason = "pending";
+          delete output.errorMessage;
+          delete output.rawStopReason;
+          recordDecision("continue_no_tools");
+          continue;
         }
-        const providerError = errorFromThrown(
-          error,
-          "The Codex provider failed with a non-Error value.",
-        );
-        clearStreamingScratchState(output);
-        output.stopReason = requestOptions.signal?.aborted ? "aborted" : "error";
-        output.errorMessage = providerError.message;
-        stream.push({ type: "error", reason: output.stopReason, error: output });
-        stream.end();
-      } finally {
-        releaseRequest();
+        recordDecision("return_terminal");
+        break;
       }
+      if (requestOptions.signal?.aborted) throw new Error("Request was aborted");
+
+      const compat = responsesCompatibility(model.compat);
+      const canonicalContext: Context = {
+        messages: [output],
+      };
+      if (context.tools) canonicalContext.tools = context.tools;
+      const canonicalItems = convertResponsesMessages(
+        model,
+        canonicalContext,
+        CODEX_TOOL_CALL_PROVIDERS,
+        {
+          includeSystemPrompt: false,
+          grammarToolInputProperties,
+          deferredTools: splitDeferredTools(context, Boolean(compat?.supportsToolSearch)).deferred,
+          toolOptions: {
+            strict: false,
+            supportsStrictMode: compat?.supportsStrictMode ?? true,
+            supportsOpenAIGrammarTools: compat?.supportsOpenAIGrammarTools ?? false,
+          },
+          namespacedToolNames: CODEX_NAMESPACED_TOOL_NAMES,
+          textContentItemToolResultNames: CODEX_TEXT_CONTENT_ITEM_TOOL_RESULT_NAMES,
+          toolResultImageDetail:
+            (runtimeSessionId
+              ? this.scopes.get(runtimeSessionId)?.config.imageDetail
+              : undefined) ?? "auto",
+        },
+      ).filter(
+        (item) =>
+          item["type"] !== "function_call_output" && item["type"] !== "custom_tool_call_output",
+      );
+      const persistNativeItems =
+        rawItems.length > 0 &&
+        (responseRequests > 1 || nativeOverrideRequired(rawItems, canonicalItems));
+      if (persistNativeItems) {
+        if (!output.responseId) throw new Error("Codex response is missing a response id.");
+        this.pi.appendEntry(
+          NATIVE_RESPONSE_ENTRY_TYPE,
+          nativeResponseData(model.id, output.responseId, rawItems, nativeAttempts),
+        );
+      }
+      try {
+        assertSuccessfulOutput(output);
+      } catch (error) {
+        webSocketResponseHandle?.discard();
+        throw error;
+      }
+      const readyContinuation = continuationHandle;
+      if (
+        responseRequests === 1 &&
+        readyContinuation &&
+        readyContinuation.responseId === output.responseId
+      ) {
+        readyContinuation.replaceResponseItems(persistNativeItems ? rawItems : canonicalItems);
+      }
+      return output.stopReason;
     })();
+    streamingTask.then(
+      (stopReason) => {
+        try {
+          stream.push({ type: "done", reason: stopReason, message: output });
+          stream.end();
+        } finally {
+          releaseRequest();
+        }
+      },
+      (error: unknown) => {
+        try {
+          if (registeredPostToolDisposition) {
+            this.forgetPostToolDisposition(registeredPostToolDisposition);
+          }
+          const providerError = errorFromThrown(
+            error,
+            "The Codex provider failed with a non-Error value.",
+          );
+          clearStreamingScratchState(output);
+          output.stopReason = requestOptions.signal?.aborted ? "aborted" : "error";
+          output.errorMessage = providerError.message;
+          stream.push({ type: "error", reason: output.stopReason, error: output });
+          stream.end();
+        } finally {
+          releaseRequest();
+        }
+      },
+    );
     return stream;
   }
 

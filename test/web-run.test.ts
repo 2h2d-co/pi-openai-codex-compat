@@ -52,7 +52,7 @@ function userEntry(id: string, text: string, parentId: string | null = null): Se
   } satisfies SessionEntry;
 }
 
-void test("retains only the latest two visible user turns for standalone search", () => {
+test("retains only the latest two visible user turns for standalone search", () => {
   const input = recentSearchInput([
     {
       type: "message",
@@ -105,7 +105,7 @@ void test("retains only the latest two visible user turns for standalone search"
   ]);
 });
 
-void test("registers the complete reserved web.run schema and executes alpha/search", async () => {
+test("registers the complete reserved web.run schema and executes alpha/search", async () => {
   let tool: WebRunTool | undefined;
   let webSearch: WebSearchMode = "indexed";
   const requests: Array<{

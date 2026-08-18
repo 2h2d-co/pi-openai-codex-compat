@@ -43,7 +43,7 @@ function bypassResponseRetryBackoff(t: TestContext): void {
   t.mock.method(globalThis, "setTimeout", immediateRetryTimeout);
 }
 
-void test("resamples a Codex output limit before returning control to Pi", async (t) => {
+test("resamples a Codex output limit before returning control to Pi", async (t) => {
   const server = await startCodexServer(t);
   const { session } = await createTestSession(t, server.baseUrl);
 
@@ -108,7 +108,7 @@ void test("resamples a Codex output limit before returning control to Pi", async
   assert.equal(session.isIdle, true);
 });
 
-void test("preserves committed progress across overflow compaction and automatic retry", async (t) => {
+test("preserves committed progress across overflow compaction and automatic retry", async (t) => {
   const server = await startCodexServer(t, (requestNumber, body) => {
     const input = requireJsonRecords(body["input"]);
     if (input.some((item) => item["type"] === "compaction_trigger")) return compactionEvents();
@@ -167,7 +167,7 @@ void test("preserves committed progress across overflow compaction and automatic
   assert.equal(session.isIdle, true);
 });
 
-void test("compacts between successful provider follow-ups with an explicit Pi boundary", async (t) => {
+test("compacts between successful provider follow-ups with an explicit Pi boundary", async (t) => {
   const server = await startCodexServer(t, (requestNumber, body) => {
     const input = requireJsonRecords(body["input"]);
     if (input.some((item) => item["type"] === "compaction_trigger")) return compactionEvents();
@@ -220,7 +220,7 @@ void test("compacts between successful provider follow-ups with an explicit Pi b
   assert.equal(session.isIdle, true);
 });
 
-void test("continues a fully exhausted output limit after successful threshold compaction", async (t) => {
+test("continues a fully exhausted output limit after successful threshold compaction", async (t) => {
   const server = await startCodexServer(t, (requestNumber, body) => {
     const input = requireJsonRecords(body["input"]);
     if (input.some((item) => item["type"] === "compaction_trigger")) return compactionEvents();
@@ -281,7 +281,7 @@ void test("continues a fully exhausted output limit after successful threshold c
   assert.equal(session.isIdle, true);
 });
 
-void test("executes an output-limit tool call before the next provider request", async (t) => {
+test("executes an output-limit tool call before the next provider request", async (t) => {
   const call = {
     type: "function_call",
     id: "fc_read",

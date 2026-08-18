@@ -145,6 +145,7 @@ export async function assertMutationEntryMatches(
 
   try {
     await assertEntryMatches(path, effectiveExpected);
+    // oxlint-disable-next-line 2h2d/no-silent-error-suppression -- A verified planned link-count change safely explains this mismatch; every other failure is rethrown below.
   } catch (error) {
     if (
       (effectiveExpected.kind === "regular" || effectiveExpected.kind === "symlink") &&

@@ -47,7 +47,7 @@ async function* events(values: JsonRecord[]): AsyncGenerator<JsonRecord> {
   yield* values;
 }
 
-void test("parses reasoning and grammar tool calls into canonical Pi content", async () => {
+test("parses reasoning and grammar tool calls into canonical Pi content", async () => {
   const message = output();
   const stream = createAssistantMessageEventStream();
   const patch = "*** Begin Patch\n*** End Patch";
@@ -132,7 +132,7 @@ void test("parses reasoning and grammar tool calls into canonical Pi content", a
   assert.equal(toolCall?.id, "call_1|ctc_1");
 });
 
-void test("ignores terminal output and commits only output_item.done items", async () => {
+test("ignores terminal output and commits only output_item.done items", async () => {
   const message = output();
   const stream = createAssistantMessageEventStream();
   const reasoning = {
@@ -204,7 +204,7 @@ void test("ignores terminal output and commits only output_item.done items", asy
   );
 });
 
-void test("matches Pi AI's closed grammar-input error wording", async () => {
+test("matches Pi AI's closed grammar-input error wording", async () => {
   await assert.rejects(
     processCodexStream(
       events([
@@ -241,7 +241,7 @@ void test("matches Pi AI's closed grammar-input error wording", async () => {
   );
 });
 
-void test("maps allowlisted Responses namespace calls to dotted Pi tool names", async () => {
+test("maps allowlisted Responses namespace calls to dotted Pi tool names", async () => {
   const message = output();
   const stream = createAssistantMessageEventStream();
 
@@ -295,7 +295,7 @@ void test("maps allowlisted Responses namespace calls to dotted Pi tool names", 
   assert.deepEqual(toolCall?.arguments, { search_query: [{ q: "Pi" }] });
 });
 
-void test("maps the Responses Lite functions namespace to bare Pi tool names", async () => {
+test("maps the Responses Lite functions namespace to bare Pi tool names", async () => {
   const message = output();
 
   await processCodexStream(
@@ -344,7 +344,7 @@ void test("maps the Responses Lite functions namespace to bare Pi tool names", a
   assert.deepEqual(toolCall?.arguments, { path: "README.md" });
 });
 
-void test("maps default-namespaced custom calls to bare Pi tool names", async () => {
+test("maps default-namespaced custom calls to bare Pi tool names", async () => {
   for (const namespace of ["", "functions"]) {
     const message = output();
     await processCodexStream(
@@ -394,7 +394,7 @@ void test("maps default-namespaced custom calls to bare Pi tool names", async ()
   }
 });
 
-void test("matches Pi AI phase, reasoning, and final tool-delta events", async () => {
+test("matches Pi AI phase, reasoning, and final tool-delta events", async () => {
   const message = output();
   const pushed: Array<{ type: string; delta?: string; stopReason?: string }> = [];
   const stream: Pick<AssistantMessageEventStream, "push"> = {
@@ -501,7 +501,7 @@ void test("matches Pi AI phase, reasoning, and final tool-delta events", async (
   );
 });
 
-void test("rejects unknown and flat namespace tool calls", async () => {
+test("rejects unknown and flat namespace tool calls", async () => {
   for (const item of [
     {
       type: "function_call",
@@ -532,7 +532,7 @@ void test("rejects unknown and flat namespace tool calls", async () => {
   }
 });
 
-void test("distinguishes token limits from other incomplete responses", async () => {
+test("distinguishes token limits from other incomplete responses", async () => {
   for (const scenario of [
     {
       reason: "max_output_tokens",
@@ -581,7 +581,7 @@ void test("distinguishes token limits from other incomplete responses", async ()
   }
 });
 
-void test("preserves response.failed details as a terminal provider error", async () => {
+test("preserves response.failed details as a terminal provider error", async () => {
   const message = output();
   await processCodexStream(
     events([
@@ -609,7 +609,7 @@ void test("preserves response.failed details as a terminal provider error", asyn
   assert.equal(message.usage.output, 2);
 });
 
-void test("drops unknown terminal response statuses like Pi AI", async () => {
+test("drops unknown terminal response statuses like Pi AI", async () => {
   const message = output();
   await processCodexStream(
     events([
@@ -632,7 +632,7 @@ void test("drops unknown terminal response statuses like Pi AI", async () => {
   assert.equal(message.rawStopReason, undefined);
 });
 
-void test("matches Pi AI's missing terminal response error", async () => {
+test("matches Pi AI's missing terminal response error", async () => {
   await assert.rejects(
     processCodexStream(events([]), output(), createAssistantMessageEventStream(), model, new Map()),
     /OpenAI Responses stream ended before a terminal response event/,

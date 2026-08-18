@@ -52,37 +52,36 @@ export async function* parseWebSocket(
     current?.();
   };
   const onMessage = (event: unknown) => {
-    void (async () => {
-      let text: string | undefined;
-      try {
-        if (!isObject(event)) return;
-        text = await decodeWebSocketData(event["data"]);
-        if (!text) return;
-        const parsed: unknown = JSON.parse(text);
-        if (!isObject(parsed)) throw new Error("Invalid WebSocket event");
-        const type = parsed.type;
-        if (
-          type === "response.completed" ||
-          type === "response.done" ||
-          type === "response.incomplete" ||
-          type === "response.failed"
-        ) {
-          terminal = true;
-          done = true;
-        }
-        queue.push(parsed);
-        notify();
-        // oxlint-disable-next-line 2h2d/no-silent-error-suppression -- The listener converts parse failures into the generator's failure state and wakes its consumer.
-      } catch (error) {
-        failure = new CodexProtocolError(
-          `Invalid Codex WebSocket JSON: ${thrownMessage(error)}`,
-          text,
-          error,
-        );
+    let text: string | undefined;
+    const messageTask = (async () => {
+      if (!isObject(event)) return;
+      text = await decodeWebSocketData(event["data"]);
+      if (!text) return;
+      const parsed: unknown = JSON.parse(text);
+      if (!isObject(parsed)) throw new Error("Invalid WebSocket event");
+      const type = parsed.type;
+      if (
+        type === "response.completed" ||
+        type === "response.done" ||
+        type === "response.incomplete" ||
+        type === "response.failed"
+      ) {
+        terminal = true;
         done = true;
-        notify();
       }
+      queue.push(parsed);
+      notify();
     })();
+    // oxlint-disable-next-line 2h2d/no-silent-error-suppression -- The listener converts parse failures into the generator's failure state and wakes its consumer.
+    messageTask.catch((error: unknown) => {
+      failure = new CodexProtocolError(
+        `Invalid Codex WebSocket JSON: ${thrownMessage(error)}`,
+        text,
+        error,
+      );
+      done = true;
+      notify();
+    });
   };
   const onError = (event: unknown) => {
     if (!failure) failure = extractWebSocketError(event);

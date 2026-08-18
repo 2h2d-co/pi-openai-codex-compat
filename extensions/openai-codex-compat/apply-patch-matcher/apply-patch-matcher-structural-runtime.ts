@@ -46,7 +46,7 @@ export function parserInitializationPromise(): Promise<void> {
     const promise = structuralRuntime.initializeParser();
     parserInitialization = promise;
     // oxlint-disable-next-line 2h2d/no-silent-error-suppression -- The original promise retains the rejection; this branch only removes the failed cache entry.
-    void promise.catch(() => {
+    promise.catch(() => {
       if (parserInitialization === promise) parserInitialization = undefined;
     });
   }
@@ -62,7 +62,7 @@ export async function loadLanguage(grammar: GrammarName): Promise<Language> {
     })();
     languagePromises.set(grammar, promise);
     // oxlint-disable-next-line 2h2d/no-silent-error-suppression -- The original promise retains the rejection; this branch only removes the failed cache entry.
-    void promise.catch(() => {
+    promise.catch(() => {
       if (languagePromises.get(grammar) === promise) languagePromises.delete(grammar);
     });
   }
@@ -192,6 +192,7 @@ export async function parseStructuralDocument(
     } finally {
       parser.delete();
     }
+    // oxlint-disable-next-line 2h2d/no-silent-error-suppression -- Structural matching treats parser failures as unavailable tolerant matches while preserving aborts.
   } catch (error) {
     if (signal?.aborted) throw new Error("apply_patch was cancelled.", { cause: error });
     return null;

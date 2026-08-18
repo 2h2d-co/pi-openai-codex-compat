@@ -181,7 +181,7 @@ function createHarness(initialEntries: SessionEntry[], initialLeafId: string | n
   };
 }
 
-void test("writes no marker during navigation and makes the finalized user its child", async () => {
+test("writes no marker during navigation and makes the finalized user its child", async () => {
   const parent = entry("parent", null);
   const oldUser = entry("old-user", "parent", "user");
   const oldAnswer = entry("old-answer", "old-user");
@@ -213,7 +213,7 @@ void test("writes no marker during navigation and makes the finalized user its c
   );
 });
 
-void test("does not mark a linear continuation from an existing leaf", async () => {
+test("does not mark a linear continuation from an existing leaf", async () => {
   const root = entry("root", null, "user");
   const leaf = entry("leaf", "root");
   const harness = createHarness([root, leaf], "leaf");
@@ -231,7 +231,7 @@ void test("does not mark a linear continuation from an existing leaf", async () 
   assert.equal(harness.entries.length, 2);
 });
 
-void test("drops unsummarized navigation with Pi's ephemeral leaf on shutdown", async () => {
+test("drops unsummarized navigation with Pi's ephemeral leaf on shutdown", async () => {
   const parent = entry("parent", null);
   const oldUser = entry("old-user", "parent", "user");
   const oldAnswer = entry("old-answer", "old-user");
@@ -255,7 +255,7 @@ void test("drops unsummarized navigation with Pi's ephemeral leaf on shutdown", 
   assert.equal(harness.entries.length, 3);
 });
 
-void test("forks from the nearest existing branch thread when editing its first user", async () => {
+test("forks from the nearest existing branch thread when editing its first user", async () => {
   const root = entry("root", null);
   const initialThreadId = codexCacheKey("session-1");
   assert.ok(initialThreadId);
@@ -280,7 +280,7 @@ void test("forks from the nearest existing branch thread when editing its first 
   assert.equal(secondMarker.data.forkedFromThreadId, "thread-a");
 });
 
-void test("restores an unmarked summarized branch without transient tree state", async () => {
+test("restores an unmarked summarized branch without transient tree state", async () => {
   const root = entry("root", null);
   const old = entry("old", "root", "user");
   const summary = {
@@ -304,7 +304,7 @@ void test("restores an unmarked summarized branch without transient tree state",
   assert.equal(storedMarker?.parentId, "summary");
 });
 
-void test("fails closed on malformed or misplaced active thread markers", () => {
+test("fails closed on malformed or misplaced active thread markers", () => {
   const root = entry("root", null);
   const malformed = {
     type: "custom",
@@ -330,7 +330,7 @@ void test("fails closed on malformed or misplaced active thread markers", () => 
   );
 });
 
-void test("ignores copied thread markers from a different Pi session", () => {
+test("ignores copied thread markers from a different Pi session", () => {
   const root = entry("root", null);
   const copiedMarker = marker("copied", "root", "old-thread", "old-root");
   copiedMarker.data = {

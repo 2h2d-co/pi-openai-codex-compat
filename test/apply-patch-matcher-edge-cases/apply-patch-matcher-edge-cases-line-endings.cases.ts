@@ -8,7 +8,7 @@ import {
   workspace,
 } from "./apply-patch-matcher-edge-cases-harness.ts";
 
-void test("preserves multibyte prefixes and CRLF around structural replacements", async (t) => {
+test("preserves multibyte prefixes and CRLF around structural replacements", async (t) => {
   const cwd = await workspace(t);
   await writeFile(
     join(cwd, "unicode.ts"),
@@ -37,7 +37,7 @@ void test("preserves multibyte prefixes and CRLF around structural replacements"
   );
 });
 
-void test("preserves CRLF during line-level recovery", async (t) => {
+test("preserves CRLF during line-level recovery", async (t) => {
   const cwd = await workspace(t);
   await writeFile(join(cwd, "line-recovery.txt"), "current context\r\nold\r\n");
 
@@ -58,7 +58,7 @@ void test("preserves CRLF during line-level recovery", async (t) => {
   );
 });
 
-void test("preserves local line endings during strict matching", async (t) => {
+test("preserves local line endings during strict matching", async (t) => {
   const cwd = await workspace(t);
 
   await writeFile(join(cwd, "single.txt"), "old\r\nnext\r\n");

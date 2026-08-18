@@ -150,7 +150,7 @@ function expectedSuccessTree(
 }
 
 for (const fixture of PRODUCTION_APPLY_PATCH_FIXTURES) {
-  void test(`production fixture: ${fixture.id}`, async (t) => {
+  test(`production fixture: ${fixture.id}`, async (t) => {
     const materialized = await materializeFixture(t, fixture);
     const before = await snapshotTree(materialized.root);
     const expected = fixture.expected;
@@ -214,7 +214,7 @@ for (const fixture of PRODUCTION_APPLY_PATCH_FIXTURES) {
   });
 }
 
-void test("production fixtures retain traceable, non-duplicated source fingerprints", () => {
+test("production fixtures retain traceable, non-duplicated source fingerprints", () => {
   const fingerprints = PRODUCTION_APPLY_PATCH_FIXTURES.flatMap(
     (fixture) => fixture.sourceFingerprints,
   );

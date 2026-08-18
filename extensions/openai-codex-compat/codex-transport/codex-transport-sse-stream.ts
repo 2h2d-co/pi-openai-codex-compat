@@ -177,14 +177,14 @@ export async function* requestSse(
       lastError = requestError;
       if (
         attempt < maxRetries &&
-        !(lastError instanceof CodexHttpError) &&
-        !(lastError instanceof RetryDelayExceededError) &&
-        !lastError.message.includes("usage limit")
+        !(requestError instanceof CodexHttpError) &&
+        !(requestError instanceof RetryDelayExceededError) &&
+        !requestError.message.includes("usage limit")
       ) {
         await sleep(retryBackoffMs(BASE_DELAY_MS, attempt + 1), options.signal);
         continue;
       }
-      throw lastError;
+      throw requestError;
     }
   }
 
