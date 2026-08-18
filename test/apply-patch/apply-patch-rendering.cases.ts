@@ -9,7 +9,6 @@ import {
   test,
   applyPatch,
   parsePatch,
-  previewPatch,
   formatApplyPatchRenderText,
   workspace,
   type ApplyPatchDetails,
@@ -111,14 +110,6 @@ void test("renders repeated operations on one path as one final-state diff", asy
 +new
 +extra
 *** End Patch`;
-  const replacementPreview = await previewPatch(cwd, replacementPatch);
-  assert.equal(replacementPreview.changes.length, 1);
-  assert.equal(replacementPreview.changes[0]?.kind, "update");
-  assert.match(
-    formatApplyPatchRenderText(replacementPreview, theme, cwd),
-    /^• Edited replaced\.txt \(\+2 -1\)/,
-  );
-
   const replacement = await applyPatch(cwd, replacementPatch);
 
   assert.deepEqual(

@@ -1,6 +1,5 @@
 import { isString } from "./value-contracts.ts";
 import { type Component, Container, Text } from "@earendil-works/pi-tui";
-import { type ApplyPatchDetails, previewPatch } from "./apply-patch-engine.ts";
 import { ApplyPatchDiffComponent, isApplyPatchDetails } from "./apply-patch-diff-render.ts";
 import {
   CodexToolSurfaceComponent,
@@ -15,24 +14,10 @@ type ApplyPatchArgs = {
   patch: string;
 };
 
-type ApplyPatchRenderState = {
-  previewKey?: string;
-  previewPending?: boolean;
-  preview?: ApplyPatchDetails;
-};
-
 type ApplyPatchRenderContext = {
-  args: ApplyPatchArgs;
-  toolCallId: string;
-  invalidate: () => void;
-  lastComponent: unknown;
-  state: ApplyPatchRenderState;
   cwd: string;
-  executionStarted: boolean;
-  argsComplete: boolean;
   isPartial: boolean;
   expanded: boolean;
-  showImages: boolean;
   isError: boolean;
 };
 
@@ -106,7 +91,7 @@ class ApplyPatchResultComponent implements Component {
 }
 
 export function renderApplyPatchCall(
-  args: ApplyPatchArgs,
+  _args: ApplyPatchArgs,
   theme: RenderTheme,
   context: ApplyPatchRenderContext,
   resolveBackground: CodexToolBackgroundResolver = () => DEFAULT_CONFIG.toolBackground,
@@ -114,41 +99,6 @@ export function renderApplyPatchCall(
 ): Component {
   const container = new Container();
   container.addChild(new ApplyPatchTitleComponent(theme, resolveDebug));
-
-  if (context.isPartial) {
-    const state = context.state;
-    const patch = isString(args.patch) ? args.patch : "";
-    if (context.argsComplete && patch) {
-      const previewKey = `${context.cwd}\0${patch}`;
-      if (state.previewKey !== previewKey) {
-        state.previewKey = previewKey;
-        delete state.preview;
-        state.previewPending = false;
-      }
-      if (!state.preview && !state.previewPending) {
-        state.previewPending = true;
-        void previewPatch(context.cwd, patch)
-          .then((preview) => {
-            if (state.previewKey === previewKey) state.preview = preview;
-          })
-          .catch((error: unknown) => {
-            if (!(error instanceof Error)) throw error;
-          })
-          .finally(() => {
-            if (state.previewKey === previewKey) {
-              state.previewPending = false;
-              context.invalidate();
-            }
-          });
-      }
-    }
-
-    if (isApplyPatchDetails(state.preview)) {
-      container.addChild(
-        new ApplyPatchDiffComponent(state.preview, theme, context.cwd, context.expanded),
-      );
-    }
-  }
 
   return new CodexToolSurfaceComponent(container, theme, {
     background: resolveBackground,

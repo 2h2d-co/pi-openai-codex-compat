@@ -8,7 +8,6 @@ import type {
   ApplyPatchInstructionEffect,
   ApplyPatchInstructionReason,
 } from "./apply-patch-engine-contracts.ts";
-import type { SemanticPlan } from "./apply-patch-engine-filesystem-model.ts";
 import { resolvePatchPath } from "./apply-patch-engine-operation-semantics.ts";
 import { requiredValue } from "../required-value.ts";
 
@@ -220,31 +219,6 @@ export function appendChange(
   else if (change.kind === "delete") details.deleted.push(change.path);
   else if (change.kind === "move") details.modified.push(change.destinationPath);
   else details.modified.push(change.moveTo ?? change.path);
-}
-
-export function detailsForPlan(plan: SemanticPlan): ApplyPatchDetails {
-  const details = emptyDetails();
-  details.exact = plan.exact;
-  details.instructions = plan.instructions.map((instruction) => ({ ...instruction }));
-  for (const mutation of plan.mutations) {
-    appendChange(details, mutation.change, mutation.instructionIndex);
-  }
-  return details;
-}
-
-export function previewDetailsForPlan(plan: SemanticPlan, cwd: string): ApplyPatchDetails {
-  const details = detailsForPlan(plan);
-  details.changes = coalesceAppliedPatchChangesForRendering(details.changes, cwd);
-  details.added = [];
-  details.modified = [];
-  details.deleted = [];
-  for (const change of details.changes) {
-    if (change.kind === "add") details.added.push(change.path);
-    else if (change.kind === "delete") details.deleted.push(change.path);
-    else if (change.kind === "move") details.modified.push(change.destinationPath);
-    else details.modified.push(change.moveTo ?? change.path);
-  }
-  return details;
 }
 
 export function failedApplyPatchDetails(

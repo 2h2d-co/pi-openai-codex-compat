@@ -110,6 +110,31 @@ void test("registers the Codex freeform tool with model, UI, and failed-history 
   assert.equal(stripAnsi(renderedCall).trim(), "apply_patch");
   assert.equal(renderedCall.split("\n").length, 2);
   assert.ok(renderedCall.includes("\u001b[48;2;26;26;33m"));
+
+  const pendingState = {};
+  const pendingCall = renderCall(
+    { patch: "*** Begin Patch\n*** Add File: pending.txt\n+pending\n*** End Patch" },
+    theme,
+    {
+      args: {
+        patch: "*** Begin Patch\n*** Add File: pending.txt\n+pending\n*** End Patch",
+      },
+      toolCallId: "pending-call",
+      invalidate() {},
+      lastComponent: undefined,
+      state: pendingState,
+      cwd,
+      executionStarted: true,
+      argsComplete: true,
+      isPartial: true,
+      expanded: false,
+      showImages: false,
+      isError: false,
+    },
+  );
+  assert.deepEqual(pendingState, {});
+  assert.equal(stripAnsi(pendingCall.render(120).join("\n")).trim(), "apply_patch");
+
   toolBackground = "none";
   assert.equal(callComponent.render(120).join("\n").includes("\u001b[48"), false);
   toolBackground = "status";
@@ -267,7 +292,7 @@ void test("registers the Codex freeform tool with model, UI, and failed-history 
         oldContent: "",
         newContent: "",
         displayDiff: [
-          "  72 if (state.preview) {",
+          "  72 if (state.pending) {",
           "- 73 oldCall();",
           "+ 73 firstNewCall();",
           "+ 74 secondNewCall();",

@@ -14,7 +14,7 @@ import {
   applyPatch,
   ApplyPatchExecutionError,
   formatApplyPatchFailureSummary,
-  previewPatch,
+  buildSemanticPlan,
   ApplyPatchDiffComponent,
   formatApplyPatchRenderText,
   workspace,
@@ -36,10 +36,10 @@ void test(
 
     await writeFile(join(cwd, "source-a.txt"), "before\n");
     await link(join(cwd, "source-a.txt"), join(cwd, "source-b.txt"));
-    const destination = join("/dev", `pi-cross-preview-${basename(cwd)}`);
+    const destination = join("/dev", `pi-cross-plan-${basename(cwd)}`);
     await assertMissing(destination);
 
-    const independent = await previewPatch(
+    const independent = await buildSemanticPlan(
       cwd,
       patch(
         `*** Update File: source-a.txt\n*** Move to: ${destination}\n`,
@@ -54,9 +54,9 @@ void test(
 
     await writeFile(join(cwd, "dead-a.txt"), "before\n");
     await link(join(cwd, "dead-a.txt"), join(cwd, "dead-b.txt"));
-    const deadDestination = join("/dev", `pi-cross-dead-preview-${basename(cwd)}`);
+    const deadDestination = join("/dev", `pi-cross-dead-plan-${basename(cwd)}`);
     await assertMissing(deadDestination);
-    const deadAfterCrossDeviceMove = await previewPatch(
+    const deadAfterCrossDeviceMove = await buildSemanticPlan(
       cwd,
       patch(
         `*** Update File: dead-a.txt\n*** Move to: ${deadDestination}\n`,

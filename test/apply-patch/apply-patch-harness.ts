@@ -20,7 +20,6 @@ import registerApplyPatch, {
   ApplyPatchVerificationError,
   parsePatch,
   parsePatchDocument,
-  previewPatch,
 } from "../../extensions/openai-codex-compat/apply-patch.ts";
 import {
   ApplyPatchDiffComponent,
@@ -160,7 +159,6 @@ export {
   ApplyPatchVerificationError,
   parsePatch,
   parsePatchDocument,
-  previewPatch,
   ApplyPatchDiffComponent,
   isApplyPatchDetails,
   formatApplyPatchRenderText,

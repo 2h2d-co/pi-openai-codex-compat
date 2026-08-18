@@ -41,7 +41,6 @@ export {
   type UpdateChunk,
   parsePatch,
   parsePatchDocument,
-  previewPatch,
 } from "./apply-patch-engine.ts";
 export type { FormatterMatchFailureDetails } from "./apply-patch-matcher.ts";
 

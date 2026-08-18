@@ -10,7 +10,6 @@ import {
   applyPatch,
   ApplyPatchExecutionError,
   ApplyPatchVerificationError,
-  previewPatch,
   formatApplyPatchRenderText,
   workspace,
   type ApplyPatchDetails,
@@ -54,7 +53,6 @@ void test("prevalidates all hunks but preserves committed-prefix history after r
 -original
 +second
 *** End Patch`;
-  await assert.rejects(previewPatch(cwd, duplicatePatch), /Failed to find expected lines/);
   const verificationLifecycle: string[] = [];
   await assert.rejects(
     applyPatch(cwd, duplicatePatch, undefined, {

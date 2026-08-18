@@ -34,8 +34,11 @@ import {
   formatApplyPatchFailureSummary,
   formatApplyPatchSummary,
   parsePatch,
-  previewPatch,
+  parsePatchDocument,
 } from "../../extensions/openai-codex-compat/apply-patch-engine.ts";
+import type { SemanticPlan } from "../../extensions/openai-codex-compat/apply-patch-engine/apply-patch-engine-filesystem-model.ts";
+import { resolveOperations } from "../../extensions/openai-codex-compat/apply-patch-engine/apply-patch-engine-operation-semantics.ts";
+import { SemanticPlanner } from "../../extensions/openai-codex-compat/apply-patch-engine/apply-patch-engine-semantic-planner.ts";
 import {
   ApplyPatchDiffComponent,
   isApplyPatchDetails,
@@ -57,6 +60,12 @@ export async function assertMissing(path: string): Promise<void> {
 
 export function patch(...operations: string[]): string {
   return `*** Begin Patch\n${operations.join("")}*** End Patch`;
+}
+
+export async function buildSemanticPlan(cwd: string, patchDocument: string): Promise<SemanticPlan> {
+  const parsed = parsePatchDocument(patchDocument);
+  const operations = resolveOperations(cwd, parsed.operations);
+  return new SemanticPlanner(operations).plan();
 }
 
 export interface DeferredSignal {
@@ -115,7 +124,6 @@ export {
   formatApplyPatchFailureSummary,
   formatApplyPatchSummary,
   parsePatch,
-  previewPatch,
   ApplyPatchDiffComponent,
   isApplyPatchDetails,
   formatApplyPatchRenderText,

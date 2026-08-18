@@ -4,10 +4,7 @@ import type {
   ApplyPatchExecutionHooks,
   ResolvedOperation,
 } from "./apply-patch-engine/apply-patch-engine-contracts.ts";
-import {
-  failedApplyPatchDetails,
-  previewDetailsForPlan,
-} from "./apply-patch-engine/apply-patch-engine-details.ts";
+import { failedApplyPatchDetails } from "./apply-patch-engine/apply-patch-engine-details.ts";
 import {
   ApplyPatchExecutionError,
   ApplyPatchInputError,
@@ -127,11 +124,6 @@ async function buildPlan(
     );
     throw new ApplyPatchVerificationError(`apply_patch verification failed: ${message}`, details);
   }
-}
-
-export async function previewPatch(cwd: string, patch: string): Promise<ApplyPatchDetails> {
-  const operations = parseAndResolvePatch(cwd, patch);
-  return previewDetailsForPlan(await buildPlan(operations), cwd);
 }
 
 export async function applyPatch(
