@@ -3,6 +3,7 @@ import type { Api, Model } from "@earendil-works/pi-ai";
 import type { ConfigResolver } from "./config-context.ts";
 import { hasNativeCheckpointEntry } from "./compaction-checkpoint.ts";
 import { errorFromThrown } from "./error-from-thrown.ts";
+import { selectedRegistryModel } from "./model-context.ts";
 import { syncCodexTools } from "./tools.ts";
 
 export type CodexModelPolicyContext = Parameters<ConfigResolver>[0] & {
@@ -34,11 +35,10 @@ export type CodexModelPolicyApi = Pick<ExtensionAPI, "getActiveTools" | "setActi
 
 export function codexModelPolicyApi(pi: ExtensionAPI): CodexModelPolicyApi {
   const context = (ctx: ExtensionContext): CodexModelPolicyContext => {
-    const selected = ctx.model;
     return {
       cwd: ctx.cwd,
       isProjectTrusted: () => ctx.isProjectTrusted(),
-      model: selected ? ctx.modelRegistry.find(selected.provider, selected.id) : undefined,
+      model: selectedRegistryModel(ctx),
       sessionManager: ctx.sessionManager,
       ui: ctx.ui,
     };

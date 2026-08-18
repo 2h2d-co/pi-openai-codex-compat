@@ -27,6 +27,8 @@ import { resolveFileConfig, type ConfigResolver } from "./config-context.ts";
 import type { CodexProviderRuntime } from "./codex-provider.ts";
 import { responsesCompactionV2Metadata, type CodexCompactionMetadata } from "./codex-metadata.ts";
 import { APPLY_PATCH_INPUT_PROPERTY, APPLY_PATCH_TOOL_NAME } from "./apply-patch.ts";
+import { errorFromThrown } from "./error-from-thrown.ts";
+import { selectedRegistryModel } from "./model-context.ts";
 
 const CODEX_PROVIDER = "openai-codex";
 const CODEX_API = "openai-codex-responses";
@@ -97,15 +99,13 @@ export type RemoteCompactionApi = {
 
 export function remoteCompactionApi(pi: ExtensionAPI): RemoteCompactionApi {
   const context = (ctx: ExtensionContext): RemoteCompactionContext => {
-    const selected = ctx.model;
-    const model = selected ? ctx.modelRegistry.find(selected.provider, selected.id) : undefined;
     return {
       cwd: ctx.cwd,
       getContextUsage: () => ctx.getContextUsage(),
       getSystemPrompt: () => ctx.getSystemPrompt(),
       hasUI: ctx.hasUI,
       isProjectTrusted: () => ctx.isProjectTrusted(),
-      model,
+      model: selectedRegistryModel(ctx),
       modelRegistry: ctx.modelRegistry,
       sessionManager: ctx.sessionManager,
       ui: ctx.ui,
@@ -195,10 +195,6 @@ function fallbackGrammarToolInputProperties(
   return activeNames.includes(APPLY_PATCH_TOOL_NAME) && compat?.supportsOpenAIGrammarTools
     ? new Map([[APPLY_PATCH_TOOL_NAME, APPLY_PATCH_INPUT_PROPERTY]])
     : new Map();
-}
-
-function explain(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
 }
 
 function compactionMetadata(reason: SessionBeforeCompactEvent["reason"]): CodexCompactionMetadata {
@@ -308,7 +304,11 @@ export default function registerRemoteCompaction(
       // oxlint-disable-next-line 2h2d/no-silent-error-suppression -- The compaction hook reports the failure and returns Pi's explicit cancellation result.
     } catch (error) {
       if (!event.signal.aborted && ctx.hasUI) {
-        ctx.ui.notify(`OpenAI Codex native compaction failed: ${explain(error)}`, "error");
+        const failure = errorFromThrown(
+          error,
+          "OpenAI Codex native compaction failed with a non-Error value.",
+        );
+        ctx.ui.notify(`OpenAI Codex native compaction failed: ${failure.message}`, "error");
       }
       return { cancel: true };
     }

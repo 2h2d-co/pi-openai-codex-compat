@@ -109,7 +109,10 @@ export async function* parseWebSocket(
       if (signal?.aborted) throw new Error("Request was aborted");
       if (queue.length > 0) {
         const event = queue.shift();
-        if (event !== undefined) yield event;
+        if (event === undefined) {
+          throw new Error("The queued WebSocket event is missing.");
+        }
+        yield event;
         continue;
       }
       if (done) break;

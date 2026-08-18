@@ -7,6 +7,7 @@ import {
 import type { Component } from "@earendil-works/pi-tui";
 import type { CodexCompatConfig } from "./config.ts";
 import type { ConfigContext, ConfigResolver } from "./config-context.ts";
+import { selectedRegistryModel } from "./model-context.ts";
 import { isCodexModel } from "./request-options.ts";
 
 export type FooterContext = ConfigContext &
@@ -83,17 +84,10 @@ interface FooterSessionAdapter {
   };
 }
 
-function selectedRegistryModel(ctx: FooterContext, provider: string): Model<Api> | undefined {
-  const selected = ctx.model;
-  return selected?.provider === provider
-    ? ctx.modelRegistry.find(selected.provider, selected.id)
-    : undefined;
-}
-
 function footerSession(ctx: FooterContext, resolveConfig: ConfigResolver): FooterSessionAdapter {
   return {
     get state() {
-      const model = ctx.model ? selectedRegistryModel(ctx, ctx.model.provider) : undefined;
+      const model = selectedRegistryModel(ctx);
       return {
         model: footerModel(model, ctx.thinkingLevel ?? "off", resolveConfig(ctx)),
         thinkingLevel: ctx.thinkingLevel ?? "off",
@@ -103,13 +97,18 @@ function footerSession(ctx: FooterContext, resolveConfig: ConfigResolver): Foote
     getContextUsage: () => ctx.getContextUsage(),
     modelRuntime: {
       isUsingOAuth(provider: string) {
-        const model = selectedRegistryModel(ctx, provider);
-        return model !== undefined && ctx.modelRegistry.isUsingOAuth(model);
+        const model = selectedRegistryModel(ctx);
+        return (
+          model !== undefined &&
+          model.provider === provider &&
+          ctx.modelRegistry.isUsingOAuth(model)
+        );
       },
       isUsingSubscription(provider: string) {
-        const model = selectedRegistryModel(ctx, provider);
+        const model = selectedRegistryModel(ctx);
         return Boolean(
           model &&
+          model.provider === provider &&
           ctx.modelRegistry.isUsingOAuth(model) &&
           ctx.modelRegistry.getProvider(provider)?.auth?.oauth?.isSubscription === true,
         );

@@ -497,3 +497,29 @@ void test("fails closed when runtime compaction fails", async () => {
   assert.deepEqual(result, { cancel: true });
   assert.match(harness.notices[0] ?? "", /native compaction failed/);
 });
+
+void test("normalizes non-Error runtime compaction failures", async () => {
+  const user = userEntry("user-1", "hello");
+  const harness = createHarness([user]);
+  harness.runtime.transport.request = async function* () {
+    yield* [];
+    // oxlint-disable-next-line typescript/only-throw-error -- This test verifies normalization of an external non-Error failure.
+    throw "backend failure";
+  };
+  const handler = harness.hooks.sessionBeforeCompact;
+  assert.ok(handler);
+
+  const result = await handler(
+    {
+      branchEntries: [user],
+      preparation: { firstKeptEntryId: "user-1", tokensBefore: 50_000 },
+      reason: "threshold",
+      willRetry: false,
+      signal: new AbortController().signal,
+    },
+    harness.context,
+  );
+
+  assert.deepEqual(result, { cancel: true });
+  assert.match(harness.notices[0] ?? "", /native compaction failed with a non-Error value/);
+});

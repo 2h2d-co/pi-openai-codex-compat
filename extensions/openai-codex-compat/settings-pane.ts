@@ -30,6 +30,7 @@ import {
 } from "./config.ts";
 import type { ConfigContext } from "./config-context.ts";
 import { errorFromThrown } from "./error-from-thrown.ts";
+import { selectedRegistryModel } from "./model-context.ts";
 
 const COMMAND_NAME = "codex-settings";
 
@@ -327,9 +328,8 @@ async function showSettings(
   const filePath = writableConfigPath(ctx.cwd, ctx.isProjectTrusted());
   const environmentConfig = parseEnvironmentConfig();
   const changeContext = (): SettingsChangeContext => {
-    const selected = ctx.model;
     return {
-      model: selected ? ctx.modelRegistry.find(selected.provider, selected.id) : undefined,
+      model: selectedRegistryModel(ctx),
       sessionId: ctx.sessionManager.getSessionId(),
     };
   };

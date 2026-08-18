@@ -9,6 +9,7 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import type { CodexCompatConfig, WebSearchMode } from "./config.ts";
 import { resolveFileConfig, type ConfigResolver } from "./config-context.ts";
 import { isObject, type JsonRecord } from "./codex-protocol.ts";
+import { selectedRegistryModel } from "./model-context.ts";
 import { splitNamespacedToolName, WEB_RUN_TOOL_NAME } from "./namespaced-tools.ts";
 
 const CODEX_PROVIDER = "openai-codex";
@@ -117,8 +118,7 @@ export default function registerCodexRequestOptions(
   resolveConfig: ConfigResolver = resolveFileConfig,
 ): void {
   pi.on("before_provider_request", (event, ctx) => {
-    const selected = ctx.model;
-    const model = selected ? ctx.modelRegistry.find(selected.provider, selected.id) : undefined;
+    const model = selectedRegistryModel(ctx);
     if (!isCodexModel(model) || !isObject(event.payload)) return undefined;
 
     const config = resolveConfig(ctx);

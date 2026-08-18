@@ -547,7 +547,9 @@ export class SemanticPlanner {
     if (target.entry.kind === "absent") {
       for (let futureIndex = index + 1; futureIndex < this.operations.length; futureIndex += 1) {
         const operation = this.operations[futureIndex];
-        if (operation === undefined) continue;
+        if (operation === undefined) {
+          throw new Error(`Future apply_patch operation ${futureIndex + 1} is missing.`);
+        }
         if (
           (operation.kind === "add" || operation.kind === "delete") &&
           (await this.pathKey(operation.absolutePath)) === targetKey
@@ -620,7 +622,9 @@ export class SemanticPlanner {
     };
     for (let futureIndex = index + 1; futureIndex < this.operations.length; futureIndex += 1) {
       const operation = this.operations[futureIndex];
-      if (operation === undefined) continue;
+      if (operation === undefined) {
+        throw new Error(`Future apply_patch operation ${futureIndex + 1} is missing.`);
+      }
       if (
         operation.kind === "update" &&
         semanticMoveOperation(operation) === undefined &&
@@ -743,12 +747,16 @@ export class SemanticPlanner {
 
     for (let futureIndex = index + 1; futureIndex < this.operations.length; futureIndex += 1) {
       const operation = this.operations[futureIndex];
-      if (operation === undefined) continue;
+      if (operation === undefined) {
+        throw new Error(`Future apply_patch operation ${futureIndex + 1} is missing.`);
+      }
       const instructionNumber = futureIndex + 1;
       const operationPaths = this.operationRelatedPaths(operation);
       const operationKeys = await Promise.all(operationPaths.map((path) => this.pathKey(path)));
       const targetKey = operationKeys[0];
-      if (targetKey === undefined) return undefined;
+      if (targetKey === undefined) {
+        throw new Error(`Apply-patch operation ${futureIndex + 1} has no target path key.`);
+      }
       if (operation.kind === "add" || operation.kind === "delete") {
         if (
           targetKey === sourceKey &&

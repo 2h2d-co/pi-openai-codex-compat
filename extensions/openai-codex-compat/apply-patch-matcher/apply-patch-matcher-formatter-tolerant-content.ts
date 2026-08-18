@@ -44,7 +44,9 @@ export function editGroups(chunks: readonly UpdateChunk[]): EditGroup[] {
     const chunkGroups: EditGroup[] = [];
     for (let index = 0; index < chunk.lines.length;) {
       const line = chunk.lines[index];
-      if (line === undefined) break;
+      if (line === undefined) {
+        throw new Error("Patch line index is outside the chunk.");
+      }
       if (line.kind === "context") {
         index += 1;
         continue;
@@ -52,20 +54,29 @@ export function editGroups(chunks: readonly UpdateChunk[]): EditGroup[] {
       const start = index;
       while (index < chunk.lines.length) {
         const current = chunk.lines[index];
-        if (current === undefined || current.kind === "context") break;
+        if (current === undefined) {
+          throw new Error("Patch line index is outside the chunk.");
+        }
+        if (current.kind === "context") break;
         index += 1;
       }
       const segment = chunk.lines.slice(start, index);
       let beforeStart = start;
       while (beforeStart > 0) {
         const previous = chunk.lines[beforeStart - 1];
-        if (previous === undefined || previous.kind !== "context") break;
+        if (previous === undefined) {
+          throw new Error("Patch context index is outside the chunk.");
+        }
+        if (previous.kind !== "context") break;
         beforeStart -= 1;
       }
       let afterEnd = index;
       while (afterEnd < chunk.lines.length) {
         const following = chunk.lines[afterEnd];
-        if (following === undefined || following.kind !== "context") break;
+        if (following === undefined) {
+          throw new Error("Patch context index is outside the chunk.");
+        }
+        if (following.kind !== "context") break;
         afterEnd += 1;
       }
       chunkGroups.push({
@@ -111,7 +122,9 @@ export function lineForByte(lineStarts: readonly number[], byte: number): number
   while (low < high) {
     const middle = Math.ceil((low + high) / 2);
     const middleStart = lineStarts[middle];
-    if (middleStart === undefined) return low;
+    if (middleStart === undefined) {
+      throw new Error("Line-start index is outside the source.");
+    }
     if (middleStart <= byte) {
       low = middle;
     } else high = middle - 1;
@@ -170,7 +183,9 @@ export function lineCandidates(
       const endLine = startLine + group.oldLines.length;
       const start = lineStarts[startLine];
       const end = lineStarts[endLine];
-      if (start === undefined || end === undefined) return [];
+      if (start === undefined || end === undefined) {
+        throw new Error("Candidate line range is outside the source.");
+      }
       const replacement = replacementLines(
         group.newLines,
         lineEndingForLine(sourceLines, startLine),
@@ -234,7 +249,9 @@ export function insertionCandidates(
     )
     .flatMap((line) => {
       const byte = lineStarts[line];
-      if (byte === undefined) return [];
+      if (byte === undefined) {
+        throw new Error("Insertion line is outside the source.");
+      }
       const replacement = replacementLines(group.newLines, lineEndingAtBoundary(sourceLines, line));
       return [
         {
@@ -285,7 +302,9 @@ export async function tokenCandidates(
     }
     const first = window[0];
     const last = window.at(-1);
-    if (first === undefined || last === undefined) continue;
+    if (first === undefined || last === undefined) {
+      throw new Error("Matched token window is empty.");
+    }
     const bounds = lineBounds(sourceBytes, first.start, last.end);
     if (!bounds.fullLines) continue;
     const lineEnding: "\n" | "\r\n" =
@@ -325,7 +344,9 @@ export function applyEdits(source: Buffer, edits: readonly ByteEdit[]): Buffer {
   for (let index = 1; index < ordered.length; index++) {
     const current = ordered[index];
     const previous = ordered[index - 1];
-    if (current === undefined || previous === undefined) continue;
+    if (current === undefined || previous === undefined) {
+      throw new Error("Ordered edit index is outside the edit list.");
+    }
     if (current.start < previous.end) {
       throw new OverlappingFormatterEditsError("formatter-tolerant edits overlap");
     }
@@ -370,7 +391,9 @@ export function distinctMappedOutputs(
       return;
     }
     const groupCandidates = candidateSets[groupIndex];
-    if (groupCandidates === undefined) return;
+    if (groupCandidates === undefined) {
+      throw new Error("Candidate group index is outside the candidate sets.");
+    }
     for (const candidate of groupCandidates) {
       if (candidate.start < previousEnd) continue;
       visit(groupIndex + 1, candidate.end, [...edits, ...candidate.edits]);

@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import type { Api, AssistantMessage, Model } from "@earendil-works/pi-ai";
 import { isNonNullObject } from "./value-contracts.ts";
+import { selectedRegistryModel } from "./model-context.ts";
 
 const CODEX_PROVIDER = "openai-codex";
 const CODEX_API = "openai-codex-responses";
@@ -55,12 +56,10 @@ export type OutputLimitContinuationApi = {
 
 export function outputLimitContinuationApi(pi: ExtensionAPI): OutputLimitContinuationApi {
   const context = (ctx: ExtensionContext): OutputLimitContinuationContext => {
-    const selected = ctx.model;
-    const model = selected ? ctx.modelRegistry.find(selected.provider, selected.id) : undefined;
     return {
       hasPendingMessages: () => ctx.hasPendingMessages(),
       isIdle: () => ctx.isIdle(),
-      model,
+      model: selectedRegistryModel(ctx),
       sessionManager: ctx.sessionManager,
     };
   };

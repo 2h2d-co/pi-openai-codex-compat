@@ -105,7 +105,10 @@ export function fenceGrammar(group: EditGroup): GrammarName | undefined {
     const match = rustTrim(line).match(/^(?:`{3,}|~{3,})[\t ]*([A-Za-z0-9_+-]+)/u);
     if (match) {
       const language = match[1];
-      if (language !== undefined) return GRAMMAR_BY_FENCE_INFO.get(language.toLowerCase());
+      if (language === undefined) {
+        throw new Error("A matched fence language is missing.");
+      }
+      return GRAMMAR_BY_FENCE_INFO.get(language.toLowerCase());
     }
   }
   return undefined;
@@ -117,7 +120,9 @@ export function utf16ByteOffsets(source: string): Uint32Array {
   for (let index = 0; index < source.length;) {
     offsets[index] = byteOffset;
     const codePoint = source.codePointAt(index);
-    if (codePoint === undefined) break;
+    if (codePoint === undefined) {
+      throw new Error("UTF-16 source index is outside the string.");
+    }
     const width = codePoint > 0xffff ? 2 : 1;
     if (width === 2) offsets[index + 1] = byteOffset;
     byteOffset += Buffer.byteLength(String.fromCodePoint(codePoint), "utf8");
@@ -204,21 +209,28 @@ export async function embeddedStructuralDocuments(
   const sourceBytes = Buffer.from(source, "utf8");
   for (let index = 0; index < sourceLines.length; index++) {
     const sourceLine = sourceLines[index];
-    if (sourceLine === undefined) continue;
+    if (sourceLine === undefined) {
+      throw new Error("Fence line index is outside the source.");
+    }
     const opening = fenceOpening(sourceLine);
     if (!opening) continue;
     const contentStart = index + 1;
     let closing = contentStart;
     while (closing < sourceLines.length) {
       const closingLine = sourceLines[closing];
-      if (closingLine === undefined || fenceClosing(closingLine, opening)) break;
+      if (closingLine === undefined) {
+        throw new Error("Fence line index is outside the source.");
+      }
+      if (fenceClosing(closingLine, opening)) break;
       closing += 1;
     }
     if (closing >= sourceLines.length) break;
     if (opening.grammar === grammar) {
       const start = lineStarts[contentStart];
       const end = lineStarts[closing];
-      if (start === undefined || end === undefined) continue;
+      if (start === undefined || end === undefined) {
+        throw new Error("Embedded document line range is outside the source.");
+      }
       const document = await parseStructuralDocument(
         grammar,
         sourceBytes.subarray(start, end).toString("utf8"),
@@ -257,7 +269,11 @@ export function commonIndent(lines: readonly string[]): string {
     .filter((line) => line.trim().length > 0)
     .map((line) => line.match(/^[\t ]*/u)?.[0] ?? "");
   if (indents.length === 0) return "";
-  let prefix = indents[0] ?? "";
+  const firstIndent = indents[0];
+  if (firstIndent === undefined) {
+    throw new Error("The first non-empty indentation is missing.");
+  }
+  let prefix = firstIndent;
   for (const indent of indents.slice(1)) {
     while (prefix && !indent.startsWith(prefix)) prefix = prefix.slice(0, -1);
   }
@@ -402,15 +418,19 @@ export function tokenSignatureMatches(
 export function relativeSyntaxPath(tokens: readonly SyntaxToken[]): string {
   if (tokens.length === 0) return "";
   const firstToken = tokens[0];
-  if (firstToken === undefined) return "";
+  if (firstToken === undefined) {
+    throw new Error("The first syntax token is missing.");
+  }
   let common = firstToken.path.length;
   for (const token of tokens.slice(1)) {
     let index = 0;
     while (index < common && index < token.path.length) {
       const firstStep = firstToken.path[index];
       const tokenStep = token.path[index];
-      if (firstStep === undefined || tokenStep === undefined || firstStep.id !== tokenStep.id)
-        break;
+      if (firstStep === undefined || tokenStep === undefined) {
+        throw new Error("Syntax path index is outside the token path.");
+      }
+      if (firstStep.id !== tokenStep.id) break;
       index += 1;
     }
     common = index;
