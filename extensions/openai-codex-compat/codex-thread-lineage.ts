@@ -35,11 +35,11 @@ export type CodexThreadLineageLifecycleHandler = (
 ) => Promise<void> | void;
 
 export type CodexThreadLineageApi = {
-  appendEntry(customType: string, data: CodexThreadMarkerData): void;
-  onMessageEnd(handler: CodexThreadLineageMessageHandler): void;
-  onSessionShutdown(handler: CodexThreadLineageLifecycleHandler): void;
-  onSessionStart(handler: CodexThreadLineageLifecycleHandler): void;
-  onSessionTree(handler: CodexThreadLineageLifecycleHandler): void;
+  appendEntry: (customType: string, data: CodexThreadMarkerData) => void;
+  onMessageEnd: (handler: CodexThreadLineageMessageHandler) => void;
+  onSessionShutdown: (handler: CodexThreadLineageLifecycleHandler) => void;
+  onSessionStart: (handler: CodexThreadLineageLifecycleHandler) => void;
+  onSessionTree: (handler: CodexThreadLineageLifecycleHandler) => void;
 };
 
 export function codexThreadLineageApi(pi: ExtensionAPI): CodexThreadLineageApi {

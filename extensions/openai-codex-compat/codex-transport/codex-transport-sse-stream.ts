@@ -32,7 +32,10 @@ import {
 export async function* parseSse(
   response: {
     body: {
-      getReader(): Pick<ReadableStreamDefaultReader<Uint8Array>, "cancel" | "read" | "releaseLock">;
+      getReader: () => Pick<
+        ReadableStreamDefaultReader<Uint8Array>,
+        "cancel" | "read" | "releaseLock"
+      >;
     } | null;
   },
   signal?: AbortSignal,

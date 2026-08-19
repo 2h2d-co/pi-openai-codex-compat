@@ -19,8 +19,8 @@ export type FooterContext = ConfigContext &
         }
       | undefined;
     modelRegistry: {
-      find(provider: string, modelId: string): Model<Api> | undefined;
-      getProvider(provider: string):
+      find: (provider: string, modelId: string) => Model<Api> | undefined;
+      getProvider: (provider: string) =>
         | {
             auth?: {
               oauth?: {
@@ -29,7 +29,7 @@ export type FooterContext = ConfigContext &
             };
           }
         | undefined;
-      isUsingOAuth(model: Model<Api>): boolean;
+      isUsingOAuth: (model: Model<Api>) => boolean;
     };
     sessionManager: Pick<
       ExtensionContext["sessionManager"],
@@ -77,10 +77,10 @@ interface FooterSessionAdapter {
     ExtensionContext["sessionManager"],
     "getEntries" | "getCwd" | "getSessionName"
   >;
-  getContextUsage(): ReturnType<ExtensionContext["getContextUsage"]>;
+  getContextUsage: () => ReturnType<ExtensionContext["getContextUsage"]>;
   modelRuntime: {
-    isUsingOAuth(provider: string): boolean;
-    isUsingSubscription(provider: string): boolean;
+    isUsingOAuth: (provider: string) => boolean;
+    isUsingSubscription: (provider: string) => boolean;
   };
 }
 
@@ -154,7 +154,7 @@ export function createCodexFooter(
   footerData: ReadonlyFooterDataProvider,
   ctx: FooterContext,
   resolveConfig: ConfigResolver,
-): Component & { dispose(): void } {
+): Component & { dispose: () => void } {
   return new CodexFooter(footerData, ctx, resolveConfig);
 }
 

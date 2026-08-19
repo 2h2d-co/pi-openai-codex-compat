@@ -59,13 +59,13 @@ export type ApplyPatchTool = ToolDefinitionWithContext<
 >;
 
 export type ApplyPatchApi = {
-  on(
+  on: (
     event: "tool_result",
     handler: (
       event: Pick<ToolResultEvent, "toolCallId" | "toolName">,
     ) => { details: ApplyPatchDetails } | undefined,
-  ): void;
-  registerTool(tool: ApplyPatchTool): void;
+  ) => void;
+  registerTool: (tool: ApplyPatchTool) => void;
 };
 
 // Adapted from OpenAI Codex's Apache-2.0 apply_patch grammar; see

@@ -12,13 +12,13 @@ export type ToolDefinitionWithContext<TParams extends TSchema, TDetails, TState,
   ToolDefinition<TParams, TDetails, TState>,
   "execute"
 > & {
-  execute(
+  execute: (
     toolCallId: string,
     params: Static<TParams>,
     signal: AbortSignal | undefined,
     onUpdate: AgentToolUpdateCallback<TDetails> | undefined,
     ctx: TContext,
-  ): Promise<AgentToolResult<TDetails>>;
+  ) => Promise<AgentToolResult<TDetails>>;
 };
 
 export type CodexToolExecutionContext = ConfigContext & {

@@ -28,9 +28,9 @@ export type CodexModelPolicySessionStartHandler = (
 ) => Promise<void> | void;
 
 export type CodexModelPolicyApi = Pick<ExtensionAPI, "getActiveTools" | "setActiveTools"> & {
-  onModelSelect(handler: CodexModelPolicySelectHandler): void;
-  onSessionStart(handler: CodexModelPolicySessionStartHandler): void;
-  setModel(model: Model<Api>): Promise<boolean>;
+  onModelSelect: (handler: CodexModelPolicySelectHandler) => void;
+  onSessionStart: (handler: CodexModelPolicySessionStartHandler) => void;
+  setModel: (model: Model<Api>) => Promise<boolean>;
 };
 
 export function codexModelPolicyApi(pi: ExtensionAPI): CodexModelPolicyApi {

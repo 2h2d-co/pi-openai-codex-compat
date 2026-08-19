@@ -203,9 +203,9 @@ export type ApplyPatchExecutionHooks = {
 export type ApplyPatchExecutionFilesystem = {
   chmod: typeof chmod;
   copyFile: typeof copyFile;
-  lstat(path: string): Promise<Stats>;
+  lstat: (path: string) => Promise<Stats>;
   mkdir: typeof mkdir;
-  readFile(path: string): Promise<Buffer>;
+  readFile: (path: string) => Promise<Buffer>;
   readlink: typeof readlink;
   readdir: typeof readdir;
   rename: typeof rename;

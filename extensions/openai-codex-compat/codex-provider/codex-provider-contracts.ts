@@ -22,14 +22,14 @@ export type RuntimeScopeContext = Pick<ExtensionContext, "getContextUsage" | "ha
   };
 
 export type MutableSessionManager = ExtensionContext["sessionManager"] & {
-  appendCompaction?<T>(
+  appendCompaction?: <T>(
     summary: string,
     firstKeptEntryId: string,
     tokensBefore: number,
     details?: T,
     fromHook?: boolean,
     usage?: Usage,
-  ): string;
+  ) => string;
 };
 
 export type RuntimeScope = {
@@ -41,7 +41,7 @@ export type RuntimeScope = {
   contextPercent: number | null;
   config: CodexCompatConfig;
   hasUI: boolean;
-  notify(message: string, level: "info" | "warning" | "error"): void;
+  notify: (message: string, level: "info" | "warning" | "error") => void;
 };
 
 export type RequestTemplate = {

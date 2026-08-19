@@ -89,7 +89,7 @@ export function validateRetryDelay(delayMs: number, options: CodexTransportOptio
 
 export interface CombinedAbortSignals {
   signal?: AbortSignal;
-  cleanup(): void;
+  cleanup: () => void;
 }
 
 export function combineAbortSignals(

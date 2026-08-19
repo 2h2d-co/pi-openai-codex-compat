@@ -41,7 +41,7 @@ export type WebRunTool = ToolDefinitionWithContext<
   CodexToolExecutionContext
 >;
 export type WebRunApi = Pick<ExtensionAPI, "getAllTools"> & {
-  registerTool(tool: WebRunTool): void;
+  registerTool: (tool: WebRunTool) => void;
 };
 
 export type { WebRunDetails } from "./web-run-render.ts";

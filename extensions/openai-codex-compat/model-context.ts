@@ -8,7 +8,7 @@ export type SelectedModelContext = {
       }
     | undefined;
   modelRegistry: {
-    find(provider: string, modelId: string): Model<Api> | undefined;
+    find: (provider: string, modelId: string) => Model<Api> | undefined;
   };
 };
 

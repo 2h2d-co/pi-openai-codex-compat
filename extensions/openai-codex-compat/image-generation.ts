@@ -37,7 +37,7 @@ export type ImageGenerationTool = ToolDefinitionWithContext<
   CodexToolExecutionContext
 >;
 export type ImageGenerationApi = Pick<ExtensionAPI, "getAllTools"> & {
-  registerTool(tool: ImageGenerationTool): void;
+  registerTool: (tool: ImageGenerationTool) => void;
 };
 const EDIT_ENDPOINT = "images/edits";
 const GENERATED_IMAGES_DIRECTORY = "generated_images";

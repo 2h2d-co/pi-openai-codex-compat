@@ -88,13 +88,13 @@ export type RemoteCompactionHookHandler = (
 ) => Promise<RemoteCompactionHookResult | undefined>;
 
 export type RemoteCompactionApi = {
-  getActiveTools(): string[];
-  getAllTools(): ToolInfo[];
-  onBeforeProviderHeaders(handler: RemoteCompactionHeadersHandler): void;
-  onContext(handler: RemoteCompactionContextHandler): void;
-  onSessionBeforeCompact(handler: RemoteCompactionHookHandler): void;
-  onSessionShutdown(handler: RemoteCompactionLifecycleHandler): void;
-  onSessionStart(handler: RemoteCompactionLifecycleHandler): void;
+  getActiveTools: () => string[];
+  getAllTools: () => ToolInfo[];
+  onBeforeProviderHeaders: (handler: RemoteCompactionHeadersHandler) => void;
+  onContext: (handler: RemoteCompactionContextHandler) => void;
+  onSessionBeforeCompact: (handler: RemoteCompactionHookHandler) => void;
+  onSessionShutdown: (handler: RemoteCompactionLifecycleHandler) => void;
+  onSessionStart: (handler: RemoteCompactionLifecycleHandler) => void;
 };
 
 export function remoteCompactionApi(pi: ExtensionAPI): RemoteCompactionApi {

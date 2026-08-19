@@ -13,8 +13,8 @@ export const OUTPUT_LIMIT_CONTINUATION_PROMPT =
   "The previous model response reached its output token limit. Continue the interrupted task from where it stopped without repeating completed work.";
 
 export type OutputLimitContinuationContext = {
-  hasPendingMessages(): boolean;
-  isIdle(): boolean;
+  hasPendingMessages: () => boolean;
+  isIdle: () => boolean;
   model: Model<Api> | undefined;
   sessionManager: Pick<ExtensionContext["sessionManager"], "getBranch" | "getSessionId">;
 };
@@ -38,12 +38,12 @@ export type OutputLimitContinuationLifecycleHandler = (
 ) => Promise<void> | void;
 
 export type OutputLimitContinuationApi = {
-  onAgentEnd(handler: OutputLimitContinuationAgentEndHandler): void;
-  onAgentSettled(handler: OutputLimitContinuationLifecycleHandler): void;
-  onSessionBeforeCompact(handler: OutputLimitContinuationCompactionHandler): void;
-  onSessionCompact(handler: OutputLimitContinuationLifecycleHandler): void;
-  onSessionShutdown(handler: OutputLimitContinuationLifecycleHandler): void;
-  sendMessage(
+  onAgentEnd: (handler: OutputLimitContinuationAgentEndHandler) => void;
+  onAgentSettled: (handler: OutputLimitContinuationLifecycleHandler) => void;
+  onSessionBeforeCompact: (handler: OutputLimitContinuationCompactionHandler) => void;
+  onSessionCompact: (handler: OutputLimitContinuationLifecycleHandler) => void;
+  onSessionShutdown: (handler: OutputLimitContinuationLifecycleHandler) => void;
+  sendMessage: (
     message: {
       content: string;
       customType: string;
@@ -51,7 +51,7 @@ export type OutputLimitContinuationApi = {
       display: boolean;
     },
     options?: { triggerTurn?: boolean },
-  ): void;
+  ) => void;
 };
 
 export function outputLimitContinuationApi(pi: ExtensionAPI): OutputLimitContinuationApi {

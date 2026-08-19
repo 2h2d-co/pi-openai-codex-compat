@@ -3,7 +3,7 @@ import { isObject, type JsonRecord } from "../codex-protocol.ts";
 import { CodexApiError } from "./codex-transport-errors.ts";
 
 interface ArrayBufferProvider {
-  arrayBuffer(): Promise<ArrayBuffer>;
+  arrayBuffer: () => Promise<ArrayBuffer>;
 }
 
 function hasArrayBuffer(value: unknown): value is ArrayBufferProvider {

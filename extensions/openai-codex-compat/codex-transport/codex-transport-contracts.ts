@@ -156,12 +156,12 @@ export type CodexTransportDiagnostic =
 
 export type CodexContinuationHandle = {
   readonly responseId: string;
-  replaceResponseItems(items: readonly JsonRecord[]): boolean;
+  replaceResponseItems: (items: readonly JsonRecord[]) => boolean;
 };
 
 export type CodexWebSocketResponseHandle = {
-  discard(): boolean;
-  failParsing(error: unknown): boolean;
+  discard: () => boolean;
+  failParsing: (error: unknown) => boolean;
 };
 
 export interface OpenAICodexWebSocketDebugStats {
@@ -185,10 +185,10 @@ export interface OpenAICodexWebSocketDebugStats {
 export type CodexTransportOptions = OpenAICodexResponsesOptions & {
   accountId?: string;
   env?: ProviderEnv;
-  onContinuationReady?(handle: CodexContinuationHandle): void;
-  onWebSocketResponseHandle?(handle: CodexWebSocketResponseHandle): void;
-  onTransportStart?(): void;
-  onTransportDiagnostic?(diagnostic: CodexTransportDiagnostic): void;
+  onContinuationReady?: (handle: CodexContinuationHandle) => void;
+  onWebSocketResponseHandle?: (handle: CodexWebSocketResponseHandle) => void;
+  onTransportStart?: () => void;
+  onTransportDiagnostic?: (diagnostic: CodexTransportDiagnostic) => void;
   warmup?: boolean;
   requestKind?: CodexRequestKind;
   turnState?: CodexTurnState;
@@ -205,10 +205,10 @@ export type WebSocketListener = (event: unknown) => void;
 
 export interface WebSocketLike {
   readonly readyState?: number;
-  close(code?: number, reason?: string): void;
-  send(data: string): void;
-  addEventListener(type: WebSocketEventType, listener: WebSocketListener): void;
-  removeEventListener(type: WebSocketEventType, listener: WebSocketListener): void;
+  close: (code?: number, reason?: string) => void;
+  send: (data: string) => void;
+  addEventListener: (type: WebSocketEventType, listener: WebSocketListener) => void;
+  removeEventListener: (type: WebSocketEventType, listener: WebSocketListener) => void;
 }
 
 export type WebSocketConstructor = new (

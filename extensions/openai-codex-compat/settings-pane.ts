@@ -81,8 +81,8 @@ export type CodexSettingsContext = ConfigContext &
     modelRegistry: Pick<ExtensionContext["modelRegistry"], "find">;
     sessionManager: Pick<ExtensionContext["sessionManager"], "getSessionId">;
     ui: {
-      custom<T>(factory: SettingsComponentFactory<T>): Promise<T>;
-      notify(message: string, type?: "info" | "warning" | "error"): void;
+      custom: <T>(factory: SettingsComponentFactory<T>) => Promise<T>;
+      notify: (message: string, type?: "info" | "warning" | "error") => void;
     };
   };
 
@@ -101,13 +101,13 @@ export type SettingsChangeContext = {
 export type CodexSettingsHandler = (args: string, ctx: CodexSettingsContext) => Promise<void>;
 
 export type CodexSettingsApi = {
-  registerCommand(
+  registerCommand: (
     name: string,
     options: {
       description?: string;
       handler: CodexSettingsHandler;
     },
-  ): void;
+  ) => void;
 };
 
 function toggleValue(value: boolean): string {

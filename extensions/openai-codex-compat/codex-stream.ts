@@ -44,7 +44,7 @@ type ThinkingSlot = Extract<OutputSlot, { type: "thinking" }>;
 type TextSlot = Extract<OutputSlot, { type: "text" }>;
 
 type ProcessCodexStreamOptions = {
-  applyServiceTierPricing?(usage: Usage, responseServiceTier: string | undefined): void;
+  applyServiceTierPricing?: (usage: Usage, responseServiceTier: string | undefined) => void;
   attemptState?: CodexStreamAttemptState;
 };
 

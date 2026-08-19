@@ -103,7 +103,7 @@ whether the pattern can and should be enforced by an Oxlint rule.
 
 ### 1. Bivariant method signatures
 
-**Status:** Pending
+**Status:** Completed; Oxlint follow-up pending discussion
 
 **Priority:** High
 
@@ -140,6 +140,10 @@ type Api = {
 
 Actual class methods and declarations intentionally mirroring an upstream or
 native method-shaped API may be justified exceptions.
+
+**Outcome:** All 59 non-vendored object method signatures were converted to
+function properties. The structural scan now reports zero method signatures.
+`npm run check` and `npm test` pass.
 
 **Oxlint checkpoint:** Decide whether to enforce property-style function
 signatures after the code change is complete.

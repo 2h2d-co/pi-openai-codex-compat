@@ -204,7 +204,7 @@ export async function acquireWebSocket(
   socket: WebSocketLike;
   entry?: CachedWebSocket;
   reused: boolean;
-  release(keep: boolean): void;
+  release: (keep: boolean) => void;
 }> {
   if (signal?.aborted) throw new Error("Request was aborted");
   if (sessionId) {
