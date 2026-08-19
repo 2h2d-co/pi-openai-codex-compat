@@ -923,8 +923,11 @@ export class SemanticPlanner {
       deletions: 0,
     };
     if (content !== undefined) {
+      const details = diffDetails(content, "");
       change.content = content;
-      Object.assign(change, diffDetails(content, ""));
+      change.displayDiff = details.displayDiff;
+      change.additions = details.additions;
+      change.deletions = details.deletions;
     }
     const targetKey = await this.pathKey(operation.absolutePath);
     const entryMutation: PlannedEntryMutation = {

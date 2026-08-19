@@ -188,10 +188,9 @@ export async function* requestWebSocket(
     const warmup = options.warmup === true;
     const requestStartedAtUnixMs = String(Date.now());
     const responseCreateBody = (candidate: JsonRecord): JsonRecord => {
-      const clientMetadata: JsonRecord = {};
-      if (isObject(candidate.client_metadata)) {
-        Object.assign(clientMetadata, candidate.client_metadata);
-      }
+      const clientMetadata = isObject(candidate.client_metadata)
+        ? { ...candidate.client_metadata }
+        : {};
       clientMetadata[CODEX_WS_REQUEST_START_METADATA_KEY] = requestStartedAtUnixMs;
       const responseBody: JsonRecord = {
         type: "response.create",

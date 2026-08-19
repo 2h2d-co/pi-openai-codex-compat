@@ -102,9 +102,7 @@ function codexStreamOptions(value: unknown): OpenAICodexResponsesOptions | undef
   if (!isNonNullObject(value)) {
     throw new Error("OpenAI Codex stream options must be an object.");
   }
-  const options: OpenAICodexResponsesOptions = {};
-  Object.assign(options, value);
-  return options;
+  return { ...value };
 }
 import {
   nativeOverrideRequired,

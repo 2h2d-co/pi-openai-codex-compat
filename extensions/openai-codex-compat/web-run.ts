@@ -162,8 +162,8 @@ export default function registerWebRun(
         max_output_tokens: SEARCH_OUTPUT_TOKEN_BUDGET,
       };
       if (input) body.input = input;
-      const requestOptions = { ...authentication };
-      if (signal) Object.assign(requestOptions, { signal });
+      const requestOptions: CodexJsonRequestOptions = { ...authentication };
+      if (signal) requestOptions.signal = signal;
       const response = await requestJson(model, SEARCH_ENDPOINT, body, requestOptions);
       if (!isObject(response) || !isString(response["output"])) {
         throw new Error("OpenAI Codex returned an invalid standalone web-search response.");

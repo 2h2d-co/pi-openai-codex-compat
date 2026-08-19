@@ -163,7 +163,7 @@ function encodeMessages(
 ): ResponsesItem[] {
   const tools = allTools.map((tool) => asPiTool(tool, grammarToolInputProperties));
   const compat = responsesCompatibility(model.compat);
-  const serializationOptions = {
+  const serializationOptions: NonNullable<Parameters<typeof convertResponsesMessages>[3]> = {
     includeSystemPrompt: false,
     grammarToolInputProperties,
     deferredTools: new Map(tools.map((tool) => [tool.name, tool])),
@@ -177,7 +177,7 @@ function encodeMessages(
     toolResultImageDetail: imageDetail,
   };
   if (nativeAssistantItems) {
-    Object.assign(serializationOptions, { nativeAssistantItems });
+    serializationOptions.nativeAssistantItems = nativeAssistantItems;
   }
   return requireResponsesItems(
     convertResponsesMessages(

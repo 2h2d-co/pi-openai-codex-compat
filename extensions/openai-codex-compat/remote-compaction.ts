@@ -291,16 +291,14 @@ export default function registerRemoteCompaction(
         },
       });
 
-      const result = {
-        compaction: {
-          summary: markerSummary(),
-          firstKeptEntryId: event.preparation.firstKeptEntryId,
-          tokensBefore: event.preparation.tokensBefore,
-          details: compacted.checkpoint,
-        },
+      const compaction: NonNullable<RemoteCompactionHookResult["compaction"]> = {
+        summary: markerSummary(),
+        firstKeptEntryId: event.preparation.firstKeptEntryId,
+        tokensBefore: event.preparation.tokensBefore,
+        details: compacted.checkpoint,
       };
-      if (compacted.usage) Object.assign(result.compaction, { usage: compacted.usage });
-      return result;
+      if (compacted.usage) compaction.usage = compacted.usage;
+      return { compaction };
       // oxlint-disable-next-line 2h2d/no-silent-error-suppression -- The compaction hook reports the failure and returns Pi's explicit cancellation result.
     } catch (error) {
       if (!event.signal.aborted && ctx.hasUI) {
