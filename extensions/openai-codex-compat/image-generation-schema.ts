@@ -1,12 +1,6 @@
-import { Type } from "typebox";
+import type { Static } from "typebox";
 
 export const MAX_EDIT_IMAGES = 5;
-
-export type ImageGenerationParameters = {
-  prompt: string;
-  referenced_image_paths?: string[] | null;
-  num_last_images_to_include?: number | null;
-};
 
 const REFERENCED_IMAGE_PATH_DESCRIPTION =
   "Absolute path to a local PNG, JPEG, GIF, or WebP image to include in an edit. Convert relative paths to absolute paths before calling the tool; the file must exist and be readable.";
@@ -15,7 +9,7 @@ const REFERENCED_IMAGE_PATH_DESCRIPTION =
  * Server-reserved image-generation schema. Range and selector constraints are
  * enforced by the executor because OpenAI rejects additional schema keywords.
  */
-export const IMAGE_GENERATION_PARAMETERS = Type.Unsafe<ImageGenerationParameters>({
+export const IMAGE_GENERATION_PARAMETERS = {
   type: "object",
   properties: {
     num_last_images_to_include: {
@@ -34,4 +28,6 @@ export const IMAGE_GENERATION_PARAMETERS = Type.Unsafe<ImageGenerationParameters
   },
   required: ["prompt"],
   additionalProperties: false,
-});
+} as const;
+
+export type ImageGenerationParameters = Static<typeof IMAGE_GENERATION_PARAMETERS>;

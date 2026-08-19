@@ -153,26 +153,31 @@ construct, class, and object implementation methods.
 
 ### 2. `Type.Unsafe` schema/type parity
 
-**Status:** Pending
+**Status:** Completed
 
 **Priority:** High-medium
 
-`image-generation-schema.ts` and `web-run-schema.ts` manually pair a static
-type with raw JSON Schema through `Type.Unsafe`. TypeScript cannot prove that
-the two contracts agree.
+`image-generation-schema.ts` and `web-run-schema.ts` previously paired a static
+type with raw JSON Schema through `Type.Unsafe`. TypeScript could not prove that
+the two contracts agreed.
 
-The web-run static type deliberately accepts several `null` values that the
-emitted schema does not advertise. Exact schema hash tests preserve the wire
-schema but do not prove static/runtime parity.
+The web-run static type also accepted several `null` values that the emitted
+schema does not advertise. Exact schema hash tests preserved the wire schema
+but did not prove static/runtime parity.
 
-Prefer deriving the static type from TypeBox constructors. If the exact raw
-schema makes that impractical, isolate and document the unsafe boundary and
-add representative parity tests.
+**Outcome:** Both exact raw schemas remain unchanged as const object literals,
+and their static types are now derived with TypeBox's native JSON Schema
+inference through `Static<typeof schema>`. All direct `Type.Unsafe` calls were
+removed.
 
-Do not add Zod alongside TypeBox.
+The validated `WebRunCommands` type now matches the reserved schema. A separate
+mapped `WebRunRenderCommands` type retains null tolerance for incomplete
+model-supplied arguments rendered before schema validation. Existing schema
+equality and hash tests confirm the wire declarations are unchanged.
+`npm run check` and `npm test` pass.
 
-**Oxlint checkpoint:** Consider whether direct `Type.Unsafe` calls should be
-forbidden outside one reviewed compatibility helper.
+**Oxlint checkpoint:** Consider forbidding direct `Type.Unsafe` calls now that
+the codebase has no justified uses.
 
 ### 3. Overclaiming hand-written type predicates
 

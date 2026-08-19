@@ -22,8 +22,21 @@ export type WebRunDetails = {
   results?: JsonValue[];
 };
 
+type NullishOptionalProperties<Value> = Value extends readonly (infer Item)[]
+  ? Array<NullishOptionalProperties<Item>>
+  : Value extends object
+    ? {
+        [Key in keyof Value]: undefined extends Value[Key]
+          ? NullishOptionalProperties<Exclude<Value[Key], undefined>> | null
+          : NullishOptionalProperties<Value[Key]>;
+      }
+    : Value;
+
+/** Arguments tolerated by the renderer before schema validation completes. */
+export type WebRunRenderCommands = NullishOptionalProperties<WebRunCommands>;
+
 type WebRunRenderContext = {
-  args: WebRunCommands;
+  args: WebRunRenderCommands;
   isPartial: boolean;
   expanded: boolean;
   isError: boolean;
@@ -118,7 +131,7 @@ function queryDescription(
   return preview ? `${kind} ${preview}` : undefined;
 }
 
-function sportsDescription(item: NonNullable<WebRunCommands["sports"]>[number]): string {
+function sportsDescription(item: NonNullable<WebRunRenderCommands["sports"]>[number]): string {
   const subject = item.team
     ? item.opponent
       ? `${item.team} vs ${item.opponent}`
@@ -127,7 +140,7 @@ function sportsDescription(item: NonNullable<WebRunCommands["sports"]>[number]):
   return `${item.league.toUpperCase()} ${item.fn} for ${subject}`;
 }
 
-export function describeWebRunCall(args: WebRunCommands): string {
+export function describeWebRunCall(args: WebRunRenderCommands): string {
   const actions: string[] = [];
   const search = queryDescription("search", args.search_query);
   if (search) actions.push(search);
@@ -209,7 +222,7 @@ function resultDomains(results: readonly JsonRecord[]): string[] {
   ];
 }
 
-function actionKinds(args: WebRunCommands): WebRunAction[] {
+function actionKinds(args: WebRunRenderCommands): WebRunAction[] {
   const kinds: WebRunAction[] = [];
   if (itemCount(args.search_query) > 0) kinds.push("search");
   if (itemCount(args.image_query) > 0) kinds.push("image");
@@ -310,7 +323,7 @@ function timeSummary(blocks: readonly WebRunOutputBlock[]): string | undefined {
 
 function actionResultSummary(
   action: WebRunAction,
-  args: WebRunCommands,
+  args: WebRunRenderCommands,
   blocks: readonly WebRunOutputBlock[],
 ): string {
   const title = blockTitle(blocks);
@@ -389,7 +402,7 @@ function actionResultSummary(
 }
 
 function resultSummary(
-  args: WebRunCommands,
+  args: WebRunRenderCommands,
   results: readonly JsonRecord[],
   blocks: readonly WebRunOutputBlock[],
   state: WebRunOutputState | undefined,
@@ -493,7 +506,7 @@ function formatStructuredResult(result: JsonRecord, index: number, theme: Render
 }
 
 function operationLabel(
-  args: WebRunCommands,
+  args: WebRunRenderCommands,
   action: WebRunAction | undefined,
   index: number,
 ): string {
@@ -588,14 +601,14 @@ function formatOutputBlock(
 }
 
 class WebRunResultComponent implements Component {
-  private readonly args: WebRunCommands;
+  private readonly args: WebRunRenderCommands;
   private readonly result: WebRunResult;
   private readonly expanded: boolean;
   private readonly theme: RenderTheme;
   private readonly isError: boolean;
 
   constructor(
-    args: WebRunCommands,
+    args: WebRunRenderCommands,
     result: WebRunResult,
     expanded: boolean,
     theme: RenderTheme,
@@ -650,7 +663,7 @@ class WebRunResultComponent implements Component {
 }
 
 export function renderWebRunCall(
-  args: WebRunCommands,
+  args: WebRunRenderCommands,
   theme: RenderTheme,
   context: WebRunRenderContext,
   resolveBackground: CodexToolBackgroundResolver = () => DEFAULT_CONFIG.toolBackground,

@@ -1,56 +1,4 @@
-import { Type } from "typebox";
-
-export type WebRunSearchQuery = {
-  q: string;
-  recency?: number | null;
-  domains?: string[] | null;
-};
-
-export type WebRunCommands = {
-  search_query?: WebRunSearchQuery[] | null;
-  image_query?: WebRunSearchQuery[] | null;
-  open?: Array<{
-    ref_id: string;
-    lineno?: number | null;
-  }> | null;
-  click?: Array<{
-    ref_id: string;
-    id: number;
-  }> | null;
-  find?: Array<{
-    ref_id: string;
-    pattern: string;
-  }> | null;
-  screenshot?: Array<{
-    ref_id: string;
-    pageno: number;
-  }> | null;
-  finance?: Array<{
-    ticker: string;
-    type: "equity" | "fund" | "crypto" | "index";
-    market?: string | null;
-  }> | null;
-  weather?: Array<{
-    location: string;
-    start?: string | null;
-    duration?: number | null;
-  }> | null;
-  sports?: Array<{
-    tool?: "sports" | null;
-    fn: "schedule" | "standings";
-    league: "nba" | "wnba" | "nfl" | "nhl" | "mlb" | "epl" | "ncaamb" | "ncaawb" | "ipl";
-    team?: string | null;
-    opponent?: string | null;
-    date_from?: string | null;
-    date_to?: string | null;
-    num_games?: number | null;
-    locale?: string | null;
-  }> | null;
-  time?: Array<{
-    utc_offset: string;
-  }> | null;
-  response_length?: "short" | "medium" | "long" | null;
-};
+import type { Static } from "typebox";
 
 /**
  * Exact post-normalization `SearchCommands` schema emitted by Codex at
@@ -58,7 +6,7 @@ export type WebRunCommands = {
  * generated schema through its Responses JSON-schema subset before transport,
  * which drops unsupported annotations such as `format` and `minimum`.
  */
-export const WEB_RUN_PARAMETERS = Type.Unsafe<WebRunCommands>({
+export const WEB_RUN_PARAMETERS = {
   type: "object",
   properties: {
     click: {
@@ -298,4 +246,7 @@ export const WEB_RUN_PARAMETERS = Type.Unsafe<WebRunCommands>({
       },
     },
   },
-});
+} as const;
+
+export type WebRunCommands = Static<typeof WEB_RUN_PARAMETERS>;
+export type WebRunSearchQuery = NonNullable<WebRunCommands["search_query"]>[number];

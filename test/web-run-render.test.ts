@@ -3,8 +3,8 @@ import test from "node:test";
 import {
   describeWebRunCall,
   renderWebRunResult,
+  type WebRunRenderCommands,
 } from "../extensions/openai-codex-compat/web-run-render.ts";
-import type { WebRunCommands } from "../extensions/openai-codex-compat/web-run-schema.ts";
 
 const ANSI_SEQUENCE_PATTERN = new RegExp(String.raw`\u001b\[[0-?]*[ -/]*[@-~]`, "gu");
 const SEPARATOR =
@@ -23,7 +23,7 @@ function stripAnsi(value: string): string {
 }
 
 function renderResult(
-  args: WebRunCommands,
+  args: WebRunRenderCommands,
   output: string,
   expanded: boolean,
   details: unknown = { results: [] },
