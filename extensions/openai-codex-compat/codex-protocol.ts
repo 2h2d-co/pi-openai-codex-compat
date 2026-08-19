@@ -661,7 +661,7 @@ export async function requestRemoteCompaction(options: {
         try {
           body = await response.text();
           // oxlint-disable-next-line 2h2d/no-silent-error-suppression -- Reading an HTTP error body is best-effort; status metadata remains available.
-        } catch (_error) {} // oxlint-disable-line no-unused-vars -- The caught body-read failure is intentionally omitted from the status error.
+        } catch {}
         const message = `Codex remote compaction failed (${response.status}): ${body || response.statusText}`;
         if (!retryableStatus(response.status)) throw new PermanentRemoteError(message);
         if (attempt === REQUEST_RETRIES) throw new Error(message);

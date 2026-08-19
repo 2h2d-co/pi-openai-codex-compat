@@ -309,10 +309,7 @@ export function compressBody(body: string): Uint8Array | undefined {
     });
     return new Uint8Array(compressed.buffer, compressed.byteOffset, compressed.byteLength);
     // oxlint-disable-next-line 2h2d/no-silent-error-suppression -- Request compression is optional; every failure falls back to the uncompressed body.
-  } catch (
-    // oxlint-disable-next-line no-unused-vars -- The caught compression failure is intentionally handled by the uncompressed fallback.
-    _error
-  ) {
+  } catch {
     return undefined;
   }
 }

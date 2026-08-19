@@ -467,7 +467,7 @@ test(
           specialPaths.push({ path: "/dev/null", kind: "character device" });
         }
         // oxlint-disable-next-line 2h2d/no-silent-error-suppression -- Device availability is platform-dependent and only controls optional test coverage.
-      } catch (_error) {} // oxlint-disable-line no-unused-vars -- The caught capability failure intentionally disables optional platform coverage.
+      } catch {}
       try {
         for (const name of await readdir("/dev")) {
           const candidate = join("/dev", name);
@@ -477,7 +477,7 @@ test(
           }
         }
         // oxlint-disable-next-line 2h2d/no-silent-error-suppression -- Device enumeration is platform-dependent and only controls optional test coverage.
-      } catch (_error) {} // oxlint-disable-line no-unused-vars -- The caught capability failure intentionally disables optional platform coverage.
+      } catch {}
 
       for (const special of specialPaths) {
         await assert.rejects(

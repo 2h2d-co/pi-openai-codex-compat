@@ -135,10 +135,7 @@ export async function logicalMutationQueueKeys(
             keys.add(`physical:${targetMetadata.dev}:${targetMetadata.ino}`);
           }
           // oxlint-disable-next-line 2h2d/no-silent-error-suppression -- Queue-key discovery is best-effort; the semantic planner reports inaccessible or invalid targets.
-        } catch (
-          // oxlint-disable-next-line no-unused-vars -- The caught discovery failure is intentionally ignored by the documented fallback.
-          _error
-        ) {
+        } catch {
           // The semantic planner reports inaccessible, dangling, or cyclic targets.
         }
       }
@@ -178,7 +175,7 @@ export async function canonicalMutationQueuePaths(
             return symlinkEntryQueuePath(path);
           }
           // oxlint-disable-next-line 2h2d/no-silent-error-suppression -- Symlink inspection is best-effort while preserving the primary canonicalization failure.
-        } catch (_error) {} // oxlint-disable-line no-unused-vars -- The caught inspection failure is intentionally ignored to preserve the primary failure.
+        } catch {}
         throw error;
       }
     }),

@@ -95,7 +95,7 @@ export async function* parseSse(
     try {
       reader.releaseLock();
       // oxlint-disable-next-line 2h2d/no-silent-error-suppression -- Releasing an already-invalidated reader lock is best-effort cleanup.
-    } catch (_error) {} // oxlint-disable-line no-unused-vars -- The caught release failure is intentionally ignored after stream completion.
+    } catch {}
   }
 }
 

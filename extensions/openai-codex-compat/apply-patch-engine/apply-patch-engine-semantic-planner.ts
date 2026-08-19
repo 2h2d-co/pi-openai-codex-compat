@@ -228,10 +228,7 @@ export class SemanticPlanner {
         }
       }
       // oxlint-disable-next-line 2h2d/no-silent-error-suppression -- Physical-name discovery falls back to known virtual aliases when direct inspection fails.
-    } catch (
-      // oxlint-disable-next-line no-unused-vars -- The caught discovery failure is intentionally handled by the virtual-alias fallback.
-      _error
-    ) {
+    } catch {
       for (const [knownPath, knownKey] of this.pathKeys) {
         const knownParent = await realpathWithMissingTail(dirname(knownPath));
         if (
@@ -414,10 +411,7 @@ export class SemanticPlanner {
       entry.content.value = { bytes, text };
       return text;
       // oxlint-disable-next-line 2h2d/no-silent-error-suppression -- Prior text is optional diagnostic context and must not block planning.
-    } catch (
-      // oxlint-disable-next-line no-unused-vars -- The caught read failure is intentionally omitted from optional diagnostic context.
-      _error
-    ) {
+    } catch {
       return undefined;
     }
   }
@@ -738,10 +732,7 @@ export class SemanticPlanner {
       try {
         destinationParentsReproduced = (await stat(destinationParent.entryPath)).isDirectory();
         // oxlint-disable-next-line 2h2d/no-silent-error-suppression -- A failed destination-parent probe means the dead-move proof is unavailable.
-      } catch (
-        // oxlint-disable-next-line no-unused-vars -- The caught probe failure is intentionally represented by an unavailable proof.
-        _error
-      ) {
+      } catch {
         return undefined;
       }
     }
@@ -830,10 +821,7 @@ export class SemanticPlanner {
           return;
         }
         // oxlint-disable-next-line 2h2d/no-silent-error-suppression -- No-op detection is best-effort; execution still verifies and applies the requested add.
-      } catch (
-        // oxlint-disable-next-line no-unused-vars -- The caught no-op probe failure is intentionally handled by normal execution.
-        _error
-      ) {
+      } catch {
         this.exact = false;
       }
     }

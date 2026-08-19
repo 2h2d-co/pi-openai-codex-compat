@@ -124,7 +124,7 @@ export function closeSocket(socket: WebSocketLike, reason = "done"): void {
   try {
     socket.close(1_000, reason);
     // oxlint-disable-next-line 2h2d/no-silent-error-suppression -- Socket close is best-effort and must not replace the request outcome.
-  } catch (_error) {} // oxlint-disable-line no-unused-vars -- The caught close failure is intentionally ignored to preserve the request outcome.
+  } catch {}
 }
 
 export function socketReusable(socket: WebSocketLike): boolean {

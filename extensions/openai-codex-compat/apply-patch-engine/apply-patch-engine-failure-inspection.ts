@@ -201,10 +201,7 @@ export async function inspectFinalPath(
         }
         return finalPathInspection(displayPath, "different-from-requested-content", actual);
         // oxlint-disable-next-line 2h2d/no-silent-error-suppression -- Failure inspection records an indeterminate state when content cannot be read.
-      } catch (
-        // oxlint-disable-next-line no-unused-vars -- The caught read failure is intentionally represented by an indeterminate final state.
-        _error
-      ) {
+      } catch {
         return finalPathInspection(
           displayPath,
           physicalEntryChanged ? "different-entry" : "not-verified",
@@ -230,10 +227,7 @@ export async function inspectFinalPath(
           actual,
         );
         // oxlint-disable-next-line 2h2d/no-silent-error-suppression -- Failure inspection records an indeterminate state when prior content cannot be read.
-      } catch (
-        // oxlint-disable-next-line no-unused-vars -- The caught read failure is intentionally represented by an indeterminate final state.
-        _error
-      ) {
+      } catch {
         return finalPathInspection(displayPath, "not-verified", actual);
       }
     }
@@ -254,10 +248,7 @@ export async function inspectFinalPath(
     }
     return finalPathInspection(displayPath, currentEntryFinalState(actual), actual);
     // oxlint-disable-next-line 2h2d/no-silent-error-suppression -- Failure inspection must preserve the primary mutation failure when the final path cannot be inspected.
-  } catch (
-    // oxlint-disable-next-line no-unused-vars -- The caught inspection failure is intentionally ignored to preserve the primary mutation failure.
-    _error
-  ) {
+  } catch {
     return finalPathInspection(displayPath, "not-verified");
   }
 }
@@ -516,7 +507,7 @@ export async function recordFailureInspection(
         addInstructionEffect(instruction, { kind: "directory-created", path: parent });
       }
       // oxlint-disable-next-line 2h2d/no-silent-error-suppression -- Parent-effect inspection is best-effort metadata for the primary mutation failure.
-    } catch (_error) {} // oxlint-disable-line no-unused-vars -- The caught inspection failure is intentionally ignored to preserve the primary mutation failure.
+    } catch {}
   }
 
   if (temporaryPath) {
@@ -527,6 +518,6 @@ export async function recordFailureInspection(
         path: temporaryPath,
       });
       // oxlint-disable-next-line 2h2d/no-silent-error-suppression -- Temporary-entry inspection is best-effort metadata for the primary mutation failure.
-    } catch (_error) {} // oxlint-disable-line no-unused-vars -- The caught inspection failure is intentionally ignored to preserve the primary mutation failure.
+    } catch {}
   }
 }

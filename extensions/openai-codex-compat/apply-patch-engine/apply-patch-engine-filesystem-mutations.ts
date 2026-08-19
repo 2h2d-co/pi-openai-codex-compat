@@ -319,7 +319,7 @@ export async function executePureMove(
       await filesystem.lstat(destinationPath);
       destinationChanged = true;
       // oxlint-disable-next-line 2h2d/no-silent-error-suppression -- Destination inspection is best-effort metadata for the primary move failure.
-    } catch (_error) {} // oxlint-disable-line no-unused-vars -- The caught inspection failure is intentionally ignored to preserve the primary failure.
+    } catch {}
     throw new PureMoveExecutionError(
       errorMessage(error),
       destinationChanged
