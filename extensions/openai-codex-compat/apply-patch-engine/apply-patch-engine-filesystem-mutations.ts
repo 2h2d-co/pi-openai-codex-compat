@@ -69,7 +69,6 @@ export async function replaceRegularFile(
     await filesystem.rename(temporaryPath, path);
     destinationChanged = true;
     await establishExactSpelling(path, filesystem);
-    // oxlint-disable-next-line 2h2d/no-silent-error-suppression -- The failure is captured and thrown after the temporary-file cleanup attempt.
   } catch (error) {
     pendingError = error;
   } finally {
@@ -257,7 +256,6 @@ export async function executeCrossDeviceMove(
     }
     destinationChanged = true;
     await filesystem.unlink(sourcePath);
-    // oxlint-disable-next-line 2h2d/no-silent-error-suppression -- The failure is captured and thrown after the temporary-entry cleanup attempt.
   } catch (error) {
     pendingError = error;
   } finally {

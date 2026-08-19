@@ -374,7 +374,6 @@ async function showSettings(
               ? theme.fg("success", `Saved to ${savedPath}`)
               : theme.fg("warning", "Unsaved session changes."),
           );
-          // oxlint-disable-next-line 2h2d/no-silent-error-suppression -- The settings boundary reports save failures through the pane and notification UI.
         } catch (cause) {
           const error = errorFromThrown(
             cause,

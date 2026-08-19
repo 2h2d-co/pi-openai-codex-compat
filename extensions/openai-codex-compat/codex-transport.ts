@@ -387,6 +387,7 @@ export class CodexTransport {
             options.onTransportDiagnostic?.(transportRequestDiagnostic(requestDiagnosticOptions));
           }
           return;
+          // oxlint-disable-next-line 2h2d/no-silent-error-suppression -- Bounded retry branches update recovery state or diagnostics; every terminal branch reports or rethrows the failure.
         } catch (error) {
           const aborted = options.signal?.aborted;
           const connectionLimitReached = isWebSocketConnectionLimitReachedError(error);

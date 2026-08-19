@@ -661,7 +661,6 @@ export async function requestRemoteCompaction(options: {
         let bodyReadFailure: unknown;
         try {
           body = await response.text();
-          // oxlint-disable-next-line 2h2d/no-silent-error-suppression -- The body-read failure is attached to the status error below.
         } catch (error) {
           bodyReadFailure = error;
         }

@@ -72,7 +72,6 @@ export async function* parseWebSocket(
       queue.push(parsed);
       notify();
     })();
-    // oxlint-disable-next-line 2h2d/no-silent-error-suppression -- The listener converts parse failures into the generator's failure state and wakes its consumer.
     messageTask.catch((error: unknown) => {
       failure = new CodexProtocolError(
         `Invalid Codex WebSocket JSON: ${thrownMessage(error)}`,

@@ -324,7 +324,6 @@ export default function registerImageGeneration(
           callId,
           imageBase64,
         );
-        // oxlint-disable-next-line 2h2d/no-silent-error-suppression -- Image persistence failure is returned with the generated image rather than replacing it.
       } catch (cause) {
         const error = errorFromThrown(
           cause,

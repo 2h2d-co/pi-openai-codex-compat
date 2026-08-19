@@ -90,20 +90,17 @@ export async function* parseSse(
         boundary = buffer.indexOf("\n\n");
       }
     }
-    // oxlint-disable-next-line 2h2d/no-silent-error-suppression -- The parse failure is rethrown with cleanup failures attached below.
   } catch (error) {
     primaryFailure = errorFromThrown(error, "Codex SSE parsing failed with a non-Error value.");
   } finally {
     signal?.removeEventListener("abort", onAbort);
     try {
       await reader.cancel();
-      // oxlint-disable-next-line 2h2d/no-silent-error-suppression -- Cleanup failures are attached below when a primary parse failure exists.
     } catch (error) {
       cleanupFailures.push(error);
     }
     try {
       reader.releaseLock();
-      // oxlint-disable-next-line 2h2d/no-silent-error-suppression -- Cleanup failures are attached below when a primary parse failure exists.
     } catch (error) {
       cleanupFailures.push(error);
     }

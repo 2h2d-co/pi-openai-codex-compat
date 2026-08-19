@@ -102,7 +102,6 @@ export default function registerCodexModelPolicy(
     let restored = false;
     try {
       restored = await pi.setModel(previousModel);
-      // oxlint-disable-next-line 2h2d/no-silent-error-suppression -- The model-selection boundary reports restoration failure through the UI.
     } catch (cause) {
       const error = errorFromThrown(
         cause,
