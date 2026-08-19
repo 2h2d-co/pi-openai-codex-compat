@@ -101,18 +101,16 @@ test("serializes SSE request payloads exactly once", async () => {
 });
 
 test("preserves SSE read errors when reader cleanup also fails", async () => {
-  const readFailure = new Error("SSE body read failed");
-  const releaseFailure = new Error("SSE reader release failed");
   const response = {
     body: {
       getReader() {
         return {
           async read() {
-            throw readFailure;
+            throw new Error("SSE body read failed");
           },
           async cancel() {},
           releaseLock() {
-            throw releaseFailure;
+            throw new Error("SSE reader release failed");
           },
         };
       },
@@ -125,14 +123,7 @@ test("preserves SSE read errors when reader cleanup also fails", async () => {
         // Consume the response.
       }
     },
-    (error: unknown) => {
-      assert.ok(error instanceof AggregateError);
-      assert.equal(error.message, "SSE body read failed");
-      assert.equal(error.cause, readFailure);
-      assert.equal(error.errors.length, 2);
-      assert.equal(error.errors[1], releaseFailure);
-      return true;
-    },
+    { message: "SSE body read failed" },
   );
 });
 

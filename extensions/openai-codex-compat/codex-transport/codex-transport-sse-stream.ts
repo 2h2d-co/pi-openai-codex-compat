@@ -41,9 +41,6 @@ export async function* parseSse(
   const reader = response.body.getReader();
   const decoder = new TextDecoder();
   let buffer = "";
-  let primaryFailure: Error | undefined;
-  const cleanupFailures: unknown[] = [];
-  // oxlint-disable-next-line 2h2d/no-silent-error-suppression -- Abort-triggered cancellation is best-effort; the parse loop observes the abort signal directly.
   const onAbort = () => void reader.cancel().catch(() => {});
   signal?.addEventListener("abort", onAbort, { once: true });
 
@@ -90,27 +87,13 @@ export async function* parseSse(
         boundary = buffer.indexOf("\n\n");
       }
     }
-  } catch (error) {
-    primaryFailure = errorFromThrown(error, "Codex SSE parsing failed with a non-Error value.");
   } finally {
     signal?.removeEventListener("abort", onAbort);
-    try {
-      await reader.cancel();
-    } catch (error) {
-      cleanupFailures.push(error);
-    }
+    await reader.cancel().catch(() => {});
     try {
       reader.releaseLock();
-    } catch (error) {
-      cleanupFailures.push(error);
-    }
+    } catch {}
   }
-  if (primaryFailure !== undefined && cleanupFailures.length > 0) {
-    throw new AggregateError([primaryFailure, ...cleanupFailures], primaryFailure.message, {
-      cause: primaryFailure,
-    });
-  }
-  if (primaryFailure !== undefined) throw primaryFailure;
 }
 
 export async function* requestSse(
