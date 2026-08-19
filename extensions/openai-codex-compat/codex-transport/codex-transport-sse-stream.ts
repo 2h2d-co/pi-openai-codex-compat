@@ -41,6 +41,8 @@ export async function* parseSse(
   const reader = response.body.getReader();
   const decoder = new TextDecoder();
   let buffer = "";
+  let primaryFailure: Error | undefined;
+  const cleanupFailures: unknown[] = [];
   // oxlint-disable-next-line 2h2d/no-silent-error-suppression -- Abort-triggered cancellation is best-effort; the parse loop observes the abort signal directly.
   const onAbort = () => void reader.cancel().catch(() => {});
   signal?.addEventListener("abort", onAbort, { once: true });
@@ -88,15 +90,30 @@ export async function* parseSse(
         boundary = buffer.indexOf("\n\n");
       }
     }
+    // oxlint-disable-next-line 2h2d/no-silent-error-suppression -- The parse failure is rethrown with cleanup failures attached below.
+  } catch (error) {
+    primaryFailure = errorFromThrown(error, "Codex SSE parsing failed with a non-Error value.");
   } finally {
     signal?.removeEventListener("abort", onAbort);
-    // oxlint-disable-next-line 2h2d/no-silent-error-suppression -- Reader cancellation is best-effort cleanup after parsing has already completed or failed.
-    await reader.cancel().catch((_error: unknown) => {});
+    try {
+      await reader.cancel();
+      // oxlint-disable-next-line 2h2d/no-silent-error-suppression -- Cleanup failures are attached below when a primary parse failure exists.
+    } catch (error) {
+      cleanupFailures.push(error);
+    }
     try {
       reader.releaseLock();
-      // oxlint-disable-next-line 2h2d/no-silent-error-suppression -- Releasing an already-invalidated reader lock is best-effort cleanup.
-    } catch {}
+      // oxlint-disable-next-line 2h2d/no-silent-error-suppression -- Cleanup failures are attached below when a primary parse failure exists.
+    } catch (error) {
+      cleanupFailures.push(error);
+    }
   }
+  if (primaryFailure !== undefined && cleanupFailures.length > 0) {
+    throw new AggregateError([primaryFailure, ...cleanupFailures], primaryFailure.message, {
+      cause: primaryFailure,
+    });
+  }
+  if (primaryFailure !== undefined) throw primaryFailure;
 }
 
 export async function* requestSse(

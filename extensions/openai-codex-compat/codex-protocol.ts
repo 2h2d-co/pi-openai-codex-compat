@@ -658,14 +658,25 @@ export async function requestRemoteCompaction(options: {
 
       if (!response.ok) {
         let body = "";
+        let bodyReadFailure: unknown;
         try {
           body = await response.text();
-          // oxlint-disable-next-line 2h2d/no-silent-error-suppression -- Reading an HTTP error body is best-effort; status metadata remains available.
-        } catch {}
+          // oxlint-disable-next-line 2h2d/no-silent-error-suppression -- The body-read failure is attached to the status error below.
+        } catch (error) {
+          bodyReadFailure = error;
+        }
         const message = `Codex remote compaction failed (${response.status}): ${body || response.statusText}`;
-        if (!retryableStatus(response.status)) throw new PermanentRemoteError(message);
-        if (attempt === REQUEST_RETRIES) throw new Error(message);
-        lastFailure = new Error(message);
+        if (!retryableStatus(response.status)) {
+          throw bodyReadFailure === undefined
+            ? new PermanentRemoteError(message)
+            : new PermanentRemoteError(message, { cause: bodyReadFailure });
+        }
+        const statusError =
+          bodyReadFailure === undefined
+            ? new Error(message)
+            : new Error(message, { cause: bodyReadFailure });
+        if (attempt === REQUEST_RETRIES) throw statusError;
+        lastFailure = statusError;
         await wait(serverRetryDelay(response) ?? 1000 * 2 ** attempt, options.signal);
         continue;
       }

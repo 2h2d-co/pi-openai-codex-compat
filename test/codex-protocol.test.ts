@@ -178,3 +178,30 @@ test("accepts compaction output supplied only on the terminal response", async (
   const result = await collectRemoteCompaction(terminalOnly(), codexModel, false);
   assert.equal(result.item.encrypted_content, "opaque");
 });
+
+test("attaches HTTP error body read failures to the status error", async () => {
+  const bodyReadFailure = new Error("body unavailable");
+  const response = new Response(null, { status: 400, statusText: "Bad Request" });
+  Object.defineProperty(response, "text", {
+    value: async () => {
+      throw bodyReadFailure;
+    },
+  });
+
+  await assert.rejects(
+    requestRemoteCompaction({
+      endpoint: "https://example.test/codex/responses",
+      headers: new Headers(),
+      payload: {},
+      accountingModel: codexModel,
+      priority: false,
+      fetcher: async () => response,
+    }),
+    (error: unknown) => {
+      assert.ok(error instanceof Error);
+      assert.equal(error.message, "Codex remote compaction failed (400): Bad Request");
+      assert.equal(error.cause, bodyReadFailure);
+      return true;
+    },
+  );
+});
