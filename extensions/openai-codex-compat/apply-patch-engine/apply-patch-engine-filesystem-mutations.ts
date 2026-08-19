@@ -74,7 +74,6 @@ export async function replaceRegularFile(
   } finally {
     try {
       await filesystem.unlink(temporaryPath);
-      // oxlint-disable-next-line 2h2d/no-silent-error-suppression -- Non-ENOENT cleanup failures are captured and thrown after cleanup completes.
     } catch (error) {
       if (!isNotFound(error)) {
         temporaryEntryRemains = true;
@@ -261,7 +260,6 @@ export async function executeCrossDeviceMove(
   } finally {
     try {
       await filesystem.unlink(temporaryPath);
-      // oxlint-disable-next-line 2h2d/no-silent-error-suppression -- Non-ENOENT cleanup failures are captured and thrown after cleanup completes.
     } catch (error) {
       if (!isNotFound(error)) {
         temporaryEntryRemains = true;
@@ -316,7 +314,6 @@ export async function executePureMove(
     try {
       await filesystem.lstat(destinationPath);
       destinationChanged = true;
-      // oxlint-disable-next-line 2h2d/no-silent-error-suppression -- Destination inspection is best-effort metadata for the primary move failure.
     } catch {}
     throw new PureMoveExecutionError(
       errorMessage(error),

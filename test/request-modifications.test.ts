@@ -141,7 +141,6 @@ async function startCodexServer(t: TestContext): Promise<{
       response.writeHead(200, { "content-type": "text/event-stream" });
       response.end(sse(textResponseEvents("modified request ok")));
     };
-    // oxlint-disable-next-line 2h2d/no-silent-error-suppression -- Destroying the response forwards request-processing failures to the test client.
     requestTask().catch((error: unknown) => {
       response.destroy(error instanceof Error ? error : new Error(String(error)));
     });

@@ -200,7 +200,6 @@ export async function inspectFinalPath(
           }
         }
         return finalPathInspection(displayPath, "different-from-requested-content", actual);
-        // oxlint-disable-next-line 2h2d/no-silent-error-suppression -- Failure inspection records an indeterminate state when content cannot be read.
       } catch {
         return finalPathInspection(
           displayPath,
@@ -226,7 +225,6 @@ export async function inspectFinalPath(
             : "different-from-previous-content",
           actual,
         );
-        // oxlint-disable-next-line 2h2d/no-silent-error-suppression -- Failure inspection records an indeterminate state when prior content cannot be read.
       } catch {
         return finalPathInspection(displayPath, "not-verified", actual);
       }
@@ -247,7 +245,6 @@ export async function inspectFinalPath(
       return finalPathInspection(displayPath, "different-entry", actual);
     }
     return finalPathInspection(displayPath, currentEntryFinalState(actual), actual);
-    // oxlint-disable-next-line 2h2d/no-silent-error-suppression -- Failure inspection must preserve the primary mutation failure when the final path cannot be inspected.
   } catch {
     return finalPathInspection(displayPath, "not-verified");
   }
@@ -506,7 +503,6 @@ export async function recordFailureInspection(
       if ((await filesystem.lstat(parent)).isDirectory()) {
         addInstructionEffect(instruction, { kind: "directory-created", path: parent });
       }
-      // oxlint-disable-next-line 2h2d/no-silent-error-suppression -- Parent-effect inspection is best-effort metadata for the primary mutation failure.
     } catch {}
   }
 
@@ -517,7 +513,6 @@ export async function recordFailureInspection(
         kind: "temporary-entry-remains",
         path: temporaryPath,
       });
-      // oxlint-disable-next-line 2h2d/no-silent-error-suppression -- Temporary-entry inspection is best-effort metadata for the primary mutation failure.
     } catch {}
   }
 }

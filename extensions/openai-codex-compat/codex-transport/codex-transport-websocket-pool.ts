@@ -123,7 +123,6 @@ export function websocketConstructor(): WebSocketConstructor | undefined {
 export function closeSocket(socket: WebSocketLike, reason = "done"): void {
   try {
     socket.close(1_000, reason);
-    // oxlint-disable-next-line 2h2d/no-silent-error-suppression -- Socket close is best-effort and must not replace the request outcome.
   } catch {}
 }
 
@@ -176,7 +175,6 @@ export async function connectWebSocket(
 
     try {
       socket = new WebSocketClass(url, { headers: requestHeaders });
-      // oxlint-disable-next-line 2h2d/no-silent-error-suppression -- The constructor failure is propagated by rejecting the returned connection promise.
     } catch (cause) {
       reject(errorFromThrown(cause, "The WebSocket constructor threw a non-Error value."));
       return;

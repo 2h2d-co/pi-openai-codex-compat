@@ -69,7 +69,6 @@ test("serializes same-process filesystem aliases with deterministic logical keys
   await writeFile(caseProbe, "");
   const caseAliases =
     (await lstat(caseProbe)).ino ===
-    // oxlint-disable-next-line 2h2d/no-silent-error-suppression -- A failed alias capability probe means the filesystem does not expose the alias.
     (await lstat(join(cwd, "caseprobe")).catch(() => ({ ino: -1 }))).ino;
   await rm(caseProbe);
   if (caseAliases) await assertAliasAddsSerialize("MissingCase.txt", "missingcase.txt");
@@ -79,7 +78,6 @@ test("serializes same-process filesystem aliases with deterministic logical keys
   await writeFile(join(cwd, composed), "");
   const unicodeAliases =
     (await lstat(join(cwd, composed))).ino ===
-    // oxlint-disable-next-line 2h2d/no-silent-error-suppression -- A failed normalization capability probe means the filesystem does not expose the alias.
     (await lstat(join(cwd, decomposed)).catch(() => ({ ino: -1 }))).ino;
   await rm(join(cwd, composed));
   if (unicodeAliases) {
@@ -466,7 +464,6 @@ test(
         if ((await lstat("/dev/null")).isCharacterDevice()) {
           specialPaths.push({ path: "/dev/null", kind: "character device" });
         }
-        // oxlint-disable-next-line 2h2d/no-silent-error-suppression -- Device availability is platform-dependent and only controls optional test coverage.
       } catch {}
       try {
         for (const name of await readdir("/dev")) {
@@ -476,7 +473,6 @@ test(
             break;
           }
         }
-        // oxlint-disable-next-line 2h2d/no-silent-error-suppression -- Device enumeration is platform-dependent and only controls optional test coverage.
       } catch {}
 
       for (const special of specialPaths) {

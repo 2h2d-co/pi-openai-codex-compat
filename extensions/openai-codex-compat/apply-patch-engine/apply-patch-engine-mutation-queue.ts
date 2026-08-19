@@ -134,7 +134,6 @@ export async function logicalMutationQueueKeys(
           if (targetMetadata.isFile()) {
             keys.add(`physical:${targetMetadata.dev}:${targetMetadata.ino}`);
           }
-          // oxlint-disable-next-line 2h2d/no-silent-error-suppression -- Queue-key discovery is best-effort; the semantic planner reports inaccessible or invalid targets.
         } catch {
           // The semantic planner reports inaccessible, dangling, or cyclic targets.
         }
@@ -174,7 +173,6 @@ export async function canonicalMutationQueuePaths(
           if ((await lstat(path)).isSymbolicLink()) {
             return symlinkEntryQueuePath(path);
           }
-          // oxlint-disable-next-line 2h2d/no-silent-error-suppression -- Symlink inspection is best-effort while preserving the primary canonicalization failure.
         } catch {}
         throw error;
       }

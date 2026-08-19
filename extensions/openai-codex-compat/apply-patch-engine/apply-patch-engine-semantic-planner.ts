@@ -127,7 +127,6 @@ export class SemanticPlanner {
           }
           instruction.status = "no-op";
         }
-        // oxlint-disable-next-line 2h2d/no-silent-error-suppression -- A proven dead operation safely dominates its planning failure; every unproven failure is preserved below.
       } catch (error) {
         if (operation.kind === "update") {
           const move = semanticMoveOperation(operation);
@@ -227,7 +226,6 @@ export class SemanticPlanner {
           }
         }
       }
-      // oxlint-disable-next-line 2h2d/no-silent-error-suppression -- Physical-name discovery falls back to known virtual aliases when direct inspection fails.
     } catch {
       for (const [knownPath, knownKey] of this.pathKeys) {
         const knownParent = await realpathWithMissingTail(dirname(knownPath));
@@ -410,7 +408,6 @@ export class SemanticPlanner {
       const text = UTF8_DECODER.decode(bytes);
       entry.content.value = { bytes, text };
       return text;
-      // oxlint-disable-next-line 2h2d/no-silent-error-suppression -- Prior text is optional diagnostic context and must not block planning.
     } catch {
       return undefined;
     }
@@ -731,7 +728,6 @@ export class SemanticPlanner {
     } else if (destinationParent.kind === "symlink") {
       try {
         destinationParentsReproduced = (await stat(destinationParent.entryPath)).isDirectory();
-        // oxlint-disable-next-line 2h2d/no-silent-error-suppression -- A failed destination-parent probe means the dead-move proof is unavailable.
       } catch {
         return undefined;
       }
@@ -820,7 +816,6 @@ export class SemanticPlanner {
           this.markNoOp(instructionIndex, "content-already-present");
           return;
         }
-        // oxlint-disable-next-line 2h2d/no-silent-error-suppression -- No-op detection is best-effort; execution still verifies and applies the requested add.
       } catch {
         this.exact = false;
       }

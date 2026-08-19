@@ -299,7 +299,6 @@ export default function registerRemoteCompaction(
       };
       if (compacted.usage) compaction.usage = compacted.usage;
       return { compaction };
-      // oxlint-disable-next-line 2h2d/no-silent-error-suppression -- The compaction hook reports the failure and returns Pi's explicit cancellation result.
     } catch (error) {
       if (!event.signal.aborted && ctx.hasUI) {
         const failure = errorFromThrown(

@@ -404,7 +404,6 @@ export class CodexProviderRuntime {
           options.diagnostics.push(diagnostic);
         },
       });
-      // oxlint-disable-next-line 2h2d/no-silent-error-suppression -- Warmup is best-effort; the request path already selected sticky SSE fallback.
     } catch {
       // Warmup is best-effort. The transport has already activated sticky SSE
       // after exhausting its WebSocket retry budget.
