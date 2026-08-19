@@ -153,7 +153,7 @@ construct, class, and object implementation methods.
 
 ### 2. `Type.Unsafe` schema/type parity
 
-**Status:** Completed
+**Status:** Completed and enforced by Oxlint
 
 **Priority:** High-medium
 
@@ -176,8 +176,10 @@ model-supplied arguments rendered before schema validation. Existing schema
 equality and hash tests confirm the wire declarations are unchanged.
 `npm run check` and `npm test` pass.
 
-**Oxlint checkpoint:** Consider forbidding direct `Type.Unsafe` calls now that
-the codebase has no justified uses.
+**Oxlint checkpoint:** Added the import-aware `2h2d/no-typebox-unsafe` rule
+without an autofixer and enabled it through `@2h2d/oxlint-config`
+`0.1.0-alpha.8`. It rejects named, aliased, default, and namespace TypeBox
+`Unsafe` calls without matching unrelated local APIs.
 
 ### 3. Overclaiming hand-written type predicates
 
