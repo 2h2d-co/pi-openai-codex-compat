@@ -5,7 +5,7 @@ import {
 } from "../../extensions/openai-codex-compat/value-contracts.ts";
 
 export interface BuiltinModelsModule {
-  getBuiltinModels?(provider: string): Model<"openai-codex-responses">[];
+  getBuiltinModels?: (provider: string) => Model<"openai-codex-responses">[];
 }
 
 export function requireBuiltinModelsModule(value: unknown): BuiltinModelsModule {

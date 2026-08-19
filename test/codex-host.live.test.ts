@@ -40,7 +40,7 @@ const extensionPath = resolve(rootDir, "extensions/index.ts");
 type HistoryMode = "text" | "tool";
 
 type WebSocketLike = {
-  send(data: string): void;
+  send: (data: string) => void;
 };
 
 type WebSocketConstructor = new (
@@ -193,12 +193,12 @@ function observeRealWebSocketTraffic(t: TestContext): ObservedWebSocketTraffic {
       traffic.connections += 1;
     }
 
-    override send(data: string): void {
+    override send = (data: string): void => {
       const parsed: unknown = JSON.parse(data);
       assert.ok(isObject(parsed), "Codex WebSocket request must be a JSON object");
       traffic.frames.push(structuredClone(parsed));
       super.send(data);
-    }
+    };
   }
 
   Object.defineProperty(globalThis, "WebSocket", {

@@ -70,7 +70,7 @@ export async function buildSemanticPlan(cwd: string, patchDocument: string): Pro
 
 export interface DeferredSignal {
   promise: Promise<void>;
-  resolve(): void;
+  resolve: () => void;
 }
 
 export function deferred(): DeferredSignal {
