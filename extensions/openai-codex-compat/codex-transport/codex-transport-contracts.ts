@@ -211,11 +211,6 @@ export interface WebSocketLike {
   removeEventListener: (type: WebSocketEventType, listener: WebSocketListener) => void;
 }
 
-export type WebSocketConstructor = new (
-  url: string,
-  protocols?: string | string[] | { headers?: Record<string, string> },
-) => WebSocketLike;
-
 export type CachedWebSocket = {
   socket: WebSocketLike;
   busy: boolean;

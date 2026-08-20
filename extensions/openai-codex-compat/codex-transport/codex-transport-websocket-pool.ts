@@ -1,10 +1,8 @@
-import { isFunction } from "../value-contracts.ts";
 import { errorFromThrown } from "../error-from-thrown.ts";
 import type {
   CachedWebSocket,
   CacheIdentitySnapshot,
   OpenAICodexWebSocketDebugStats,
-  WebSocketConstructor,
   WebSocketFallbackSession,
   WebSocketLike,
 } from "./codex-transport-contracts.ts";
@@ -111,15 +109,6 @@ export function recordWebSocketFailure(
   stats.websocketFallbackActive = true;
 }
 
-function isWebSocketConstructor(value: unknown): value is WebSocketConstructor {
-  return isFunction(value);
-}
-
-export function websocketConstructor(): WebSocketConstructor | undefined {
-  const candidate: unknown = globalThis.WebSocket;
-  return isWebSocketConstructor(candidate) ? candidate : undefined;
-}
-
 export function closeSocket(socket: WebSocketLike, reason = "done"): void {
   try {
     socket.close(1_000, reason);
@@ -136,8 +125,8 @@ export async function connectWebSocket(
   signal: AbortSignal | undefined,
   timeoutMs: number,
 ): Promise<WebSocketLike> {
-  const WebSocketClass = websocketConstructor();
-  if (!WebSocketClass) {
+  const WebSocketClass = globalThis.WebSocket;
+  if (typeof WebSocketClass !== "function") {
     throw new Error("WebSocket transport is not available in this runtime");
   }
   const requestHeaders = headersToRecord(headers);

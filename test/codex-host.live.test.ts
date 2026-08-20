@@ -20,7 +20,7 @@ import {
   type AgentSession,
   type ToolDefinition,
 } from "@earendil-works/pi-coding-agent";
-import { isFunction, isString } from "../extensions/openai-codex-compat/value-contracts.ts";
+import { isString } from "../extensions/openai-codex-compat/value-contracts.ts";
 import { Type } from "typebox";
 import { CONFIG_FILE } from "../extensions/openai-codex-compat/config.ts";
 import {
@@ -38,15 +38,6 @@ const rootDir = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const extensionPath = resolve(rootDir, "extensions/index.ts");
 
 type HistoryMode = "text" | "tool";
-
-type WebSocketLike = {
-  send: (data: string) => void;
-};
-
-type WebSocketConstructor = new (
-  url: string,
-  protocols?: string | string[] | { headers?: Record<string, string> },
-) => WebSocketLike;
 
 type ObservedWebSocketTraffic = {
   connections: number;
@@ -77,10 +68,6 @@ interface CacheObservation {
 
 function diagnosticValue(value: unknown): JsonValue | undefined {
   return isJsonValue(value) ? value : undefined;
-}
-
-function isWebSocketConstructor(value: unknown): value is WebSocketConstructor {
-  return isFunction(value);
 }
 
 function liveApiKey(): string {
@@ -183,22 +170,22 @@ function cacheObservation(message: AssistantMessage): CacheObservation {
 
 function observeRealWebSocketTraffic(t: TestContext): ObservedWebSocketTraffic {
   const traffic: ObservedWebSocketTraffic = { connections: 0, frames: [] };
-  const candidate: unknown = globalThis.WebSocket;
-  assert.ok(isWebSocketConstructor(candidate), "A real WebSocket runtime is required");
-  const OriginalWebSocket = candidate;
+  const OriginalWebSocket = globalThis.WebSocket;
+  assert.equal(typeof OriginalWebSocket, "function", "A real WebSocket runtime is required");
 
   class ObservedWebSocket extends OriginalWebSocket {
-    constructor(url: string, protocols?: string | string[] | { headers?: Record<string, string> }) {
+    constructor(url: string | URL, protocols?: string | string[] | WebSocketInit) {
       super(url, protocols);
       traffic.connections += 1;
     }
 
-    override send = (data: string): void => {
+    override send(data: Parameters<WebSocket["send"]>[0]): void {
+      assert.ok(isString(data), "Codex WebSocket requests must be JSON strings");
       const parsed: unknown = JSON.parse(data);
       assert.ok(isObject(parsed), "Codex WebSocket request must be a JSON object");
       traffic.frames.push(structuredClone(parsed));
       super.send(data);
-    };
+    }
   }
 
   Object.defineProperty(globalThis, "WebSocket", {
