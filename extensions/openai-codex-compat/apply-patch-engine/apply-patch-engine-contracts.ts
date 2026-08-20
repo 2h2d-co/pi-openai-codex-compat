@@ -11,7 +11,21 @@ import type {
   writeFile,
 } from "node:fs/promises";
 import type { Stats } from "node:fs";
-import type { FormatterMatchFailureDetails, UpdateChunk } from "../apply-patch-matcher.ts";
+import type { UpdateChunk } from "../apply-patch-matcher.ts";
+import type { ApplyPatchDetails } from "./apply-patch-engine-details-schema.ts";
+
+export type {
+  AppliedPatchChange,
+  ApplyPatchDetails,
+  ApplyPatchFailureDetails,
+  ApplyPatchFileEntryDetails,
+  ApplyPatchFinalPathState,
+  ApplyPatchInstructionDetails,
+  ApplyPatchInstructionEffect,
+  ApplyPatchInstructionReason,
+  ApplyPatchInstructionReasonCode,
+  ApplyPatchInstructionStatus,
+} from "./apply-patch-engine-details-schema.ts";
 
 export type PatchOperation =
   | { kind: "add"; path: string; content: string }
@@ -22,147 +36,6 @@ export type ParsedPatch = {
   patch: string;
   operations: PatchOperation[];
   environmentId?: string;
-};
-
-export type AppliedPatchChange =
-  | {
-      kind: "add";
-      path: string;
-      content: string;
-      overwrittenContent?: string;
-      displayDiff: string;
-      additions: number;
-      deletions: number;
-    }
-  | {
-      kind: "delete";
-      path: string;
-      entryType: "regular-file" | "symlink";
-      content?: string;
-      displayDiff: string;
-      additions: number;
-      deletions: number;
-    }
-  | {
-      kind: "update";
-      path: string;
-      moveTo?: string;
-      oldContent: string;
-      newContent: string;
-      overwrittenMoveContent?: string;
-      displayDiff: string;
-      additions: number;
-      deletions: number;
-    }
-  | {
-      kind: "move";
-      sourcePath: string;
-      destinationPath: string;
-      replacedDestination: boolean;
-      entryType: "regular-file" | "symlink";
-      exact: boolean;
-      displayDiff: "";
-      additions: 0;
-      deletions: 0;
-    };
-
-export type ApplyPatchInstructionStatus =
-  | "applied"
-  | "planned"
-  | "no-op"
-  | "dead"
-  | "failed"
-  | "not-run";
-
-export type ApplyPatchInstructionReasonCode =
-  | "empty-update"
-  | "identity-update"
-  | "content-already-present"
-  | "update-result-unchanged"
-  | "path-already-absent"
-  | "same-entry-move"
-  | "move-already-fulfilled"
-  | "dead-dominated";
-
-export type ApplyPatchInstructionReason = {
-  code: ApplyPatchInstructionReasonCode;
-  message: string;
-  dominatingInstructions?: number[];
-  relatedInstructions?: number[];
-};
-
-export type ApplyPatchFileEntryDetails =
-  | { entryType: "regular-file" }
-  | { entryType: "symlink"; target: string };
-
-export type ApplyPatchInstructionEffect =
-  | {
-      kind: "created" | "updated" | "deleted" | "directory-created" | "temporary-entry-remains";
-      path: string;
-    }
-  | {
-      kind: "replaced";
-      path: string;
-      previousEntry: ApplyPatchFileEntryDetails;
-      replacementEntry: ApplyPatchFileEntryDetails;
-    }
-  | { kind: "source-remains"; path: string }
-  | {
-      kind: "symlink-removed" | "symlink-moved";
-      path: string;
-      target: string;
-    }
-  | { kind: "symlink-target-modified"; path: string; target: string };
-
-export type ApplyPatchFinalPathState = {
-  path: string;
-  state:
-    | "absent"
-    | "regular-file"
-    | "symlink"
-    | "directory"
-    | "other-entry"
-    | "unchanged"
-    | "requested-content"
-    | "different-from-requested-content"
-    | "different-from-requested-and-previous-content"
-    | "different-from-previous-content"
-    | "different-entry"
-    | "different-entry-type"
-    | "not-verified";
-};
-
-export type ApplyPatchInstructionDetails = {
-  index: number;
-  kind: "add" | "delete" | "update" | "move";
-  path: string;
-  moveTo?: string;
-  status: ApplyPatchInstructionStatus;
-  reason?: ApplyPatchInstructionReason;
-  effects?: ApplyPatchInstructionEffect[];
-  finalStates?: ApplyPatchFinalPathState[];
-  matcher?: FormatterMatchFailureDetails;
-  changeIndexes?: number[];
-  error?: string;
-};
-
-export type ApplyPatchFailureDetails = {
-  phase: "input" | "parse" | "preflight" | "execution";
-  message: string;
-  failedInstruction?: number;
-  matcher?: FormatterMatchFailureDetails;
-};
-
-export type ApplyPatchDetails = {
-  status: "completed" | "failed";
-  exact: boolean;
-  changes: AppliedPatchChange[];
-  added: string[];
-  modified: string[];
-  deleted: string[];
-  instructions?: ApplyPatchInstructionDetails[];
-  failure?: ApplyPatchFailureDetails;
-  error?: string;
 };
 
 type ResolvedUpdateBase = {

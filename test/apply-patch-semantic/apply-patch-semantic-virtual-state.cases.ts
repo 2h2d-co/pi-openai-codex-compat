@@ -1,3 +1,5 @@
+import { Value } from "typebox/value";
+import { APPLY_PATCH_DETAILS_SCHEMA } from "../../extensions/openai-codex-compat/apply-patch-engine/apply-patch-engine-details-schema.ts";
 import {
   assert,
   chmod,
@@ -13,7 +15,6 @@ import {
   ApplyPatchVerificationError,
   formatApplyPatchSummary,
   ApplyPatchDiffComponent,
-  isApplyPatchDetails,
   workspace,
   assertMissing,
   patch,
@@ -99,7 +100,7 @@ test("moves symlink entries and reports both replacement entry types", async (t)
     previousEntry: { entryType: "regular-file" },
     replacementEntry: { entryType: "symlink", target: "target.txt" },
   });
-  assert.ok(isApplyPatchDetails(details));
+  assert.ok(Value.Check(APPLY_PATCH_DETAILS_SCHEMA, details));
   const incompleteDetails = structuredClone(details);
   assert.ok(incompleteDetails.instructions);
   const incompleteReplacement = incompleteDetails.instructions[2]?.effects?.find(
@@ -107,7 +108,7 @@ test("moves symlink entries and reports both replacement entry types", async (t)
   );
   assert.ok(incompleteReplacement);
   Reflect.deleteProperty(incompleteReplacement, "replacementEntry");
-  assert.equal(isApplyPatchDetails(incompleteDetails), false);
+  assert.equal(Value.Check(APPLY_PATCH_DETAILS_SCHEMA, incompleteDetails), false);
   const feedback = formatApplyPatchSummary(details, cwd);
   assert.match(
     feedback,

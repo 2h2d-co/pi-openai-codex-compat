@@ -11,6 +11,7 @@ import {
   type ToolDefinition,
 } from "@earendil-works/pi-coding-agent";
 import { visibleWidth } from "@earendil-works/pi-tui";
+import { Value } from "typebox/value";
 import registerApplyPatch, {
   APPLY_PATCH_LARK_GRAMMAR,
   applyPatch,
@@ -20,10 +21,8 @@ import registerApplyPatch, {
   parsePatch,
   parsePatchDocument,
 } from "../../extensions/openai-codex-compat/apply-patch.ts";
-import {
-  ApplyPatchDiffComponent,
-  isApplyPatchDetails,
-} from "../../extensions/openai-codex-compat/apply-patch-diff-render.ts";
+import { ApplyPatchDiffComponent } from "../../extensions/openai-codex-compat/apply-patch-diff-render.ts";
+import { APPLY_PATCH_DETAILS_SCHEMA } from "../../extensions/openai-codex-compat/apply-patch-engine/apply-patch-engine-details-schema.ts";
 import { formatApplyPatchRenderText } from "../../extensions/openai-codex-compat/apply-patch-render.ts";
 import type { CodexToolBackground } from "../../extensions/openai-codex-compat/config.ts";
 import { testTheme } from "../support/test-theme.ts";
@@ -40,7 +39,7 @@ export async function workspace(t: TestContext): Promise<string> {
 }
 
 export function requireApplyPatchDetails(value: unknown): ApplyPatchDetails {
-  assert.ok(isApplyPatchDetails(value));
+  assert.ok(Value.Check(APPLY_PATCH_DETAILS_SCHEMA, value));
   return value;
 }
 
@@ -68,7 +67,6 @@ export {
   parsePatch,
   parsePatchDocument,
   ApplyPatchDiffComponent,
-  isApplyPatchDetails,
   formatApplyPatchRenderText,
   testTheme,
 };

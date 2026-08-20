@@ -1,5 +1,11 @@
 import type { GrammarName } from "@2h2d/tree-sitter-wasms";
 
+export type {
+  FormatterMatchCandidateRange,
+  FormatterMatchFailureDetails,
+  FormatterMatchFailureReason,
+} from "./apply-patch-matcher-failure-schema.ts";
+
 export type UpdateHunkLine = {
   kind: "add" | "context" | "delete";
   text: string;
@@ -38,37 +44,6 @@ export type EditGroup = {
   beforeContext: string[];
   afterContext: string[];
   endsChunk: boolean;
-};
-
-export type FormatterMatchCandidateRange = {
-  startLine: number;
-  endLine: number;
-};
-
-export type FormatterMatchFailureReason =
-  | "no-candidate"
-  | "no-ordered-mapping"
-  | "too-many-candidates"
-  | "ambiguous-output"
-  | "mapping-limit"
-  | "overlapping-edits";
-
-export type FormatterMatchFailureDetails = {
-  reason: FormatterMatchFailureReason;
-  path: string;
-  groupCount: number;
-  groupIndex?: number;
-  chunkCount?: number;
-  chunkIndex?: number;
-  candidateCount: number;
-  candidates: FormatterMatchCandidateRange[];
-  previousGroupIndex?: number;
-  previousCandidates?: FormatterMatchCandidateRange[];
-  reverseOrdered?: boolean;
-  overlapping?: boolean;
-  replacementCandidateCount?: number;
-  replacementCandidates?: FormatterMatchCandidateRange[];
-  oldExcerpt?: string;
 };
 
 export type SyntaxPathEntry = {

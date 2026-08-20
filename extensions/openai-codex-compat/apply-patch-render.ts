@@ -1,6 +1,8 @@
 import { isString } from "./value-contracts.ts";
 import { type Component, Container, Text } from "@earendil-works/pi-tui";
-import { ApplyPatchDiffComponent, isApplyPatchDetails } from "./apply-patch-diff-render.ts";
+import { Value } from "typebox/value";
+import { ApplyPatchDiffComponent } from "./apply-patch-diff-render.ts";
+import { APPLY_PATCH_DETAILS_SCHEMA } from "./apply-patch-engine/apply-patch-engine-details-schema.ts";
 import {
   CodexToolSurfaceComponent,
   type CodexToolBackgroundResolver,
@@ -118,7 +120,9 @@ export function renderApplyPatchResult(
 ): Component {
   if (options.isPartial) return new Container();
 
-  const details = isApplyPatchDetails(result.details) ? result.details : undefined;
+  const details = Value.Check(APPLY_PATCH_DETAILS_SCHEMA, result.details)
+    ? result.details
+    : undefined;
 
   if (details) {
     return new CodexToolSurfaceComponent(

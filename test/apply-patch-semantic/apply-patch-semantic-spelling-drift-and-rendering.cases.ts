@@ -1,3 +1,5 @@
+import { Value } from "typebox/value";
+import { APPLY_PATCH_DETAILS_SCHEMA } from "../../extensions/openai-codex-compat/apply-patch-engine/apply-patch-engine-details-schema.ts";
 import {
   assert,
   writeFileSync,
@@ -15,7 +17,6 @@ import {
   formatApplyPatchRenderText,
   workspace,
   assertMissing,
-  isApplyPatchDetails,
   patch,
 } from "./apply-patch-semantic-harness.ts";
 
@@ -221,7 +222,7 @@ test("renders opaque moves as path-only structured history", async (t) => {
     fg: (_color: string, text: string) => text,
     bold: (text: string) => text,
   };
-  assert.ok(isApplyPatchDetails(details));
+  assert.ok(Value.Check(APPLY_PATCH_DETAILS_SCHEMA, details));
   const rendered = formatApplyPatchRenderText(details, theme, cwd);
   assert.match(
     rendered,

@@ -1,3 +1,5 @@
+import { Value } from "typebox/value";
+import { APPLY_PATCH_DETAILS_SCHEMA } from "../../extensions/openai-codex-compat/apply-patch-engine/apply-patch-engine-details-schema.ts";
 import {
   assert,
   writeFileSync,
@@ -14,6 +16,227 @@ import {
   workspace,
   type ApplyPatchDetails,
 } from "./apply-patch-harness.ts";
+
+test("rejects malformed optional and literal applied-change fields", () => {
+  const detailsWithChange = (change: unknown) => ({
+    status: "completed",
+    exact: true,
+    changes: [change],
+    added: [],
+    modified: [],
+    deleted: [],
+  });
+  const add = {
+    kind: "add",
+    path: "added.txt",
+    content: "new\n",
+    overwrittenContent: "old\n",
+    displayDiff: "+new",
+    additions: 1,
+    deletions: 0,
+  };
+  const update = {
+    kind: "update",
+    path: "updated.txt",
+    oldContent: "old\n",
+    newContent: "new\n",
+    overwrittenMoveContent: "destination\n",
+    displayDiff: "-old\n+new",
+    additions: 1,
+    deletions: 1,
+  };
+  const move = {
+    kind: "move",
+    sourcePath: "source.txt",
+    destinationPath: "destination.txt",
+    replacedDestination: true,
+    entryType: "regular-file",
+    exact: true,
+    displayDiff: "",
+    additions: 0,
+    deletions: 0,
+  };
+
+  assert.equal(Value.Check(APPLY_PATCH_DETAILS_SCHEMA, detailsWithChange(add)), true);
+  assert.equal(Value.Check(APPLY_PATCH_DETAILS_SCHEMA, detailsWithChange(update)), true);
+  assert.equal(Value.Check(APPLY_PATCH_DETAILS_SCHEMA, detailsWithChange(move)), true);
+
+  for (const malformed of [
+    { ...add, overwrittenContent: 42 },
+    { ...update, overwrittenMoveContent: false },
+    { ...move, displayDiff: "unexpected" },
+    { ...move, additions: 1 },
+    { ...move, deletions: 1 },
+    { ...add, additions: 0.5 },
+  ]) {
+    assert.equal(Value.Check(APPLY_PATCH_DETAILS_SCHEMA, detailsWithChange(malformed)), false);
+  }
+});
+
+test("validates complete nested apply-patch details from one schema", () => {
+  const matcher = {
+    reason: "ambiguous-output",
+    path: "source.txt",
+    groupCount: 2,
+    groupIndex: 1,
+    chunkCount: 3,
+    chunkIndex: 2,
+    candidateCount: 1,
+    candidates: [{ startLine: 4, endLine: 6 }],
+    previousGroupIndex: 0,
+    previousCandidates: [{ startLine: 1, endLine: 2 }],
+    reverseOrdered: false,
+    overlapping: true,
+    replacementCandidateCount: 1,
+    replacementCandidates: [{ startLine: 8, endLine: 9 }],
+    oldExcerpt: "old\n",
+    futureMatcherMetadata: true,
+  };
+  const instruction = {
+    index: 1,
+    kind: "move",
+    path: "source.txt",
+    moveTo: "destination.txt",
+    status: "no-op",
+    reason: {
+      code: "move-already-fulfilled",
+      message: "A previous instruction already moved the entry.",
+      dominatingInstructions: [1],
+      relatedInstructions: [1],
+    },
+    effects: [
+      { kind: "created", path: "created.txt" },
+      {
+        kind: "replaced",
+        path: "destination.txt",
+        previousEntry: { entryType: "regular-file" },
+        replacementEntry: { entryType: "symlink", target: "target.txt" },
+      },
+      { kind: "symlink-target-modified", path: "link.txt", target: "target.txt" },
+    ],
+    finalStates: [{ path: "destination.txt", state: "unchanged" }],
+    matcher,
+    changeIndexes: [0],
+    error: "diagnostic",
+    futureInstructionMetadata: true,
+  };
+  const details = {
+    status: "failed",
+    exact: false,
+    changes: [],
+    added: [],
+    modified: [],
+    deleted: [],
+    instructions: [instruction],
+    failure: {
+      phase: "execution",
+      message: "Execution stopped.",
+      failedInstruction: 1,
+      matcher,
+    },
+    error: "Execution stopped.",
+    futureDetailsMetadata: true,
+  };
+
+  assert.equal(Value.Check(APPLY_PATCH_DETAILS_SCHEMA, details), true);
+
+  const missingReplacement = structuredClone(instruction.effects[1]);
+  assert.ok(missingReplacement);
+  Reflect.deleteProperty(missingReplacement, "replacementEntry");
+
+  const missingRequiredDetails = structuredClone(details);
+  Reflect.deleteProperty(missingRequiredDetails, "changes");
+
+  for (const malformed of [
+    missingRequiredDetails,
+    { ...details, instructions: [{ ...instruction, index: 1.5 }] },
+    { ...details, instructions: [{ ...instruction, changeIndexes: [0.5] }] },
+    {
+      ...details,
+      instructions: [
+        {
+          ...instruction,
+          reason: { ...instruction.reason, dominatingInstructions: [0.5] },
+        },
+      ],
+    },
+    {
+      ...details,
+      instructions: [
+        {
+          ...instruction,
+          reason: { ...instruction.reason, relatedInstructions: [] },
+        },
+      ],
+    },
+    {
+      ...details,
+      instructions: [
+        {
+          ...instruction,
+          reason: { ...instruction.reason, relatedInstructions: [1, 2] },
+        },
+      ],
+    },
+    { ...details, instructions: [{ ...instruction, effects: [missingReplacement] }] },
+    {
+      ...details,
+      instructions: [
+        {
+          ...instruction,
+          effects: [
+            {
+              kind: "replaced",
+              path: "destination.txt",
+              previousEntry: { entryType: "regular-file" },
+              replacementEntry: { entryType: "symlink" },
+            },
+          ],
+        },
+      ],
+    },
+    {
+      ...details,
+      instructions: [
+        {
+          ...instruction,
+          effects: [{ kind: "symlink-moved", path: "link.txt" }],
+        },
+      ],
+    },
+    {
+      ...details,
+      instructions: [
+        {
+          ...instruction,
+          finalStates: [{ path: "destination.txt", state: "unexpected" }],
+        },
+      ],
+    },
+    {
+      ...details,
+      instructions: [{ ...instruction, matcher: { ...matcher, groupCount: 1.5 } }],
+    },
+    {
+      ...details,
+      instructions: [
+        {
+          ...instruction,
+          matcher: {
+            ...matcher,
+            candidates: [{ startLine: 1.5, endLine: 2 }],
+          },
+        },
+      ],
+    },
+    {
+      ...details,
+      failure: { ...details.failure, failedInstruction: 1.5 },
+    },
+  ]) {
+    assert.equal(Value.Check(APPLY_PATCH_DETAILS_SCHEMA, malformed), false);
+  }
+});
 
 test("prevalidates all hunks but preserves committed-prefix history after runtime failure", async (t) => {
   const cwd = await workspace(t);

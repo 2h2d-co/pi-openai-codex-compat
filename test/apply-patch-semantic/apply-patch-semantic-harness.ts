@@ -39,10 +39,7 @@ import {
 import type { SemanticPlan } from "../../extensions/openai-codex-compat/apply-patch-engine/apply-patch-engine-filesystem-model.ts";
 import { resolveOperations } from "../../extensions/openai-codex-compat/apply-patch-engine/apply-patch-engine-operation-semantics.ts";
 import { SemanticPlanner } from "../../extensions/openai-codex-compat/apply-patch-engine/apply-patch-engine-semantic-planner.ts";
-import {
-  ApplyPatchDiffComponent,
-  isApplyPatchDetails,
-} from "../../extensions/openai-codex-compat/apply-patch-diff-render.ts";
+import { ApplyPatchDiffComponent } from "../../extensions/openai-codex-compat/apply-patch-diff-render.ts";
 import type { FormatterMatchFailureDetails } from "../../extensions/openai-codex-compat/apply-patch-matcher.ts";
 import { formatApplyPatchRenderText } from "../../extensions/openai-codex-compat/apply-patch-render.ts";
 
@@ -125,7 +122,6 @@ export {
   formatApplyPatchSummary,
   parsePatch,
   ApplyPatchDiffComponent,
-  isApplyPatchDetails,
   formatApplyPatchRenderText,
 };
 export type { TestContext, Theme, ApplyPatchDetails, FormatterMatchFailureDetails };

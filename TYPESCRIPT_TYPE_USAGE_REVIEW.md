@@ -183,26 +183,47 @@ without an autofixer and enabled it through `@2h2d/oxlint-config`
 
 ### 3. Overclaiming hand-written type predicates
 
-**Status:** Pending
+**Status:** In progress
 
 **Priority:** High-medium
 
-`isAppliedPatchChange` does not validate every optional field promised by
+`isAppliedPatchChange` did not validate every optional field promised by
 `AppliedPatchChange`, including:
 
 - `overwrittenContent`
 - `overwrittenMoveContent`
 
-`isWebSocketConstructor` also checks only that a value is callable while
-claiming that it is newable and implements the complete constructor contract.
+`isWebSocketConstructor` also checked only that a value was callable while
+claiming that it was newable and implemented the complete constructor
+contract.
 
 Audit substantive type predicates field-by-field and add malformed-input
 tests. TypeScript trusts a predicate's claim without checking its
 implementation.
 
-**Oxlint checkpoint:** Discuss whether a project-specific rule can identify
-high-risk predicates or whether tests and code review are the appropriate
-enforcement mechanism.
+**Outcome to date:** The complete `ApplyPatchDetails` contract, including
+formatter-match diagnostics, is now represented by raw TypeBox-compatible JSON
+Schemas. All corresponding static types are derived with `Static`, and the
+renderer calls TypeBox's `Value.Check` directly instead of maintaining nine
+hand-written predicates.
+
+The schemas require integers for numeric metadata, allow additional
+properties, preserve optional fields, and retain the
+`move-already-fulfilled` single-related-instruction invariant. Focused tests
+cover valid complete details and malformed nested data. `npm run check` and
+`npm test` pass.
+
+The WebSocket boundary now uses Node's native, header-aware
+`globalThis.WebSocket` type directly instead of replacing it with a
+hand-written constructor predicate and contract. The live test also uses the
+typed runtime global directly.
+
+The mutable-session predicate found during the broader audit remains to be
+discussed.
+
+**Oxlint checkpoint:** Discuss whether a syntax rule can distinguish
+overclaiming predicates from complete structural validators without producing
+low-confidence findings.
 
 ### 4. Broad wire types leaking into domain logic
 
