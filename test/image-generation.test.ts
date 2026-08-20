@@ -6,6 +6,7 @@ import { join, sep } from "node:path";
 import test from "node:test";
 import type { SessionEntry } from "@earendil-works/pi-coding-agent";
 import type { Api, Model } from "@earendil-works/pi-ai";
+import { Value } from "typebox/value";
 import registerImageGeneration, {
   type ImageGenerationApi,
   type ImageGenerationTool,
@@ -15,6 +16,7 @@ import registerImageGeneration, {
 import { DEFAULT_CONFIG } from "../extensions/openai-codex-compat/config.ts";
 import type { JsonRecord } from "../extensions/openai-codex-compat/codex-protocol.ts";
 import type { CodexJsonRequestOptions } from "../extensions/openai-codex-compat/codex-transport.ts";
+import { IMAGE_GENERATION_DETAILS_SCHEMA } from "../extensions/openai-codex-compat/image-generation-render.ts";
 import type { CodexToolExecutionContext } from "../extensions/openai-codex-compat/tool-definition-contract.ts";
 import { isString } from "../extensions/openai-codex-compat/value-contracts.ts";
 import { testTheme } from "./support/test-theme.ts";
@@ -348,4 +350,19 @@ test("executes generation and recent-image edits through Codex Images", async (t
   );
   assert.match(expandedText, /Prompt\s+Draw a blue square\./);
   assert.match(expandedText.replace(/\s+/gu, " "), /Saved .*call-generate\.png/);
+
+  assert.equal(
+    Value.Check(IMAGE_GENERATION_DETAILS_SCHEMA, {
+      ...generated.details,
+      futureMetadata: true,
+    }),
+    true,
+  );
+  assert.equal(
+    Value.Check(IMAGE_GENERATION_DETAILS_SCHEMA, {
+      ...generated.details,
+      revisedPrompt: false,
+    }),
+    false,
+  );
 });

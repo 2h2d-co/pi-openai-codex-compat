@@ -1,10 +1,11 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import type { SessionEntry } from "@earendil-works/pi-coding-agent";
+import { Value } from "typebox/value";
 import { codexCacheKey } from "../extensions/openai-codex-compat/codex-cache-key.ts";
 import registerCodexThreadLineage, {
+  CODEX_THREAD_MARKER_DATA_SCHEMA,
   CODEX_THREAD_MARKER_ENTRY_TYPE,
-  isCodexThreadMarkerData,
   resolveCodexThreadIdentity,
   type CodexThreadLineageApi,
   type CodexThreadLineageContext,
@@ -181,6 +182,28 @@ function createHarness(initialEntries: SessionEntry[], initialLeafId: string | n
   };
 }
 
+test("validates complete thread markers while allowing additional metadata", () => {
+  const valid = {
+    version: 1,
+    sessionId: "session-1",
+    threadId: "thread-1",
+    forkedFromThreadId: "thread-0",
+    branchParentEntryId: null,
+    futureMetadata: true,
+  };
+  assert.equal(Value.Check(CODEX_THREAD_MARKER_DATA_SCHEMA, valid), true);
+
+  for (const malformed of [
+    { ...valid, version: 2 },
+    { ...valid, sessionId: "" },
+    { ...valid, threadId: "" },
+    { ...valid, forkedFromThreadId: "" },
+    { ...valid, branchParentEntryId: 42 },
+  ]) {
+    assert.equal(Value.Check(CODEX_THREAD_MARKER_DATA_SCHEMA, malformed), false);
+  }
+});
+
 test("writes no marker during navigation and makes the finalized user its child", async () => {
   const parent = entry("parent", null);
   const oldUser = entry("old-user", "parent", "user");
@@ -202,7 +225,10 @@ test("writes no marker during navigation and makes the finalized user its child"
   const storedMarker = harness.entries.at(-1);
   assert.equal(storedMarker?.type, "custom");
   assert.equal(storedMarker?.parentId, "parent");
-  assert.ok(storedMarker?.type === "custom" && isCodexThreadMarkerData(storedMarker.data));
+  assert.ok(
+    storedMarker?.type === "custom" &&
+      Value.Check(CODEX_THREAD_MARKER_DATA_SCHEMA, storedMarker.data),
+  );
   assert.equal(storedMarker.data.forkedFromThreadId, codexCacheKey("session-1"));
 
   harness.appendUser("new-user");
@@ -276,7 +302,10 @@ test("forks from the nearest existing branch thread when editing its first user"
 
   const secondMarker = harness.entries.at(-1);
   assert.equal(secondMarker?.parentId, "marker-a");
-  assert.ok(secondMarker?.type === "custom" && isCodexThreadMarkerData(secondMarker.data));
+  assert.ok(
+    secondMarker?.type === "custom" &&
+      Value.Check(CODEX_THREAD_MARKER_DATA_SCHEMA, secondMarker.data),
+  );
   assert.equal(secondMarker.data.forkedFromThreadId, "thread-a");
 });
 

@@ -1,20 +1,27 @@
 import { isString } from "./value-contracts.ts";
 import { Container, type Component, Text, wrapTextWithAnsi } from "@earendil-works/pi-tui";
+import type { Static } from "typebox";
+import { Value } from "typebox/value";
 import {
   CodexToolSurfaceComponent,
   type CodexToolBackgroundResolver,
   type RenderTheme,
 } from "./codex-tool-surface.ts";
 import { DEFAULT_CONFIG } from "./config.ts";
-import { isObject } from "./codex-protocol.ts";
 import { IMAGE_GENERATION_TOOL_NAME } from "./namespaced-tools.ts";
 
-export type ImageGenerationDetails = {
-  operation: "generate" | "edit";
-  revisedPrompt: string;
-  savedPath?: string;
-  saveError?: string;
-};
+export const IMAGE_GENERATION_DETAILS_SCHEMA = {
+  type: "object",
+  properties: {
+    operation: { enum: ["generate", "edit"] },
+    revisedPrompt: { type: "string" },
+    savedPath: { type: "string" },
+    saveError: { type: "string" },
+  },
+  required: ["operation", "revisedPrompt"],
+} as const;
+
+export type ImageGenerationDetails = Static<typeof IMAGE_GENERATION_DETAILS_SCHEMA>;
 
 type ImageGenerationArgs = {
   prompt: string;
@@ -52,17 +59,6 @@ function describeImageCall(args: ImageGenerationArgs): string {
   const operation =
     count === undefined ? "generate" : `edit ${count} ${count === 1 ? "image" : "images"}`;
   return `${operation} ${promptPreview(args.prompt)}`;
-}
-
-function isImageGenerationDetails(value: unknown): value is ImageGenerationDetails {
-  if (!isObject(value)) return false;
-  const details = value;
-  return (
-    (details["operation"] === "generate" || details["operation"] === "edit") &&
-    typeof details["revisedPrompt"] === "string" &&
-    (details["savedPath"] === undefined || typeof details["savedPath"] === "string") &&
-    (details["saveError"] === undefined || typeof details["saveError"] === "string")
-  );
 }
 
 function textOutput(result: ImageGenerationResult): string {
@@ -104,7 +100,7 @@ class ImageGenerationResultComponent implements Component {
       return wrapLines(lines, width);
     }
 
-    if (!isImageGenerationDetails(this.result.details)) {
+    if (!Value.Check(IMAGE_GENERATION_DETAILS_SCHEMA, this.result.details)) {
       return wrapLines([this.theme.fg("warning", "Image result metadata unavailable")], width);
     }
     const details = this.result.details;

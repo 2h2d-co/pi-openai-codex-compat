@@ -1,4 +1,4 @@
-import { isNumber, isString } from "../extensions/openai-codex-compat/value-contracts.ts";
+import { isString } from "../extensions/openai-codex-compat/value-contracts.ts";
 import { isObject, parseJsonRecord } from "../extensions/openai-codex-compat/codex-protocol.ts";
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
@@ -6,18 +6,33 @@ import { mkdir, mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import type { Static } from "typebox";
+import { Value } from "typebox/value";
 
-type PackFile = {
-  path: string;
-  mode: number;
-};
+const PACK_FILE_SCHEMA = {
+  type: "object",
+  properties: {
+    path: { type: "string" },
+    mode: { type: "integer" },
+  },
+  required: ["path", "mode"],
+} as const;
 
-type PackResult = {
-  filename: string;
-  files: PackFile[];
-  name: string;
-  version: string;
-};
+const PACK_RESULT_SCHEMA = {
+  type: "object",
+  properties: {
+    filename: { type: "string" },
+    files: {
+      type: "array",
+      items: PACK_FILE_SCHEMA,
+    },
+    name: { type: "string" },
+    version: { type: "string" },
+  },
+  required: ["filename", "files", "name", "version"],
+} as const;
+
+type PackResult = Static<typeof PACK_RESULT_SCHEMA>;
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const packageName = "pi-openai-codex-compat";
@@ -217,30 +232,14 @@ async function readExpectedPackageFiles(): Promise<string[]> {
 
 function parsePackResult(output: string): PackResult {
   const parsed: unknown = JSON.parse(output);
-  if (!Array.isArray(parsed) || parsed.length !== 1 || !isObject(parsed[0])) {
+  if (!Array.isArray(parsed) || parsed.length !== 1) {
     throw new Error("npm pack did not report exactly one package.");
   }
-  const result = parsed[0];
-  if (
-    !isString(result["filename"]) ||
-    !isString(result["name"]) ||
-    !isString(result["version"]) ||
-    !Array.isArray(result["files"])
-  ) {
+  const result: unknown = parsed[0];
+  if (!Value.Check(PACK_RESULT_SCHEMA, result)) {
     throw new Error("npm pack returned invalid package metadata.");
   }
-  const files = result["files"].map((value) => {
-    if (!isObject(value) || !isString(value["path"]) || !isNumber(value["mode"])) {
-      throw new Error("npm pack returned invalid file metadata.");
-    }
-    return { path: value["path"], mode: value["mode"] };
-  });
-  return {
-    filename: result["filename"],
-    files,
-    name: result["name"],
-    version: result["version"],
-  };
+  return result;
 }
 
 function verifyReleaseCommit(commit: string, releaseTag: string, digest: string): void {

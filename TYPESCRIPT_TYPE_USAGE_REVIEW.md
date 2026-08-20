@@ -218,6 +218,17 @@ The WebSocket boundary now uses Node's native, header-aware
 hand-written constructor predicate and contract. The live test also uses the
 typed runtime global directly.
 
+The same schema-first pattern now covers image-generation render metadata,
+persisted Codex thread markers, CI package identity, and `npm pack` result
+metadata. Each static type is inferred from its raw TypeBox-compatible schema,
+and each untrusted value is narrowed directly with `Value.Check`.
+
+Broad Responses items and recursive JSON values are deferred to finding 4 so
+that they can be narrowed at the correct domain boundaries rather than encoded
+as another broad schema. Tolerant sanitizers and non-JSON capability checks
+remain manual because all-or-nothing schema validation would change their
+semantics.
+
 The mutable-session predicate found during the broader audit remains to be
 discussed.
 

@@ -1,19 +1,28 @@
 import { appendFileSync, readFileSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import { resolve } from "node:path";
+import type { Static } from "typebox";
+import { Value } from "typebox/value";
 
-type PackageJson = {
-  name: string;
-  version: string;
-};
+const PACKAGE_JSON_SCHEMA = {
+  type: "object",
+  properties: {
+    name: { type: "string", minLength: 1 },
+    version: { type: "string", minLength: 1 },
+  },
+  required: ["name", "version"],
+} as const;
+
+type PackageJson = Static<typeof PACKAGE_JSON_SCHEMA>;
 
 const packageJsonPath = resolve(process.cwd(), "package.json");
 const parsedPackage: unknown = JSON.parse(readFileSync(packageJsonPath, "utf8"));
-if (!isPackageJson(parsedPackage)) {
+if (!Value.Check(PACKAGE_JSON_SCHEMA, parsedPackage)) {
   throw new Error(`Missing or invalid package name/version in ${packageJsonPath}`);
 }
-const packageName = parsedPackage.name;
-const version = parsedPackage.version;
+const packageJson: PackageJson = parsedPackage;
+const packageName = packageJson.name;
+const version = packageJson.version;
 
 if (process.argv.length > 2) {
   throw new Error("ci-publish-checks.ts does not accept arguments.");
@@ -114,18 +123,6 @@ function deriveNpmTag(version: string): string {
   }
 
   return firstIdentifier;
-}
-
-function isPackageJson(value: unknown): value is PackageJson {
-  if (typeof value !== "object" || value === null || Array.isArray(value)) {
-    return false;
-  }
-
-  if (!("version" in value) || typeof value.version !== "string" || value.version.length === 0) {
-    return false;
-  }
-
-  return "name" in value && typeof value.name === "string" && value.name.length > 0;
 }
 
 function writeGithubOutput(name: string, value: string): void {

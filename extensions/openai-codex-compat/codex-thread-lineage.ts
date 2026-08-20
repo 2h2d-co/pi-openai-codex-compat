@@ -1,18 +1,26 @@
-import { isObject } from "./codex-protocol.ts";
-import { isString } from "./value-contracts.ts";
 import type { ExtensionAPI, ExtensionContext, SessionEntry } from "@earendil-works/pi-coding-agent";
 import { uuidv7 } from "@earendil-works/pi-ai";
+import type { Static } from "typebox";
+import { Value } from "typebox/value";
 import { codexCacheKey } from "./codex-cache-key.ts";
 
 export const CODEX_THREAD_MARKER_ENTRY_TYPE = "openai-codex-compat-thread";
 
-export type CodexThreadMarkerData = {
-  version: 1;
-  sessionId: string;
-  threadId: string;
-  forkedFromThreadId: string;
-  branchParentEntryId: string | null;
-};
+export const CODEX_THREAD_MARKER_DATA_SCHEMA = {
+  type: "object",
+  properties: {
+    version: { const: 1 },
+    sessionId: { type: "string", minLength: 1 },
+    threadId: { type: "string", minLength: 1 },
+    forkedFromThreadId: { type: "string", minLength: 1 },
+    branchParentEntryId: {
+      anyOf: [{ type: "string" }, { type: "null" }],
+    },
+  },
+  required: ["version", "sessionId", "threadId", "forkedFromThreadId", "branchParentEntryId"],
+} as const;
+
+export type CodexThreadMarkerData = Static<typeof CODEX_THREAD_MARKER_DATA_SCHEMA>;
 
 export type CodexThreadLineageContext = {
   sessionManager: Pick<
@@ -62,25 +70,11 @@ type PendingTreeFork = {
   expectedLeafId: string | null;
 };
 
-export function isCodexThreadMarkerData(value: unknown): value is CodexThreadMarkerData {
-  if (!isObject(value)) return false;
-  return (
-    value["version"] === 1 &&
-    isString(value["sessionId"]) &&
-    value["sessionId"].length > 0 &&
-    isString(value["threadId"]) &&
-    value["threadId"].length > 0 &&
-    isString(value["forkedFromThreadId"]) &&
-    value["forkedFromThreadId"].length > 0 &&
-    (value["branchParentEntryId"] === null || isString(value["branchParentEntryId"]))
-  );
-}
-
 function markerData(entry: SessionEntry, sessionId: string): CodexThreadMarkerData | undefined {
   if (entry.type !== "custom" || entry.customType !== CODEX_THREAD_MARKER_ENTRY_TYPE) {
     return undefined;
   }
-  if (!isCodexThreadMarkerData(entry.data)) {
+  if (!Value.Check(CODEX_THREAD_MARKER_DATA_SCHEMA, entry.data)) {
     throw new Error("The active Pi branch contains an invalid OpenAI Codex thread marker.");
   }
   const candidate = entry.data;
