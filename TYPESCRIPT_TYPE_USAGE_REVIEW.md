@@ -361,7 +361,7 @@ semantic knowledge that a syntax rule cannot infer reliably.
 
 ### 7. Selective primitive branding
 
-**Status:** Pending
+**Status:** Completed — no brands introduced
 
 **Priority:** Advisory
 
@@ -372,8 +372,22 @@ boundary.
 
 Do not brand every string or path.
 
-**Oxlint checkpoint:** Branding policy is likely too domain-specific for a
-general syntax rule.
+**Outcome:** No identifier currently meets that threshold. These values enter
+through Pi, Pi AI, and provider contracts that expose ordinary strings;
+partially branding them would require widespread unchecked conversions and
+would create stronger-looking types without stronger runtime guarantees.
+Session-derived thread and cache identities are also intentionally
+interconvertible in defined protocol paths.
+
+Keep identifiers as strings at dependency and protocol boundaries. Prefer
+named parameter objects if an API accumulates multiple easily swapped
+identifiers, and reconsider branding only when a concrete swap risk appears or
+an upstream contract provides a trustworthy branded construction boundary.
+
+**Oxlint checkpoint:** No additional rule. Syntax cannot determine which
+strings are semantically interchangeable, intentionally convertible, or worth
+branding. Enforcing brands by identifier naming would be brittle and
+encourage assertion-heavy code.
 
 ### 8. Focused type-level tests
 
