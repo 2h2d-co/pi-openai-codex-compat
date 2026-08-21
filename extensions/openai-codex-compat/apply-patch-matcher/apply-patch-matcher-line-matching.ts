@@ -1,8 +1,6 @@
 import { extname } from "node:path";
 import type { GrammarName } from "@2h2d/tree-sitter-wasms";
-import type { MatchMode } from "./apply-patch-matcher-contracts.ts";
-
-export const MATCH_MODES: readonly MatchMode[] = ["exact", "trim-end", "trim", "unicode"];
+import { MATCH_MODES, type MatchMode } from "./apply-patch-matcher-contracts.ts";
 
 export const GRAMMAR_BY_FENCE_INFO = new Map<string, GrammarName>([
   ["js", "javascript"],

@@ -1,4 +1,4 @@
-import { isAllowedString, isBoolean, isNumber } from "./value-contracts.ts";
+import { isBoolean, isNumber } from "./value-contracts.ts";
 import {
   getSettingsListTheme,
   type ExtensionContext,
@@ -17,8 +17,15 @@ import {
   truncateToWidth,
   type TUI,
 } from "@earendil-works/pi-tui";
+import { Value } from "typebox/value";
 import {
+  CODEX_TOOL_BACKGROUND_SCHEMA,
   CONFIG_ENVIRONMENT_VARIABLES,
+  IMAGE_DETAIL_SCHEMA,
+  REASONING_MODE_SCHEMA,
+  REASONING_SUMMARY_SCHEMA,
+  TEXT_VERBOSITY_SCHEMA,
+  WEB_SEARCH_MODE_SCHEMA,
   configLayer,
   loadConfig,
   parseEnvironmentConfig,
@@ -34,36 +41,11 @@ import { selectedRegistryModel } from "./model-context.ts";
 
 const COMMAND_NAME = "codex-settings";
 
-type SettingId =
-  | "fastMode"
-  | "responsesLite"
-  | "textVerbosity"
-  | "reasoningSummary"
-  | "reasoningMode"
-  | "toolBackground"
-  | "applyPatch"
-  | "applyPatchDebug"
-  | "imageGeneration"
-  | "imageDetail"
-  | "webRun"
-  | "webSearch"
-  | "autoCompactAtPercent";
+type SettingId = keyof typeof CONFIG_ENVIRONMENT_VARIABLES;
 
-const SETTING_IDS = new Set<SettingId>([
-  "fastMode",
-  "responsesLite",
-  "textVerbosity",
-  "reasoningSummary",
-  "reasoningMode",
-  "toolBackground",
-  "applyPatch",
-  "applyPatchDebug",
-  "imageGeneration",
-  "imageDetail",
-  "webRun",
-  "webSearch",
-  "autoCompactAtPercent",
-]);
+function isSettingId(value: string): value is SettingId {
+  return Object.hasOwn(CONFIG_ENVIRONMENT_VARIABLES, value);
+}
 
 export type SettingsCallbacks = {
   getConfig?: (ctx: ConfigContext) => CodexCompatConfig;
@@ -142,14 +124,14 @@ export function settingItems(
       label: "Text verbosity",
       description: "Set Responses API text.verbosity.",
       currentValue: config.textVerbosity,
-      values: ["low", "medium", "high"],
+      values: [...TEXT_VERBOSITY_SCHEMA.enum],
     },
     {
       id: "reasoningSummary",
       label: "Reasoning summary",
       description: "Choose the reasoning summary detail, or omit summaries.",
       currentValue: config.reasoningSummary,
-      values: ["auto", "concise", "detailed", "off"],
+      values: [...REASONING_SUMMARY_SCHEMA.enum],
     },
     {
       id: "reasoningMode",
@@ -157,14 +139,14 @@ export function settingItems(
       description:
         "Choose standard or pro execution independently of reasoning effort. Applied only to GPT-5.6 models.",
       currentValue: config.reasoningMode,
-      values: ["standard", "pro"],
+      values: [...REASONING_MODE_SCHEMA.enum],
     },
     {
       id: "toolBackground",
       label: "Codex tool background",
       description: "Choose a distinct subtle surface, Pi's normal status colors, or no background.",
       currentValue: config.toolBackground,
-      values: ["subtle", "status", "none"],
+      values: [...CODEX_TOOL_BACKGROUND_SCHEMA.enum],
     },
     {
       id: "applyPatch",
@@ -192,7 +174,7 @@ export function settingItems(
       label: "Image result detail",
       description: "Set input_image.detail when image tool results are returned to the model.",
       currentValue: config.imageDetail,
-      values: ["auto", "low", "high", "original"],
+      values: [...IMAGE_DETAIL_SCHEMA.enum],
     },
     {
       id: "webRun",
@@ -207,7 +189,7 @@ export function settingItems(
       description:
         "Control hosted search and web.run access: disabled removes hosted search but keeps web.run cached-only.",
       currentValue: config.webSearch,
-      values: ["disabled", "cached", "indexed", "live"],
+      values: [...WEB_SEARCH_MODE_SCHEMA.enum],
     },
     {
       id: "autoCompactAtPercent",
@@ -219,7 +201,7 @@ export function settingItems(
   ];
 
   return items.map((item) => {
-    if (!isAllowedString(item.id, SETTING_IDS)) {
+    if (!isSettingId(item.id)) {
       throw new Error(`Unknown OpenAI Codex setting: ${item.id}`);
     }
     const id = item.id;
@@ -235,27 +217,27 @@ export function settingItems(
 }
 
 export function settingPatch(id: string, value: string): ConfigLayer | undefined {
-  if (!isAllowedString(id, SETTING_IDS)) return undefined;
+  if (!isSettingId(id)) return undefined;
   switch (id) {
     case "fastMode":
       return value === "on" || value === "off" ? { fastMode: value === "on" } : undefined;
     case "responsesLite":
       return value === "on" || value === "off" ? { responsesLite: value === "on" } : undefined;
     case "textVerbosity":
-      if (value === "low" || value === "medium" || value === "high") {
+      if (Value.Check(TEXT_VERBOSITY_SCHEMA, value)) {
         return { textVerbosity: value };
       }
       return undefined;
     case "reasoningSummary":
-      if (value === "auto" || value === "concise" || value === "detailed" || value === "off") {
+      if (Value.Check(REASONING_SUMMARY_SCHEMA, value)) {
         return { reasoningSummary: value };
       }
       return undefined;
     case "reasoningMode":
-      if (value === "standard" || value === "pro") return { reasoningMode: value };
+      if (Value.Check(REASONING_MODE_SCHEMA, value)) return { reasoningMode: value };
       return undefined;
     case "toolBackground":
-      if (value === "subtle" || value === "status" || value === "none") {
+      if (Value.Check(CODEX_TOOL_BACKGROUND_SCHEMA, value)) {
         return { toolBackground: value };
       }
       return undefined;
@@ -266,14 +248,14 @@ export function settingPatch(id: string, value: string): ConfigLayer | undefined
     case "imageGeneration":
       return value === "on" || value === "off" ? { imageGeneration: value === "on" } : undefined;
     case "imageDetail":
-      if (value === "auto" || value === "low" || value === "high" || value === "original") {
+      if (Value.Check(IMAGE_DETAIL_SCHEMA, value)) {
         return { imageDetail: value };
       }
       return undefined;
     case "webRun":
       return value === "on" || value === "off" ? { webRun: value === "on" } : undefined;
     case "webSearch":
-      if (value === "disabled" || value === "cached" || value === "indexed" || value === "live") {
+      if (Value.Check(WEB_SEARCH_MODE_SCHEMA, value)) {
         return { webSearch: value };
       }
       return undefined;

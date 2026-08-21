@@ -56,12 +56,6 @@ export type ActiveAgentTurn = {
   turnState: CodexTurnState;
 };
 
-export type CodexCompat = {
-  supportsToolSearch?: boolean;
-  supportsStrictMode?: boolean;
-  supportsOpenAIGrammarTools?: boolean;
-};
-
 export type CodexTerminalState = {
   type?: "response.completed" | "response.incomplete" | "response.failed";
   response?: JsonRecord;

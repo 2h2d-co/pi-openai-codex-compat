@@ -33,10 +33,3 @@ export function nodeErrorCode(value: unknown): string | undefined {
   if (!(value instanceof Error) || !("code" in value)) return undefined;
   return isString(value.code) ? value.code : undefined;
 }
-
-export function isAllowedString<Value extends string>(
-  value: unknown,
-  allowed: ReadonlySet<Value>,
-): value is Value {
-  return isString(value) && [...allowed].some((candidate) => candidate === value);
-}

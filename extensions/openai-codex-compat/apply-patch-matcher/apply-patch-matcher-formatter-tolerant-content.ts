@@ -6,6 +6,7 @@ import type {
   StructuralDocument,
   UpdateChunk,
 } from "./apply-patch-matcher-contracts.ts";
+import { MATCH_MODES } from "./apply-patch-matcher-contracts.ts";
 import {
   MAX_COMPLETE_MAPPINGS,
   FormatterMatchAmbiguityError,
@@ -17,7 +18,6 @@ import {
   oldExcerpt,
 } from "./apply-patch-matcher-diagnostics.ts";
 import {
-  MATCH_MODES,
   findTolerantSequences,
   isMarkdownPath,
   lineEndingAtBoundary,

@@ -288,11 +288,11 @@ closed schema unions and boundary tests enforce the intended separation.
 
 ### 5. Duplicated literal domains and types
 
-**Status:** Pending
+**Status:** Completed
 
 **Priority:** Medium
 
-Several closed string domains are declared independently as both unions and
+Several closed string domains were declared independently as both unions and
 runtime sets. `Set<Union>` rejects invalid members but does not prove that all
 union members are present.
 
@@ -311,12 +311,24 @@ const MODES = ["disabled", "cached", "indexed", "live"] as const;
 type Mode = (typeof MODES)[number];
 ```
 
-Also remove localized residue such as the unused duplicate `CodexCompat` and
-the duplicate `ImageGenerationArgs`.
+**Outcome:** Configuration modes and terminal response statuses now derive
+their static types from the same raw TypeBox schemas used for runtime
+validation. The settings pane reuses those schema enums and derives
+`SettingId` from `CONFIG_ENVIRONMENT_VARIABLES`. Internal matcher modes derive
+their type from one runtime tuple. The apply-patch reason schema composes its
+complete domain from the ordinary reason-code tuple instead of repeating
+literals.
 
-**Oxlint checkpoint:** Consider enforcing type derivation for typed literal
-sets only if a rule can distinguish closed domains from intentionally partial
-sets.
+The unused `CodexCompat`, duplicate `ImageGenerationArgs`, and obsolete
+`isAllowedString` helper were removed. Apply-patch statuses, final states, and
+formatter reasons were already schema-derived after finding 2 and required no
+further restructuring.
+
+**Oxlint checkpoint:** No additional rule. A `Set<Union>` may intentionally
+represent a subset, so banning that syntax would produce false positives.
+Cross-declaration analysis to infer whether a collection is intended to be
+exhaustive is not reliable enough for a project lint rule. Schema-first and
+tuple-first declarations prevent the drift structurally.
 
 ### 6. Remaining impossible-state objects
 

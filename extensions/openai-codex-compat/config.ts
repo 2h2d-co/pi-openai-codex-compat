@@ -1,17 +1,48 @@
-import { isBoolean, isAllowedString, isNumber, nodeErrorCode } from "./value-contracts.ts";
+import { isBoolean, isNumber, nodeErrorCode } from "./value-contracts.ts";
 import { randomUUID } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
 import { mkdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
 import { CONFIG_DIR_NAME, getAgentDir } from "@earendil-works/pi-coding-agent";
+import type { Static } from "typebox";
+import { Value } from "typebox/value";
 import { isObject, type JsonRecord } from "./codex-protocol.ts";
 
-export type WebSearchMode = "disabled" | "cached" | "indexed" | "live";
-export type TextVerbosity = "low" | "medium" | "high";
-export type ReasoningSummary = "auto" | "concise" | "detailed" | "off";
-export type ReasoningMode = "standard" | "pro";
-export type ImageDetail = "auto" | "low" | "high" | "original";
-export type CodexToolBackground = "subtle" | "status" | "none";
+export const WEB_SEARCH_MODE_SCHEMA = {
+  enum: ["disabled", "cached", "indexed", "live"],
+} as const;
+
+export type WebSearchMode = Static<typeof WEB_SEARCH_MODE_SCHEMA>;
+
+export const TEXT_VERBOSITY_SCHEMA = {
+  enum: ["low", "medium", "high"],
+} as const;
+
+export type TextVerbosity = Static<typeof TEXT_VERBOSITY_SCHEMA>;
+
+export const REASONING_SUMMARY_SCHEMA = {
+  enum: ["auto", "concise", "detailed", "off"],
+} as const;
+
+export type ReasoningSummary = Static<typeof REASONING_SUMMARY_SCHEMA>;
+
+export const REASONING_MODE_SCHEMA = {
+  enum: ["standard", "pro"],
+} as const;
+
+export type ReasoningMode = Static<typeof REASONING_MODE_SCHEMA>;
+
+export const IMAGE_DETAIL_SCHEMA = {
+  enum: ["auto", "low", "high", "original"],
+} as const;
+
+export type ImageDetail = Static<typeof IMAGE_DETAIL_SCHEMA>;
+
+export const CODEX_TOOL_BACKGROUND_SCHEMA = {
+  enum: ["subtle", "status", "none"],
+} as const;
+
+export type CodexToolBackground = Static<typeof CODEX_TOOL_BACKGROUND_SCHEMA>;
 
 export const ENV_PREFIX = "PI_OPENAI_CODEX_COMPAT_";
 
@@ -92,13 +123,6 @@ export const DEFAULT_CONFIG: CodexCompatConfig = {
   reasoningMode: "standard",
 };
 
-const WEB_SEARCH_MODES = new Set<WebSearchMode>(["disabled", "cached", "indexed", "live"]);
-const TEXT_VERBOSITIES = new Set<TextVerbosity>(["low", "medium", "high"]);
-const REASONING_SUMMARIES = new Set<ReasoningSummary>(["auto", "concise", "detailed", "off"]);
-const REASONING_MODES = new Set<ReasoningMode>(["standard", "pro"]);
-const IMAGE_DETAILS = new Set<ImageDetail>(["auto", "low", "high", "original"]);
-const CODEX_TOOL_BACKGROUNDS = new Set<CodexToolBackground>(["subtle", "status", "none"]);
-
 type Environment = Readonly<Record<string, string | undefined>>;
 
 function invalidEnvironmentValue(name: string, value: string, expected: string): never {
@@ -125,17 +149,17 @@ function environmentBoolean(environment: Environment, name: string): boolean | u
   }
 }
 
-function environmentEnum<T extends string>(
+function environmentEnum<const Schema extends { readonly enum: readonly string[] }>(
   environment: Environment,
   name: string,
-  values: ReadonlySet<T>,
-): T | undefined {
+  schema: Schema,
+): Static<Schema> | undefined {
   const raw = environment[name];
   if (raw === undefined) return undefined;
 
   const value = raw.trim();
-  if (isAllowedString(value, values)) return value;
-  return invalidEnvironmentValue(name, raw, [...values].join(", "));
+  if (Value.Check(schema, value)) return value;
+  return invalidEnvironmentValue(name, raw, schema.enum.join(", "));
 }
 
 /**
@@ -164,7 +188,7 @@ export function parseEnvironmentConfig(environment: Environment = process.env): 
   const toolBackground = environmentEnum(
     environment,
     CONFIG_ENVIRONMENT_VARIABLES.toolBackground,
-    CODEX_TOOL_BACKGROUNDS,
+    CODEX_TOOL_BACKGROUND_SCHEMA,
   );
   if (toolBackground !== undefined) layer.toolBackground = toolBackground;
 
@@ -177,7 +201,7 @@ export function parseEnvironmentConfig(environment: Environment = process.env): 
   const imageDetail = environmentEnum(
     environment,
     CONFIG_ENVIRONMENT_VARIABLES.imageDetail,
-    IMAGE_DETAILS,
+    IMAGE_DETAIL_SCHEMA,
   );
   if (imageDetail !== undefined) layer.imageDetail = imageDetail;
 
@@ -206,28 +230,28 @@ export function parseEnvironmentConfig(environment: Environment = process.env): 
   const webSearch = environmentEnum(
     environment,
     CONFIG_ENVIRONMENT_VARIABLES.webSearch,
-    WEB_SEARCH_MODES,
+    WEB_SEARCH_MODE_SCHEMA,
   );
   if (webSearch !== undefined) layer.webSearch = webSearch;
 
   const textVerbosity = environmentEnum(
     environment,
     CONFIG_ENVIRONMENT_VARIABLES.textVerbosity,
-    TEXT_VERBOSITIES,
+    TEXT_VERBOSITY_SCHEMA,
   );
   if (textVerbosity !== undefined) layer.textVerbosity = textVerbosity;
 
   const reasoningSummary = environmentEnum(
     environment,
     CONFIG_ENVIRONMENT_VARIABLES.reasoningSummary,
-    REASONING_SUMMARIES,
+    REASONING_SUMMARY_SCHEMA,
   );
   if (reasoningSummary !== undefined) layer.reasoningSummary = reasoningSummary;
 
   const reasoningMode = environmentEnum(
     environment,
     CONFIG_ENVIRONMENT_VARIABLES.reasoningMode,
-    REASONING_MODES,
+    REASONING_MODE_SCHEMA,
   );
   if (reasoningMode !== undefined) layer.reasoningMode = reasoningMode;
 
@@ -252,7 +276,7 @@ export function parseConfig(value: unknown): ConfigLayer {
   if (isBoolean(applyPatchDebug)) layer.applyPatchDebug = applyPatchDebug;
 
   const toolBackground = value["toolBackground"];
-  if (isAllowedString(toolBackground, CODEX_TOOL_BACKGROUNDS)) {
+  if (Value.Check(CODEX_TOOL_BACKGROUND_SCHEMA, toolBackground)) {
     layer.toolBackground = toolBackground;
   }
 
@@ -260,7 +284,7 @@ export function parseConfig(value: unknown): ConfigLayer {
   if (isBoolean(imageGeneration)) layer.imageGeneration = imageGeneration;
 
   const imageDetail = value["imageDetail"];
-  if (isAllowedString(imageDetail, IMAGE_DETAILS)) {
+  if (Value.Check(IMAGE_DETAIL_SCHEMA, imageDetail)) {
     layer.imageDetail = imageDetail;
   }
 
@@ -280,22 +304,22 @@ export function parseConfig(value: unknown): ConfigLayer {
   }
 
   const webSearch = value["webSearch"];
-  if (isAllowedString(webSearch, WEB_SEARCH_MODES)) {
+  if (Value.Check(WEB_SEARCH_MODE_SCHEMA, webSearch)) {
     layer.webSearch = webSearch;
   }
 
   const textVerbosity = value["textVerbosity"];
-  if (isAllowedString(textVerbosity, TEXT_VERBOSITIES)) {
+  if (Value.Check(TEXT_VERBOSITY_SCHEMA, textVerbosity)) {
     layer.textVerbosity = textVerbosity;
   }
 
   const reasoningSummary = value["reasoningSummary"];
-  if (isAllowedString(reasoningSummary, REASONING_SUMMARIES)) {
+  if (Value.Check(REASONING_SUMMARY_SCHEMA, reasoningSummary)) {
     layer.reasoningSummary = reasoningSummary;
   }
 
   const reasoningMode = value["reasoningMode"];
-  if (isAllowedString(reasoningMode, REASONING_MODES)) {
+  if (Value.Check(REASONING_MODE_SCHEMA, reasoningMode)) {
     layer.reasoningMode = reasoningMode;
   }
 

@@ -1,4 +1,4 @@
-import { isAllowedString, isNumber, isString } from "./value-contracts.ts";
+import { isNumber, isString } from "./value-contracts.ts";
 import {
   calculateCost,
   parseStreamingJson,
@@ -12,6 +12,8 @@ import {
   type ToolCall,
   type Usage,
 } from "@earendil-works/pi-ai";
+import type { Static } from "typebox";
+import { Value } from "typebox/value";
 import { isObject, type JsonRecord } from "./codex-protocol.ts";
 import { CODEX_NAMESPACED_TOOL_NAMES, namespacedToolCallName } from "./namespaced-tools.ts";
 
@@ -53,22 +55,11 @@ export type CodexStreamAttemptState = {
   completedContentIndexes: Set<number>;
 };
 
-type CodexResponseStatus =
-  | "completed"
-  | "incomplete"
-  | "failed"
-  | "cancelled"
-  | "queued"
-  | "in_progress";
+const CODEX_RESPONSE_STATUS_SCHEMA = {
+  enum: ["completed", "incomplete", "failed", "cancelled", "queued", "in_progress"],
+} as const;
 
-const CODEX_RESPONSE_STATUSES = new Set<CodexResponseStatus>([
-  "completed",
-  "incomplete",
-  "failed",
-  "cancelled",
-  "queued",
-  "in_progress",
-]);
+type CodexResponseStatus = Static<typeof CODEX_RESPONSE_STATUS_SCHEMA>;
 
 function outputIndex(event: JsonRecord): number {
   return isNumber(event["output_index"]) ? event["output_index"] : 0;
@@ -176,7 +167,7 @@ function reasoningText(item: JsonRecord): string {
 }
 
 function normalizeCodexStatus(status: unknown): CodexResponseStatus | undefined {
-  return isAllowedString(status, CODEX_RESPONSE_STATUSES) ? status : undefined;
+  return Value.Check(CODEX_RESPONSE_STATUS_SCHEMA, status) ? status : undefined;
 }
 
 interface CodexStopReason {

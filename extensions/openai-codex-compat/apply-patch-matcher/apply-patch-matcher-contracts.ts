@@ -19,7 +19,9 @@ export type UpdateChunk = {
   endOfFile: boolean;
 };
 
-export type MatchMode = "exact" | "trim-end" | "trim" | "unicode";
+export const MATCH_MODES = ["exact", "trim-end", "trim", "unicode"] as const;
+
+export type MatchMode = (typeof MATCH_MODES)[number];
 
 export type ByteEdit = {
   start: number;

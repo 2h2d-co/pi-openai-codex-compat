@@ -8,6 +8,7 @@ import {
   type RenderTheme,
 } from "./codex-tool-surface.ts";
 import { DEFAULT_CONFIG } from "./config.ts";
+import type { ImageGenerationParameters } from "./image-generation-schema.ts";
 import { IMAGE_GENERATION_TOOL_NAME } from "./namespaced-tools.ts";
 
 export const IMAGE_GENERATION_DETAILS_SCHEMA = {
@@ -23,14 +24,8 @@ export const IMAGE_GENERATION_DETAILS_SCHEMA = {
 
 export type ImageGenerationDetails = Static<typeof IMAGE_GENERATION_DETAILS_SCHEMA>;
 
-type ImageGenerationArgs = {
-  prompt: string;
-  referenced_image_paths?: string[] | null;
-  num_last_images_to_include?: number | null;
-};
-
 type ImageGenerationRenderContext = {
-  args: ImageGenerationArgs;
+  args: ImageGenerationParameters;
   isPartial: boolean;
   expanded: boolean;
   isError: boolean;
@@ -48,13 +43,13 @@ function promptPreview(prompt: string, maximum = 250): string {
   return `"${preview}"`;
 }
 
-function imageCount(args: ImageGenerationArgs): number | undefined {
+function imageCount(args: ImageGenerationParameters): number | undefined {
   const paths = args.referenced_image_paths ?? [];
   if (paths.length > 0) return paths.length;
   return args.num_last_images_to_include ?? undefined;
 }
 
-function describeImageCall(args: ImageGenerationArgs): string {
+function describeImageCall(args: ImageGenerationParameters): string {
   const count = imageCount(args);
   const operation =
     count === undefined ? "generate" : `edit ${count} ${count === 1 ? "image" : "images"}`;
@@ -131,7 +126,7 @@ class ImageGenerationResultComponent implements Component {
 }
 
 export function renderImageGenerationCall(
-  args: ImageGenerationArgs,
+  args: ImageGenerationParameters,
   theme: RenderTheme,
   context: ImageGenerationRenderContext,
   resolveBackground: CodexToolBackgroundResolver = () => DEFAULT_CONFIG.toolBackground,

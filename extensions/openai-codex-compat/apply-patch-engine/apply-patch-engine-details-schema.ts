@@ -91,20 +91,26 @@ export const APPLIED_PATCH_CHANGE_SCHEMA = {
 
 export type AppliedPatchChange = Static<typeof APPLIED_PATCH_CHANGE_SCHEMA>;
 
+const ORDINARY_APPLY_PATCH_INSTRUCTION_REASON_CODES = [
+  "empty-update",
+  "identity-update",
+  "content-already-present",
+  "update-result-unchanged",
+  "path-already-absent",
+  "same-entry-move",
+  "dead-dominated",
+] as const;
+
+const APPLY_PATCH_INSTRUCTION_REASON_CODES = [
+  ...ORDINARY_APPLY_PATCH_INSTRUCTION_REASON_CODES,
+  "move-already-fulfilled",
+] as const;
+
 export const APPLY_PATCH_INSTRUCTION_REASON_SCHEMA = {
   type: "object",
   properties: {
     code: {
-      enum: [
-        "empty-update",
-        "identity-update",
-        "content-already-present",
-        "update-result-unchanged",
-        "path-already-absent",
-        "same-entry-move",
-        "move-already-fulfilled",
-        "dead-dominated",
-      ],
+      enum: APPLY_PATCH_INSTRUCTION_REASON_CODES,
     },
     message: { type: "string" },
     dominatingInstructions: INTEGER_ARRAY_SCHEMA,
@@ -115,15 +121,7 @@ export const APPLY_PATCH_INSTRUCTION_REASON_SCHEMA = {
     {
       properties: {
         code: {
-          enum: [
-            "empty-update",
-            "identity-update",
-            "content-already-present",
-            "update-result-unchanged",
-            "path-already-absent",
-            "same-entry-move",
-            "dead-dominated",
-          ],
+          enum: ORDINARY_APPLY_PATCH_INSTRUCTION_REASON_CODES,
         },
       },
       required: ["code"],
