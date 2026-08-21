@@ -391,7 +391,7 @@ encourage assertion-heavy code.
 
 ### 8. Focused type-level tests
 
-**Status:** Pending
+**Status:** Completed — no dedicated type tests added
 
 **Priority:** Low
 
@@ -406,8 +406,27 @@ Add type-level tests only for high-value generic or public contracts, such as:
 - Public transport debug contracts
 - Future branded identifiers
 
-**Oxlint checkpoint:** Ensure any type-test mechanism remains compatible with
-the project's suppression-directive policy.
+**Outcome:** No current contract justifies a separate type-test mechanism.
+Schema/static parity is structural because exported types derive directly from
+their raw TypeBox schemas. `ToolDefinitionWithContext` is exercised by three
+production tool implementations, and the public WebSocket debug contract is a
+simple record covered by runtime tests. No branded identifiers were
+introduced.
+
+The main TypeScript project already includes production and test sources, and
+real fixtures use `satisfies` for positive assignability coverage. Negative
+tests based on `@ts-expect-error` would violate the project's
+suppression-directive policy; custom conditional-type assertions or another
+dependency would add machinery without protecting a high-value type
+transformation.
+
+Reconsider a compile-only `.test-d.ts` file without suppression comments if
+the package later introduces a reusable public generic, complex conditional
+types, brands, independent schema and static declarations, or a concrete type
+regression not caught by production compilation.
+
+**Oxlint checkpoint:** No additional rule. Syntax cannot determine whether a
+contract is complex or public enough to warrant dedicated type-level tests.
 
 ## Approaches to Avoid
 
