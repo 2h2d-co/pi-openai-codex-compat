@@ -7,6 +7,7 @@
 - Preserve unexpected parser, matcher, and asynchronous transport failures instead of replacing or detaching them.
 - Recover expired 60-minute Codex WebSockets in the provider response loop, retaining committed items, discarding provisional output, and waiting for Pi to record completed tool outputs before continuing.
 - Validate complete apply-patch result details against schema-derived contracts before rendering, including integer metadata and nested instruction and matcher relationships.
+- Distinguish an unavailable Pi compaction append capability from a missing percentage-compaction retention boundary.
 
 ### Changed
 

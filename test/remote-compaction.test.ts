@@ -195,6 +195,20 @@ function createHarness(branch: SessionEntry[]) {
   return { hooks: pi, runtime, context, requests, requestHeaders, notices };
 }
 
+test("requires a callable Pi compaction append capability when capturing runtime scope", () => {
+  const harness = createHarness([userEntry("user-1", "Remember BLUE-42.")]);
+  const { getBranch, getLeafId, getSessionId } = harness.context.sessionManager;
+
+  for (const sessionManager of [
+    { getBranch, getLeafId, getSessionId },
+    { getBranch, getLeafId, getSessionId, appendCompaction: "not callable" },
+  ]) {
+    assert.throws(() => harness.runtime.captureScope({ ...harness.context, sessionManager }), {
+      message: "OpenAI Codex requires Pi's compaction-capable session manager.",
+    });
+  }
+});
+
 test("routes manual compaction through the custom provider runtime", async () => {
   const user = userEntry("user-1", "Remember BLUE-42.");
   const harness = createHarness([user]);

@@ -1,5 +1,9 @@
-import type { ExtensionContext, SessionEntry } from "@earendil-works/pi-coding-agent";
-import type { OpenAICodexResponsesOptions, Usage } from "@earendil-works/pi-ai";
+import type {
+  ExtensionContext,
+  SessionEntry,
+  SessionManager,
+} from "@earendil-works/pi-coding-agent";
+import type { OpenAICodexResponsesOptions } from "@earendil-works/pi-ai";
 import type { GrammarToolInputProperties } from "../compaction-checkpoint.ts";
 import type { CodexCompatConfig } from "../config.ts";
 import type { ConfigResolver } from "../config-context.ts";
@@ -12,29 +16,23 @@ export type SessionContext = {
   sessionManager: Pick<ExtensionContext["sessionManager"], "getSessionId">;
 };
 
+type SessionScopeReader = Pick<
+  ExtensionContext["sessionManager"],
+  "getBranch" | "getLeafId" | "getSessionId"
+>;
+
 export type RuntimeScopeContext = Pick<ExtensionContext, "getContextUsage" | "hasUI"> &
   Parameters<ConfigResolver>[0] & {
-    sessionManager: Pick<
-      ExtensionContext["sessionManager"],
-      "getBranch" | "getLeafId" | "getSessionId"
-    >;
+    sessionManager: SessionScopeReader;
     ui: Pick<ExtensionContext["ui"], "notify">;
   };
 
-export type MutableSessionManager = ExtensionContext["sessionManager"] & {
-  appendCompaction?: <T>(
-    summary: string,
-    firstKeptEntryId: string,
-    tokensBefore: number,
-    details?: T,
-    fromHook?: boolean,
-    usage?: Usage,
-  ) => string;
-};
+export type CompactionSessionManager = SessionScopeReader &
+  Pick<SessionManager, "appendCompaction">;
 
 export type RuntimeScope = {
   sessionId: string;
-  manager: MutableSessionManager;
+  manager: CompactionSessionManager;
   branch: SessionEntry[];
   leafId: string | null;
   contextTokens: number | null;

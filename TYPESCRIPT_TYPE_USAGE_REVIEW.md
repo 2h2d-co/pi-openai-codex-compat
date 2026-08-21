@@ -183,7 +183,7 @@ without an autofixer and enabled it through `@2h2d/oxlint-config`
 
 ### 3. Overclaiming hand-written type predicates
 
-**Status:** In progress
+**Status:** Completed
 
 **Priority:** High-medium
 
@@ -229,12 +229,20 @@ as another broad schema. Tolerant sanitizers and non-JSON capability checks
 remain manual because all-or-nothing schema validation would change their
 semantics.
 
-The mutable-session predicate found during the broader audit remains to be
-discussed.
+The final capability predicate no longer accepts `unknown` and claims a
+complete session-manager contract after checking one method. Its input is now a
+`SessionScopeReader` derived from the three Pi session operations already
+required by scope capture. A successful check adds only
+`Pick<SessionManager, "appendCompaction">`, producing the focused
+`CompactionSessionManager` contract. The append signature therefore remains
+owned by Pi, while a focused test verifies that scope capture fails closed when
+the runtime capability is absent.
 
-**Oxlint checkpoint:** Discuss whether a syntax rule can distinguish
-overclaiming predicates from complete structural validators without producing
-low-confidence findings.
+**Oxlint checkpoint:** No additional rule. Predicate completeness depends on
+the relationship between preconditions, runtime checks, and the claimed domain
+contract; a syntax rule would produce low-confidence findings. Schema-derived
+JSON contracts, native platform types, narrow capability checks, and malformed
+boundary tests provide stronger enforcement for the concrete cases found here.
 
 ### 4. Broad wire types leaking into domain logic
 

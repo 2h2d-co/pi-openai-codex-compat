@@ -83,18 +83,18 @@ import type {
   CodexResponseDecision,
   CodexResponseRetryPolicy,
   CodexTerminalState,
+  CompactionSessionManager,
   ConfigResolver,
-  MutableSessionManager,
   RequestTemplate,
   RuntimeScopeContext,
   RuntimeScope,
   SessionContext,
 } from "./codex-provider-contracts.ts";
 
-function isMutableSessionManager(value: unknown): value is MutableSessionManager {
-  return (
-    isNonNullObject(value) && "appendCompaction" in value && isFunction(value.appendCompaction)
-  );
+function hasAppendCompaction(
+  value: RuntimeScopeContext["sessionManager"],
+): value is CompactionSessionManager {
+  return "appendCompaction" in value && isFunction(value.appendCompaction);
 }
 
 function codexStreamOptions(value: unknown): OpenAICodexResponsesOptions | undefined {
@@ -195,8 +195,8 @@ export class CodexProviderRuntime {
   captureScope(ctx: RuntimeScopeContext): void {
     const sessionId = ctx.sessionManager.getSessionId();
     const usage = ctx.getContextUsage();
-    if (!isMutableSessionManager(ctx.sessionManager)) {
-      throw new Error("OpenAI Codex requires Pi's mutable session manager.");
+    if (!hasAppendCompaction(ctx.sessionManager)) {
+      throw new Error("OpenAI Codex requires Pi's compaction-capable session manager.");
     }
     this.scopes.set(sessionId, {
       sessionId,
@@ -726,14 +726,13 @@ export class CodexProviderRuntime {
       responsesLiteEnabled,
     });
     const firstKeptEntryId = userEntryAfterLastSampled(branch)?.id ?? scope.manager.getLeafId();
-    const appendCompaction = scope.manager.appendCompaction?.bind(scope.manager);
-    if (!firstKeptEntryId || !appendCompaction) {
-      throw new Error("Pi's mutable SessionManager is unavailable for percentage compaction.");
+    if (!firstKeptEntryId) {
+      throw new Error("Pi's active session branch has no entry to retain after compaction.");
     }
     if (scope.manager.getLeafId() !== scope.leafId) {
       throw new Error("Pi's active session branch changed while Codex was compacting.");
     }
-    appendCompaction(
+    scope.manager.appendCompaction(
       markerSummary(),
       firstKeptEntryId,
       scope.contextTokens ?? 0,
