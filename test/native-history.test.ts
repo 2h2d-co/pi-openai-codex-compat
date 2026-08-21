@@ -8,6 +8,10 @@ import {
   NATIVE_RESPONSE_ENTRY_TYPE,
   parseNativeResponse,
 } from "../extensions/openai-codex-compat/native-history.ts";
+import type {
+  ResponsesFunctionCallItem,
+  ResponsesOutputMessageItem,
+} from "../extensions/openai-codex-compat/responses-item-schema.ts";
 
 test("persists native response overrides on the active session branch", () => {
   const data = nativeResponseData("gpt-test", "resp_1", [
@@ -30,6 +34,17 @@ test("persists native response overrides on the active session branch", () => {
 });
 
 test("fails closed on corrupt native response entries", () => {
+  assert.equal(
+    parseNativeResponse({
+      kind: NATIVE_RESPONSE_ENTRY_TYPE,
+      version: 1,
+      modelId: "gpt-test",
+      responseId: "resp-unknown",
+      items: [{ type: "future_item", payload: "opaque" }],
+    }),
+    undefined,
+  );
+
   const branch = [
     {
       type: "custom",
@@ -44,7 +59,7 @@ test("fails closed on corrupt native response entries", () => {
   assert.throws(() => nativeResponseOverrides(branch, "gpt-test"), /corrupt/);
 });
 
-test("recovers only done prefixes with linked tool outputs before overflow", () => {
+test("recovers only done prefixes without unresolved tool calls before overflow", () => {
   const attempts = [
     {
       itemCount: 1,
@@ -57,7 +72,7 @@ test("recovers only done prefixes with linked tool outputs before overflow", () 
       terminalReason: "context_length_exceeded",
     },
   ];
-  const committed = {
+  const committed: ResponsesOutputMessageItem = {
     type: "message",
     id: "msg_1",
     role: "assistant",
@@ -78,7 +93,7 @@ test("recovers only done prefixes with linked tool outputs before overflow", () 
     committed,
   ]);
 
-  const unresolvedCall = {
+  const unresolvedCall: ResponsesFunctionCallItem = {
     type: "function_call",
     id: "call_item",
     call_id: "call_1",

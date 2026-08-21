@@ -2,7 +2,7 @@ import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-a
 import type { Api, Model, ProviderHeaders } from "@earendil-works/pi-ai";
 import { providerHistory } from "./compaction-checkpoint.ts";
 import type { ImageDetail } from "./config.ts";
-import type { ResponsesItem } from "./codex-protocol.ts";
+import type { ResponsesInputItem } from "./responses-item-schema.ts";
 
 export interface CodexToolAuthentication {
   apiKey: string;
@@ -36,7 +36,7 @@ export function codexToolHistory(
   ctx: ToolHistoryContext,
   model: Model<Api>,
   imageDetail: ImageDetail = "auto",
-): ResponsesItem[] {
+): ResponsesInputItem[] {
   return providerHistory({
     branch: ctx.sessionManager.getBranch(),
     wireModel: model,

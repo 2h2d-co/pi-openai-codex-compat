@@ -96,15 +96,17 @@ The detailed `apply_patch` contracts remain normative:
 
 - **Our choice:** For ordinary streamed assistant output, commit exact items
   from `response.output_item.done`. Preserve unknown fields on those items for
-  forward-compatible replay. Discard started-only and incomplete items. The
-  terminal response's `output` array is normally empty and is not used to
-  reconstruct the completed output.
+  forward-compatible replay. Unknown item `type` variants fail closed until an
+  official release review adds them to the supported schema union. Discard
+  started-only and incomplete items. The terminal response's `output` array is
+  normally empty and is not used to reconstruct the completed output.
 - **Official Codex:** Uses completed output items as durable model output.
 - **Why:** The item-done events are the stream's reliable source of completed
   output; the terminal event normally supplies status and usage rather than
   output items. This boundary also prevents retries from duplicating partial
   text or tool calls.
-- **Revisit only if:** Official Codex changes its item-level commit semantics.
+- **Revisit only if:** Official Codex changes its item-level commit semantics
+  or adds an item type this package must interpret or replay.
 
 ### P-003 — Adapt the endpoint without impersonating the official client
 

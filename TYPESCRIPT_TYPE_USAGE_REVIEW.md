@@ -246,7 +246,7 @@ boundary tests provide stronger enforcement for the concrete cases found here.
 
 ### 4. Broad wire types leaking into domain logic
 
-**Status:** Pending
+**Status:** Completed
 
 **Priority:** Medium
 
@@ -266,9 +266,25 @@ Keep broad records at wire boundaries, then introduce small local unions for
 the known event and item subsets consumed by individual modules. Do not model
 the complete evolving Responses API.
 
-**Oxlint checkpoint:** This is primarily architectural; determine whether any
-narrow rule, such as restricting `JsonRecord` in domain contract files, would
-be reliable enough to help.
+**Outcome:** The broad `ResponsesItem` contract was removed. Raw TypeBox
+schemas now model each supported content item, message representation,
+completed provider item, request-input item, and Responses tool definition.
+The individually exported types compose into lifecycle-specific
+`ResponsesOutputItem`, `ResponsesInputItem`, and `ResponsesToolDefinition`
+unions.
+
+Only `response.output_item.done` values validated by the closed output union
+enter native history. Request history has its own closed union, including Pi's
+canonical type-less input messages and input-only tool outputs and controls.
+Unknown variants and malformed known variants fail closed, while additional
+fields on known variants remain allowed and survive replay. Tool definitions
+no longer masquerade as history items. The approved inventory and union
+membership are recorded in [`RESPONSES_ITEM_TYPE_MODEL.md`](RESPONSES_ITEM_TYPE_MODEL.md).
+
+**Oxlint checkpoint:** No additional rule. Whether a JSON record represents a
+transport envelope, input item, committed output item, or tool definition is a
+domain-lifecycle distinction that syntax alone cannot infer reliably. The
+closed schema unions and boundary tests enforce the intended separation.
 
 ### 5. Duplicated literal domains and types
 

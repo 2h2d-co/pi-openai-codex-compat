@@ -6,7 +6,15 @@ import {
   type ProviderHeaders,
   type Usage,
 } from "@earendil-works/pi-ai";
+import { Value } from "typebox/value";
 import { errorFromThrown } from "./error-from-thrown.ts";
+import {
+  RESPONSES_COMPACTION_ITEM_SCHEMA,
+  RESPONSES_INPUT_ITEM_SCHEMA,
+  RESPONSES_MESSAGE_ITEM_SCHEMA,
+  type ResponsesCompactionItem,
+  type ResponsesInputItem,
+} from "./responses-item-schema.ts";
 
 export const REMOTE_COMPACTION_BETA = "remote_compaction_v2";
 export const RETAINED_CONTEXT_BUDGET = 64_000;
@@ -69,12 +77,8 @@ export interface JsonRecord {
   history?: JsonValue;
 }
 
-export interface ResponsesItem extends JsonRecord {
-  type?: string;
-}
-
 export type RemoteCompactionResponse = {
-  item: ResponsesItem;
+  item: ResponsesCompactionItem;
   usage?: Usage;
 };
 
@@ -125,28 +129,26 @@ export function parseJsonRecord(value: string, label = "value"): JsonRecord {
   return requireJsonRecord(parsed, label);
 }
 
-export function isResponsesItem(value: unknown): value is ResponsesItem {
-  if (!isObject(value)) return false;
-  return (
-    typeof value.type === "string" ||
-    (typeof value.role === "string" &&
-      (typeof value.content === "string" || Array.isArray(value.content)))
-  );
-}
-
-export function requireResponsesItems(value: unknown, label = "value"): ResponsesItem[] {
-  if (!Array.isArray(value) || !value.every(isResponsesItem)) {
+export function requireResponsesInputItems(value: unknown, label = "value"): ResponsesInputItem[] {
+  if (!Array.isArray(value)) {
     throw new Error(`${label} must be an array of Responses items.`);
   }
-  return value;
+  const items: ResponsesInputItem[] = [];
+  for (const item of value) {
+    if (!isObject(item) || !Value.Check(RESPONSES_INPUT_ITEM_SCHEMA, item)) {
+      throw new Error(`${label} must be an array of Responses items.`);
+    }
+    items.push(item);
+  }
+  return items;
 }
 
 export function approximateTokens(text: string): number {
   return Math.ceil(new TextEncoder().encode(text).byteLength / UTF8_BYTES_PER_TOKEN);
 }
 
-export function messageTextTokens(item: ResponsesItem): number {
-  if (item.type !== undefined && item.type !== "message") return 0;
+export function messageTextTokens(item: ResponsesInputItem): number {
+  if (!Value.Check(RESPONSES_MESSAGE_ITEM_SCHEMA, item)) return 0;
   if (isString(item.content)) return approximateTokens(item.content);
   if (!Array.isArray(item.content)) return 0;
 
@@ -215,15 +217,20 @@ export function truncateMiddleWithTokenBudget(text: string, tokenLimit: number):
   return `${prefix}…${removedTokens} tokens truncated…${suffix}`;
 }
 
-function shortenMessage(item: ResponsesItem, tokenLimit: number): ResponsesItem | undefined {
-  if (tokenLimit <= 0 || (item.type !== undefined && item.type !== "message")) return undefined;
-  const result = structuredClone(item);
+function shortenMessage(
+  item: ResponsesInputItem,
+  tokenLimit: number,
+): ResponsesInputItem | undefined {
+  if (tokenLimit <= 0 || !Value.Check(RESPONSES_MESSAGE_ITEM_SCHEMA, item)) return undefined;
+  const result: JsonRecord = structuredClone(item);
 
   if (isString(result.content)) {
     result.content = truncateMiddleWithTokenBudget(result.content, tokenLimit);
-    return result.content ? result : undefined;
+    return result.content && Value.Check(RESPONSES_INPUT_ITEM_SCHEMA, result) ? result : undefined;
   }
-  if (!Array.isArray(result.content)) return result;
+  if (!Array.isArray(result.content)) {
+    return Value.Check(RESPONSES_INPUT_ITEM_SCHEMA, result) ? result : undefined;
+  }
 
   let remaining = tokenLimit;
   const content: JsonValue[] = [];
@@ -250,12 +257,14 @@ function shortenMessage(item: ResponsesItem, tokenLimit: number): ResponsesItem 
   }
 
   result.content = content;
-  return content.length > 0 ? result : undefined;
+  return content.length > 0 && Value.Check(RESPONSES_INPUT_ITEM_SCHEMA, result)
+    ? result
+    : undefined;
 }
 
-function retainedRole(item: ResponsesItem): boolean {
+function retainedRole(item: ResponsesInputItem): boolean {
   return (
-    (item.type === undefined || item.type === "message") &&
+    Value.Check(RESPONSES_MESSAGE_ITEM_SCHEMA, item) &&
     (item.role === "user" || item.role === "developer" || item.role === "system")
   );
 }
@@ -266,11 +275,11 @@ function retainedRole(item: ResponsesItem): boolean {
  * chronological order. The oldest selected message may be truncated.
  */
 export function selectRetainedContext(
-  history: readonly ResponsesItem[],
+  history: readonly ResponsesInputItem[],
   budget = RETAINED_CONTEXT_BUDGET,
-): ResponsesItem[] {
+): ResponsesInputItem[] {
   let remaining = budget;
-  const newestFirst: ResponsesItem[] = [];
+  const newestFirst: ResponsesInputItem[] = [];
 
   for (let index = history.length - 1; index >= 0 && remaining > 0; index--) {
     const item = history[index];
@@ -293,12 +302,9 @@ export function selectRetainedContext(
 }
 
 export function installCompactionItem(
-  previousHistory: readonly ResponsesItem[],
-  compactionItem: ResponsesItem,
-): ResponsesItem[] {
-  if (compactionItem.type !== "compaction" || !isString(compactionItem.encrypted_content)) {
-    throw new Error("Codex returned an invalid remote compaction item.");
-  }
+  previousHistory: readonly ResponsesInputItem[],
+  compactionItem: ResponsesCompactionItem,
+): ResponsesInputItem[] {
   return [...selectRetainedContext(previousHistory), structuredClone(compactionItem)];
 }
 
@@ -329,7 +335,7 @@ export function withoutConversationInput(payload: JsonRecord): JsonRecord {
 export function remoteCompactionPayload(options: {
   template?: JsonRecord | undefined;
   modelId: string;
-  history: readonly ResponsesItem[];
+  history: readonly ResponsesInputItem[];
   instructions: string;
   sessionId?: string | undefined;
   fallbackTools?: JsonValue[] | undefined;
@@ -456,13 +462,13 @@ async function wait(milliseconds: number, signal?: AbortSignal): Promise<void> {
 
 async function readCompactionStream(
   response: Response,
-): Promise<{ item: ResponsesItem; usage?: unknown }> {
+): Promise<{ item: ResponsesCompactionItem; usage?: unknown }> {
   if (!response.body)
     throw new IncompleteRemoteStream("Codex returned an empty compaction stream.");
 
   const reader = response.body.getReader();
   const decoder = new TextDecoder();
-  const compacted: ResponsesItem[] = [];
+  const compacted: ResponsesCompactionItem[] = [];
   let pending = "";
   let finished = false;
   let usage: unknown;
@@ -498,8 +504,11 @@ async function readCompactionStream(
     if (event.type === "response.incomplete") {
       throw new IncompleteRemoteStream("Codex remote compaction was incomplete.");
     }
-    if (event.type === "response.output_item.done" && isResponsesItem(event.item)) {
-      if (event.item.type === "compaction") compacted.push(event.item);
+    if (
+      event.type === "response.output_item.done" &&
+      Value.Check(RESPONSES_COMPACTION_ITEM_SCHEMA, event.item)
+    ) {
+      compacted.push(event.item);
     }
     if (event.type === "response.completed" || event.type === "response.done") {
       finished = true;
@@ -534,10 +543,6 @@ async function readCompactionStream(
   if (compactionItem === undefined) {
     throw new PermanentRemoteError("Codex compaction output has no compaction item.");
   }
-  if (!isString(compactionItem.encrypted_content)) {
-    throw new PermanentRemoteError("Codex compaction output did not contain encrypted_content.");
-  }
-
   return { item: compactionItem, usage };
 }
 
@@ -583,13 +588,16 @@ export async function collectRemoteCompaction(
   accountingModel: Model<Api>,
   priority: boolean,
 ): Promise<RemoteCompactionResponse> {
-  const compacted: ResponsesItem[] = [];
+  const compacted: ResponsesCompactionItem[] = [];
   let finished = false;
   let usageValue: unknown;
 
   for await (const event of events) {
-    if (event.type === "response.output_item.done" && isResponsesItem(event.item)) {
-      if (event.item.type === "compaction") compacted.push(structuredClone(event.item));
+    if (
+      event.type === "response.output_item.done" &&
+      Value.Check(RESPONSES_COMPACTION_ITEM_SCHEMA, event.item)
+    ) {
+      compacted.push(structuredClone(event.item));
     }
     if (event.type === "response.completed" || event.type === "response.done") {
       finished = true;
@@ -598,8 +606,7 @@ export async function collectRemoteCompaction(
         if (Array.isArray(event.response["output"])) {
           for (const item of event.response["output"]) {
             if (
-              isResponsesItem(item) &&
-              item.type === "compaction" &&
+              Value.Check(RESPONSES_COMPACTION_ITEM_SCHEMA, item) &&
               !compacted.some(
                 (existing) =>
                   (isString(existing.id) && isString(item.id) && existing.id === item.id) ||

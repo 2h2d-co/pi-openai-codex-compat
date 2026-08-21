@@ -7,8 +7,9 @@ import type { OpenAICodexResponsesOptions } from "@earendil-works/pi-ai";
 import type { GrammarToolInputProperties } from "../compaction-checkpoint.ts";
 import type { CodexCompatConfig } from "../config.ts";
 import type { ConfigResolver } from "../config-context.ts";
-import type { JsonRecord, ResponsesItem } from "../codex-protocol.ts";
+import type { JsonRecord } from "../codex-protocol.ts";
 import type { CodexTurnState } from "../codex-transport.ts";
+import type { ResponsesOutputItem } from "../responses-item-schema.ts";
 
 export type { ConfigResolver } from "../config-context.ts";
 
@@ -67,7 +68,7 @@ export type CodexTerminalState = {
 };
 
 export type CodexAttemptCapture = {
-  streamedItems: ResponsesItem[];
+  streamedItems: ResponsesOutputItem[];
   streamedToolCallIndexes: Set<number>;
   streamedCompletedToolCallIndexes: Set<number>;
 };

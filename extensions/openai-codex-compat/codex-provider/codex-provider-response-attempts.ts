@@ -8,13 +8,15 @@ import type {
   OpenAICodexResponsesOptions,
   Usage,
 } from "@earendil-works/pi-ai";
-import {
-  isObject,
-  isResponsesItem,
-  type JsonRecord,
-  type ResponsesItem,
-} from "../codex-protocol.ts";
+import { Value } from "typebox/value";
+import { isObject, type JsonRecord } from "../codex-protocol.ts";
 import type { CodexStreamAttemptState } from "../codex-stream.ts";
+import {
+  RESPONSES_INPUT_ITEM_SCHEMA,
+  RESPONSES_OUTPUT_ITEM_SCHEMA,
+  type ResponsesInputItem,
+  type ResponsesOutputItem,
+} from "../responses-item-schema.ts";
 import type {
   CodexAttemptCapture,
   CodexPostToolDisposition,
@@ -30,7 +32,7 @@ export function transportOptions(
   return options ?? {};
 }
 
-export function isToolCallItem(item: ResponsesItem): boolean {
+export function isExecutableToolCallItem(item: { type?: unknown }): boolean {
   return item.type === "function_call" || item.type === "custom_tool_call";
 }
 
@@ -39,10 +41,10 @@ export function eventOutputIndex(event: JsonRecord): number {
 }
 
 export function assessAttemptToolCalls(
-  items: readonly ResponsesItem[],
+  items: readonly ResponsesOutputItem[],
   capture: CodexAttemptCapture,
 ): CodexToolCallAssessment {
-  const completedCount = items.filter(isToolCallItem).length;
+  const completedCount = items.filter(isExecutableToolCallItem).length;
   const discardedPartialCount = [...capture.streamedToolCallIndexes].filter(
     (index) => !capture.streamedCompletedToolCallIndexes.has(index),
   ).length;
@@ -57,10 +59,10 @@ export interface OutputItemTypeCounts {
   [type: string]: number | undefined;
 }
 
-export function outputItemTypeCounts(items: readonly ResponsesItem[]): OutputItemTypeCounts {
+export function outputItemTypeCounts(items: readonly ResponsesOutputItem[]): OutputItemTypeCounts {
   const counts: OutputItemTypeCounts = {};
   for (const item of items) {
-    const type = item.type ?? "message";
+    const type = item.type;
     counts[type] = (counts[type] ?? 0) + 1;
   }
   return counts;
@@ -68,7 +70,7 @@ export function outputItemTypeCounts(items: readonly ResponsesItem[]): OutputIte
 
 export function responseDecisionDiagnostic(options: {
   attempt: number;
-  attemptItems: readonly ResponsesItem[];
+  attemptItems: readonly ResponsesOutputItem[];
   capture: CodexAttemptCapture;
   decision: CodexResponseDecision;
   failureReason?: string;
@@ -120,15 +122,18 @@ export function captureRawEvents(
       for await (const event of events) {
         if (
           event.type === "response.output_item.added" &&
-          isResponsesItem(event.item) &&
-          isToolCallItem(event.item)
+          isObject(event.item) &&
+          isExecutableToolCallItem(event.item)
         ) {
           capture.streamedToolCallIndexes.add(eventOutputIndex(event));
         }
-        if (event.type === "response.output_item.done" && isResponsesItem(event.item)) {
+        if (event.type === "response.output_item.done") {
+          if (!isObject(event.item) || !Value.Check(RESPONSES_OUTPUT_ITEM_SCHEMA, event.item)) {
+            throw new Error("Codex returned an unsupported or malformed completed output item.");
+          }
           const item = structuredClone(event.item);
           capture.streamedItems.push(item);
-          if (isToolCallItem(item)) {
+          if (isExecutableToolCallItem(item)) {
             const index = eventOutputIndex(event);
             capture.streamedToolCallIndexes.add(index);
             capture.streamedCompletedToolCallIndexes.add(index);
@@ -342,13 +347,18 @@ export function waitForResponseRetry(milliseconds: number, signal?: AbortSignal)
 
 export function continueResponseBody(
   body: JsonRecord,
-  responseItems: readonly ResponsesItem[],
+  responseItems: readonly ResponsesOutputItem[],
 ): JsonRecord | undefined {
-  if (!Array.isArray(body.input) || !body.input.every(isResponsesItem)) return undefined;
-  return updateInput(body, [...body.input, ...responseItems]);
+  if (!Array.isArray(body.input)) return undefined;
+  const input: ResponsesInputItem[] = [];
+  for (const item of body.input) {
+    if (!isObject(item) || !Value.Check(RESPONSES_INPUT_ITEM_SCHEMA, item)) return undefined;
+    input.push(item);
+  }
+  return updateInput(body, [...input, ...responseItems]);
 }
 
-export function updateInput(payload: JsonRecord, input: readonly ResponsesItem[]): JsonRecord {
+export function updateInput(payload: JsonRecord, input: readonly ResponsesInputItem[]): JsonRecord {
   const result: JsonRecord = {
     ...payload,
     input: input.map((item) => structuredClone(item)),

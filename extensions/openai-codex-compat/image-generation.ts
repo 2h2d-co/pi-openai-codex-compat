@@ -3,11 +3,12 @@ import { readFile, mkdir, writeFile } from "node:fs/promises";
 import { dirname, isAbsolute, join, normalize } from "node:path";
 import { getAgentDir, type ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import type { Api, Model } from "@earendil-works/pi-ai";
+import { Value } from "typebox/value";
 import { errorFromThrown } from "./error-from-thrown.ts";
 import type { ConfigResolver } from "./config-context.ts";
 import type { CodexToolBackgroundResolver } from "./codex-tool-surface.ts";
 import { DEFAULT_CONFIG } from "./config.ts";
-import { isObject, type JsonRecord, type JsonValue, type ResponsesItem } from "./codex-protocol.ts";
+import { isObject, type JsonRecord, type JsonValue } from "./codex-protocol.ts";
 import { requestCodexJson, type CodexJsonRequestOptions } from "./codex-transport.ts";
 import {
   IMAGE_GENERATION_PARAMETERS,
@@ -15,6 +16,15 @@ import {
   type ImageGenerationParameters,
 } from "./image-generation-schema.ts";
 import { IMAGE_GENERATION_TOOL_NAME } from "./namespaced-tools.ts";
+import {
+  RESPONSES_CUSTOM_TOOL_CALL_ITEM_SCHEMA,
+  RESPONSES_CUSTOM_TOOL_CALL_OUTPUT_ITEM_SCHEMA,
+  RESPONSES_FUNCTION_CALL_ITEM_SCHEMA,
+  RESPONSES_FUNCTION_CALL_OUTPUT_ITEM_SCHEMA,
+  RESPONSES_IMAGE_GENERATION_CALL_ITEM_SCHEMA,
+  RESPONSES_MESSAGE_ITEM_SCHEMA,
+  type ResponsesInputItem,
+} from "./responses-item-schema.ts";
 import {
   renderImageGenerationCall,
   renderImageGenerationResult,
@@ -81,36 +91,34 @@ function imageUrlsFromContent(content: unknown): string[] {
 }
 
 /** Return recent provider-history images in chronological order. */
-export function recentImageUrls(history: readonly ResponsesItem[], count: number): string[] {
+export function recentImageUrls(history: readonly ResponsesInputItem[], count: number): string[] {
   const functionCallIds = new Set<string>();
   const customToolCallIds = new Set<string>();
   for (const item of history) {
-    if (item.type === "function_call" && isString(item["call_id"])) {
-      functionCallIds.add(item["call_id"]);
-    } else if (item.type === "custom_tool_call" && isString(item["call_id"])) {
-      customToolCallIds.add(item["call_id"]);
+    if (Value.Check(RESPONSES_FUNCTION_CALL_ITEM_SCHEMA, item)) {
+      functionCallIds.add(item.call_id);
+    } else if (Value.Check(RESPONSES_CUSTOM_TOOL_CALL_ITEM_SCHEMA, item)) {
+      customToolCallIds.add(item.call_id);
     }
   }
 
   const newestFirst: string[] = [];
   for (const item of history.toReversed()) {
     let imageUrls: string[] = [];
-    if (item.type === undefined || item.type === "message") {
+    if (Value.Check(RESPONSES_MESSAGE_ITEM_SCHEMA, item)) {
       imageUrls = imageUrlsFromContent(item.content);
     } else if (
-      item.type === "function_call_output" &&
-      isString(item["call_id"]) &&
-      functionCallIds.has(item["call_id"])
+      Value.Check(RESPONSES_FUNCTION_CALL_OUTPUT_ITEM_SCHEMA, item) &&
+      functionCallIds.has(item.call_id)
     ) {
-      imageUrls = imageUrlsFromContent(item["output"]);
+      imageUrls = imageUrlsFromContent(item.output);
     } else if (
-      item.type === "custom_tool_call_output" &&
-      isString(item["call_id"]) &&
-      customToolCallIds.has(item["call_id"])
+      Value.Check(RESPONSES_CUSTOM_TOOL_CALL_OUTPUT_ITEM_SCHEMA, item) &&
+      customToolCallIds.has(item.call_id)
     ) {
-      imageUrls = imageUrlsFromContent(item["output"]);
-    } else if (item.type === "image_generation_call" && isString(item["result"])) {
-      imageUrls = [`data:image/png;base64,${item["result"]}`];
+      imageUrls = imageUrlsFromContent(item.output);
+    } else if (Value.Check(RESPONSES_IMAGE_GENERATION_CALL_ITEM_SCHEMA, item)) {
+      imageUrls = [`data:image/png;base64,${item.result}`];
     }
 
     for (const imageUrl of imageUrls) {
@@ -161,7 +169,7 @@ async function localImageUrl(path: string): Promise<string> {
 
 async function imageRequest(
   params: ImageGenerationParameters,
-  history: readonly ResponsesItem[],
+  history: readonly ResponsesInputItem[],
 ): Promise<ImageRequest> {
   const paths = params.referenced_image_paths ?? [];
   const recentCount = params.num_last_images_to_include ?? undefined;

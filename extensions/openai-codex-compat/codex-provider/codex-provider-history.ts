@@ -2,8 +2,8 @@ import type { SessionEntry, ToolInfo } from "@earendil-works/pi-coding-agent";
 import type { Api, Context, Model, Tool } from "@earendil-works/pi-ai";
 import { providerHistory, type GrammarToolInputProperties } from "../compaction-checkpoint.ts";
 import type { ImageDetail } from "../config.ts";
-import type { ResponsesItem } from "../codex-protocol.ts";
 import { normalizeReplayItem, stableResponsesJson } from "../responses-replay.ts";
+import type { ResponsesInputItem, ResponsesOutputItem } from "../responses-item-schema.ts";
 import type { ResponsesItem as SerializedResponsesItem } from "../vendor/pi-ai/openai-responses-serialization.ts";
 
 export interface DeferredToolGroups {
@@ -39,7 +39,7 @@ export function splitDeferredTools(context: Context, enabled: boolean): Deferred
 }
 
 export function nativeOverrideRequired(
-  rawItems: readonly ResponsesItem[],
+  rawItems: readonly ResponsesOutputItem[],
   canonicalItems: readonly SerializedResponsesItem[],
 ): boolean {
   if (rawItems.length !== canonicalItems.length) return true;
@@ -67,13 +67,13 @@ export function userEntryAfterLastSampled(
 
 export function splitUnsampledUserInput(options: {
   branch: readonly SessionEntry[];
-  history: readonly ResponsesItem[];
+  history: readonly ResponsesInputItem[];
   model: Model<Api>;
   allTools: readonly ToolInfo[];
   grammarToolInputProperties: GrammarToolInputProperties;
   imageDetail: ImageDetail;
 }):
-  | { kind: "none" | "found"; history: ResponsesItem[]; tail: ResponsesItem[] }
+  | { kind: "none" | "found"; history: ResponsesInputItem[]; tail: ResponsesInputItem[] }
   | { kind: "unsafe" } {
   const firstUnsampled = userEntryAfterLastSampled(options.branch);
   if (!firstUnsampled) {

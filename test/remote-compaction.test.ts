@@ -31,6 +31,7 @@ import registerRemoteCompaction, {
   type RemoteCompactionHookHandler,
   type RemoteCompactionLifecycleHandler,
 } from "../extensions/openai-codex-compat/remote-compaction.ts";
+import type { ResponsesOutputMessageItem } from "../extensions/openai-codex-compat/responses-item-schema.ts";
 
 interface TestCompactionResult {
   compaction: {
@@ -333,7 +334,7 @@ test("classifies every Pi compaction lifecycle in official Codex metadata", asyn
 
 test("preserves a proven committed prefix in overflow compaction", async () => {
   const user = userEntry("user-1", "finish this task");
-  const committedItem = {
+  const committedItem: ResponsesOutputMessageItem = {
     type: "message",
     id: "msg_committed",
     role: "assistant",

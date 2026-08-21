@@ -16,6 +16,7 @@ import {
   type Usage,
   uuidv7,
 } from "@earendil-works/pi-ai";
+import { Value } from "typebox/value";
 import {
   codexCacheDiagnosticContext,
   type CodexCacheDiagnosticContext,
@@ -32,13 +33,11 @@ import {
 import {
   collectRemoteCompaction,
   isObject,
-  isResponsesItem,
   remoteCompactionPayload,
-  requireResponsesItems,
+  requireResponsesInputItems,
   withoutConversationInput,
   type JsonRecord,
   type JsonValue,
-  type ResponsesItem,
 } from "../codex-protocol.ts";
 import { codexCacheKey } from "../codex-cache-key.ts";
 import {
@@ -70,6 +69,11 @@ import {
   CODEX_NAMESPACED_TOOL_NAMES,
   CODEX_TEXT_CONTENT_ITEM_TOOL_RESULT_NAMES,
 } from "../namespaced-tools.ts";
+import {
+  RESPONSES_INPUT_ITEM_SCHEMA,
+  type ResponsesInputItem,
+  type ResponsesOutputItem,
+} from "../responses-item-schema.ts";
 import {
   convertResponsesTools,
   convertResponsesMessages,
@@ -474,12 +478,12 @@ export class CodexProviderRuntime {
     context: Context,
     grammarToolInputProperties: GrammarToolInputProperties,
     sessionId: string | undefined,
-  ): ResponsesItem[] {
+  ): ResponsesInputItem[] {
     const scope = sessionId ? this.scopes.get(sessionId) : undefined;
     if (!scope) {
       const compat = responsesCompatibility(model.compat);
-      const nativeItems = new Map<string, ResponsesItem[]>();
-      return requireResponsesItems(
+      const nativeItems = new Map<string, ResponsesOutputItem[]>();
+      return requireResponsesInputItems(
         convertResponsesMessages(model, context, CODEX_TOOL_CALL_PROVIDERS, {
           includeSystemPrompt: false,
           grammarToolInputProperties,
@@ -567,8 +571,8 @@ export class CodexProviderRuntime {
   private async performCompaction(options: {
     model: Model<Api>;
     requestOptions: OpenAICodexResponsesOptions;
-    history: ResponsesItem[];
-    postCompactionTail?: ResponsesItem[];
+    history: ResponsesInputItem[];
+    postCompactionTail?: ResponsesInputItem[];
     template: JsonRecord;
     instructions: string;
     grammarToolInputProperties: GrammarToolInputProperties;
@@ -689,7 +693,7 @@ export class CodexProviderRuntime {
     if (!hasNewAssistant) return body;
 
     const history = body.input.map((item) => {
-      if (!isResponsesItem(item))
+      if (!isObject(item) || !Value.Check(RESPONSES_INPUT_ITEM_SCHEMA, item))
         throw new Error("Codex request history contains an invalid item.");
       return structuredClone(item);
     });
@@ -866,7 +870,7 @@ export class CodexProviderRuntime {
         responsesLiteEnabled,
       );
 
-      const rawItems: ResponsesItem[] = [];
+      const rawItems: ResponsesOutputItem[] = [];
       const nativeAttempts: NativeResponseAttempt[] = [];
       const prewarmDiagnostics: CodexTransportDiagnostic[] = [];
       await this.maybePrewarm({
@@ -1229,7 +1233,7 @@ export class CodexProviderRuntime {
   async compact(options: {
     model: Model<Api>;
     requestOptions: OpenAICodexResponsesOptions;
-    history: ResponsesItem[];
+    history: ResponsesInputItem[];
     instructions: string;
     grammarToolInputProperties: GrammarToolInputProperties;
     template: JsonRecord;

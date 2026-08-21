@@ -7,16 +7,14 @@ import {
   type ToolInfo,
 } from "@earendil-works/pi-coding-agent";
 import type { Api, Message, Model, Tool } from "@earendil-works/pi-ai";
+import { Value } from "typebox/value";
 import { APPLY_PATCH_LARK_GRAMMAR, APPLY_PATCH_TOOL_NAME } from "./apply-patch.ts";
 import type { ImageDetail } from "./config.ts";
 import {
   installCompactionItem,
-  isJsonValue,
   isObject,
-  isResponsesItem,
-  requireResponsesItems,
-  type JsonValue,
-  type ResponsesItem,
+  requireResponsesInputItems,
+  type JsonRecord,
 } from "./codex-protocol.ts";
 import { nativeCommittedPrefixBeforeOverflow, nativeResponseOverrides } from "./native-history.ts";
 import {
@@ -24,6 +22,14 @@ import {
   CODEX_TEXT_CONTENT_ITEM_TOOL_RESULT_NAMES,
   splitNamespacedToolName,
 } from "./namespaced-tools.ts";
+import {
+  RESPONSES_COMPACTION_ITEM_SCHEMA,
+  RESPONSES_INPUT_ITEM_SCHEMA,
+  type ResponsesCompactionItem,
+  type ResponsesInputItem,
+  type ResponsesOutputItem,
+} from "./responses-item-schema.ts";
+import type { ResponsesToolDefinition } from "./responses-tool-schema.ts";
 import { convertResponsesMessages } from "./vendor/pi-ai/openai-responses-serialization.ts";
 
 export const CHECKPOINT_ENTRY_TYPE = "openai-codex-compat-remote-compaction";
@@ -38,7 +44,7 @@ export type CheckpointData = {
   kind: typeof CHECKPOINT_ENTRY_TYPE;
   version: typeof CHECKPOINT_FORMAT_VERSION;
   modelId: string;
-  history: ResponsesItem[];
+  history: ResponsesInputItem[];
   compactionDecision?: CompactionDecision;
 };
 
@@ -70,9 +76,9 @@ export function responsesCompatibility(value: unknown): ResponsesCompatibility {
   return compatibility;
 }
 
-function responsesToolParameters(tool: ToolInfo): JsonValue {
-  if (!isJsonValue(tool.parameters)) {
-    throw new Error(`Tool ${tool.name} has non-JSON parameters.`);
+function responsesToolParameters(tool: ToolInfo): JsonRecord {
+  if (!isObject(tool.parameters)) {
+    throw new Error(`Tool ${tool.name} must have JSON object parameters.`);
   }
   return tool.parameters;
 }
@@ -80,7 +86,7 @@ function responsesToolParameters(tool: ToolInfo): JsonValue {
 function asResponsesTool(
   tool: ToolInfo,
   grammarToolInputProperties: GrammarToolInputProperties,
-): ResponsesItem {
+): ResponsesToolDefinition {
   if (tool.name === APPLY_PATCH_TOOL_NAME && grammarToolInputProperties.has(tool.name)) {
     return {
       type: "custom",
@@ -123,7 +129,7 @@ export function activeResponsesTools(
   allTools: readonly ToolInfo[],
   activeNames: readonly string[],
   grammarToolInputProperties: GrammarToolInputProperties = new Map(),
-): ResponsesItem[] | undefined {
+): ResponsesToolDefinition[] | undefined {
   const enabled = new Set(activeNames);
   const tools = allTools.filter((tool) => enabled.has(tool.name));
   return tools.length > 0
@@ -159,8 +165,8 @@ function encodeMessages(
   allTools: readonly ToolInfo[],
   grammarToolInputProperties: GrammarToolInputProperties,
   imageDetail: ImageDetail,
-  nativeAssistantItems?: ReadonlyMap<string, readonly ResponsesItem[]>,
-): ResponsesItem[] {
+  nativeAssistantItems?: ReadonlyMap<string, readonly ResponsesOutputItem[]>,
+): ResponsesInputItem[] {
   const tools = allTools.map((tool) => asPiTool(tool, grammarToolInputProperties));
   const compat = responsesCompatibility(model.compat);
   const serializationOptions: NonNullable<Parameters<typeof convertResponsesMessages>[3]> = {
@@ -179,7 +185,7 @@ function encodeMessages(
   if (nativeAssistantItems) {
     serializationOptions.nativeAssistantItems = nativeAssistantItems;
   }
-  return requireResponsesItems(
+  return requireResponsesInputItems(
     convertResponsesMessages(
       model,
       { messages, tools },
@@ -195,8 +201,8 @@ export function encodeSessionEntries(
   allTools: readonly ToolInfo[],
   grammarToolInputProperties: GrammarToolInputProperties = new Map(),
   imageDetail: ImageDetail = "auto",
-  nativeAssistantItems?: ReadonlyMap<string, readonly ResponsesItem[]>,
-): ResponsesItem[] {
+  nativeAssistantItems?: ReadonlyMap<string, readonly ResponsesOutputItem[]>,
+): ResponsesInputItem[] {
   const messages = entries.flatMap((entry) => sessionEntryToContextMessages(entry));
   return encodeMessages(
     model,
@@ -215,20 +221,18 @@ export function parseCheckpoint(value: unknown): CheckpointData | undefined {
   }
   if (!isString(value.modelId) || !Array.isArray(value.history)) return undefined;
 
-  const history: ResponsesItem[] = [];
+  const history: ResponsesInputItem[] = [];
   for (const item of value.history) {
-    if (!isResponsesItem(item)) return undefined;
+    if (!isObject(item) || !Value.Check(RESPONSES_INPUT_ITEM_SCHEMA, item)) return undefined;
     history.push(structuredClone(item));
   }
   if (history.length === 0) return undefined;
 
-  const compactionItems = history.filter((item) => item.type === "compaction");
+  const compactionItems = history.filter((item) =>
+    Value.Check(RESPONSES_COMPACTION_ITEM_SCHEMA, item),
+  );
   const compactionItem = compactionItems[0];
-  if (
-    compactionItems.length !== 1 ||
-    !compactionItem ||
-    !isString(compactionItem.encrypted_content)
-  ) {
+  if (compactionItems.length !== 1 || !compactionItem) {
     return undefined;
   }
 
@@ -300,9 +304,9 @@ export function hasNativeCheckpointEntry(branch: readonly SessionEntry[]): boole
 
 export function checkpointData(
   modelId: string,
-  inputHistory: readonly ResponsesItem[],
-  compactionItem: ResponsesItem,
-  postCompactionTail: readonly ResponsesItem[] = [],
+  inputHistory: readonly ResponsesInputItem[],
+  compactionItem: ResponsesCompactionItem,
+  postCompactionTail: readonly ResponsesInputItem[] = [],
   compactionDecision?: CompactionDecision,
 ): CheckpointData {
   const checkpoint: CheckpointData = {
@@ -329,9 +333,9 @@ export function providerHistory(options: {
   grammarToolInputProperties?: GrammarToolInputProperties;
   imageDetail?: ImageDetail;
   recoverLatestOverflowPrefix?: boolean;
-}): ResponsesItem[] {
+}): ResponsesInputItem[] {
   const branch = [...options.branch];
-  let recoveredPrefix: ResponsesItem[] = [];
+  let recoveredPrefix: ResponsesInputItem[] = [];
   if (options.recoverLatestOverflowPrefix) {
     const index = branch.findLastIndex(
       (entry) => entry.type === "message" && entry.message.role === "assistant",

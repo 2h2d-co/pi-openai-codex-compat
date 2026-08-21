@@ -1,6 +1,13 @@
 import { isNumber, isString } from "./value-contracts.ts";
 import type { SessionEntry } from "@earendil-works/pi-coding-agent";
-import { isObject, isResponsesItem, type ResponsesItem } from "./codex-protocol.ts";
+import { Value } from "typebox/value";
+import { isObject } from "./codex-protocol.ts";
+import {
+  RESPONSES_CUSTOM_TOOL_CALL_ITEM_SCHEMA,
+  RESPONSES_FUNCTION_CALL_ITEM_SCHEMA,
+  RESPONSES_OUTPUT_ITEM_SCHEMA,
+  type ResponsesOutputItem,
+} from "./responses-item-schema.ts";
 
 export const NATIVE_RESPONSE_ENTRY_TYPE = "openai-codex-compat-native-response";
 export const NATIVE_RESPONSE_FORMAT_VERSION = 1;
@@ -17,7 +24,7 @@ export type NativeResponseData = {
   version: typeof NATIVE_RESPONSE_FORMAT_VERSION;
   modelId: string;
   responseId: string;
-  items: ResponsesItem[];
+  items: ResponsesOutputItem[];
   itemCommit?: typeof NATIVE_RESPONSE_ITEM_COMMIT;
   attempts?: NativeResponseAttempt[];
 };
@@ -25,7 +32,7 @@ export type NativeResponseData = {
 export function nativeResponseData(
   modelId: string,
   responseId: string,
-  items: readonly ResponsesItem[],
+  items: readonly ResponsesOutputItem[],
   attempts?: readonly NativeResponseAttempt[],
 ): NativeResponseData {
   const data: NativeResponseData = {
@@ -52,9 +59,9 @@ export function parseNativeResponse(value: unknown): NativeResponseData | undefi
     return undefined;
   }
 
-  const items: ResponsesItem[] = [];
+  const items: ResponsesOutputItem[] = [];
   for (const item of value["items"]) {
-    if (!isResponsesItem(item)) return undefined;
+    if (!isObject(item) || !Value.Check(RESPONSES_OUTPUT_ITEM_SCHEMA, item)) return undefined;
     items.push(structuredClone(item));
   }
   if (items.length === 0) return undefined;
@@ -107,21 +114,12 @@ export function parseNativeResponse(value: unknown): NativeResponseData | undefi
   return data;
 }
 
-function linkedToolCalls(items: readonly ResponsesItem[]): boolean {
-  const unresolved = new Set<string>();
-  for (const item of items) {
-    if (item.type === "function_call" || item.type === "custom_tool_call") {
-      if (!isString(item["call_id"]) || unresolved.has(item["call_id"])) return false;
-      unresolved.add(item["call_id"]);
-      continue;
-    }
-    if (item.type === "function_call_output" || item.type === "custom_tool_call_output") {
-      if (!isString(item["call_id"]) || !unresolved.delete(item["call_id"])) {
-        return false;
-      }
-    }
-  }
-  return unresolved.size === 0;
+function containsNoToolCalls(items: readonly ResponsesOutputItem[]): boolean {
+  return items.every(
+    (item) =>
+      !Value.Check(RESPONSES_FUNCTION_CALL_ITEM_SCHEMA, item) &&
+      !Value.Check(RESPONSES_CUSTOM_TOOL_CALL_ITEM_SCHEMA, item),
+  );
 }
 
 /**
@@ -133,7 +131,7 @@ export function nativeCommittedPrefixBeforeOverflow(
   branch: readonly SessionEntry[],
   modelId: string,
   responseId: string,
-): ResponsesItem[] | undefined {
+): ResponsesOutputItem[] | undefined {
   for (let index = branch.length - 1; index >= 0; index--) {
     const entry = branch[index];
     if (entry === undefined) continue;
@@ -162,7 +160,7 @@ export function nativeCommittedPrefixBeforeOverflow(
     const prefixLength = parsed.items.length - finalAttempt.itemCount;
     if (prefixLength <= 0) return undefined;
     const prefix = parsed.items.slice(0, prefixLength);
-    if (!linkedToolCalls(prefix)) return undefined;
+    if (!containsNoToolCalls(prefix)) return undefined;
     return prefix.map((item) => structuredClone(item));
   }
   return undefined;
@@ -172,8 +170,8 @@ export function nativeCommittedPrefixBeforeOverflow(
 export function nativeResponseOverrides(
   branch: readonly SessionEntry[],
   modelId: string,
-): ReadonlyMap<string, ResponsesItem[]> {
-  const overrides = new Map<string, ResponsesItem[]>();
+): ReadonlyMap<string, ResponsesOutputItem[]> {
+  const overrides = new Map<string, ResponsesOutputItem[]>();
 
   for (const entry of branch) {
     if (entry.type !== "custom" || entry.customType !== NATIVE_RESPONSE_ENTRY_TYPE) continue;

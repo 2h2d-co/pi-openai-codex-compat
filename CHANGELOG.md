@@ -8,6 +8,7 @@
 - Recover expired 60-minute Codex WebSockets in the provider response loop, retaining committed items, discarding provisional output, and waiting for Pi to record completed tool outputs before continuing.
 - Validate complete apply-patch result details against schema-derived contracts before rendering, including integer metadata and nested instruction and matcher relationships.
 - Distinguish an unavailable Pi compaction append capability from a missing percentage-compaction retention boundary.
+- Validate supported Responses input, completed-output, content, and tool-definition variants with closed schema-derived unions, failing closed on unknown or malformed item types while preserving additional fields on known variants.
 
 ### Changed
 

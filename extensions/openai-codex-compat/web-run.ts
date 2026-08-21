@@ -2,13 +2,13 @@ import { isString } from "./value-contracts.ts";
 import { readFileSync } from "node:fs";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import type { Api, Model } from "@earendil-works/pi-ai";
+import { Value } from "typebox/value";
 import {
   approximateTokens,
   isObject,
   truncateMiddleWithTokenBudget,
   type JsonRecord,
   type JsonValue,
-  type ResponsesItem,
 } from "./codex-protocol.ts";
 import { requestCodexJson, type CodexJsonRequestOptions } from "./codex-transport.ts";
 import type { WebSearchMode } from "./config.ts";
@@ -16,6 +16,15 @@ import type { ConfigResolver } from "./config-context.ts";
 import type { CodexToolBackgroundResolver } from "./codex-tool-surface.ts";
 import { DEFAULT_CONFIG } from "./config.ts";
 import { WEB_RUN_TOOL_NAME } from "./namespaced-tools.ts";
+import {
+  PI_INPUT_MESSAGE_ITEM_SCHEMA,
+  RESPONSES_INPUT_MESSAGE_ITEM_SCHEMA,
+  RESPONSES_OUTPUT_MESSAGE_ITEM_SCHEMA,
+  type ResponsesInputItem,
+  type ResponsesInputMessageItem,
+  type ResponsesOutputMessageItem,
+  type ResponsesOutputTextContent,
+} from "./responses-item-schema.ts";
 import { isCodexModel } from "./request-options.ts";
 import type {
   CodexToolExecutionContext,
@@ -53,25 +62,37 @@ type JsonRequester = (
   options: CodexJsonRequestOptions,
 ) => Promise<JsonValue>;
 
-function visibleMessage(item: ResponsesItem): JsonRecord | undefined {
-  if (item.type !== undefined && item.type !== "message") return undefined;
-  if (item.role !== "user" && item.role !== "assistant") return undefined;
-  if (!Array.isArray(item.content)) return undefined;
-
-  const content: JsonRecord[] = [];
-  const expectedType = item.role === "user" ? "input_text" : "output_text";
-  for (const part of item.content) {
-    if (isObject(part) && part.type === expectedType && isString(part.text)) {
-      content.push({ type: expectedType, text: part.text });
-    }
+function visibleMessage(
+  item: ResponsesInputItem,
+): ResponsesInputMessageItem | ResponsesOutputMessageItem | undefined {
+  if (Value.Check(RESPONSES_OUTPUT_MESSAGE_ITEM_SCHEMA, item)) {
+    const content = item.content.flatMap((part) =>
+      part.type === "output_text" ? [{ type: "output_text" as const, text: part.text }] : [],
+    );
+    return content.length > 0 ? { type: "message", role: "assistant", content } : undefined;
   }
-  if (content.length === 0) return undefined;
-  return { type: "message", role: item.role, content };
+  if (
+    !Value.Check(PI_INPUT_MESSAGE_ITEM_SCHEMA, item) &&
+    !Value.Check(RESPONSES_INPUT_MESSAGE_ITEM_SCHEMA, item)
+  ) {
+    return undefined;
+  }
+  if (item.role === "user" && Array.isArray(item.content)) {
+    const content = item.content.flatMap((part) =>
+      isObject(part) && part.type === "input_text" && isString(part.text)
+        ? [{ type: "input_text" as const, text: part.text }]
+        : [],
+    );
+    return content.length > 0 ? { type: "message", role: "user", content } : undefined;
+  }
+  return undefined;
 }
 
-function truncateAssistantMessages(messages: JsonRecord[]): JsonRecord[] {
+function truncateAssistantMessages(
+  messages: Array<ResponsesInputMessageItem | ResponsesOutputMessageItem>,
+): Array<ResponsesInputMessageItem | ResponsesOutputMessageItem> {
   let remaining = ASSISTANT_CONTEXT_TOKEN_BUDGET;
-  const result: JsonRecord[] = [];
+  const result: Array<ResponsesInputMessageItem | ResponsesOutputMessageItem> = [];
 
   for (const message of messages) {
     if (message.role !== "assistant" || !Array.isArray(message.content)) {
@@ -79,11 +100,9 @@ function truncateAssistantMessages(messages: JsonRecord[]): JsonRecord[] {
       continue;
     }
 
-    const content: JsonRecord[] = [];
-    for (const part of message.content.filter(isObject)) {
-      if (part.type !== "output_text" || !isString(part.text) || remaining === 0) {
-        continue;
-      }
+    const content: ResponsesOutputTextContent[] = [];
+    for (const part of message.content) {
+      if (part.type !== "output_text" || remaining === 0) continue;
       const tokens = approximateTokens(part.text);
       if (tokens <= remaining) {
         content.push(part);
@@ -96,14 +115,22 @@ function truncateAssistantMessages(messages: JsonRecord[]): JsonRecord[] {
         remaining = 0;
       }
     }
-    if (content.length > 0) result.push({ ...message, content });
+    if (content.length > 0) {
+      result.push({ ...message, content });
+    }
   }
   return result;
 }
 
 /** Build the same two-user-turn text tail used by standalone Codex search. */
-export function recentSearchInput(history: readonly ResponsesItem[]): JsonRecord[] | undefined {
-  const visible = history.map(visibleMessage).filter((item): item is JsonRecord => Boolean(item));
+export function recentSearchInput(
+  history: readonly ResponsesInputItem[],
+): Array<ResponsesInputMessageItem | ResponsesOutputMessageItem> | undefined {
+  const visible = history
+    .map(visibleMessage)
+    .filter((item): item is ResponsesInputMessageItem | ResponsesOutputMessageItem =>
+      Boolean(item),
+    );
   const latestUser = visible.findLastIndex((item) => item.role === "user");
   if (latestUser < 0) return undefined;
 

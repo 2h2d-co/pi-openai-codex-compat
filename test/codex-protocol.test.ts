@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import type { Api, Model } from "@earendil-works/pi-ai";
+import { Value } from "typebox/value";
 import {
   approximateTokens,
   collectRemoteCompaction,
@@ -9,12 +10,40 @@ import {
   remoteCompactionHeaders,
   remoteCompactionPayload,
   requestRemoteCompaction,
-  requireResponsesItems,
+  requireResponsesInputItems,
   selectRetainedContext,
   truncateMiddleWithTokenBudget,
   type JsonRecord,
-  type ResponsesItem,
 } from "../extensions/openai-codex-compat/codex-protocol.ts";
+import { captureRawEvents } from "../extensions/openai-codex-compat/codex-provider/codex-provider-response-attempts.ts";
+import type { CodexAttemptCapture } from "../extensions/openai-codex-compat/codex-provider/codex-provider-contracts.ts";
+import {
+  PI_INPUT_MESSAGE_ITEM_SCHEMA,
+  RESPONSES_ADDITIONAL_TOOLS_ITEM_SCHEMA,
+  RESPONSES_COMPACTION_ITEM_SCHEMA,
+  RESPONSES_COMPACTION_TRIGGER_ITEM_SCHEMA,
+  RESPONSES_CUSTOM_TOOL_CALL_ITEM_SCHEMA,
+  RESPONSES_CUSTOM_TOOL_CALL_OUTPUT_ITEM_SCHEMA,
+  RESPONSES_FUNCTION_CALL_ITEM_SCHEMA,
+  RESPONSES_FUNCTION_CALL_OUTPUT_ITEM_SCHEMA,
+  RESPONSES_IMAGE_GENERATION_CALL_ITEM_SCHEMA,
+  RESPONSES_INPUT_ITEM_SCHEMA,
+  RESPONSES_INPUT_MESSAGE_ITEM_SCHEMA,
+  RESPONSES_OUTPUT_ITEM_SCHEMA,
+  RESPONSES_OUTPUT_MESSAGE_ITEM_SCHEMA,
+  RESPONSES_REASONING_ITEM_SCHEMA,
+  RESPONSES_TOOL_SEARCH_CALL_ITEM_SCHEMA,
+  RESPONSES_TOOL_SEARCH_OUTPUT_ITEM_SCHEMA,
+  RESPONSES_WEB_SEARCH_CALL_ITEM_SCHEMA,
+  type ResponsesInputItem,
+} from "../extensions/openai-codex-compat/responses-item-schema.ts";
+import {
+  RESPONSES_CUSTOM_TOOL_DEFINITION_SCHEMA,
+  RESPONSES_FUNCTION_TOOL_DEFINITION_SCHEMA,
+  RESPONSES_NAMESPACE_TOOL_DEFINITION_SCHEMA,
+  RESPONSES_TOOL_DEFINITION_SCHEMA,
+  RESPONSES_WEB_SEARCH_TOOL_DEFINITION_SCHEMA,
+} from "../extensions/openai-codex-compat/responses-tool-schema.ts";
 
 const codexModel = {
   id: "gpt-test",
@@ -29,7 +58,7 @@ const codexModel = {
   maxTokens: 10_000,
 } satisfies Model<Api>;
 
-function user(text: string): ResponsesItem {
+function user(text: string): ResponsesInputItem {
   return { role: "user", content: [{ type: "input_text", text }] };
 }
 
@@ -42,6 +71,160 @@ function accessToken(): string {
   ).toString("base64url");
   return `${header}.${claims}.signature`;
 }
+
+test("validates each supported Responses item and tool family through closed unions", () => {
+  const functionTool = {
+    type: "function",
+    name: "read",
+    description: "Read a file",
+    parameters: { type: "object" },
+  };
+  const customTool = {
+    type: "custom",
+    name: "apply_patch",
+    description: "Apply a patch",
+    format: { type: "grammar", syntax: "lark", definition: "start: patch" },
+  };
+  const namespaceTool = {
+    type: "namespace",
+    name: "web",
+    description: "Web tools",
+    tools: [functionTool],
+  };
+  const webSearchTool = { type: "web_search", external_web_access: true };
+
+  for (const [schema, value] of [
+    [RESPONSES_FUNCTION_TOOL_DEFINITION_SCHEMA, functionTool],
+    [RESPONSES_CUSTOM_TOOL_DEFINITION_SCHEMA, customTool],
+    [RESPONSES_NAMESPACE_TOOL_DEFINITION_SCHEMA, namespaceTool],
+    [RESPONSES_WEB_SEARCH_TOOL_DEFINITION_SCHEMA, webSearchTool],
+  ] as const) {
+    assert.equal(Value.Check(schema, value), true);
+    assert.equal(Value.Check(RESPONSES_TOOL_DEFINITION_SCHEMA, value), true);
+  }
+
+  const outputItems = [
+    [
+      RESPONSES_OUTPUT_MESSAGE_ITEM_SCHEMA,
+      {
+        type: "message",
+        id: "msg_1",
+        role: "assistant",
+        content: [{ type: "output_text", text: "Done", annotations: [] }],
+        futureMetadata: true,
+      },
+    ],
+    [RESPONSES_REASONING_ITEM_SCHEMA, { type: "reasoning", summary: [], encrypted_content: null }],
+    [
+      RESPONSES_FUNCTION_CALL_ITEM_SCHEMA,
+      { type: "function_call", call_id: "call_1", name: "read", arguments: "{}" },
+    ],
+    [
+      RESPONSES_CUSTOM_TOOL_CALL_ITEM_SCHEMA,
+      { type: "custom_tool_call", call_id: "call_2", name: "apply_patch", input: "patch" },
+    ],
+    [
+      RESPONSES_TOOL_SEARCH_CALL_ITEM_SCHEMA,
+      {
+        type: "tool_search_call",
+        call_id: "search_1",
+        execution: "client",
+        arguments: { query: "read" },
+      },
+    ],
+    [
+      RESPONSES_TOOL_SEARCH_OUTPUT_ITEM_SCHEMA,
+      {
+        type: "tool_search_output",
+        call_id: "search_1",
+        execution: "client",
+        status: "completed",
+        tools: [functionTool],
+      },
+    ],
+    [RESPONSES_WEB_SEARCH_CALL_ITEM_SCHEMA, { type: "web_search_call", id: "ws_1" }],
+    [
+      RESPONSES_IMAGE_GENERATION_CALL_ITEM_SCHEMA,
+      {
+        type: "image_generation_call",
+        status: "completed",
+        result: "base64-image",
+      },
+    ],
+    [RESPONSES_COMPACTION_ITEM_SCHEMA, { type: "compaction", encrypted_content: "opaque" }],
+  ] as const;
+
+  for (const [schema, value] of outputItems) {
+    assert.equal(Value.Check(schema, value), true);
+    assert.equal(Value.Check(RESPONSES_OUTPUT_ITEM_SCHEMA, value), true);
+    assert.equal(Value.Check(RESPONSES_INPUT_ITEM_SCHEMA, value), true);
+  }
+
+  const inputOnlyItems = [
+    [PI_INPUT_MESSAGE_ITEM_SCHEMA, { role: "user", content: "Hello" }],
+    [
+      RESPONSES_INPUT_MESSAGE_ITEM_SCHEMA,
+      {
+        type: "message",
+        role: "developer",
+        content: [{ type: "input_text", text: "Instructions" }],
+      },
+    ],
+    [
+      RESPONSES_FUNCTION_CALL_OUTPUT_ITEM_SCHEMA,
+      { type: "function_call_output", call_id: "call_1", output: "done" },
+    ],
+    [
+      RESPONSES_CUSTOM_TOOL_CALL_OUTPUT_ITEM_SCHEMA,
+      { type: "custom_tool_call_output", call_id: "call_2", output: "done" },
+    ],
+    [
+      RESPONSES_ADDITIONAL_TOOLS_ITEM_SCHEMA,
+      { type: "additional_tools", role: "developer", tools: [namespaceTool] },
+    ],
+    [RESPONSES_COMPACTION_TRIGGER_ITEM_SCHEMA, { type: "compaction_trigger" }],
+  ] as const;
+
+  for (const [schema, value] of inputOnlyItems) {
+    assert.equal(Value.Check(schema, value), true);
+    assert.equal(Value.Check(RESPONSES_INPUT_ITEM_SCHEMA, value), true);
+    assert.equal(Value.Check(RESPONSES_OUTPUT_ITEM_SCHEMA, value), false);
+  }
+
+  assert.equal(Value.Check(RESPONSES_INPUT_ITEM_SCHEMA, { type: "future_item" }), false);
+  assert.equal(Value.Check(RESPONSES_OUTPUT_ITEM_SCHEMA, { type: "future_item" }), false);
+  assert.equal(
+    Value.Check(RESPONSES_OUTPUT_ITEM_SCHEMA, {
+      type: "function_call",
+      name: "read",
+      arguments: "{}",
+    }),
+    false,
+  );
+});
+
+test("fails closed on unknown completed output item variants", async () => {
+  const capture: CodexAttemptCapture = {
+    streamedItems: [],
+    streamedToolCallIndexes: new Set(),
+    streamedCompletedToolCallIndexes: new Set(),
+  };
+  const events: AsyncIterable<JsonRecord> = {
+    async *[Symbol.asyncIterator]() {
+      yield {
+        type: "response.output_item.done",
+        item: { type: "future_item", payload: "opaque" },
+      };
+    },
+  };
+
+  await assert.rejects(async () => {
+    for await (const _event of captureRawEvents(events, capture)) {
+      // Exhaust the validating stream.
+    }
+  }, /unsupported or malformed completed output item/);
+  assert.deepEqual(capture.streamedItems, []);
+});
 
 test("counts and retains context with Codex's four-byte approximation", () => {
   assert.equal(approximateTokens("abcd"), 1);
@@ -58,7 +241,7 @@ test("counts and retains context with Codex's four-byte approximation", () => {
     },
     user("b".repeat(12)),
     user("c".repeat(12)),
-  ] satisfies ResponsesItem[];
+  ] satisfies ResponsesInputItem[];
   assert.deepEqual(selectRetainedContext(history, 6), [user("b".repeat(12)), user("c".repeat(12))]);
 
   const boundary = selectRetainedContext([user("abcdefgh"), user("ijklmnop")], 3);
@@ -89,7 +272,7 @@ test("builds the remote-compaction-v2 request and checkpoint history", () => {
     priority: true,
   });
 
-  assert.deepEqual(requireResponsesItems(payload.input).at(-1), {
+  assert.deepEqual(requireResponsesInputItems(payload.input).at(-1), {
     type: "compaction_trigger",
   });
   assert.equal(payload.service_tier, "priority");
