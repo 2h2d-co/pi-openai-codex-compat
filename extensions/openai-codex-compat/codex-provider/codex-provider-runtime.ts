@@ -86,6 +86,7 @@ import type {
   CodexPostToolDisposition,
   CodexResponseDecision,
   CodexResponseRetryPolicy,
+  CodexTerminalCapture,
   CodexTerminalState,
   CompactionSessionManager,
   ConfigResolver,
@@ -918,7 +919,7 @@ export class CodexProviderRuntime {
           streamedToolCallIndexes: new Set(),
           streamedCompletedToolCallIndexes: new Set(),
         };
-        const terminalState: CodexTerminalState = {};
+        const terminalCapture: CodexTerminalCapture = {};
         const attemptState: CodexStreamAttemptState = {
           startedContentIndexes: new Set(),
           completedContentIndexes: new Set(),
@@ -932,7 +933,7 @@ export class CodexProviderRuntime {
               captureRawEvents(
                 this.transport.request(model, requestBody, transportRequestOptions),
                 attemptCapture,
-                terminalState,
+                terminalCapture,
               ),
               emitStart,
             ),
@@ -969,7 +970,8 @@ export class CodexProviderRuntime {
         // `response.output_item.done` is Codex's item-level commit point. Terminal
         // response.output snapshots are deliberately ignored.
         const attemptItems = attemptCapture.streamedItems;
-        if (terminalState.type) {
+        const terminalState: CodexTerminalState | undefined = terminalCapture.current;
+        if (terminalState) {
           const reason = terminalReason(terminalState);
           const nativeAttempt: NativeResponseAttempt = {
             itemCount: attemptItems.length,
@@ -979,7 +981,7 @@ export class CodexProviderRuntime {
           nativeAttempts.push(nativeAttempt);
         }
         const toolCalls = assessAttemptToolCalls(attemptItems, attemptCapture);
-        const incompleteDetails = isObject(terminalState.response?.["incomplete_details"])
+        const incompleteDetails = isObject(terminalState?.response?.["incomplete_details"])
           ? terminalState.response["incomplete_details"]
           : undefined;
         const incompleteReason = isString(incompleteDetails?.["reason"])
@@ -1011,7 +1013,7 @@ export class CodexProviderRuntime {
         // Return each done tool call before processing an unsuccessful response
         // terminal. Pi will execute the completed subset; started-only siblings
         // are discarded and never enter provider history.
-        if (toolCalls.hasCompletedCalls) {
+        if (toolCalls.completedCount > 0) {
           const callIds = completedAttemptToolCallIds(output, attemptState);
           if (callIds.length !== toolCalls.completedCount) {
             throw new Error("Codex completed tool-call items could not be mapped to Pi calls.");
@@ -1028,8 +1030,8 @@ export class CodexProviderRuntime {
               type: "retry",
             };
           } else if (
-            terminalState.type === "response.incomplete" ||
-            terminalState.type === "response.failed"
+            terminalState?.type === "response.incomplete" ||
+            terminalState?.type === "response.failed"
           ) {
             const retryable =
               terminalState.type === "response.incomplete" ||
@@ -1066,8 +1068,8 @@ export class CodexProviderRuntime {
         rawItems.push(...attemptItems.map((item) => structuredClone(item)));
         discardIncompleteAttemptContent(output, attemptState);
         const retryableTerminal =
-          terminalState.type === "response.incomplete" ||
-          (terminalState.type === "response.failed" &&
+          terminalState?.type === "response.incomplete" ||
+          (terminalState?.type === "response.failed" &&
             retryableResponseFailure(terminalState.response));
         if (
           (connectionLimitError || retryableTerminal) &&
@@ -1094,8 +1096,8 @@ export class CodexProviderRuntime {
         }
 
         if (
-          terminalState.type === "response.completed" &&
-          terminalState.response?.["end_turn"] === false
+          terminalState?.type === "response.completed" &&
+          terminalState.response["end_turn"] === false
         ) {
           const scope = runtimeSessionId ? this.scopes.get(runtimeSessionId) : undefined;
           if (reachedProviderCompactionThreshold(scope, output.usage, model)) {

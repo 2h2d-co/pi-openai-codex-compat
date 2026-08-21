@@ -2,6 +2,7 @@ import { isString } from "./value-contracts.ts";
 import { randomUUID } from "node:crypto";
 import type {
   BeforeProviderHeadersEvent,
+  CompactionResult,
   ContextEvent,
   ExtensionAPI,
   ExtensionContext,
@@ -13,7 +14,6 @@ import type {
   Model,
   OpenAICodexResponsesOptions,
   ProviderHeaders,
-  Usage,
 } from "@earendil-works/pi-ai";
 import { addRemoteCompactionFeature, isObject, type JsonRecord } from "./codex-protocol.ts";
 import {
@@ -61,16 +61,15 @@ export type RemoteCompactionHeadersHandler = (
   ctx: RemoteCompactionContext,
 ) => void;
 
-type RemoteCompactionHookResult = {
-  cancel?: boolean;
-  compaction?: {
-    summary: string;
-    firstKeptEntryId: string;
-    tokensBefore: number;
-    details?: unknown;
-    usage?: Usage;
-  };
-};
+type RemoteCompactionHookResult =
+  | {
+      cancel: true;
+      compaction?: never;
+    }
+  | {
+      cancel?: never;
+      compaction: CompactionResult;
+    };
 
 export type RemoteCompactionHookHandler = (
   event: {
@@ -291,7 +290,7 @@ export default function registerRemoteCompaction(
         },
       });
 
-      const compaction: NonNullable<RemoteCompactionHookResult["compaction"]> = {
+      const compaction: CompactionResult = {
         summary: markerSummary(),
         firstKeptEntryId: event.preparation.firstKeptEntryId,
         tokensBefore: event.preparation.tokensBefore,

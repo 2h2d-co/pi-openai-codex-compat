@@ -21,6 +21,7 @@ import type {
   CodexAttemptCapture,
   CodexPostToolDisposition,
   CodexResponseDecision,
+  CodexTerminalCapture,
   CodexTerminalState,
   CodexToolCallAssessment,
   RuntimeScope,
@@ -51,7 +52,6 @@ export function assessAttemptToolCalls(
   return {
     completedCount,
     discardedPartialCount,
-    hasCompletedCalls: completedCount > 0,
   };
 }
 
@@ -76,15 +76,15 @@ export function responseDecisionDiagnostic(options: {
   failureReason?: string;
   incompleteReason?: string;
   postToolDisposition?: "continue" | "error" | "retry";
-  terminalState: CodexTerminalState;
+  terminalState: CodexTerminalState | undefined;
   toolCalls: CodexToolCallAssessment;
 }): AssistantMessageDiagnostic | undefined {
-  const endTurn = isBoolean(options.terminalState.response?.["end_turn"])
+  const endTurn = isBoolean(options.terminalState?.response?.["end_turn"])
     ? options.terminalState.response["end_turn"]
     : undefined;
   const nontrivial =
     options.attempt > 1 ||
-    options.terminalState.type !== "response.completed" ||
+    options.terminalState?.type !== "response.completed" ||
     options.failureReason !== undefined ||
     endTurn === false ||
     options.capture.streamedToolCallIndexes.size > 0;
@@ -92,7 +92,7 @@ export function responseDecisionDiagnostic(options: {
 
   const details: JsonRecord = {
     attempt: options.attempt,
-    terminalType: options.failureReason ?? options.terminalState.type ?? "missing",
+    terminalType: options.failureReason ?? options.terminalState?.type ?? "missing",
     outputItemTypes: outputItemTypeCounts(options.attemptItems),
     streamedCallsStarted: options.capture.streamedToolCallIndexes.size,
     streamedCallsDone: options.capture.streamedCompletedToolCallIndexes.size,
@@ -115,7 +115,7 @@ export function responseDecisionDiagnostic(options: {
 export function captureRawEvents(
   events: AsyncIterable<JsonRecord>,
   capture: CodexAttemptCapture,
-  terminalState?: CodexTerminalState,
+  terminalCapture?: CodexTerminalCapture,
 ): AsyncIterable<JsonRecord> {
   return {
     async *[Symbol.asyncIterator]() {
@@ -140,16 +140,20 @@ export function captureRawEvents(
           }
         }
         if (
-          terminalState &&
+          terminalCapture &&
           (event.type === "response.completed" ||
             event.type === "response.incomplete" ||
             event.type === "response.failed")
         ) {
-          terminalState.type = event.type;
           if (isObject(event.response)) {
-            terminalState.response = structuredClone(event.response);
+            terminalCapture.current = {
+              type: event.type,
+              response: structuredClone(event.response),
+            };
+          } else if (event.type === "response.failed") {
+            terminalCapture.current = { type: event.type };
           } else {
-            delete terminalState.response;
+            delete terminalCapture.current;
           }
         }
         yield event;
@@ -256,15 +260,15 @@ export function retryableResponseFailure(response: JsonRecord | undefined): bool
   );
 }
 
-export function terminalReason(terminalState: CodexTerminalState): string | undefined {
-  if (terminalState.type === "response.failed") {
+export function terminalReason(terminalState: CodexTerminalState | undefined): string | undefined {
+  if (terminalState?.type === "response.failed") {
     const error = isObject(terminalState.response?.["error"])
       ? terminalState.response["error"]
       : undefined;
     return isString(error?.["code"]) ? error["code"] : undefined;
   }
-  if (terminalState.type === "response.incomplete") {
-    const details = isObject(terminalState.response?.["incomplete_details"])
+  if (terminalState?.type === "response.incomplete") {
+    const details = isObject(terminalState.response["incomplete_details"])
       ? terminalState.response["incomplete_details"]
       : undefined;
     return isString(details?.["reason"]) ? details["reason"] : undefined;

@@ -24,8 +24,7 @@ import { CODEX_NAMESPACED_TOOL_NAMES, namespacedToolCallName } from "./namespace
 
 type GrammarJsonBuffer = {
   input: string;
-  started: boolean;
-  closed: boolean;
+  phase: "pending" | "streaming" | "closed";
 };
 
 type StreamingToolCall = ToolCall & {
@@ -93,7 +92,7 @@ function appendGrammarDelta(
   nextInput: string,
   close: boolean,
 ): string | undefined {
-  if (buffer.closed) {
+  if (buffer.phase === "closed") {
     if (close && nextInput === buffer.input) return undefined;
     throw new Error(`grammar tool input for property "${property}" changed after it was closed`);
   }
@@ -104,15 +103,15 @@ function appendGrammarDelta(
   if (!close && inputDelta.length === 0) return undefined;
 
   let delta = "";
-  if (!buffer.started) {
+  if (buffer.phase === "pending") {
     delta = `{${JSON.stringify(property)}:"`;
-    buffer.started = true;
+    buffer.phase = "streaming";
   }
   delta += JSON.stringify(inputDelta).slice(1, -1);
   buffer.input = nextInput;
   if (close) {
     delta += '"}';
-    buffer.closed = true;
+    buffer.phase = "closed";
   }
   return delta;
 }
@@ -293,7 +292,7 @@ export async function processCodexStream(
         arguments: { [property]: input },
         customInput: {
           property,
-          jsonBuffer: { input: "", started: false, closed: false },
+          jsonBuffer: { input: "", phase: "pending" },
         },
       };
       output.content.push(block);

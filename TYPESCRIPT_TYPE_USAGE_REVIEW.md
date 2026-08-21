@@ -332,11 +332,11 @@ tuple-first declarations prevent the drift structurally.
 
 ### 6. Remaining impossible-state objects
 
-**Status:** Pending
+**Status:** Completed
 
 **Priority:** Low-medium
 
-Some objects still permit combinations the implementation does not produce:
+Some objects permitted combinations the implementation does not produce:
 
 - `RemoteCompactionHookResult` can contain both `cancel` and `compaction`.
 - `CodexTerminalState` can contain `response` without `type`.
@@ -346,8 +346,18 @@ Some objects still permit combinations the implementation does not produce:
 
 Prioritize returned result contracts over temporary mutable accumulator state.
 
-**Oxlint checkpoint:** Likely better handled through domain modeling than a
-syntax rule, but discuss after the refactor.
+**Outcome:** The remote-compaction hook now returns mutually exclusive cancel
+or Pi-native `CompactionResult` branches. Terminal capture is separate from
+the terminal-state discriminated union, so a response cannot exist without its
+terminal event type and completed or incomplete states always carry their
+response. Tool-call assessment retains only the canonical count instead of a
+derived boolean. The mutable grammar buffer uses one lifecycle phase instead
+of contradictory `started` and `closed` booleans.
+
+**Oxlint checkpoint:** No additional rule. Optional properties, multiple
+booleans, and derived fields are each legitimate in other contexts. Detecting
+whether their combinations represent impossible domain states requires
+semantic knowledge that a syntax rule cannot infer reliably.
 
 ### 7. Selective primitive branding
 

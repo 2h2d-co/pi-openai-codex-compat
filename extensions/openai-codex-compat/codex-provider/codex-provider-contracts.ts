@@ -56,9 +56,18 @@ export type ActiveAgentTurn = {
   turnState: CodexTurnState;
 };
 
-export type CodexTerminalState = {
-  type?: "response.completed" | "response.incomplete" | "response.failed";
-  response?: JsonRecord;
+export type CodexTerminalState =
+  | {
+      type: "response.completed" | "response.incomplete";
+      response: JsonRecord;
+    }
+  | {
+      type: "response.failed";
+      response?: JsonRecord;
+    };
+
+export type CodexTerminalCapture = {
+  current?: CodexTerminalState;
 };
 
 export type CodexAttemptCapture = {
@@ -70,7 +79,6 @@ export type CodexAttemptCapture = {
 export type CodexToolCallAssessment = {
   completedCount: number;
   discardedPartialCount: number;
-  hasCompletedCalls: boolean;
 };
 
 export type CodexPostToolDisposition = {

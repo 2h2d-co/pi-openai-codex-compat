@@ -16,7 +16,10 @@ import {
   type JsonRecord,
 } from "../extensions/openai-codex-compat/codex-protocol.ts";
 import { captureRawEvents } from "../extensions/openai-codex-compat/codex-provider/codex-provider-response-attempts.ts";
-import type { CodexAttemptCapture } from "../extensions/openai-codex-compat/codex-provider/codex-provider-contracts.ts";
+import type {
+  CodexAttemptCapture,
+  CodexTerminalCapture,
+} from "../extensions/openai-codex-compat/codex-provider/codex-provider-contracts.ts";
 import {
   PI_INPUT_MESSAGE_ITEM_SCHEMA,
   RESPONSES_ADDITIONAL_TOOLS_ITEM_SCHEMA,
@@ -224,6 +227,38 @@ test("fails closed on unknown completed output item variants", async () => {
     }
   }, /unsupported or malformed completed output item/);
   assert.deepEqual(capture.streamedItems, []);
+});
+
+test("captures only complete terminal-state combinations", async () => {
+  const capture: CodexAttemptCapture = {
+    streamedItems: [],
+    streamedToolCallIndexes: new Set(),
+    streamedCompletedToolCallIndexes: new Set(),
+  };
+  const terminalCapture: CodexTerminalCapture = {};
+  const events: AsyncIterable<JsonRecord> = {
+    async *[Symbol.asyncIterator]() {
+      yield {
+        type: "response.completed",
+        response: { status: "completed" },
+      };
+      yield { type: "response.incomplete" };
+      yield { type: "response.failed" };
+    },
+  };
+  const iterator = captureRawEvents(events, capture, terminalCapture)[Symbol.asyncIterator]();
+
+  await iterator.next();
+  assert.deepEqual(terminalCapture.current, {
+    type: "response.completed",
+    response: { status: "completed" },
+  });
+
+  await iterator.next();
+  assert.equal(terminalCapture.current, undefined);
+
+  await iterator.next();
+  assert.deepEqual(terminalCapture.current, { type: "response.failed" });
 });
 
 test("counts and retains context with Codex's four-byte approximation", () => {
