@@ -182,7 +182,7 @@ test("explains every no-op and dead operation to the model and TUI", async (t) =
       "*** Update File: same-content.txt\n@@\n- value\n+value\n",
       "*** Update File: same-content.txt\n*** Move to: same-content.txt\n",
       "*** Update File: move-source.txt\n*** Move to: move-destination.txt\n",
-      "*** Update File: move-source.txt\n*** Move to: move-destination.txt\n",
+      "*** Update File: move-source.txt\n*** Move to: move-destination.txt\n@@\n-move\n+move\n",
       "*** Update File: dead-delete.txt\n@@\n-missing\n+ignored\n",
       "*** Delete File: dead-delete.txt\n",
       "*** Update File: dead-add.txt\n@@\n-missing\n+ignored\n",

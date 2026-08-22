@@ -949,6 +949,7 @@ export class SemanticPlanner {
         if (move) {
           await this.planPureMove(move, instructionIndex);
         } else {
+          await this.validatePureMoveChunks(operation, await this.stateAt(operation.absolutePath));
           this.markNoOp(instructionIndex, "same-entry-move");
         }
       } else {
@@ -1208,12 +1209,13 @@ export class SemanticPlanner {
     const moveTo = operation.moveTo;
     const sourceKey = await this.pathKey(operation.absolutePath);
     const destinationKey = await this.pathKey(destinationPath);
+    const source = await this.stateAt(operation.absolutePath);
     if (sourceKey === destinationKey) {
+      await this.validatePureMoveChunks(operation, source);
       if (operation.absolutePath === destinationPath) {
         this.markNoOp(instructionIndex, "same-entry-move");
         return;
       }
-      const source = await this.stateAt(operation.absolutePath);
       if (
         (source.kind === "regular" || source.kind === "symlink") &&
         this.virtualSpellingSatisfied(source.entryPath, destinationPath)
@@ -1265,7 +1267,6 @@ export class SemanticPlanner {
       return;
     }
 
-    const source = await this.stateAt(operation.absolutePath);
     if (source.kind === "absent") {
       const fulfilled = this.fulfilledMoves.get(sourceKey);
       const destination = await this.stateAt(destinationPath);
@@ -1274,6 +1275,7 @@ export class SemanticPlanner {
         (destination.kind === "regular" || destination.kind === "symlink") &&
         fulfilled.destinationEntryId === destination.id
       ) {
+        await this.validatePureMoveChunks(operation, destination);
         requiredValue(
           this.instructions[instructionIndex],
           "The fulfilled move instruction is missing.",
@@ -1289,6 +1291,7 @@ export class SemanticPlanner {
         `Failed to move ${operation.absolutePath}: source is ${source.kind === "directory" ? "a directory" : `a ${source.entryType}`}`,
       );
     }
+    await this.validatePureMoveChunks(operation, source);
 
     const expectedDestination = await this.stateAt(destinationPath);
     if (expectedDestination.kind === "directory" || expectedDestination.kind === "unsupported") {
@@ -1395,5 +1398,26 @@ export class SemanticPlanner {
       destinationEntryId: resultingEntry.id,
       instruction: instructionIndex + 1,
     });
+  }
+
+  private async validatePureMoveChunks(
+    operation: ResolvedMoveUpdateOperation,
+    source: VirtualEntry,
+  ): Promise<void> {
+    if (operation.chunks.length === 0) return;
+    if (source.kind !== "regular" && source.kind !== "symlink") {
+      const description =
+        source.kind === "absent"
+          ? "path does not exist"
+          : source.kind === "unsupported"
+            ? `path is a ${source.entryType}`
+            : "path is a directory";
+      throw new Error(`Failed to read file to update ${operation.absolutePath}: ${description}`);
+    }
+    const oldContent = await this.readText(source, operation.absolutePath);
+    deriveNewContent(oldContent, operation.chunks, operation.absolutePath, this.signal);
+    // Identity chunks constrain eligibility only; the pure move retains the
+    // original entry and bytes even when a non-exact official tier matched.
+    source.content.planned = true;
   }
 }

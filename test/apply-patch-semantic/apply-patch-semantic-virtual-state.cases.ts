@@ -3,6 +3,8 @@ import { APPLY_PATCH_DETAILS_SCHEMA } from "../../extensions/openai-codex-compat
 import {
   assert,
   chmod,
+  link,
+  lstat,
   mkdir,
   readFile,
   readlink,
@@ -36,10 +38,8 @@ test("moves opaque regular files without decoding or changing bytes", async (t) 
   for (const [name, bytes] of fixtures) await writeFile(join(cwd, name), bytes);
   await chmod(join(cwd, "invalid.bin"), 0o755);
 
-  const operations = [...fixtures.keys()].map((name) =>
-    name === "identity.bin"
-      ? `*** Update File: ${name}\n*** Move to: moved/${name}\n@@\n-same\n+same\n`
-      : `*** Update File: ${name}\n*** Move to: moved/${name}\n`,
+  const operations = [...fixtures.keys()].map(
+    (name) => `*** Update File: ${name}\n*** Move to: moved/${name}\n`,
   );
   const details = await applyPatch(cwd, patch(...operations));
 
@@ -51,6 +51,170 @@ test("moves opaque regular files without decoding or changing bytes", async (t) 
     await assertMissing(join(cwd, name));
   }
   assert.equal((await stat(join(cwd, "moved", "invalid.bin"))).mode & 0o777, 0o755);
+});
+
+test("validates supplied identity and context chunks before pure moves", async (t) => {
+  const cwd = await workspace(t);
+
+  await writeFile(join(cwd, "valid-identity.txt"), "expected   \n");
+  const identityBefore = await lstat(join(cwd, "valid-identity.txt"));
+  const identityDetails = await applyPatch(
+    cwd,
+    patch(
+      "*** Update File: valid-identity.txt\n",
+      "*** Move to: moved/valid-identity.txt\n",
+      "@@\n",
+      "-expected\n",
+      "+expected\n",
+    ),
+  );
+  assert.equal(identityDetails.changes[0]?.kind, "move");
+  assert.equal(await readFile(join(cwd, "moved", "valid-identity.txt"), "utf8"), "expected   \n");
+  assert.equal((await lstat(join(cwd, "moved", "valid-identity.txt"))).ino, identityBefore.ino);
+
+  await writeFile(join(cwd, "stale-identity.txt"), "unexpected\n");
+  await assert.rejects(
+    applyPatch(
+      cwd,
+      patch(
+        "*** Update File: stale-identity.txt\n",
+        "*** Move to: moved/stale-identity.txt\n",
+        "@@\n",
+        "-expected\n",
+        "+expected\n",
+      ),
+    ),
+    (error: unknown) => {
+      assert.ok(error instanceof ApplyPatchVerificationError);
+      assert.match(error.message, /Failed to find expected lines/u);
+      return true;
+    },
+  );
+  assert.equal(await readFile(join(cwd, "stale-identity.txt"), "utf8"), "unexpected\n");
+  await assertMissing(join(cwd, "moved", "stale-identity.txt"));
+
+  await writeFile(join(cwd, "context-source.txt"), "header\nmarker\nbody\n");
+  await applyPatch(
+    cwd,
+    patch(
+      "*** Update File: context-source.txt\n",
+      "*** Move to: context-destination.txt\n",
+      "@@ marker\n",
+    ),
+  );
+  assert.equal(
+    await readFile(join(cwd, "context-destination.txt"), "utf8"),
+    "header\nmarker\nbody\n",
+  );
+
+  await writeFile(join(cwd, "stale-context.txt"), "header\nbody\n");
+  await assert.rejects(
+    applyPatch(
+      cwd,
+      patch(
+        "*** Update File: stale-context.txt\n",
+        "*** Move to: stale-context-destination.txt\n",
+        "@@ missing\n",
+      ),
+    ),
+    /Failed to find context/u,
+  );
+  assert.equal(await readFile(join(cwd, "stale-context.txt"), "utf8"), "header\nbody\n");
+  await assertMissing(join(cwd, "stale-context-destination.txt"));
+
+  await writeFile(join(cwd, "same-path.txt"), "unexpected\n");
+  await assert.rejects(
+    applyPatch(
+      cwd,
+      patch(
+        "*** Update File: same-path.txt\n",
+        "*** Move to: same-path.txt\n",
+        "@@\n",
+        "-expected\n",
+        "+expected\n",
+      ),
+    ),
+    /Failed to find expected lines/u,
+  );
+  assert.equal(await readFile(join(cwd, "same-path.txt"), "utf8"), "unexpected\n");
+
+  await writeFile(join(cwd, "fulfilled-source.txt"), "actual\n");
+  await assert.rejects(
+    applyPatch(
+      cwd,
+      patch(
+        "*** Update File: fulfilled-source.txt\n",
+        "*** Move to: fulfilled-destination.txt\n",
+        "*** Update File: fulfilled-source.txt\n",
+        "*** Move to: fulfilled-destination.txt\n",
+        "@@\n",
+        "-expected\n",
+        "+expected\n",
+      ),
+    ),
+    /Failed to find expected lines/u,
+  );
+  assert.equal(await readFile(join(cwd, "fulfilled-source.txt"), "utf8"), "actual\n");
+  await assertMissing(join(cwd, "fulfilled-destination.txt"));
+});
+
+test("requires text for supplied move chunks while keeping chunkless moves opaque", async (t) => {
+  const cwd = await workspace(t);
+  await writeFile(join(cwd, "opaque.bin"), Buffer.from([0xff, 0x00, 0xfe]));
+  await assert.rejects(
+    applyPatch(cwd, patch("*** Update File: opaque.bin\n*** Move to: rejected.bin\n@@\n")),
+    /encoded data was not valid/u,
+  );
+  assert.deepEqual(await readFile(join(cwd, "opaque.bin")), Buffer.from([0xff, 0x00, 0xfe]));
+  await assertMissing(join(cwd, "rejected.bin"));
+
+  await applyPatch(cwd, patch("*** Update File: opaque.bin\n*** Move to: accepted.bin\n"));
+  assert.deepEqual(await readFile(join(cwd, "accepted.bin")), Buffer.from([0xff, 0x00, 0xfe]));
+  await assertMissing(join(cwd, "opaque.bin"));
+
+  await writeFile(join(cwd, "blank-text.txt"), "text without newline");
+  await applyPatch(
+    cwd,
+    patch("*** Update File: blank-text.txt\n*** Move to: blank-text-moved.txt\n@@\n"),
+  );
+  assert.equal(await readFile(join(cwd, "blank-text-moved.txt"), "utf8"), "text without newline");
+});
+
+test("preserves symlink and hard-link topology after identity-chunk validation", async (t) => {
+  const cwd = await workspace(t);
+
+  await writeFile(join(cwd, "symlink-target.txt"), "expected\n");
+  await symlink("symlink-target.txt", join(cwd, "source-link.txt"));
+  await applyPatch(
+    cwd,
+    patch(
+      "*** Update File: source-link.txt\n",
+      "*** Move to: destination-link.txt\n",
+      "@@\n",
+      "-expected\n",
+      "+expected\n",
+    ),
+  );
+  await assertMissing(join(cwd, "source-link.txt"));
+  assert.equal(await readlink(join(cwd, "destination-link.txt")), "symlink-target.txt");
+  assert.equal(await readFile(join(cwd, "symlink-target.txt"), "utf8"), "expected\n");
+
+  await writeFile(join(cwd, "hard-source.txt"), "expected\n");
+  await link(join(cwd, "hard-source.txt"), join(cwd, "hard-peer.txt"));
+  const hardPeerBefore = await lstat(join(cwd, "hard-peer.txt"));
+  await applyPatch(
+    cwd,
+    patch(
+      "*** Update File: hard-source.txt\n",
+      "*** Move to: hard-destination.txt\n",
+      "@@\n",
+      "-expected\n",
+      "+expected\n",
+    ),
+  );
+  await assertMissing(join(cwd, "hard-source.txt"));
+  assert.equal((await lstat(join(cwd, "hard-destination.txt"))).ino, hardPeerBefore.ino);
+  assert.equal(await readFile(join(cwd, "hard-peer.txt"), "utf8"), "expected\n");
 });
 
 test("moves symlink entries and reports both replacement entry types", async (t) => {

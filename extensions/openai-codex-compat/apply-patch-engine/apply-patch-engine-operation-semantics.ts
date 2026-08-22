@@ -64,6 +64,13 @@ export function resolvedUpdateHasMove(
   return operation.moveAbsolutePath !== undefined;
 }
 
+export function updateRequiresTextValidation(operation: ResolvedUpdateOperation): boolean {
+  return (
+    !chunksAreIdentity(operation.chunks) ||
+    (resolvedUpdateHasMove(operation) && operation.chunks.length > 0)
+  );
+}
+
 export function semanticMoveOperation(
   operation: ResolvedUpdateOperation,
 ): ResolvedMoveUpdateOperation | undefined {

@@ -299,6 +299,7 @@ Compatibility behavior:
 - `*** Move to` overwrites an existing destination, matching Codex.
 - Hunk matching retries exact text, trailing-whitespace-insensitive text, fully trimmed text, and Codex's Unicode punctuation normalization.
 - Matching stops after the official Codex-compatible line matcher. There is no Tree-sitter, Markdown-table, code-fence, formatter-reflow, candidate-ranking, or output-equivalence fallback.
+- Move identity and context chunks must match before the entry is moved; chunkless moves remain byte-opaque.
 - The parser accepts Codex's lenient marker whitespace, blank update-context lines, and direct heredoc wrappers.
 - Empty and identity updates, identical adds, absent deletes, self-moves, and same-patch fulfilled moves succeed with concise `NO CHANGE` results. Inapplicable operations are `SKIPPED` only when later operations deterministically make every effect unobservable.
 - Model-facing results retain the aggregate A/M/D summary. When any instruction is not applied or an applied instruction has feedback, they list every source-ordered instruction under `Patch instruction results:` as `N. [STATUS] operation`, without an instruction limit; ordinary all-applied results omit the ledger.
@@ -317,6 +318,7 @@ Filesystem behavior:
 - Text updates follow live symlinks; adds replace live or dangling symlinks without writing through them; deletes remove only the symlink; pure moves move the source symlink; and state-changing moves create a regular file at the destination without writing updated text through a source or destination symlink.
 - Entry-only operations and no-op updates do not dereference cyclic or inaccessible symlink targets during mutation-queue acquisition.
 - Same-filesystem pure moves use native rename topology. Cross-filesystem moves copy through a temporary entry, create or replace the destination, and then unlink the source, producing an inode independent from remaining source hard links.
+- Supplied identity or context chunks validate a pure move through the text matcher without rewriting the moved entry. A blank `@@` therefore requires valid UTF-8; omit chunks for arbitrary binary content.
 - Strict edits preserve the matched region's local CRLF or mixed line endings.
 - The extension does not add path filtering, sandboxing, or approval prompts.
 - Every hunk is parsed and validated before filesystem writes begin.

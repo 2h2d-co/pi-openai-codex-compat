@@ -4,7 +4,7 @@ import { withFileMutationQueue } from "@earendil-works/pi-coding-agent";
 import { requiredValue } from "../required-value.ts";
 import type { ResolvedOperation } from "./apply-patch-engine-contracts.ts";
 import { hasErrorCode, isNotFound } from "./apply-patch-engine-errors.ts";
-import { chunksAreIdentity } from "./apply-patch-engine-operation-semantics.ts";
+import { updateRequiresTextValidation } from "./apply-patch-engine-operation-semantics.ts";
 import {
   directoryIsCaseInsensitive,
   namesAlias,
@@ -112,7 +112,7 @@ export function mutationQueueTargets(
     const targets: MutationQueueTarget[] = [
       {
         path: operation.absolutePath,
-        followSymlink: !chunksAreIdentity(operation.chunks),
+        followSymlink: updateRequiresTextValidation(operation),
       },
     ];
     if (operation.moveAbsolutePath) {

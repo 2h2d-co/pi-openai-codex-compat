@@ -6,9 +6,10 @@ Formatter-tolerant matching has been removed permanently. Text updates now use
 only the official Codex-compatible exact, trailing-trim, full-trim, and Unicode
 matcher.
 
-The matching incident that initiated this review is closed. Four independent
-semantic and execution findings remain open. This document tracks only those
-findings and their approval-gated implementation work.
+The matching incident that initiated this review is closed. S-001 is
+implemented and verified. Three independent semantic and execution findings
+remain open. This document tracks those findings and their approval-gated
+implementation work.
 
 No open work described here has been approved for implementation. Before
 starting a workstream:
@@ -59,17 +60,17 @@ Strict-matcher regressions cover the four tiers, tier priority, first-location
 selection, anchors, intervening lines, pure additions, EOF, trailing-newline
 sentinels, and local CRLF preservation.
 
-## Open findings
+## Findings
 
 ### S-001 — Identity chunks on a move are not validated
 
 **Severity:** High
 
-**Status:** Confirmed; implementation not approved
+**Status:** Implemented and verified
 
-An update-and-move whose old and replacement sequences are structurally
-identical is treated as an opaque pure move. Supplied context and expected
-content are not matched.
+Before the correction, an update-and-move whose old and replacement sequences
+were structurally identical was treated as an opaque pure move. Supplied
+context and expected content were not matched.
 
 Example:
 
@@ -85,15 +86,15 @@ patch:
 +expected
 ```
 
-Current result: `unexpected` is moved successfully.
+Previous result: `unexpected` was moved successfully.
 
-Required correction:
+Implemented correction:
 
 - only a move with no chunks may bypass text validation;
 - supplied identity or context chunks must validate source preconditions; and
 - chunkless moves must remain byte-opaque and binary-safe.
 
-Required tests:
+Validation:
 
 - stale identity chunks reject without moving the source;
 - valid identity chunks permit the move;
@@ -206,14 +207,20 @@ Required tests:
 
 ### Workstream 1 — Move preconditions and virtual add state
 
-**Status:** Planned; not approved
+**Status:** Partially implemented; S-004 remains not approved
 
-Scope:
+Completed scope:
 
-- implement S-001 and S-004;
-- preserve chunkless opaque moves;
-- update semantic and feedback documentation; and
-- add the required regressions.
+- implemented S-001;
+- preserved chunkless opaque moves;
+- updated the semantic and user-facing documentation while retaining the
+  existing feedback format; and
+- added the required S-001 regressions.
+
+Remaining scope:
+
+- implement S-004 only after separate approval; and
+- update its semantic and feedback documentation and regressions.
 
 Completion criteria:
 
@@ -263,6 +270,12 @@ The permanent strict-matching cleanup passed:
 The full suite included the existing symlink, hard-link, repeated-path,
 same-filesystem move, and cross-filesystem move coverage.
 
+The S-001 correction passed:
+
+- all 45 semantic-planner and execution tests;
+- 289 full-suite tests, with 287 passed and 2 live tests skipped; and
+- `npm run check`.
+
 ## Decision log
 
 | Date       | Decision                                                   | Rationale                                                                                            |
@@ -270,3 +283,4 @@ same-filesystem move, and cross-filesystem move coverage.
 | 2026-08-20 | Disable formatter-tolerant mutation after strict failure.  | Immediate containment prevented the unsafe fallback from writing.                                    |
 | 2026-08-20 | Remove formatter-tolerant matching permanently.            | Strict Codex compatibility provides one source-traceable eligibility path.                           |
 | 2026-08-22 | Retain only unresolved semantic and execution safety work. | Completed trackers and superseded matcher redesign plans duplicated current normative documentation. |
+| 2026-08-23 | Validate supplied chunks before pure moves.                | Text preconditions now constrain moves while chunkless syntax preserves opaque entry semantics.      |

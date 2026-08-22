@@ -21,7 +21,8 @@ The objective is semantic correctness, not pedantic tool-call validation:
 ## Dictionary
 
 - **Directory entry:** A named filesystem entry such as a regular file or
-  symlink. A pure move operates on this entry, not on decoded text.
+  symlink. A pure move operates on this entry rather than rewriting decoded
+  text; supplied text chunks can still constrain whether the move is valid.
 - **Dominating operation:** A later operation that unconditionally determines
   a path's state, making an earlier result at that path irrelevant.
 - **Dead operation:** An operation whose removal provably leaves the same final
@@ -191,10 +192,14 @@ Each operation is classified as one of:
 
 Any conflict rejects the complete patch without writes.
 
-### 6. Content is decoded only when content is edited
+### 6. Content is decoded only when edited or explicitly constrained
 
-A pure move is byte-opaque. It MUST NOT decode, normalize, hash, diff, or
-rewrite file contents merely to move the entry.
+A chunkless pure move is byte-opaque. It MUST NOT decode, normalize, hash,
+diff, or rewrite file contents merely to move the entry.
+
+A pure move with supplied identity or context chunks decodes the applicable
+text target only to validate those chunks. Successful validation does not
+rewrite, normalize, or otherwise transform the moved entry.
 
 A state-changing update chunk is a line-oriented text operation and therefore
 continues to require valid UTF-8.
@@ -345,7 +350,7 @@ It has these postconditions:
 - the same entry is present at the destination, replacing an existing
   destination according to established overwrite semantics.
 
-Pure moves:
+Chunkless pure moves:
 
 - MUST support arbitrary regular-file bytes, including invalid UTF-8, NUL
   bytes, empty files, BOMs, CRLF, CR, mixed line endings, and files without a
@@ -395,8 +400,24 @@ links retain the original inode.
 If all supplied chunks are structurally identity-only, they have no content
 effect. An accompanying move is therefore treated as a pure move.
 
-The implementation MUST NOT force a byte-opaque file through UTF-8 decoding
-solely to validate chunks that cannot alter its contents.
+Supplied chunks are nevertheless text preconditions:
+
+1. the applicable source text must be valid UTF-8;
+2. every `@@` context and old-line sequence must match through the
+   official-compatible exact, trailing-trim, full-trim, and Unicode tiers;
+3. a mismatch rejects the complete patch before writes; and
+4. successful validation moves the original entry without applying the
+   matcher's derived replacement text.
+
+This includes blank `@@` chunks: they require a valid textual source even
+though they contain no useful content assertion. A model that intends an
+opaque move must use chunkless move syntax.
+
+For a source symlink, validation follows its text target while successful
+execution still moves the symlink entry. For a source hard link, validation
+reads the shared file while successful execution preserves normal pure-move
+hard-link topology. Same-entry and same-patch fulfilled moves validate their
+supplied chunks before producing a no-change result.
 
 ### Move with state-changing chunks
 
@@ -785,7 +806,9 @@ load or serialize bytes merely to move them.
 
 Text decoding is lazy:
 
-- pure move, delete, and unconditional overwrite do not decode;
+- chunkless pure moves, deletes, and unconditional overwrites do not decode;
+- pure moves with supplied identity or context chunks decode only to validate
+  their text preconditions;
 - a state-changing text update decodes only the entry it consumes; and
 - a moved opaque entry remains opaque until a later operation genuinely needs
   its text.
@@ -797,11 +820,12 @@ symlink-parent, and physical hard-link aliases. Distinct hard-link
 directory entries retain distinct entry keys while sharing a physical inode
 key. Queue acquisition order MUST be deterministic to avoid deadlocks.
 
-Queue identity is operation-aware. Entry-only adds, deletes, identity updates,
-and pure moves MUST NOT dereference a symlink target merely to choose a
-queue key. State-changing text updates do acquire the physical identity of a
-live regular-file target. Cyclic, dangling, or inaccessible targets are left
-for semantic preflight so entry-only operations and no-ops remain valid.
+Queue identity is operation-aware. Entry-only adds, deletes, identity updates
+without a move, and chunkless pure moves MUST NOT dereference a symlink target
+merely to choose a queue key. State-changing text updates and pure moves with
+supplied chunks do acquire the physical identity of a live regular-file
+target. Cyclic, dangling, or inaccessible targets are left for semantic
+preflight so genuinely entry-only operations and no-ops remain valid.
 
 Both queues are in-memory and process-local. They coordinate concurrent
 `apply_patch` calls sharing one Pi process and module instance. They do not
@@ -987,7 +1011,8 @@ These differences do not authorize:
 - empty update without move parses as no-op;
 - move-only update parses as pure move;
 - identity chunks without move classify as no-op;
-- identity chunks with move classify as pure move;
+- identity chunks with move validate their text preconditions and then
+  classify as pure move;
 - state-changing chunks classify as text update;
 - repeated and aliased paths parse without blanket rejection.
 
@@ -1121,7 +1146,8 @@ The implementation is complete when:
 2. harmless operations no longer reject an otherwise semantically correct
    patch;
 3. conflicts are detected before writes;
-4. pure moves never decode or transform file bytes;
+4. chunkless pure moves never decode file bytes, while identity-chunk pure
+   moves decode only for validation and never transform the moved entry;
 5. binary, text, empty, symlink, and chained pure moves follow the documented
    semantics;
 6. repeated paths are handled through ordered virtual state;

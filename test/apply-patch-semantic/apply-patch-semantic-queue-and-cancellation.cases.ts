@@ -5,6 +5,7 @@ import {
   lstat,
   mkdir,
   readFile,
+  readlink,
   readdir,
   rm,
   symlink,
@@ -298,6 +299,55 @@ test("serializes same-process filesystem aliases with deterministic logical keys
   ]);
   assert.equal(await readFile(join(cwd, "order-a.txt"), "utf8"), "a2\n");
   assert.equal(await readFile(join(cwd, "order-b.txt"), "utf8"), "b2\n");
+});
+
+test("queues identity-chunk moves with the symlink target they validate", async (t) => {
+  const cwd = await workspace(t);
+  await writeFile(join(cwd, "identity-target.txt"), "before\n");
+  await symlink("identity-target.txt", join(cwd, "identity-source-link.txt"));
+
+  const targetUpdateStarted = deferred();
+  const releaseTargetUpdate = deferred();
+  let identityMoveStarted = false;
+  const targetUpdate = applyPatch(
+    cwd,
+    patch("*** Update File: identity-target.txt\n@@\n-before\n+after\n"),
+    undefined,
+    {
+      async onExecutionStart() {
+        targetUpdateStarted.resolve();
+        await releaseTargetUpdate.promise;
+      },
+    },
+  );
+  await targetUpdateStarted.promise;
+
+  const identityMove = applyPatch(
+    cwd,
+    patch(
+      "*** Update File: identity-source-link.txt\n",
+      "*** Move to: identity-destination-link.txt\n",
+      "@@\n",
+      "-before\n",
+      "+before\n",
+    ),
+    undefined,
+    {
+      onExecutionStart() {
+        identityMoveStarted = true;
+      },
+    },
+  );
+  const identityMoveFailure = assert.rejects(identityMove, /Failed to find expected lines/u);
+  await delay(25);
+  assert.equal(identityMoveStarted, false);
+
+  releaseTargetUpdate.resolve();
+  await Promise.all([targetUpdate, identityMoveFailure]);
+  assert.equal(identityMoveStarted, false);
+  assert.equal(await readFile(join(cwd, "identity-target.txt"), "utf8"), "after\n");
+  assert.equal(await readlink(join(cwd, "identity-source-link.txt")), "identity-target.txt");
+  await assertMissing(join(cwd, "identity-destination-link.txt"));
 });
 
 test("honors cancellation before and between strict matching and mutation phases", async (t) => {
