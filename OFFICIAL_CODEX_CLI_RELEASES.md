@@ -35,13 +35,13 @@ The detailed `apply_patch` contracts remain normative:
 
 | Item                    | Baseline                                                                              |
 | ----------------------- | ------------------------------------------------------------------------------------- |
-| Official stable         | Codex CLI `0.147.0` / tag `rust-v0.147.0`                                             |
-| Published               | August 7, 2026                                                                        |
-| Official commit         | `be6e8eac029b183056b7e4402879f15d2c85f61b`                                            |
-| npm `latest`            | `@openai/codex@0.147.0`                                                               |
-| Package review baseline | `pi-openai-codex-compat` `0.0.9` at commit `87c598b5674a88f450e2cfd27f9014207fba498d` |
-| Reviewed                | August 17, 2026                                                                       |
-| Latest prerelease seen  | `0.148.0-alpha.20`; noted only, not used as the baseline                              |
+| Official stable         | Codex CLI `0.149.0` / tag `rust-v0.149.0`                                             |
+| Published               | August 20, 2026                                                                       |
+| Official commit         | `758ef40f50c1a458425c7cfbf1eb12cbc07af0b0`                                            |
+| npm `latest`            | `@openai/codex@0.149.0`                                                               |
+| Package review baseline | `pi-openai-codex-compat` `0.0.9` at commit `fdac6a04f01cfd451be7a33608f924ccb02b7701` |
+| Reviewed                | August 22, 2026                                                                       |
+| Latest prerelease seen  | `0.150.0-alpha.6`; noted only, not used as the baseline                               |
 
 ## Decisions at a glance
 
@@ -61,6 +61,8 @@ The detailed `apply_patch` contracts remain normative:
 - **Codex-only runtimes stay excluded until they are implemented as real Pi
   runtimes.**
 - **Retries and compaction must preserve canonical Pi history.**
+- **Transport recovery remains bounded rather than approximating Codex's
+  unbounded connection-error category.**
 
 ### `apply_patch`
 
@@ -214,6 +216,29 @@ The detailed `apply_patch` contracts remain normative:
 - **Revisit only if:** Pi delegates the complete agent sampling loop to the
   provider.
 
+### P-012 — Keep transport recovery bounded
+
+- **Our choice:** Retry fresh WebSockets at most five times before sticky SSE
+  fallback, and retry SSE transport failures at most five times before
+  model-visible output. Do not approximate an unbounded connection-only retry
+  category from the phase of a Fetch request.
+- **Official Codex:** Enables `unbounded_connection_retries` by default for
+  sampling `ConnectionFailed` errors outside internal sessions and Amazon
+  Bedrock. Those retries use a separate counter, wait 5 seconds, double to a
+  60-second cap, and continue until cancellation. Reqwest distinguishes
+  connection establishment from timeouts, HTTP failures, and established
+  stream failures; ordinary failures retain the bounded retry and transport
+  fallback path.
+- **Why:** The standard Fetch API reliably reveals whether response headers
+  arrived, but not Reqwest's narrower `is_connect()` category. A request can
+  reach the server and fail before headers, and custom Fetch implementations
+  can reject for deterministic non-network reasons. Treating that broader
+  phase as unbounded could repeat accepted work indefinitely and hold Pi's
+  provider turn open without a faithful error classification.
+- **Revisit only if:** Pi's supported transport exposes a stable semantic
+  connection-error category, or this package deliberately adds a
+  user-controlled connection-recovery policy.
+
 ## Detailed `apply_patch` decisions
 
 ### A-001 — Official grammar and strict matching are the baseline
@@ -248,8 +273,11 @@ The detailed `apply_patch` contracts remain normative:
   Tree-sitter, Markdown-table, typed-fence, formatter-reflow, exhaustive
   candidate, candidate-ranking, ambiguity, or output-equivalence matching.
   Preserve local CRLF after a successful official-compatible match.
-- **Official Codex:** Uses the same line matcher without formatter recovery,
-  but can convert an edited CRLF region to LF.
+- **Official Codex:** Uses the same matching tiers without formatter recovery.
+  Its historical stable mode normalizes edited files to LF; a
+  default-disabled, under-development mode preserves existing line endings and
+  uses the file's preferred ending for new lines. That opt-in mode also makes
+  EOF search respect the current hunk cursor.
 - **Why:** Additional matching expanded the set of accepted patches and could
   apply an edit at a location not described by the complete official old-line
   sequence. Matching compatibility is safer and easier to audit when one
@@ -321,6 +349,112 @@ The detailed `apply_patch` contracts remain normative:
   protocol that can carry the same facts.
 
 ## Release log
+
+### Codex CLI 0.149.0
+
+#### Baseline
+
+- Release:
+  [`rust-v0.149.0`](https://github.com/openai/codex/releases/tag/rust-v0.149.0)
+- Published: August 20, 2026
+- Commit: `758ef40f50c1a458425c7cfbf1eb12cbc07af0b0`
+- Compared with the previously reviewed stable:
+  [`rust-v0.147.0`](https://github.com/openai/codex/releases/tag/rust-v0.147.0)
+  at `be6e8eac029b183056b7e4402879f15d2c85f61b`
+- Intervening stable:
+  [`rust-v0.148.0`](https://github.com/openai/codex/releases/tag/rust-v0.148.0),
+  published August 18, 2026 at
+  `3ba0f711642a888aec92a611a3f3b2211157ff89`
+- Source comparison:
+  [`rust-v0.147.0...rust-v0.149.0`](https://github.com/openai/codex/compare/rust-v0.147.0...rust-v0.149.0)
+- GitHub's latest stable release and npm's `latest` dist-tag both resolved to
+  `0.149.0`.
+
+#### What changed in the protocol
+
+Implemented or already aligned:
+
+1. **Misalignment policy failures:** Official Codex now maps
+   `misalignment_policy_violation` to a typed, non-retryable error and stops
+   the active TUI chat. The package now treats the same streamed failure code
+   as terminal before and after linked tool execution, makes one request, and
+   preserves the provider's message.
+2. **Model routing hints:** Official first-party requests now send the
+   model-and-service-tier routing hint. The package already sends the same
+   endpoint-owned hint for ordinary, prewarm, retry, fallback, and compaction
+   requests.
+3. **Response storage:** Official Azure Responses requests now explicitly
+   disable storage. The package already sends `store: false` on its first-party
+   Responses paths.
+4. **Wire schemas:** No new provider `ResponseItem` variant or Responses Lite
+   default-tool namespace layout requires a package schema or serializer
+   change. Known item variants continue to preserve additional provider
+   fields under P-002.
+
+Intentional deviations retained:
+
+1. **Unbounded connection recovery:** Official Codex now has a stable,
+   default-enabled `unbounded_connection_retries` feature for sampling
+   connection-establishment failures. P-012 retains the package's bounded
+   five-WebSocket and five-SSE retry behavior. No phase-only or error-code
+   approximation was added.
+2. **Tool namespace metadata:** Official turns can advertise configured
+   namespace inventories. P-004 through P-006 retain the package's explicit
+   Responses Lite setting, fixed extension-owned namespace allowlist, and
+   Pi-owned tool registration.
+3. **Request metadata:** Official requests can carry configurable metadata,
+   sandbox state, and expanded harness context. P-003 and P-009 continue to
+   send only truthful Pi-owned values.
+
+Excluded because the runtime is absent:
+
+1. safety-buffering metadata, Guardian sampling, approval routing, and stored
+   risk scores;
+2. rollout history envelopes, turn-aware item injection, asynchronous user
+   messages, and tool-lifecycle history access;
+3. provider-owned custom authentication recovery and model-catalog ETag
+   refresh; and
+4. plugin, MCP, remote-environment, Code Mode, and multi-agent lifecycle
+   additions.
+
+#### What changed in `apply_patch`
+
+1. **Grammar and strict matching:** The grammar and exact, trailing-trim,
+   full-trim, and Unicode matching tiers did not change. The stable default
+   still uses the previously reviewed matcher behavior.
+2. **Optional line-ending preservation:** Official Codex added the
+   default-disabled, under-development
+   `apply_patch_preserve_line_endings` mode. It preserves existing terminators,
+   chooses the file's preferred ending for inserted lines, and makes EOF
+   search respect the current hunk cursor. The package retains A-003: preserve
+   the matched region's local endings after the stable official-compatible
+   matcher succeeds, without adopting a second matcher mode.
+3. **Duplicate resolved paths:** Official verification now rejects multiple
+   operations resolving to the same path. A-002 deliberately retains
+   sequential repeated and aliased paths after complete virtual preflight.
+4. **No-follow filesystem access:** Official Codex can disable symlink
+   following when otherwise-required sandbox enforcement is unavailable;
+   standalone `apply_patch` still follows symlinks by default. The package
+   retains its operation-specific A-005 symlink semantics and does not copy a
+   sandbox fallback without the A-007 runtime. The upstream tests provide an
+   additional ancestor-symlink replacement scenario for the existing S-002
+   execution-identity remediation item.
+5. **Permission orchestration:** Official core handling avoids widening a
+   selected environment's write permissions for patch execution. This remains
+   excluded under A-007; Pi extensions run with host process permissions.
+
+#### Outcome
+
+- One runtime compatibility fix was committed:
+  `misalignment_policy_violation` is terminal and preserves the provider
+  message.
+- Unbounded connection retries were reviewed and deliberately not
+  implemented; P-012 records the bounded policy and revisit condition.
+- No `apply_patch` implementation change was adopted. The strict matcher,
+  repeated-path extension, line-ending policy, symlink semantics, move
+  semantics, and mutation queues remain unchanged.
+- The README and Responses Lite report were advanced to the official
+  `0.149.0` baseline.
 
 ### Codex CLI 0.147.0
 

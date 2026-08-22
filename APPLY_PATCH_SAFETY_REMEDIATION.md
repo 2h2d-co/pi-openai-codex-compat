@@ -119,9 +119,19 @@ Example:
 3. execution accepts the byte-identical replacement; and
 4. updating `source.txt` also changes `collateral.txt`.
 
+An equivalent ancestor-symlink variant can redirect the write:
+
+1. preflight resolves a regular parent directory and target containing `old`;
+2. an external action replaces that parent with a symlink to another tree
+   whose target also contains `old`;
+3. execution accepts the byte-identical target; and
+4. the update writes outside the preflighted tree.
+
 Required correction:
 
 - in-place text updates must reject entry-identity drift;
+- the resolved ancestor chain must not change to a different directory or
+  symlink route;
 - byte equality must not replace topology validation; and
 - any tolerated identity change must prove equivalent metadata and alias
   effects, not only content.
@@ -130,6 +140,7 @@ Required tests:
 
 - byte-identical inode replacement rejects before writing;
 - a replacement hard-linked to collateral content cannot modify that content;
+- a byte-identical target reached through a replaced symlink ancestor rejects;
 - changed bytes and changed entry types continue to reject; and
 - safe link-count changes produced by the same plan remain accepted.
 
