@@ -569,6 +569,5 @@ With `applyPatchDebug` enabled:
 Implementation changes must also update:
 
 - `APPLY_PATCH_SEMANTIC_OPERATIONS.md`
-- `APPLY_PATCH_REMAINING_WORK.md`
 - `README.md`
 - `CHANGELOG.md`

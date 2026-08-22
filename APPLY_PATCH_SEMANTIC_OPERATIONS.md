@@ -259,8 +259,8 @@ A state-changing text update:
 
 1. requires the source path to resolve to an updatable file;
 2. decodes its bytes as UTF-8;
-3. applies ordered chunks using the established Codex context and fuzzy
-   matching behavior; and
+3. applies ordered chunks using the official-compatible strict matching
+   behavior described below; and
 4. writes the derived bytes back to the same path.
 
 If the source is absent or cannot be decoded, reject unless the operation is
@@ -268,8 +268,7 @@ proven dead.
 
 If the old side cannot be mapped, the update MUST be rejected. Finding the
 requested replacement text in the current file does not prove that this update
-was previously applied and MUST NOT make the operation a no-op. Replacement
-locations MAY be reported only as diagnostic evidence.
+was previously applied and MUST NOT make the operation a no-op.
 
 After a valid strict mapping is found, derive the complete requested output.
 If those derived bytes already equal the current file byte-for-byte, the
@@ -307,6 +306,9 @@ The first location in the first successful tier is selected. A later exact
 match therefore takes precedence over an earlier trim-only match, and
 duplicate locations within one tier are not treated as ambiguous. These rules
 apply without file-type or syntax restrictions.
+
+Replacement lines are applied as provided. The matcher does not lint, repair,
+reinterpret, or reject replacement content based on language syntax.
 
 An `@@ context` value is matched with the same algorithm and advances the
 forward-search cursor to the following line. The chunk's complete `oldLines`
@@ -761,74 +763,6 @@ special entry reject during preflight. No operation invents shell-style
 "move into directory" behavior or recursively removes a directory. Semantic
 no-ops that require no filesystem interaction remain successful.
 
-## Reviewed implementation scope
-
-This section records the disposition of the adversarial review so future
-implementors do not have to reconstruct decisions from session history.
-
-### Confirmed defects to fix
-
-The matcher findings from this review were resolved by removing every
-nonofficial fallback. The implementation uses only the source-traceable
-official sequence matcher described above.
-
-The implementation MUST address these remaining defect classes:
-
-1. **Entry identity:** prevent write-then-unlink data loss for case, Unicode,
-   symlink-parent, and destination-link aliases; keep hard-link entries
-   distinct; and make sequential virtual state coherent across equivalent path
-   spellings and symlink targets.
-2. **Execution continuity:** account for link-count changes caused by the plan
-   itself and for fresh destination identity after cross-filesystem moves, so
-   valid later operations do not fail as apparent external drift.
-3. **Preflight:** reject predictable directory and unsupported-entry conflicts,
-   including write-through destinations that resolve to directories, before
-   any mutation.
-4. **Failure accounting:** inspect partial writes, report destination loss
-   during cross-filesystem replacement retries, attach completed effects to
-   their failed instruction, and keep same-inode completion checks from masking
-   a missing destination.
-5. **Diagnostics:** derive parse-failure instruction details with parser-aware
-   line roles so header-looking context lines do not manufacture instructions.
-6. **Harness quality:** compare complete success and failure trees, including
-   directories, symlinks, entry types, modes, and collateral paths.
-
-### Intentional non-goals and rejected proposals
-
-The implementation MUST NOT:
-
-- lint, repair, reinterpret, or reject replacement code merely because the LLM
-  requested code that is invalid in its language context;
-- add language-specific contextual-keyword blacklists;
-- add file-type, syntax, ambiguity, or contextual restrictions to the official
-  trim and Unicode matching tiers;
-- add formatter-reflow, Tree-sitter, Markdown-table, typed-fence,
-  candidate-ranking, or output-equivalence matching after the official
-  matcher fails;
-- require production-fixture fingerprints to hash sanitized fixture text;
-- infer that fixture minimization or operation count caused an observed
-  production failure without evidence; or
-- preserve ownership, ACLs, extended attributes, or timestamps for
-  independently created text results.
-
-The following review claims were disproved or narrowed and MUST NOT drive
-implementation:
-
-- a proposed call-argument-tail versus parenthesized-sequence fixture did not
-  apply and is not evidence of a matcher defect;
-- raw `parseFragment` language-load failure after successful document loading
-  is not an independent practical path because both use the same cached
-  language promise;
-- UTF-16-to-UTF-8 offset conversion is linear and is not the primary memory or
-  performance defect;
-- cross-process serialization is outside the in-process mutation queue's
-  contract; missing-tail aliases remain an in-process canonicalization concern;
-- every literal pipe in a Markdown link or HTML fragment is not inherently a
-  false match, although table recovery must remain semantically exact and
-  fence-aware; and
-- generic exact line recovery inside a Markdown block is not itself a prose
-  recovery defect.
-
 ## Virtual filesystem and planning model
 
 The virtual filesystem should distinguish at least:
@@ -980,8 +914,8 @@ their status and operation when the ledger is present.
 An update hunk that also has a move destination is labeled
 `Update & Move source -> destination`; a move-only hunk remains
 `Move source -> destination`.
-Reasons, non-obvious effects, deterministic final states, concise matcher
-evidence, and errors remain on the relevant instruction.
+Reasons, non-obvious effects, deterministic final states, and errors remain on
+the relevant instruction.
 
 Symlink effects retain the raw target pathname returned by `readlink`.
 Every replacement effect records the verified previous and resulting entry
@@ -992,10 +926,8 @@ rather than claiming a replacement.
 
 Model-facing status labels and separators are ASCII, while the TUI may use
 Unicode separators. Failed matcher feedback does not repeat old or replacement
-patch blocks. Every matcher failure gives a short, direct instruction for
-retrying with current content, source-ordered changes, non-overlapping changes,
-or more specific surrounding context as appropriate. Model feedback does not
-discuss diff availability or unreadable previous content.
+patch blocks. Model feedback does not discuss diff availability or unreadable
+previous content.
 
 The default-off `applyPatchDebug` presentation setting replaces a completed
 collapsed TUI result with the exact model-facing text. It does not change tool

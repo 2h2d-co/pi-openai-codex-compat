@@ -2,7 +2,7 @@
 
 ## OpenAI Codex
 
-The `apply_patch` grammar, parser behavior, fuzzy matching, mutation semantics, result formatting, diff rendering, standalone image-generation behavior, standalone web-search behavior, tool schemas, and compatibility scenarios in this package are adapted for Pi from the public OpenAI Codex implementation.
+The `apply_patch` grammar, parser behavior, line matching, mutation semantics, result formatting, diff rendering, standalone image-generation behavior, standalone web-search behavior, tool schemas, and compatibility scenarios in this package are adapted for Pi from the public OpenAI Codex implementation.
 
 OpenAI Codex, Copyright 2025 OpenAI
 
