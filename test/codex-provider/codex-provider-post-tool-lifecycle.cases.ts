@@ -308,7 +308,10 @@ test("preserves fatal post-tool handling without session affinity or agent hooks
       response: {
         id: "resp_fatal_done_call",
         status: "failed",
-        error: { code: "invalid_prompt", message: "Invalid after tool completion." },
+        error: {
+          code: "misalignment_policy_violation",
+          message: "Policy rejection after tool completion.",
+        },
         output: [],
       },
     };
@@ -340,7 +343,7 @@ test("preserves fatal post-tool handling without session affinity or agent hooks
   assert.equal(callMessage.stopReason, "toolUse");
   assert.equal(responseDecisions(callMessage)[0]?.["postToolDisposition"], "error");
   assert.equal(errorMessage.stopReason, "error");
-  assert.equal(errorMessage.errorMessage, "Invalid after tool completion.");
+  assert.equal(errorMessage.errorMessage, "Policy rejection after tool completion.");
   assert.equal(requests, 1);
 });
 
@@ -398,37 +401,43 @@ test("ignores terminal-only calls in non-retryable failed responses", async () =
 });
 
 test("does not resample official fatal response.failed codes", async () => {
-  const user = userEntry("user-1", "invalid request");
-  const harness = createHarness([user], DEFAULT_CONFIG, "session-fatal-response", {
-    maxRetries: 1,
-    baseDelayMs: 0,
-  });
-  let requests = 0;
-  harness.runtime.transport.request = async function* () {
-    requests += 1;
-    yield {
-      type: "response.failed",
-      response: {
-        id: "resp_fatal",
-        status: "failed",
-        error: { code: "invalid_prompt", message: "Invalid request." },
-      },
+  for (const [code, errorMessage] of [
+    ["invalid_prompt", "Invalid request."],
+    ["misalignment_policy_violation", "This request violated the misalignment policy."],
+  ] as const) {
+    const user = userEntry("user-1", code);
+    const sessionId = `session-fatal-response-${code}`;
+    const harness = createHarness([user], DEFAULT_CONFIG, sessionId, {
+      maxRetries: 1,
+      baseDelayMs: 0,
+    });
+    let requests = 0;
+    harness.runtime.transport.request = async function* () {
+      requests += 1;
+      yield {
+        type: "response.failed",
+        response: {
+          id: `resp_fatal_${code}`,
+          status: "failed",
+          error: { code, message: errorMessage },
+        },
+      };
     };
-  };
 
-  const message = await harness.runtime
-    .streamSimple(
-      codexModel(),
-      { messages: [user.message] },
-      {
-        apiKey: accessToken(),
-        sessionId: "session-fatal-response",
-        transport: "sse",
-      },
-    )
-    .result();
+    const message = await harness.runtime
+      .streamSimple(
+        codexModel(),
+        { messages: [user.message] },
+        {
+          apiKey: accessToken(),
+          sessionId,
+          transport: "sse",
+        },
+      )
+      .result();
 
-  assert.equal(requests, 1);
-  assert.equal(message.stopReason, "error");
-  assert.equal(message.errorMessage, "Invalid request.");
+    assert.equal(requests, 1, code);
+    assert.equal(message.stopReason, "error", code);
+    assert.equal(message.errorMessage, errorMessage, code);
+  }
 });

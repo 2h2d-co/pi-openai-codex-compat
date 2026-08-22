@@ -5,6 +5,7 @@
 ### Fixed
 
 - Remove formatter-tolerant `apply_patch` matching permanently and rely exclusively on the official Codex-compatible exact, trailing-trim, full-trim, and Unicode matcher.
+- Treat streamed Codex misalignment-policy violations as terminal without retrying and preserve the provider's error message.
 - Preserve unexpected parser, matcher, and asynchronous transport failures instead of replacing or detaching them.
 - Recover expired 60-minute Codex WebSockets in the provider response loop, retaining committed items, discarding provisional output, and waiting for Pi to record completed tool outputs before continuing.
 - Validate complete apply-patch result details against schema-derived contracts before rendering, including integer metadata and nested instruction relationships.

@@ -251,6 +251,7 @@ export function retryableResponseFailure(response: JsonRecord | undefined): bool
     code === "insufficient_quota" ||
     code === "usage_not_included" ||
     code === "cyber_policy" ||
+    code === "misalignment_policy_violation" ||
     code === "invalid_prompt" ||
     code === "bio_policy"
   );
