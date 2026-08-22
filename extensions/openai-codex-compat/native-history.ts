@@ -8,6 +8,10 @@ import {
   RESPONSES_OUTPUT_ITEM_SCHEMA,
   type ResponsesOutputItem,
 } from "./responses-item-schema.ts";
+import {
+  RESPONSES_TERMINAL_EVENT_TYPE_SCHEMA,
+  type ResponsesTerminalEventType,
+} from "./responses-event-schema.ts";
 
 export const NATIVE_RESPONSE_ENTRY_TYPE = "openai-codex-compat-native-response";
 export const NATIVE_RESPONSE_FORMAT_VERSION = 1;
@@ -15,7 +19,7 @@ export const NATIVE_RESPONSE_ITEM_COMMIT = "response.output_item.done";
 
 export type NativeResponseAttempt = {
   itemCount: number;
-  terminalType: "response.completed" | "response.incomplete" | "response.failed";
+  terminalType: ResponsesTerminalEventType;
   terminalReason?: string;
 };
 
@@ -82,9 +86,7 @@ export function parseNativeResponse(value: unknown): NativeResponseData | undefi
         !isNumber(itemCount) ||
         !Number.isSafeInteger(itemCount) ||
         itemCount < 0 ||
-        (rawAttempt["terminalType"] !== "response.completed" &&
-          rawAttempt["terminalType"] !== "response.incomplete" &&
-          rawAttempt["terminalType"] !== "response.failed") ||
+        !Value.Check(RESPONSES_TERMINAL_EVENT_TYPE_SCHEMA, rawAttempt["terminalType"]) ||
         (rawAttempt["terminalReason"] !== undefined && !isString(rawAttempt["terminalReason"]))
       ) {
         return undefined;

@@ -77,10 +77,6 @@ const STRUCTURED_RESULT_KEYS = new Set([
   "width",
 ]);
 
-function isRecord(value: unknown): value is JsonRecord {
-  return isObject(value);
-}
-
 function stringField(record: JsonRecord, key: string): string | undefined {
   const value = record[key];
   return isString(value) && value.length > 0 ? value : undefined;
@@ -185,14 +181,14 @@ function textOutput(result: WebRunResult): string {
 }
 
 function resultDetails(value: unknown): WebRunDetails | undefined {
-  if (!isRecord(value)) return undefined;
+  if (!isObject(value)) return undefined;
   const results = value["results"];
   if (results !== undefined && !Array.isArray(results)) return undefined;
   return Array.isArray(results) ? { results } : {};
 }
 
 function resultRecords(details: WebRunDetails | undefined): JsonRecord[] {
-  return (details?.results ?? []).filter(isRecord);
+  return (details?.results ?? []).filter(isObject);
 }
 
 function domainFromUrl(value: string | undefined): string | undefined {
@@ -456,7 +452,7 @@ function flattenFields(
     }
     return;
   }
-  if (isRecord(value)) {
+  if (isObject(value)) {
     for (const [key, item] of Object.entries(value)) {
       flattenFields(item, `${label} › ${humanizeKey(key)}`, fields);
     }

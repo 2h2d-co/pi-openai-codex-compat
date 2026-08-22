@@ -249,4 +249,3 @@ export const WEB_RUN_PARAMETERS = {
 } as const;
 
 export type WebRunCommands = Static<typeof WEB_RUN_PARAMETERS>;
-export type WebRunSearchQuery = NonNullable<WebRunCommands["search_query"]>[number];

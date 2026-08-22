@@ -17,6 +17,7 @@ import {
   type ResponsesInputItem,
   type ResponsesOutputItem,
 } from "../responses-item-schema.ts";
+import { RESPONSES_TERMINAL_EVENT_TYPE_SCHEMA } from "../responses-event-schema.ts";
 import type {
   CodexAttemptCapture,
   CodexPostToolDisposition,
@@ -139,12 +140,7 @@ export function captureRawEvents(
             capture.streamedCompletedToolCallIndexes.add(index);
           }
         }
-        if (
-          terminalCapture &&
-          (event.type === "response.completed" ||
-            event.type === "response.incomplete" ||
-            event.type === "response.failed")
-        ) {
+        if (terminalCapture && Value.Check(RESPONSES_TERMINAL_EVENT_TYPE_SCHEMA, event.type)) {
           if (isObject(event.response)) {
             terminalCapture.current = {
               type: event.type,

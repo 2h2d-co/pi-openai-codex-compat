@@ -1,4 +1,5 @@
 import { isBoolean, isString } from "./value-contracts.ts";
+import { randomUUID } from "node:crypto";
 import {
   buildSessionContext,
   convertToLlm,
@@ -9,6 +10,7 @@ import {
 import type { Api, Message, Model, Tool } from "@earendil-works/pi-ai";
 import { Value } from "typebox/value";
 import { APPLY_PATCH_LARK_GRAMMAR, APPLY_PATCH_TOOL_NAME } from "./apply-patch.ts";
+import { CODEX_TOOL_CALL_PROVIDERS } from "./codex-identifiers.ts";
 import type { ImageDetail } from "./config.ts";
 import {
   installCompactionItem,
@@ -137,11 +139,9 @@ export function activeResponsesTools(
     : undefined;
 }
 
-const CODEX_TOOL_CALL_PROVIDERS: ReadonlySet<string> = new Set([
-  "openai",
-  "openai-codex",
-  "opencode",
-]);
+export function remoteCompactionMarkerSummary(): string {
+  return `OpenAI Codex remote compaction checkpoint (${randomUUID()}).`;
+}
 
 function asPiTool(tool: ToolInfo, grammarToolInputProperties: GrammarToolInputProperties): Tool {
   const piTool: Tool = {

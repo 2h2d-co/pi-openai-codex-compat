@@ -8,8 +8,16 @@ export const RESPONSES_ITEM_STATUS_SCHEMA = {
 
 export type ResponsesItemStatus = Static<typeof RESPONSES_ITEM_STATUS_SCHEMA>;
 
+const RESPONSES_INPUT_MESSAGE_ROLE_SCHEMA = {
+  enum: ["user", "system", "developer"],
+} as const;
+
+const RESPONSES_ASSISTANT_MESSAGE_ROLE_SCHEMA = {
+  const: "assistant",
+} as const;
+
 export const RESPONSES_MESSAGE_ROLE_SCHEMA = {
-  enum: ["user", "assistant", "system", "developer"],
+  anyOf: [RESPONSES_INPUT_MESSAGE_ROLE_SCHEMA, RESPONSES_ASSISTANT_MESSAGE_ROLE_SCHEMA],
 } as const;
 
 export type ResponsesMessageRole = Static<typeof RESPONSES_MESSAGE_ROLE_SCHEMA>;
@@ -125,7 +133,7 @@ export const PI_INPUT_MESSAGE_ITEM_SCHEMA = {
   type: "object",
   properties: {
     type: { const: "message" },
-    role: { enum: ["user", "system", "developer"] },
+    role: RESPONSES_INPUT_MESSAGE_ROLE_SCHEMA,
     content: {
       anyOf: [
         { type: "string" },
@@ -146,7 +154,7 @@ export const RESPONSES_INPUT_MESSAGE_ITEM_SCHEMA = {
   properties: {
     type: { const: "message" },
     id: { type: "string" },
-    role: { enum: ["user", "system", "developer"] },
+    role: RESPONSES_INPUT_MESSAGE_ROLE_SCHEMA,
     content: {
       type: "array",
       items: RESPONSES_INPUT_CONTENT_SCHEMA,
@@ -166,7 +174,7 @@ export const RESPONSES_OUTPUT_MESSAGE_ITEM_SCHEMA = {
   properties: {
     type: { const: "message" },
     id: { type: "string" },
-    role: { const: "assistant" },
+    role: RESPONSES_ASSISTANT_MESSAGE_ROLE_SCHEMA,
     content: {
       type: "array",
       items: RESPONSES_OUTPUT_CONTENT_SCHEMA,

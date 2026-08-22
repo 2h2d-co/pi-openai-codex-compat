@@ -10,6 +10,7 @@ import type { ConfigResolver } from "../config-context.ts";
 import type { JsonRecord } from "../codex-protocol.ts";
 import type { CodexTurnState } from "../codex-transport.ts";
 import type { ResponsesOutputItem } from "../responses-item-schema.ts";
+import type { ResponsesTerminalEventType } from "../responses-event-schema.ts";
 
 export type { ConfigResolver } from "../config-context.ts";
 
@@ -58,7 +59,7 @@ export type ActiveAgentTurn = {
 
 export type CodexTerminalState =
   | {
-      type: "response.completed" | "response.incomplete";
+      type: Exclude<ResponsesTerminalEventType, "response.failed">;
       response: JsonRecord;
     }
   | {
@@ -87,7 +88,9 @@ export type CodexPostToolDisposition = {
   response?: JsonRecord;
   retryAttempt: number;
   sessionId?: string;
-  terminalType: "response.incomplete" | "response.failed" | "websocket_connection_limit_reached";
+  terminalType:
+    | Exclude<ResponsesTerminalEventType, "response.completed">
+    | "websocket_connection_limit_reached";
   turnId: string;
   type: "error" | "retry";
 };

@@ -1,11 +1,10 @@
 import { createHash } from "node:crypto";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import type { Api, AssistantMessage, Model } from "@earendil-works/pi-ai";
+import { CODEX_API, CODEX_PROVIDER } from "./codex-identifiers.ts";
 import { isNonNullObject } from "./value-contracts.ts";
 import { selectedRegistryModel } from "./model-context.ts";
 
-const CODEX_PROVIDER = "openai-codex";
-const CODEX_API = "openai-codex-responses";
 const OUTPUT_LIMIT_RAW_STOP_REASON = "incomplete.max_output_tokens";
 
 export const OUTPUT_LIMIT_CONTINUATION_TYPE = "openai-codex-compat-output-limit-continuation";

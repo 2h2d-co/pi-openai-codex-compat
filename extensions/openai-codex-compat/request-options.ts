@@ -6,14 +6,12 @@ import {
   type Model,
 } from "@earendil-works/pi-ai";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { CODEX_API, CODEX_PROVIDER } from "./codex-identifiers.ts";
 import type { CodexCompatConfig, WebSearchMode } from "./config.ts";
 import { resolveFileConfig, type ConfigResolver } from "./config-context.ts";
 import { isObject, type JsonRecord } from "./codex-protocol.ts";
 import { selectedRegistryModel } from "./model-context.ts";
 import { splitNamespacedToolName, WEB_RUN_TOOL_NAME } from "./namespaced-tools.ts";
-
-const CODEX_PROVIDER = "openai-codex";
-const CODEX_API = "openai-codex-responses";
 
 export type CodexRequestOptionsApi = Pick<ExtensionAPI, "on">;
 

@@ -19,7 +19,6 @@ import {
 export const REMOTE_COMPACTION_BETA = "remote_compaction_v2";
 export const RETAINED_CONTEXT_BUDGET = 64_000;
 
-const DEFAULT_BASE_URL = "https://chatgpt.com/backend-api";
 const REQUEST_RETRIES = 2;
 const UTF8_BYTES_PER_TOKEN = 4;
 
@@ -306,13 +305,6 @@ export function installCompactionItem(
   compactionItem: ResponsesCompactionItem,
 ): ResponsesInputItem[] {
   return [...selectRetainedContext(previousHistory), structuredClone(compactionItem)];
-}
-
-export function responsesEndpoint(baseUrl?: string): string {
-  const base = (baseUrl?.trim() || DEFAULT_BASE_URL).replace(/\/+$/, "");
-  if (base.endsWith("/codex/responses")) return base;
-  if (base.endsWith("/codex")) return `${base}/responses`;
-  return `${base}/codex/responses`;
 }
 
 export function addRemoteCompactionFeature(current: string | null | undefined): string {

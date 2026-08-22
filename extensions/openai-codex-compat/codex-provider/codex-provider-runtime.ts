@@ -24,12 +24,14 @@ import {
 import {
   checkpointData,
   providerHistory,
+  remoteCompactionMarkerSummary,
   responsesCompatibility,
   searchCheckpoint,
   type CheckpointData,
   type CompactionDecision,
   type GrammarToolInputProperties,
 } from "../compaction-checkpoint.ts";
+import { CODEX_API, CODEX_TOOL_CALL_PROVIDERS } from "../codex-identifiers.ts";
 import {
   collectRemoteCompaction,
   isObject,
@@ -139,10 +141,6 @@ import {
   waitForResponseRetry,
 } from "./codex-provider-response-attempts.ts";
 
-export const CODEX_API = "openai-codex-responses";
-
-export const CODEX_TOOL_CALL_PROVIDERS = new Set(["openai", "openai-codex", "opencode"]);
-
 export const PROVIDER_COMPACTION_BOUNDARY_STOP_REASON = "completed.end_turn_false.context_limit";
 
 export const DEFAULT_RESPONSE_RETRY_POLICY: CodexResponseRetryPolicy = {
@@ -153,10 +151,6 @@ export const DEFAULT_RESPONSE_RETRY_POLICY: CodexResponseRetryPolicy = {
 export type CodexProviderRuntimeApi = Pick<ExtensionAPI, "appendEntry" | "getAllTools">;
 
 type CodexCompactionResult = { checkpoint: CheckpointData; usage?: Usage };
-
-export function markerSummary(): string {
-  return `OpenAI Codex remote compaction checkpoint (${randomUUID()}).`;
-}
 
 export class CodexProviderRuntime {
   readonly transport = new CodexTransport();
@@ -738,7 +732,7 @@ export class CodexProviderRuntime {
       throw new Error("Pi's active session branch changed while Codex was compacting.");
     }
     scope.manager.appendCompaction(
-      markerSummary(),
+      remoteCompactionMarkerSummary(),
       firstKeptEntryId,
       scope.contextTokens ?? 0,
       compacted.checkpoint,

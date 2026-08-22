@@ -1,5 +1,4 @@
 import { isString } from "./value-contracts.ts";
-import { randomUUID } from "node:crypto";
 import type {
   BeforeProviderHeadersEvent,
   CompactionResult,
@@ -16,9 +15,11 @@ import type {
   ProviderHeaders,
 } from "@earendil-works/pi-ai";
 import { addRemoteCompactionFeature, isObject, type JsonRecord } from "./codex-protocol.ts";
+import { CODEX_API, CODEX_PROVIDER } from "./codex-identifiers.ts";
 import {
   activeResponsesTools,
   providerHistory,
+  remoteCompactionMarkerSummary,
   responsesCompatibility,
   searchCheckpoint,
   type GrammarToolInputProperties,
@@ -29,9 +30,6 @@ import { responsesCompactionV2Metadata, type CodexCompactionMetadata } from "./c
 import { APPLY_PATCH_INPUT_PROPERTY, APPLY_PATCH_TOOL_NAME } from "./apply-patch.ts";
 import { errorFromThrown } from "./error-from-thrown.ts";
 import { selectedRegistryModel } from "./model-context.ts";
-
-const CODEX_PROVIDER = "openai-codex";
-const CODEX_API = "openai-codex-responses";
 
 export type RemoteCompactionContext = Parameters<ConfigResolver>[0] & {
   getContextUsage: ExtensionContext["getContextUsage"];
@@ -142,10 +140,6 @@ function featureHeaders(headers: ProviderHeaders | undefined): ProviderHeaders {
   const result: ProviderHeaders = { ...headers };
   appendFeatureHeader(result);
   return result;
-}
-
-function markerSummary(): string {
-  return `OpenAI Codex remote compaction checkpoint (${randomUUID()}).`;
 }
 
 function instructionsForCompaction(systemPrompt: string, customInstructions?: string): string {
@@ -291,7 +285,7 @@ export default function registerRemoteCompaction(
       });
 
       const compaction: CompactionResult = {
-        summary: markerSummary(),
+        summary: remoteCompactionMarkerSummary(),
         firstKeptEntryId: event.preparation.firstKeptEntryId,
         tokensBefore: event.preparation.tokensBefore,
         details: compacted.checkpoint,
