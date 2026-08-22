@@ -316,12 +316,13 @@ The fallback MUST:
 
 1. preserve each hunk line's context, addition, or deletion role during
    parsing;
-2. partition each hunk into edit groups;
-3. locate candidates for every edit group against the same pre-update file;
-4. retain every eligible candidate for each group without heuristic ranking;
-5. enumerate ordered, non-overlapping mappings;
-6. derive the final bytes for every retained mapping; and
-7. apply the patch only when the enumeration is exhaustive and every mapping
+2. retain every chunk, including context-only checkpoints;
+3. establish a complete old-hunk witness before deriving any edit location;
+4. derive every edit group and insertion boundary from that witness;
+5. retain every eligible complete candidate without heuristic ranking;
+6. enumerate source-ordered, non-overlapping mappings;
+7. derive the final bytes for every retained mapping; and
+8. apply the patch only when the enumeration is exhaustive and every mapping
    produces byte-identical final content.
 
 If no complete mapping exists, matching falls back to the original context
@@ -340,36 +341,44 @@ changes, but it MUST preserve this boundary. EOF insertions are placed at EOF;
 line, Markdown, and structural candidates in the middle of the file are
 ineligible.
 
-A present `@@ context` anchor has positional force. Candidates preceding the
-matched anchor are ineligible; the anchor is not merely a scoring bonus.
+A supplied `@@ context` anchor MUST match. If it does not, tolerant recovery
+rejects rather than treating the chunk as unanchored. A matched anchor has
+positional force: candidates preceding it are ineligible, and source order
+between chunks includes the anchor checkpoint. The anchor is not merely a
+scoring bonus.
 
 #### Line-level recovery
 
-For replacements and deletions, the fallback first searches for the actual
-deleted lines without requiring every unchanged context line to remain
-adjacent. The existing exact, trailing-whitespace, trimmed-whitespace, and
-Unicode punctuation matching modes remain in force. Adjacent surviving
-context does not rank otherwise eligible candidates.
+For ordinary line-level replacements and deletions, a candidate MUST map the
+complete old side as one contiguous source-line sequence. Every unchanged and
+deleted line receives an explicit source-line witness. Matching only deleted
+payload lines, dropping context-only chunks, or bridging an unmatched source
+line is forbidden. The existing exact, trailing-whitespace,
+trimmed-whitespace, and Unicode punctuation relations remain available to the
+candidate collector, subject to the exhaustive-tier requirement below.
 
 Strict matching retains Codex's matching-mode priority and first-match
 behavior, but preserves each matched region's local line ending when writing
 replacement lines. A strict edit of a CRLF or mixed-line-ending file MUST NOT
 convert the edited region to LF merely because patch instructions use LF.
 
-For pure insertions, candidates may be derived only from surviving context,
-an `@@ context` anchor, or an explicit end-of-file marker. An unanchored
-insertion MUST NOT be guessed. Context on both sides may have formatter-added
-lines between it; the insertion is accepted only if exhaustive final-output
-equivalence makes the result unique.
+For pure insertions, ordinary context on both sides MUST belong to one complete
+contiguous old-side mapping; the insertion boundary is the position between
+those mapped lines. It is not the union of independently discovered before,
+after, and anchor boundaries. Genuine one-sided hunk context may establish its
+one boundary. With no ordinary context, a matched `@@ context` may establish
+the boundary immediately after the anchor, and `*** End of File` may establish
+EOF. An otherwise unanchored insertion MUST NOT be guessed.
 
 Only the nearest unchanged line on each side may directly establish an
 insertion boundary. If that line changed semantically, an older surviving line
 MUST NOT be treated as if it were adjacent; a language-aware block matcher may
 still recover the boundary when it proves the complete block equivalent.
 
-This permits harmless stale context, such as an unrelated formatter-added
-line, when the requested edit itself remains uniquely identifiable. It does
-not permit an old deletion to match text that is absent.
+Line-level matching does not classify an unmatched intervening line as
+harmless formatter output. Structural or Markdown recovery may bridge physical
+layout only after it supplies an equivalence proof for the complete old side.
+No recovery mode permits an old deletion or required anchor to be absent.
 
 #### Structural token recovery
 
@@ -1276,14 +1285,15 @@ Every case must preserve source bytes exactly.
 
 During containment, every strict mismatch in the cases below must reject
 before writes, formatter parser initialization, or tolerant candidate search.
-The positive recovery expectations remain re-enablement gates: they become
-active requirements only after every accepted mapping has a complete old-hunk
-witness.
+The remaining recovery expectations are re-enablement gates: they become
+active only after every accepted mapping has a complete old-hunk witness.
 
 - parsed update hunks retain context, addition, and deletion roles;
-- a uniquely located edit survives unrelated stale context;
-- pure insertion uses surviving context and rejects an unanchored location;
-- multiple mappings with byte-identical final content succeed;
+- a uniquely located edit rejects when any required ordinary context is stale;
+- every supplied anchor matches, and context-only chunks preserve source order;
+- pure insertion jointly maps its complete context to one boundary and rejects
+  an unanchored location;
+- multiple fully witnessed mappings with byte-identical final content succeed;
 - multiple mappings with different final content reject before writes;
 - candidate and mapping search limits reject rather than assume uniqueness;
 - JavaScript, JSX, TypeScript, TSX, Python, Go, Java, and Scala each recover a
@@ -1311,7 +1321,8 @@ witness.
   trailing tabs are recognized;
 - reflowed plain Markdown paragraphs reject;
 - a changed nearest insertion context is not bypassed using older context;
-- obsolete context-only chunks do not block a later uniquely located edit;
+- obsolete context-only chunks reject rather than disappearing before a later
+  uniquely located edit;
 - unsupported extensions retain conservative line matching; and
 - strict Codex matching behavior remains first and unchanged.
 

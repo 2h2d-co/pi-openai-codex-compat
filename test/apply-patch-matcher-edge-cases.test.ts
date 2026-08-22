@@ -6,3 +6,4 @@ import "./apply-patch-matcher-edge-cases/apply-patch-matcher-edge-cases-boundary
 import "./apply-patch-matcher-edge-cases/apply-patch-matcher-edge-cases-safety-and-ambiguity.cases.ts";
 import "./apply-patch-matcher-edge-cases/apply-patch-matcher-edge-cases-fail-closed-limits.cases.ts";
 import "./apply-patch-matcher-edge-cases/apply-patch-matcher-edge-cases-containment.cases.ts";
+import "./apply-patch-matcher-edge-cases/apply-patch-matcher-edge-cases-full-hunk-lines.cases.ts";

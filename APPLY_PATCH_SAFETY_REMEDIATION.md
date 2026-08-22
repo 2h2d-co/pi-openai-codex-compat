@@ -120,7 +120,7 @@ or incomplete candidate set. It does not prove patch intent.
 
 **Severity:** Critical
 
-**Status:** Confirmed
+**Status:** Contained; proof-only full-hunk replacement implemented
 
 `editGroups()` retains context separately, but line and structural candidates
 map only deleted payload lines or tokens. Ordinary before/after context is not
@@ -169,7 +169,7 @@ Required correction:
 
 **Severity:** Critical
 
-**Status:** Confirmed
+**Status:** Contained; proof-only full-hunk replacement implemented
 
 When an `@@` anchor has no source match, `anchorLines()` returns no anchors and
 `candidateFollowsAnchor()` treats that as unrestricted matching.
@@ -195,7 +195,7 @@ Required correction:
 
 **Severity:** Critical
 
-**Status:** Confirmed and intentionally encoded by current tests
+**Status:** Contained; proof-only ordered-checkpoint replacement implemented
 
 A context-only chunk creates no edit group and disappears from tolerant
 matching. Its source-order and positional constraints are lost.
@@ -217,7 +217,7 @@ patch:
 Strict matching rejected the reverse traversal. Tolerant matching discarded
 the checkpoint and changed `target`.
 
-Current behavior is explicitly accepted by:
+At audit time, this behavior was explicitly accepted by:
 
 - the `recent obsolete context-only chunk before insertion` production
   fixture; and
@@ -233,7 +233,7 @@ Required correction:
 
 **Severity:** Critical
 
-**Status:** Confirmed
+**Status:** Contained; proof-only joint-boundary replacement implemented
 
 Insertion candidates are independently proposed:
 
@@ -296,7 +296,7 @@ Required correction:
 
 **Severity:** Critical
 
-**Status:** Confirmed
+**Status:** Contained; remediation planned for Step 3
 
 `findSequences()` returns matches from the first matching tier and omits
 matches from later tiers:
@@ -334,7 +334,7 @@ Required correction:
 
 **Severity:** Critical
 
-**Status:** Confirmed
+**Status:** Contained; remediation planned for Step 4
 
 `parseStructuralDocument()` converts parser initialization, grammar loading,
 source parsing, and many unexpected failures into no structural document.
@@ -372,7 +372,7 @@ Required correction:
 
 **Severity:** Critical
 
-**Status:** Confirmed
+**Status:** Contained; remediation planned for Step 4
 
 Ordinary line matches are returned before Markdown table-cell recovery.
 Ordinary exact matches can occur inside fenced blocks, while table recovery
@@ -403,7 +403,7 @@ Required correction:
 
 **Severity:** Critical
 
-**Status:** Confirmed
+**Status:** Contained; proof-only complete-EOF replacement implemented
 
 The tolerant EOF condition checks:
 
@@ -446,7 +446,7 @@ Required correction:
 
 **Severity:** Critical
 
-**Status:** Confirmed and normative
+**Status:** Contained; normative remediation planned for Step 5
 
 Multiple mappings that produce one byte-identical output are currently
 accepted. This is safe only after every mapping has a full-hunk witness.
@@ -799,7 +799,7 @@ Completion criteria:
 
 ### Step 2 — Full-hunk line and insertion mapping
 
-**Status:** PLANNED
+**Status:** COMPLETE
 
 Scope:
 
@@ -810,6 +810,23 @@ Scope:
 - validate complete EOF content;
 - preserve source order across chunks; and
 - add M-001 through M-004 and M-008 regressions.
+
+Implementation:
+
+- each ordinary candidate records every unchanged and deleted old-side line,
+  its source line, and its matching relation;
+- all old-side lines map contiguously, while an `@@` anchor remains a required
+  positional scope witness rather than a substitute edit boundary;
+- each edit group is derived from that one complete old-side mapping;
+- context-only chunks participate in forward and backward source-order
+  reachability;
+- two-sided insertions derive one internal boundary from one complete old-side
+  mapping, while genuine one-sided, anchor-only, and explicit-EOF forms remain
+  distinct;
+- complete trailing context must end at EOF;
+- inconsistent parser line-role projections reject; and
+- the proof-only mapper remains disconnected from production mutation pending
+  Steps 3 through 5.
 
 Completion criteria:
 
@@ -971,11 +988,13 @@ Completion criteria:
 | Date       | Step   | Decision                                                                            | Rationale                                                                |
 | ---------- | ------ | ----------------------------------------------------------------------------------- | ------------------------------------------------------------------------ |
 | 2026-08-20 | Step 1 | Disable all tolerant mutation after strict matching fails; retain no unsafe opt-in. | Kaan approved immediate fail-closed containment before matcher redesign. |
+| 2026-08-20 | Step 2 | Build the full-hunk line mapper behind containment; do not reactivate mutation.     | Candidate completeness and output-equivalence work remain pending.       |
 
 ## Progress log
 
-| Date       | Step              | Status   | Validation and notes                                                                                                                                              |
-| ---------- | ----------------- | -------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 2026-08-20 | Audit             | COMPLETE | Read-only audit; `npm run check` passed; `npm test` passed with 320 tests and 2 skips; critical silent-misapplication probes reproduced in temporary directories. |
-| 2026-08-20 | Tracking document | COMPLETE | Findings, invariants, decisions, tests, and approval-gated remediation plan recorded.                                                                             |
-| 2026-08-20 | Step 1            | COMPLETE | Disabled tolerant mutation with no opt-in; all 77 focused tests and the full 328-test suite passed with 2 live tests skipped; `npm run check` passed.             |
+| Date       | Step              | Status   | Validation and notes                                                                                                                                                                            |
+| ---------- | ----------------- | -------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 2026-08-20 | Audit             | COMPLETE | Read-only audit; `npm run check` passed; `npm test` passed with 320 tests and 2 skips; critical silent-misapplication probes reproduced in temporary directories.                               |
+| 2026-08-20 | Tracking document | COMPLETE | Findings, invariants, decisions, tests, and approval-gated remediation plan recorded.                                                                                                           |
+| 2026-08-20 | Step 1            | COMPLETE | Disabled tolerant mutation with no opt-in; all 77 focused tests and the full 328-test suite passed with 2 live tests skipped; `npm run check` passed.                                           |
+| 2026-08-20 | Step 2            | COMPLETE | Added a proof-only full-hunk line mapper and M-001/M-002/M-003/M-004/M-008 regressions; all 88 focused tests and 339 full-suite tests passed with 2 live tests skipped; `npm run check` passed. |
