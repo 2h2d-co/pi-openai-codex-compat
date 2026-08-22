@@ -1,4 +1,6 @@
 /** Runtime predicates shared by boundary validators and domain type guards. */
+export type UnknownFunction = (...args: never[]) => void;
+
 export function isString(value: unknown): value is string {
   return typeof value === "string";
 }
@@ -16,7 +18,7 @@ export function isBoolean(value: unknown): value is boolean {
   return typeof value === "boolean";
 }
 
-export function isFunction(value: unknown): value is CallableFunction {
+export function isFunction(value: unknown): value is UnknownFunction {
   return typeof value === "function";
 }
 

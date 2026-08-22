@@ -440,6 +440,9 @@ made these additional improvements:
   easily reordered arguments now accept named option objects.
 - The two production definite-assignment assertions used to capture Promise
   resolvers were replaced by explicit invariant checks.
+- The shared function capability predicate now narrows to an `UnknownFunction`
+  with `never` parameters and a discarded `void` result instead of the broad legacy
+  `CallableFunction` interface.
 - Dead wrappers, exports, aliases, and helpers found during the pass were
   removed.
 
@@ -455,6 +458,12 @@ test signatures, while parameter count alone cannot identify reorder risk.
 Applying the rule globally would encourage ceremonial options objects and
 per-file exceptions rather than stronger contracts. Review high-arity internal
 APIs based on ambiguity and call-site readability instead.
+
+**Oxlint checkpoint:** No rule was added for `CallableFunction`. It appeared
+once, and banning that global name would enforce a project style rather than a
+general correctness property. The replacement makes unchecked direct
+argument passing and result consumption impossible while preserving exact
+signatures at all capability check call sites.
 
 ## Approaches to Avoid
 
