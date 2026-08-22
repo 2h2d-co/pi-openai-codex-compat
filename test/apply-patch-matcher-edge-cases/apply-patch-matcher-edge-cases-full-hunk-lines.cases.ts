@@ -54,21 +54,21 @@ test("requires complete replacement context around a line-level edit", () => {
       sourceLine: 0,
       kind: "context",
       patchText: "## Intended",
-      mode: "exact",
+      modes: ["exact", "trim-end", "trim", "unicode"],
     },
     {
       patchLine: 1,
       sourceLine: 1,
       kind: "delete",
       patchText: "old",
-      mode: "exact",
+      modes: ["exact", "trim-end", "trim", "unicode"],
     },
     {
       patchLine: 3,
       sourceLine: 2,
       kind: "context",
       patchText: "## Other",
-      mode: "exact",
+      modes: ["exact", "trim-end", "trim", "unicode"],
     },
   ]);
   assert.deepEqual(candidate?.edits, [
@@ -104,7 +104,7 @@ test("requires supplied anchors and records their source location", () => {
   assert.deepEqual(witnessed(present, 0).candidates[0]?.witness.anchor, {
     patchText: "Section",
     sourceLine: 0,
-    mode: "exact",
+    modes: ["exact", "trim-end", "trim", "unicode"],
   });
 });
 
@@ -401,13 +401,13 @@ test("records the matching relation for every old-side source line", () => {
 *** End Patch`),
   );
   assert.deepEqual(
-    witnessed(candidateSets, 0).candidates[0]?.witness.oldLines.map(({ sourceLine, mode }) => ({
+    witnessed(candidateSets, 0).candidates[0]?.witness.oldLines.map(({ sourceLine, modes }) => ({
       sourceLine,
-      mode,
+      modes,
     })),
     [
-      { sourceLine: 0, mode: "trim" },
-      { sourceLine: 1, mode: "trim-end" },
+      { sourceLine: 0, modes: ["trim", "unicode"] },
+      { sourceLine: 1, modes: ["trim-end", "trim", "unicode"] },
     ],
   );
 });

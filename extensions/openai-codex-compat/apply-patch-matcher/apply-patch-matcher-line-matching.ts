@@ -116,6 +116,47 @@ export function sequenceMatches(
   });
 }
 
+export type SequenceMatch = {
+  start: number;
+  modes: MatchMode[];
+};
+
+export function matchingModes(actual: string, expected: string): MatchMode[] {
+  return MATCH_MODES.filter((mode) => linesMatch(actual, expected, mode));
+}
+
+export function findAllSequenceMatches(
+  lines: readonly string[],
+  pattern: readonly string[],
+  start: number,
+  endOfFile: boolean,
+): SequenceMatch[] {
+  if (pattern.length === 0) {
+    const boundary = endOfFile ? lines.length : start;
+    if (boundary < 0 || boundary > lines.length) return [];
+    return [
+      {
+        start: boundary,
+        modes: [...MATCH_MODES],
+      },
+    ];
+  }
+  if (pattern.length > lines.length) return [];
+  const last = lines.length - pattern.length;
+  const searchStart = endOfFile ? Math.max(start, last) : start;
+  const matches: SequenceMatch[] = [];
+  for (let index = searchStart; index <= last; index++) {
+    const modes = MATCH_MODES.filter((mode) => sequenceMatches(lines, pattern, index, mode));
+    if (modes.length > 0) {
+      matches.push({
+        start: index,
+        modes,
+      });
+    }
+  }
+  return matches;
+}
+
 export function findSequences(
   lines: readonly string[],
   pattern: readonly string[],

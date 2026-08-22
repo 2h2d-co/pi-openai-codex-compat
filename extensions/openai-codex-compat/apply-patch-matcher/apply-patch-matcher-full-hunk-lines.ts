@@ -1,10 +1,9 @@
 import {
-  MATCH_MODES,
   type MatchMode,
   type UpdateChunk,
   type UpdateHunkLine,
 } from "./apply-patch-matcher-contracts.ts";
-import { findSequences, linesMatch } from "./apply-patch-matcher-line-matching.ts";
+import { findAllSequenceMatches, matchingModes } from "./apply-patch-matcher-line-matching.ts";
 
 // This module constructs proof data only. The production mutation path remains
 // strict-only until candidate completeness and output-equivalence gates are complete.
@@ -12,7 +11,7 @@ import { findSequences, linesMatch } from "./apply-patch-matcher-line-matching.t
 export type FullHunkAnchorWitness = {
   patchText: string;
   sourceLine: number;
-  mode: MatchMode;
+  modes: MatchMode[];
 };
 
 export type FullHunkOldLineWitness = {
@@ -20,7 +19,7 @@ export type FullHunkOldLineWitness = {
   sourceLine: number;
   kind: "context" | "delete";
   patchText: string;
-  mode: MatchMode;
+  modes: MatchMode[];
 };
 
 export type FullHunkLineEdit = {
@@ -36,6 +35,7 @@ export type FullHunkLineWitness = {
   orderEndLine: number;
   anchor?: FullHunkAnchorWitness;
   oldLines: FullHunkOldLineWitness[];
+  oldSideModes: MatchMode[];
   explicitEndOfFile: boolean;
 };
 
@@ -59,7 +59,7 @@ export type FullHunkLineChunkCandidates =
 
 type AnchorMatch = {
   sourceLine: number;
-  mode: MatchMode;
+  modes: MatchMode[];
 };
 
 function arraysEqual(left: readonly string[], right: readonly string[]): boolean {
@@ -80,10 +80,10 @@ function sourceLines(content: string): string[] {
   return lines;
 }
 
-function matchMode(actual: string, expected: string): MatchMode {
-  const mode = MATCH_MODES.find((candidate) => linesMatch(actual, expected, candidate));
-  if (!mode) throw new Error("A matched line has no matching mode.");
-  return mode;
+function requiredMatchingModes(actual: string, expected: string): MatchMode[] {
+  const modes = matchingModes(actual, expected);
+  if (modes.length === 0) throw new Error("A witnessed line has no matching mode.");
+  return modes;
 }
 
 function anchorMatches(
@@ -92,12 +92,10 @@ function anchorMatches(
 ): Array<AnchorMatch | undefined> {
   if (chunk.context === undefined) return [undefined];
   const context = chunk.context;
-  return findSequences(lines, [context], 0, false).map((sourceLine) => {
-    const actual = lines[sourceLine];
-    if (actual === undefined) throw new Error("Anchor line is outside the source.");
+  return findAllSequenceMatches(lines, [context], 0, false).map((match) => {
     return {
-      sourceLine,
-      mode: matchMode(actual, context),
+      sourceLine: match.start,
+      modes: match.modes,
     };
   });
 }
@@ -118,7 +116,7 @@ function oldLineWitnesses(
       sourceLine,
       kind: line.kind,
       patchText: line.text,
-      mode: matchMode(actual, line.text),
+      modes: requiredMatchingModes(actual, line.text),
     });
     sourceLine += 1;
   }
@@ -167,10 +165,11 @@ function fullOldSideCandidates(
   anchors: ReadonlyArray<AnchorMatch | undefined>,
 ): FullHunkLineCandidate[] {
   const candidates: FullHunkLineCandidate[] = [];
-  const starts = findSequences(lines, chunk.oldLines, 0, chunk.endOfFile);
+  const matches = findAllSequenceMatches(lines, chunk.oldLines, 0, chunk.endOfFile);
   for (const anchor of anchors) {
     const minimumStart = anchor ? anchor.sourceLine + 1 : 0;
-    for (const oldStartLine of starts.filter((start) => start >= minimumStart)) {
+    for (const match of matches.filter((candidate) => candidate.start >= minimumStart)) {
+      const oldStartLine = match.start;
       const oldEndLine = oldStartLine + chunk.oldLines.length;
       const witness: FullHunkLineWitness = {
         chunkIndex,
@@ -178,13 +177,14 @@ function fullOldSideCandidates(
         orderStartLine: anchor?.sourceLine ?? oldStartLine,
         orderEndLine: oldEndLine,
         oldLines: oldLineWitnesses(chunk, lines, oldStartLine),
+        oldSideModes: match.modes,
         explicitEndOfFile: chunk.endOfFile,
       };
       if (anchor) {
         witness.anchor = {
           patchText: chunk.context ?? "",
           sourceLine: anchor.sourceLine,
-          mode: anchor.mode,
+          modes: anchor.modes,
         };
       }
       candidates.push({
@@ -213,13 +213,14 @@ function boundaryCandidates(
       orderStartLine: anchor?.sourceLine ?? boundary,
       orderEndLine: boundary,
       oldLines: [],
+      oldSideModes: [],
       explicitEndOfFile: chunk.endOfFile,
     };
     if (anchor) {
       witness.anchor = {
         patchText: chunk.context ?? "",
         sourceLine: anchor.sourceLine,
-        mode: anchor.mode,
+        modes: anchor.modes,
       };
     }
     candidates.push({

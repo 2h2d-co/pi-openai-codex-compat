@@ -52,6 +52,9 @@ After completing a step:
   group.
 - **Candidate completeness:** Every location allowed by the matching rules is
   considered before uniqueness is claimed.
+- **Candidate superset:** Every location matched by any collected relation
+  before a later eligibility policy decides which relations may authorize
+  mutation.
 - **Context-only chunk:** A chunk containing an `@@` anchor or unchanged lines
   but no additions or deletions.
 - **Edit group:** One contiguous run of additions and deletions bounded by
@@ -60,6 +63,8 @@ After completing a step:
   including unchanged context, corresponds to the current source.
 - **Old hunk:** The context and deleted lines describing the source state
   expected by a patch.
+- **Mode evidence:** Every matching relation that proves one source location
+  corresponds to a patch line or sequence.
 - **Output equivalence:** Different candidate mappings produce byte-identical
   final files.
 - **Strict matcher:** The official Codex-compatible matching path attempted
@@ -296,7 +301,7 @@ Required correction:
 
 **Severity:** Critical
 
-**Status:** Contained; remediation planned for Step 3
+**Status:** Contained; proof-only exhaustive collector implemented
 
 `findSequences()` returns matches from the first matching tier and omits
 matches from later tiers:
@@ -836,21 +841,40 @@ Completion criteria:
 
 ### Step 3 — Candidate completeness and matching tiers
 
-**Status:** PLANNED
+**Status:** COMPLETE
 
 Scope:
 
 - separate strict tier priority from tolerant exhaustive collection;
-- collect and deduplicate every approved line-level candidate;
+- collect and deduplicate every potential line-level candidate with complete
+  mode evidence;
 - prevent exact decoys from suppressing trim or Unicode candidates;
-- define file-type restrictions resulting from C-002 and C-003 decisions; and
+- retain C-002/C-003 eligibility and file-type restrictions as a separate
+  Step 9 reactivation gate; and
 - add M-005 regressions.
+
+Implementation:
+
+- the strict matcher retains its official mode priority and first-match
+  behavior unchanged;
+- a separate proof-only collector scans exact, trailing-trim, full-trim, and
+  Unicode relations at every eligible source location;
+- one location is returned once with every mode that proves it;
+- anchors, individual old-side lines, and complete old-side sequences retain
+  their full mode evidence;
+- candidates remain source-ordered without mode ranking, so exact evidence
+  cannot hide or displace trim or Unicode evidence;
+- candidate collection is monotonic when additional non-EOF source locations
+  are introduced;
+- all four modes form a conservative candidate superset only; C-002 and C-003
+  eligibility and file-type restrictions remain a mandatory Step 9 gate; and
+- production mutation remains strict-only.
 
 Completion criteria:
 
-- adding an admitted candidate can only preserve success with the same proven
-  output or turn success into ambiguity;
-- it can never redirect the selected edit silently.
+- adding a collected source location never removes or redirects an existing
+  candidate;
+- output-level preservation or ambiguity remains the Step 5 integration gate.
 
 ### Step 4 — Structural and Markdown proof integration
 
@@ -989,12 +1013,14 @@ Completion criteria:
 | ---------- | ------ | ----------------------------------------------------------------------------------- | ------------------------------------------------------------------------ |
 | 2026-08-20 | Step 1 | Disable all tolerant mutation after strict matching fails; retain no unsafe opt-in. | Kaan approved immediate fail-closed containment before matcher redesign. |
 | 2026-08-20 | Step 2 | Build the full-hunk line mapper behind containment; do not reactivate mutation.     | Candidate completeness and output-equivalence work remain pending.       |
+| 2026-08-20 | Step 3 | Collect all line-match modes as a proof superset without changing strict behavior.  | C-002/C-003 eligibility remains a separate pre-reactivation gate.        |
 
 ## Progress log
 
-| Date       | Step              | Status   | Validation and notes                                                                                                                                                                            |
-| ---------- | ----------------- | -------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 2026-08-20 | Audit             | COMPLETE | Read-only audit; `npm run check` passed; `npm test` passed with 320 tests and 2 skips; critical silent-misapplication probes reproduced in temporary directories.                               |
-| 2026-08-20 | Tracking document | COMPLETE | Findings, invariants, decisions, tests, and approval-gated remediation plan recorded.                                                                                                           |
-| 2026-08-20 | Step 1            | COMPLETE | Disabled tolerant mutation with no opt-in; all 77 focused tests and the full 328-test suite passed with 2 live tests skipped; `npm run check` passed.                                           |
-| 2026-08-20 | Step 2            | COMPLETE | Added a proof-only full-hunk line mapper and M-001/M-002/M-003/M-004/M-008 regressions; all 88 focused tests and 339 full-suite tests passed with 2 live tests skipped; `npm run check` passed. |
+| Date       | Step              | Status   | Validation and notes                                                                                                                                                                                           |
+| ---------- | ----------------- | -------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 2026-08-20 | Audit             | COMPLETE | Read-only audit; `npm run check` passed; `npm test` passed with 320 tests and 2 skips; critical silent-misapplication probes reproduced in temporary directories.                                              |
+| 2026-08-20 | Tracking document | COMPLETE | Findings, invariants, decisions, tests, and approval-gated remediation plan recorded.                                                                                                                          |
+| 2026-08-20 | Step 1            | COMPLETE | Disabled tolerant mutation with no opt-in; all 77 focused tests and the full 328-test suite passed with 2 live tests skipped; `npm run check` passed.                                                          |
+| 2026-08-20 | Step 2            | COMPLETE | Added a proof-only full-hunk line mapper and M-001/M-002/M-003/M-004/M-008 regressions; all 88 focused tests and 339 full-suite tests passed with 2 live tests skipped; `npm run check` passed.                |
+| 2026-08-20 | Step 3            | COMPLETE | Added exhaustive mode collection and M-005 regressions without changing strict or production behavior; all 96 focused tests and 347 full-suite tests passed with 2 live tests skipped; `npm run check` passed. |

@@ -20,6 +20,11 @@ The objective is semantic correctness, not pedantic tool-call validation:
 
 ## Dictionary
 
+- **Candidate:** One proposed complete old-hunk witness and its derived edit
+  locations.
+- **Candidate superset:** Every location matched by any collected relation
+  before a later eligibility policy decides which relations may authorize
+  mutation.
 - **Directory entry:** A named filesystem entry such as a regular file or
   symlink. A pure move operates on this entry, not on decoded text.
 - **Dominating operation:** A later operation that unconditionally determines
@@ -34,8 +39,10 @@ The objective is semantic correctness, not pedantic tool-call validation:
   or nearby context.
 - **Identity update:** An update whose old and new line sequences are
   structurally identical and therefore has no content effect.
-- **Mapping:** One ordered, non-overlapping selection of candidate locations,
-  with one location selected for each edit group.
+- **Mapping:** One ordered, non-overlapping selection with one complete
+  candidate for each witnessed chunk.
+- **Mode evidence:** Every matching relation that proves one source location
+  corresponds to a patch line or sequence.
 - **Opaque content:** File content that has not been decoded as text. It may be
   valid UTF-8, binary data, or an empty byte sequence.
 - **Path alias:** A different path spelling that identifies the same directory
@@ -354,13 +361,19 @@ complete old side as one contiguous source-line sequence. Every unchanged and
 deleted line receives an explicit source-line witness. Matching only deleted
 payload lines, dropping context-only chunks, or bridging an unmatched source
 line is forbidden. The existing exact, trailing-whitespace,
-trimmed-whitespace, and Unicode punctuation relations remain available to the
-candidate collector, subject to the exhaustive-tier requirement below.
+trimmed-whitespace, and Unicode punctuation relations are all recorded by the
+proof-only candidate collector as a conservative superset. Collection does not
+decide that full trim or Unicode equivalence may authorize mutation; C-002 and
+C-003 eligibility remains a separate pre-reactivation decision.
 
 Strict matching retains Codex's matching-mode priority and first-match
 behavior, but preserves each matched region's local line ending when writing
 replacement lines. A strict edit of a CRLF or mixed-line-ending file MUST NOT
 convert the edited region to LF merely because patch instructions use LF.
+Tolerant collection has different semantics: it MUST scan every collected
+mode, union every resulting location, deduplicate identical locations while
+retaining all mode evidence, and never let an exact candidate suppress a trim
+or Unicode candidate.
 
 For pure insertions, ordinary context on both sides MUST belong to one complete
 contiguous old-side mapping; the insertion boundary is the position between
@@ -1291,6 +1304,8 @@ active only after every accepted mapping has a complete old-hunk witness.
 - parsed update hunks retain context, addition, and deletion roles;
 - a uniquely located edit rejects when any required ordinary context is stale;
 - every supplied anchor matches, and context-only chunks preserve source order;
+- exact matches do not suppress complete trim or Unicode candidates, and
+  duplicate locations retain all matching-mode evidence;
 - pure insertion jointly maps its complete context to one boundary and rejects
   an unanchored location;
 - multiple fully witnessed mappings with byte-identical final content succeed;
