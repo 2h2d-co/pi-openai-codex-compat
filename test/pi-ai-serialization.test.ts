@@ -217,7 +217,13 @@ test("configures image detail for image tool-result history", () => {
       message: imageResult,
     },
   ] satisfies SessionEntry[];
-  const checkpointHistory = encodeSessionEntries(imageModel, entries, [], new Map(), "low");
+  const checkpointHistory = encodeSessionEntries({
+    model: imageModel,
+    entries,
+    allTools: [],
+    grammarToolInputProperties: new Map(),
+    imageDetail: "low",
+  });
   const checkpointOutput = checkpointHistory[1]?.["output"];
   assert.ok(Array.isArray(checkpointOutput));
   assert.equal(requireJsonRecord(checkpointOutput[1])["detail"], "low");
@@ -380,10 +386,10 @@ test("round-trips namespaced calls and deferred namespaced definitions", () => {
       message: namespacedResult,
     },
   ] satisfies SessionEntry[];
-  const checkpointHistory = encodeSessionEntries(
+  const checkpointHistory = encodeSessionEntries({
     model,
     entries,
-    [
+    allTools: [
       {
         name: IMAGE_GENERATION_TOOL_NAME,
         description: imageGenerationTool.description,
@@ -391,8 +397,8 @@ test("round-trips namespaced calls and deferred namespaced definitions", () => {
         sourceInfo: TEST_TOOL_SOURCE,
       } satisfies ToolInfo,
     ],
-    new Map(),
-  );
+    grammarToolInputProperties: new Map(),
+  });
   assert.deepEqual(checkpointHistory[1], {
     type: "function_call_output",
     call_id: "call_web",

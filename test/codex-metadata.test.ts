@@ -15,15 +15,17 @@ test("adds Codex session, thread, turn, and request-kind metadata", () => {
   const installationId = "11111111-1111-4111-8111-111111111111";
   const payload = withCodexRequestMetadata(
     { input: [], client_metadata: { retained: "value" } },
-    "session-1",
-    { kind: "turn" },
-    "turn-1",
     {
-      installationId,
-      windowNumber: 2,
-      turnStartedAtUnixMs: 123,
-      threadSource: "user",
-      sandbox: "none",
+      sessionId: "session-1",
+      request: { kind: "turn" },
+      turnId: "turn-1",
+      identity: {
+        installationId,
+        windowNumber: 2,
+        turnStartedAtUnixMs: 123,
+        threadSource: "user",
+        sandbox: "none",
+      },
     },
   );
   const candidate = payload["client_metadata"];
@@ -60,10 +62,12 @@ test("adds the official nested metadata to compaction requests only", () => {
   const compaction = responsesCompactionV2Metadata("auto", "context_limit", "mid_turn");
   const payload = withCodexRequestMetadata(
     { input: [] },
-    "session-1",
-    { kind: "compaction", compaction },
-    "turn-1",
-    { installationId: "11111111-1111-4111-8111-111111111111" },
+    {
+      sessionId: "session-1",
+      request: { kind: "compaction", compaction },
+      turnId: "turn-1",
+      identity: { installationId: "11111111-1111-4111-8111-111111111111" },
+    },
   );
   const metadata = requireJsonRecord(payload["client_metadata"]);
   const turn = requireJsonRecord(
@@ -80,10 +84,12 @@ test("adds the official nested metadata to compaction requests only", () => {
 
   const ordinary = withCodexRequestMetadata(
     { input: [] },
-    "session-1",
-    { kind: "turn" },
-    "turn-2",
-    { installationId: "11111111-1111-4111-8111-111111111111" },
+    {
+      sessionId: "session-1",
+      request: { kind: "turn" },
+      turnId: "turn-2",
+      identity: { installationId: "11111111-1111-4111-8111-111111111111" },
+    },
   );
   const ordinaryMetadata = requireJsonRecord(ordinary["client_metadata"]);
   const ordinaryTurn = requireJsonRecord(
@@ -95,12 +101,20 @@ test("adds the official nested metadata to compaction requests only", () => {
 });
 
 test("projects branch thread and fork lineage without changing session identity", () => {
-  const payload = withCodexRequestMetadata({ input: [] }, "session-1", { kind: "turn" }, "turn-1", {
-    installationId: "11111111-1111-4111-8111-111111111111",
-    threadId: "thread-2",
-    forkedFromThreadId: "thread-1",
-    windowNumber: 3,
-  });
+  const payload = withCodexRequestMetadata(
+    { input: [] },
+    {
+      sessionId: "session-1",
+      request: { kind: "turn" },
+      turnId: "turn-1",
+      identity: {
+        installationId: "11111111-1111-4111-8111-111111111111",
+        threadId: "thread-2",
+        forkedFromThreadId: "thread-1",
+        windowNumber: 3,
+      },
+    },
+  );
   const metadata = requireJsonRecord(payload["client_metadata"]);
   assert.equal(metadata["session_id"], "session-1");
   assert.equal(metadata["thread_id"], "thread-2");
@@ -116,19 +130,31 @@ test("projects branch thread and fork lineage without changing session identity"
 
 test("omits Codex metadata without session affinity", () => {
   assert.deepEqual(
-    withCodexRequestMetadata({ input: [], client_metadata: { stale: true } }, undefined, {
-      kind: "turn",
-    }),
+    withCodexRequestMetadata(
+      { input: [], client_metadata: { stale: true } },
+      {
+        sessionId: undefined,
+        request: { kind: "turn" },
+      },
+    ),
     { input: [] },
   );
 });
 
 test("omits a prewarm start timestamp when the startup turn has not begun", () => {
-  const payload = withCodexRequestMetadata({ input: [] }, "session-1", { kind: "prewarm" }, "", {
-    installationId: "11111111-1111-4111-8111-111111111111",
-    threadSource: "user",
-    sandbox: "none",
-  });
+  const payload = withCodexRequestMetadata(
+    { input: [] },
+    {
+      sessionId: "session-1",
+      request: { kind: "prewarm" },
+      turnId: "",
+      identity: {
+        installationId: "11111111-1111-4111-8111-111111111111",
+        threadSource: "user",
+        sandbox: "none",
+      },
+    },
+  );
   const metadata = requireJsonRecord(payload["client_metadata"]);
   assert.equal(metadata["turn_id"], "");
   const turn = requireJsonRecord(

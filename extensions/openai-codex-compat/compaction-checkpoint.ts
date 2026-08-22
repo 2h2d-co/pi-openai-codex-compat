@@ -143,6 +143,24 @@ export function remoteCompactionMarkerSummary(): string {
   return `OpenAI Codex remote compaction checkpoint (${randomUUID()}).`;
 }
 
+type EncodeMessagesOptions = {
+  model: Model<Api>;
+  messages: Message[];
+  allTools: readonly ToolInfo[];
+  grammarToolInputProperties: GrammarToolInputProperties;
+  imageDetail: ImageDetail;
+  nativeAssistantItems?: ReadonlyMap<string, readonly ResponsesOutputItem[]>;
+};
+
+export type EncodeSessionEntriesOptions = {
+  model: Model<Api>;
+  entries: readonly SessionEntry[];
+  allTools: readonly ToolInfo[];
+  grammarToolInputProperties?: GrammarToolInputProperties;
+  imageDetail?: ImageDetail;
+  nativeAssistantItems?: ReadonlyMap<string, readonly ResponsesOutputItem[]>;
+};
+
 function asPiTool(tool: ToolInfo, grammarToolInputProperties: GrammarToolInputProperties): Tool {
   const piTool: Tool = {
     name: tool.name,
@@ -159,14 +177,15 @@ function asPiTool(tool: ToolInfo, grammarToolInputProperties: GrammarToolInputPr
 }
 
 /** Encode Pi's canonical messages using Pi AI's OpenAI Responses serializer. */
-function encodeMessages(
-  model: Model<Api>,
-  messages: Message[],
-  allTools: readonly ToolInfo[],
-  grammarToolInputProperties: GrammarToolInputProperties,
-  imageDetail: ImageDetail,
-  nativeAssistantItems?: ReadonlyMap<string, readonly ResponsesOutputItem[]>,
-): ResponsesInputItem[] {
+function encodeMessages(options: EncodeMessagesOptions): ResponsesInputItem[] {
+  const {
+    model,
+    messages,
+    allTools,
+    grammarToolInputProperties,
+    imageDetail,
+    nativeAssistantItems,
+  } = options;
   const tools = allTools.map((tool) => asPiTool(tool, grammarToolInputProperties));
   const compat = responsesCompatibility(model.compat);
   const serializationOptions: NonNullable<Parameters<typeof convertResponsesMessages>[3]> = {
@@ -195,23 +214,25 @@ function encodeMessages(
   );
 }
 
-export function encodeSessionEntries(
-  model: Model<Api>,
-  entries: readonly SessionEntry[],
-  allTools: readonly ToolInfo[],
-  grammarToolInputProperties: GrammarToolInputProperties = new Map(),
-  imageDetail: ImageDetail = "auto",
-  nativeAssistantItems?: ReadonlyMap<string, readonly ResponsesOutputItem[]>,
-): ResponsesInputItem[] {
-  const messages = entries.flatMap((entry) => sessionEntryToContextMessages(entry));
-  return encodeMessages(
+export function encodeSessionEntries(options: EncodeSessionEntriesOptions): ResponsesInputItem[] {
+  const {
     model,
-    convertToLlm(messages),
+    entries,
+    allTools,
+    grammarToolInputProperties = new Map(),
+    imageDetail = "auto",
+    nativeAssistantItems,
+  } = options;
+  const messages = entries.flatMap((entry) => sessionEntryToContextMessages(entry));
+  const encodeOptions: EncodeMessagesOptions = {
+    model,
+    messages: convertToLlm(messages),
     allTools,
     grammarToolInputProperties,
     imageDetail,
-    nativeAssistantItems,
-  );
+  };
+  if (nativeAssistantItems) encodeOptions.nativeAssistantItems = nativeAssistantItems;
+  return encodeMessages(encodeOptions);
 }
 
 export function parseCheckpoint(value: unknown): CheckpointData | undefined {
@@ -371,28 +392,28 @@ export function providerHistory(options: {
     }
     return [
       ...checkpoint.data.history.map((item) => structuredClone(item)),
-      ...encodeSessionEntries(
-        options.wireModel,
-        branch.slice(checkpoint.entryIndex + 1),
-        options.allTools,
-        options.grammarToolInputProperties,
-        options.imageDetail,
+      ...encodeSessionEntries({
+        model: options.wireModel,
+        entries: branch.slice(checkpoint.entryIndex + 1),
+        allTools: options.allTools,
+        grammarToolInputProperties: options.grammarToolInputProperties ?? new Map(),
+        imageDetail: options.imageDetail ?? "auto",
         nativeAssistantItems,
-      ),
+      }),
       ...recoveredPrefix,
     ];
   }
 
   const context = buildSessionContext(branch);
   return [
-    ...encodeMessages(
-      options.wireModel,
-      convertToLlm(context.messages),
-      options.allTools,
-      options.grammarToolInputProperties ?? new Map(),
-      options.imageDetail ?? "auto",
+    ...encodeMessages({
+      model: options.wireModel,
+      messages: convertToLlm(context.messages),
+      allTools: options.allTools,
+      grammarToolInputProperties: options.grammarToolInputProperties ?? new Map(),
+      imageDetail: options.imageDetail ?? "auto",
       nativeAssistantItems,
-    ),
+    }),
     ...recoveredPrefix,
   ];
 }

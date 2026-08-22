@@ -50,6 +50,7 @@ import {
 } from "../codex-metadata.ts";
 import { resolveCodexThreadIdentity, type CodexThreadIdentity } from "../codex-thread-lineage.ts";
 import { applyResponsesLite } from "../responses-lite.ts";
+import { requiredValue } from "../required-value.ts";
 import { processCodexStream, type CodexStreamAttemptState } from "../codex-stream.ts";
 import {
   CodexTransport,
@@ -151,6 +152,16 @@ export const DEFAULT_RESPONSE_RETRY_POLICY: CodexResponseRetryPolicy = {
 export type CodexProviderRuntimeApi = Pick<ExtensionAPI, "appendEntry" | "getAllTools">;
 
 type CodexCompactionResult = { checkpoint: CheckpointData; usage?: Usage };
+
+type BuildRequestBodyOptions = {
+  model: Model<Api>;
+  context: Context;
+  requestOptions: OpenAICodexResponsesOptions;
+  runtimeSessionId: string | undefined;
+  cacheSessionId: string | undefined;
+  grammarToolInputProperties: GrammarToolInputProperties;
+  turnId: string;
+};
 
 export class CodexProviderRuntime {
   readonly transport = new CodexTransport();
@@ -385,13 +396,12 @@ export class CodexProviderRuntime {
     this.prewarmedTemplates.add(key);
 
     const cacheSessionId = codexCacheKey(sessionId);
-    const prewarmBody = withCodexRequestMetadata(
-      options.body,
-      cacheSessionId,
-      { kind: "prewarm" },
-      "",
-      this.metadataIdentity(cacheSessionId, undefined, sessionId),
-    );
+    const prewarmBody = withCodexRequestMetadata(options.body, {
+      sessionId: cacheSessionId,
+      request: { kind: "prewarm" },
+      turnId: "",
+      identity: this.metadataIdentity(cacheSessionId, undefined, sessionId),
+    });
     try {
       await this.transport.prewarm(options.model, prewarmBody, {
         ...options.requestOptions,
@@ -415,16 +425,20 @@ export class CodexProviderRuntime {
   ): Promise<() => void> {
     if (!sessionId) return () => {};
     const previous = this.requestTails.get(sessionId) ?? Promise.resolve();
-    let releaseCurrent!: () => void;
+    let releaseCurrent: (() => void) | undefined;
     const current = new Promise<void>((resolve) => {
       releaseCurrent = resolve;
     });
+    const releaseRequest = requiredValue(
+      releaseCurrent,
+      "Codex request serialization gate did not initialize.",
+    );
     this.requestTails.set(sessionId, current);
     let released = false;
     const release = () => {
       if (released) return;
       released = true;
-      releaseCurrent();
+      releaseRequest();
       if (this.requestTails.get(sessionId) === current) this.requestTails.delete(sessionId);
     };
 
@@ -504,15 +518,16 @@ export class CodexProviderRuntime {
     });
   }
 
-  private buildRequestBody(
-    model: Model<Api>,
-    context: Context,
-    options: OpenAICodexResponsesOptions,
-    runtimeSessionId: string | undefined,
-    cacheSessionId: string | undefined,
-    grammarToolInputProperties: GrammarToolInputProperties,
-    turnId: string,
-  ): JsonRecord {
+  private buildRequestBody(options: BuildRequestBodyOptions): JsonRecord {
+    const {
+      model,
+      context,
+      requestOptions,
+      runtimeSessionId,
+      cacheSessionId,
+      grammarToolInputProperties,
+      turnId,
+    } = options;
     const compat = responsesCompatibility(model.compat);
     const toolPlacement = splitDeferredTools(context, Boolean(compat?.supportsToolSearch));
     let body: JsonRecord = {
@@ -521,25 +536,24 @@ export class CodexProviderRuntime {
       stream: true,
       instructions: context.systemPrompt || "You are a helpful assistant.",
       input: this.wireHistory(model, context, grammarToolInputProperties, runtimeSessionId),
-      text: { verbosity: options.textVerbosity ?? "low" },
+      text: { verbosity: requestOptions.textVerbosity ?? "low" },
       include: ["reasoning.encrypted_content"],
-      tool_choice: options.toolChoice ?? "auto",
+      tool_choice: requestOptions.toolChoice ?? "auto",
       parallel_tool_calls: true,
       tools: [],
     };
     if (cacheSessionId !== undefined) body.prompt_cache_key = cacheSessionId;
-    body = withCodexRequestMetadata(
-      body,
-      cacheSessionId,
-      { kind: "turn" },
+    body = withCodexRequestMetadata(body, {
+      sessionId: cacheSessionId,
+      request: { kind: "turn" },
       turnId,
-      this.metadataIdentity(
+      identity: this.metadataIdentity(
         cacheSessionId,
         this.activeAgentTurns.get(runtimeSessionId ?? ""),
         runtimeSessionId,
       ),
-    );
-    if (options.serviceTier !== undefined) body.service_tier = options.serviceTier;
+    });
+    if (requestOptions.serviceTier !== undefined) body.service_tier = requestOptions.serviceTier;
     if (toolPlacement.immediate.length > 0) {
       body.tools = convertResponsesTools(toolPlacement.immediate, {
         strict: false,
@@ -548,15 +562,16 @@ export class CodexProviderRuntime {
         namespacedToolNames: CODEX_NAMESPACED_TOOL_NAMES,
       });
     }
-    if (options.reasoningEffort !== undefined) {
+    if (requestOptions.reasoningEffort !== undefined) {
       const mapped =
-        options.reasoningEffort === "none"
+        requestOptions.reasoningEffort === "none"
           ? (model.thinkingLevelMap?.off ?? "none")
-          : (model.thinkingLevelMap?.[options.reasoningEffort] ?? options.reasoningEffort);
+          : (model.thinkingLevelMap?.[requestOptions.reasoningEffort] ??
+            requestOptions.reasoningEffort);
       if (mapped !== null) {
         body["reasoning"] = {
           effort: mapped,
-          summary: options.reasoningSummary ?? "auto",
+          summary: requestOptions.reasoningSummary ?? "auto",
         };
       }
     }
@@ -594,14 +609,17 @@ export class CodexProviderRuntime {
           options.requestOptions.cacheRetention === "none" ? undefined : codexCacheKey(sessionId),
         priority: options.priority,
       }),
-      options.requestOptions.cacheRetention === "none" ? undefined : codexCacheKey(sessionId),
-      { kind: "compaction", compaction: options.compactionMetadata },
-      agentTurn.turnId,
-      this.metadataIdentity(
-        options.requestOptions.cacheRetention === "none" ? undefined : codexCacheKey(sessionId),
-        agentTurn,
-        sessionId,
-      ),
+      {
+        sessionId:
+          options.requestOptions.cacheRetention === "none" ? undefined : codexCacheKey(sessionId),
+        request: { kind: "compaction", compaction: options.compactionMetadata },
+        turnId: agentTurn.turnId,
+        identity: this.metadataIdentity(
+          options.requestOptions.cacheRetention === "none" ? undefined : codexCacheKey(sessionId),
+          agentTurn,
+          sessionId,
+        ),
+      },
     );
     const transformed = await options.requestOptions.onPayload?.(payload, options.model);
     const ordinaryRequest = transformed === undefined ? payload : requireJsonRecord(transformed);
@@ -745,13 +763,12 @@ export class CodexProviderRuntime {
     );
     this.advanceWindow(sessionId);
     const cacheSessionId = options.cacheRetention === "none" ? undefined : codexCacheKey(sessionId);
-    return withCodexRequestMetadata(
-      updateInput(body, compacted.checkpoint.history),
-      cacheSessionId,
-      { kind: "turn" },
-      agentTurn.turnId,
-      this.metadataIdentity(cacheSessionId, agentTurn, sessionId),
-    );
+    return withCodexRequestMetadata(updateInput(body, compacted.checkpoint.history), {
+      sessionId: cacheSessionId,
+      request: { kind: "turn" },
+      turnId: agentTurn.turnId,
+      identity: this.metadataIdentity(cacheSessionId, agentTurn, sessionId),
+    });
   }
 
   stream(
@@ -806,15 +823,15 @@ export class CodexProviderRuntime {
         context.tools,
         responsesCompatibility(model.compat).supportsOpenAIGrammarTools ?? false,
       );
-      let body = this.buildRequestBody(
+      let body = this.buildRequestBody({
         model,
         context,
         requestOptions,
         runtimeSessionId,
         cacheSessionId,
         grammarToolInputProperties,
-        agentTurn.turnId,
-      );
+        turnId: agentTurn.turnId,
+      });
       const transformed = await requestOptions.onPayload?.(body, model);
       let replacementValues: JsonValue[] | undefined;
       if (transformed !== undefined) {

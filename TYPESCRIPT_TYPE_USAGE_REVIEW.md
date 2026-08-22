@@ -27,7 +27,8 @@ Observed escape hatches:
 
 - Explicit `any`: 0
 - Non-const type assertions: 0
-- Non-null assertions: 0
+- Non-null expression assertions: 0
+- Definite-assignment assertions: 2
 - `@ts-ignore`: 0
 - `@ts-expect-error`: 0
 - `as unknown as`: 0
@@ -427,6 +428,33 @@ regression not caught by production compilation.
 
 **Oxlint checkpoint:** No additional rule. Syntax cannot determine whether a
 contract is complex or public enough to warrant dedicated type-level tests.
+
+## Post-review polish
+
+After closing the eight findings, a final source-of-truth and API-shape pass
+made these additional improvements:
+
+- Codex provider, API, tool-provider, message-role, and terminal-event domains
+  now have one runtime/static source of truth.
+- Internal metadata, request-body, and session-entry encoders with several
+  easily reordered arguments now accept named option objects.
+- The two production definite-assignment assertions used to capture Promise
+  resolvers were replaced by explicit invariant checks.
+- Dead wrappers, exports, aliases, and helpers found during the pass were
+  removed.
+
+These are behavior-preserving changes. Named options are reserved for calls
+where argument count, repeated primitive types, or multiple related identifiers
+make positional ordering hard to review. Short mathematical, matcher, renderer,
+framework-owned, and tightly local signatures do not benefit automatically
+from an options object.
+
+**Oxlint checkpoint:** Do not enable `max-params`. Its default threshold reports
+many legitimate framework callback, renderer, matcher, transport-adapter, and
+test signatures, while parameter count alone cannot identify reorder risk.
+Applying the rule globally would encourage ceremonial options objects and
+per-file exceptions rather than stronger contracts. Review high-arity internal
+APIs based on ambiguity and call-site readability instead.
 
 ## Approaches to Avoid
 

@@ -1,6 +1,7 @@
 import { lstat, readdir, realpath, stat } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
 import { withFileMutationQueue } from "@earendil-works/pi-coding-agent";
+import { requiredValue } from "../required-value.ts";
 import type { ResolvedOperation } from "./apply-patch-engine-contracts.ts";
 import { hasErrorCode, isNotFound } from "./apply-patch-engine-errors.ts";
 import { chunksAreIdentity } from "./apply-patch-engine-operation-semantics.ts";
@@ -31,13 +32,17 @@ export async function withLogicalMutationQueue<T>(
 ): Promise<T> {
   const registration = logicalQueueRegistration.then(() => {
     const currentQueue = logicalMutationQueues.get(key) ?? Promise.resolve();
-    let releaseNext!: () => void;
+    let releaseNext: (() => void) | undefined;
     const nextQueue = new Promise<void>((resolveQueue) => {
       releaseNext = resolveQueue;
     });
     const chainedQueue = currentQueue.then(() => nextQueue);
     logicalMutationQueues.set(key, chainedQueue);
-    return { currentQueue, chainedQueue, releaseNext };
+    return {
+      currentQueue,
+      chainedQueue,
+      releaseNext: requiredValue(releaseNext, "Logical mutation queue gate did not initialize."),
+    };
   });
   logicalQueueRegistration = registration.then(
     () => undefined,

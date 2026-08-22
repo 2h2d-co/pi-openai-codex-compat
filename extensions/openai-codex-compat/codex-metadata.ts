@@ -30,6 +30,13 @@ export type CodexMetadataIdentity = {
   sandbox?: string;
 };
 
+export type CodexMetadataOptions = {
+  sessionId: string | undefined;
+  request: CodexMetadataRequest;
+  turnId?: string;
+  identity?: CodexMetadataIdentity;
+};
+
 const EPHEMERAL_METADATA_IDENTITY: CodexMetadataIdentity = { installationId: uuidv7() };
 
 type CodexClientMetadata = {
@@ -73,12 +80,13 @@ interface TurnMetadata {
   compaction?: CodexCompactionMetadata;
 }
 
-function turnMetadata(
-  sessionId: string,
-  turnId: string,
-  request: CodexMetadataRequest,
-  identity: CodexMetadataIdentity,
-): string {
+function turnMetadata(options: {
+  sessionId: string;
+  turnId: string;
+  request: CodexMetadataRequest;
+  identity: CodexMetadataIdentity;
+}): string {
+  const { sessionId, turnId, request, identity } = options;
   const threadId = identity.threadId ?? sessionId;
   const metadata: TurnMetadata = {
     installation_id: identity.installationId,
@@ -101,11 +109,9 @@ function turnMetadata(
 }
 
 export function codexClientMetadata(
-  sessionId: string | undefined,
-  request: CodexMetadataRequest,
-  turnId = uuidv7(),
-  identity: CodexMetadataIdentity = EPHEMERAL_METADATA_IDENTITY,
+  options: CodexMetadataOptions,
 ): CodexClientMetadata | undefined {
+  const { sessionId, request, turnId = uuidv7(), identity = EPHEMERAL_METADATA_IDENTITY } = options;
   if (!sessionId) return undefined;
   const threadId = identity.threadId ?? sessionId;
   return {
@@ -114,18 +120,15 @@ export function codexClientMetadata(
     thread_id: threadId,
     turn_id: turnId,
     [CODEX_WINDOW_ID_HEADER]: windowId(sessionId, identity),
-    [CODEX_TURN_METADATA_HEADER]: turnMetadata(sessionId, turnId, request, identity),
+    [CODEX_TURN_METADATA_HEADER]: turnMetadata({ sessionId, turnId, request, identity }),
   };
 }
 
 export function withCodexRequestMetadata(
   payload: JsonRecord,
-  sessionId: string | undefined,
-  request: CodexMetadataRequest,
-  turnId?: string,
-  identity: CodexMetadataIdentity = EPHEMERAL_METADATA_IDENTITY,
+  options: CodexMetadataOptions,
 ): JsonRecord {
-  const metadata = codexClientMetadata(sessionId, request, turnId, identity);
+  const metadata = codexClientMetadata(options);
   if (!metadata) {
     const result = structuredClone(payload);
     delete result["client_metadata"];
