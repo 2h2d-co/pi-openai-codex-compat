@@ -68,8 +68,8 @@ The detailed `apply_patch` contracts remain normative:
 - **Safe semantic extensions are intentional.** This includes move-only
   updates, harmless no-change instructions, repeated paths, and exactly proven
   skipped operations.
-- **Formatter recovery must be conservative, exhaustive, and never heuristic;
-  it is currently disabled until complete old-hunk proof is restored.**
+- **Matching stops after the official Codex-compatible line matcher; no
+  formatter-recovery fallback is implemented.**
 - **The complete patch is validated before writes.**
 - **Filesystem behavior explicitly accounts for symlinks, hard links, opaque
   files, and cross-filesystem moves.**
@@ -240,26 +240,22 @@ The detailed `apply_patch` contracts remain normative:
 - **Revisit only if:** A counterexample shows that an accepted operation is
   ambiguous or unsafe.
 
-### A-003 — Formatter recovery must be exhaustive, not heuristic
+### A-003 — Do not add formatter-recovery matching
 
-- **Our policy:** Formatter recovery may run only after strict matching fails
-  and may accept only complete old-hunk mappings whose exhaustive enumeration
-  produces byte-identical final output. Tree-sitter matching must be
-  exact-token and whole-line. Markdown support is limited to typed code fences
-  and exact-cell tables. Replacement text stays opaque. Strict edits preserve
-  local CRLF.
-- **Current containment:** A safety audit found that the retained matcher did
-  not prove complete ordinary context, anchors, insertion boundaries, and EOF
-  content before using output equivalence. Formatter-tolerant mutation is
-  therefore disabled with no opt-in; strict mismatches reject before tolerant
-  candidate search. Re-enablement is tracked in
-  `APPLY_PATCH_SAFETY_REMEDIATION.md`.
-- **Official Codex:** Does not provide this recovery and can convert an edited
-  CRLF region to LF.
-- **Why:** Formatters frequently change line layout, but guessing between
-  plausible edits risks corruption.
-- **Revisit only if:** Official Codex introduces a stronger proven matcher or
-  a supported case can be added without heuristics.
+- **Our policy:** Stop after the official exact, trailing-trim, full-trim, and
+  Unicode matcher. Preserve its mode priority, first-match selection, anchor
+  handling, pure-insertion placement, and EOF behavior. Do not add
+  Tree-sitter, Markdown-table, typed-fence, formatter-reflow, exhaustive
+  candidate, candidate-ranking, ambiguity, or output-equivalence matching.
+  Preserve local CRLF after a successful official-compatible match.
+- **Official Codex:** Uses the same line matcher without formatter recovery,
+  but can convert an edited CRLF region to LF.
+- **Why:** Additional matching expanded the set of accepted patches and could
+  apply an edit at a location not described by the complete official old-line
+  sequence. Matching compatibility is safer and easier to audit when one
+  source-traceable algorithm determines eligibility.
+- **Revisit only if:** Official Codex changes its matcher and the corresponding
+  pinned release review adopts that change.
 
 ### A-004 — Validate the complete patch before writes
 

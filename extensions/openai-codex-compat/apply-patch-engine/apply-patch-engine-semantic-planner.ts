@@ -1,10 +1,6 @@
 import { lstat, readFile, readdir, readlink, realpath, stat } from "node:fs/promises";
 import { basename, dirname, join, parse, resolve } from "node:path";
-import {
-  deriveNewContent,
-  FormatterMatchError,
-  type FormatterMatchFailureDetails,
-} from "../apply-patch-matcher.ts";
+import { deriveNewContent } from "../apply-patch-matcher.ts";
 import type {
   AppliedPatchChange,
   ApplyPatchExecutionHooks,
@@ -51,19 +47,16 @@ import { requiredValue } from "../required-value.ts";
 export class SemanticPlanningError extends Error {
   readonly instructions: ApplyPatchInstructionDetails[];
   readonly failedInstruction: number;
-  readonly matcher: FormatterMatchFailureDetails | undefined;
 
   constructor(
     message: string,
     instructions: ApplyPatchInstructionDetails[],
     failedInstruction: number,
-    matcher?: FormatterMatchFailureDetails,
     cause?: unknown,
   ) {
     super(message, { cause });
     this.instructions = instructions;
     this.failedInstruction = failedInstruction;
-    this.matcher = matcher;
   }
 }
 
@@ -147,12 +140,10 @@ export class SemanticPlanner {
         }
         instruction.status = "failed";
         instruction.error = errorMessage(error);
-        if (error instanceof FormatterMatchError) instruction.matcher = error.details;
         throw new SemanticPlanningError(
           instruction.error,
           this.instructions.map((item) => ({ ...item })),
           instruction.index,
-          error instanceof FormatterMatchError ? error.details : undefined,
           error,
         );
       }
@@ -981,7 +972,7 @@ export class SemanticPlanner {
     }
 
     const oldContent = await this.readText(source, operation.absolutePath);
-    const newContent = await deriveNewContent(
+    const newContent = deriveNewContent(
       oldContent,
       operation.chunks,
       operation.absolutePath,

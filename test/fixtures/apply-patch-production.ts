@@ -1,6 +1,6 @@
 import { PRODUCTION_APPLY_PATCH_FILESYSTEM_FIXTURES } from "./apply-patch-production/apply-patch-production-filesystem-fixtures.ts";
 import { PRODUCTION_APPLY_PATCH_PARSER_BOUNDARY_FIXTURES } from "./apply-patch-production/apply-patch-production-parser-boundary-fixtures.ts";
-import { PRODUCTION_APPLY_PATCH_FORMATTER_RECOVERY_FIXTURES } from "./apply-patch-production/apply-patch-production-formatter-recovery-fixtures.ts";
+import { PRODUCTION_APPLY_PATCH_STRICT_MISMATCH_FIXTURES } from "./apply-patch-production/apply-patch-production-strict-mismatch-fixtures.ts";
 import { PRODUCTION_APPLY_PATCH_FAIL_CLOSED_FIXTURES } from "./apply-patch-production/apply-patch-production-fail-closed-fixtures.ts";
 import { PRODUCTION_APPLY_PATCH_MULTI_CHUNK_FIXTURES } from "./apply-patch-production/apply-patch-production-multi-chunk-fixtures.ts";
 
@@ -16,7 +16,7 @@ export type {
 export const PRODUCTION_APPLY_PATCH_FIXTURES = [
   ...PRODUCTION_APPLY_PATCH_FILESYSTEM_FIXTURES,
   ...PRODUCTION_APPLY_PATCH_PARSER_BOUNDARY_FIXTURES,
-  ...PRODUCTION_APPLY_PATCH_FORMATTER_RECOVERY_FIXTURES,
+  ...PRODUCTION_APPLY_PATCH_STRICT_MISMATCH_FIXTURES,
   ...PRODUCTION_APPLY_PATCH_FAIL_CLOSED_FIXTURES,
   ...PRODUCTION_APPLY_PATCH_MULTI_CHUNK_FIXTURES,
 ];

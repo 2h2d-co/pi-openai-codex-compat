@@ -3,14 +3,9 @@
 ## Status
 
 All work originally agreed in this historical tracker was completed. A later
-adversarial review found unsafe formatter-tolerant matching behavior, so its
-formatter-recovery completion claims are superseded by
-`APPLY_PATCH_SAFETY_REMEDIATION.md`.
-
-Formatter-tolerant mutation is currently contained: after strict matching
-fails, `apply_patch` rejects without invoking tolerant recovery. The
-non-formatter workstreams and historical decisions in this document remain
-implemented unless the remediation tracker says otherwise.
+adversarial review found unsafe formatter-tolerant matching behavior, and that
+nonofficial fallback has now been removed permanently. Matching stops after
+the official Codex-compatible line matcher.
 
 The semantic decisions in `APPLY_PATCH_SEMANTIC_OPERATIONS.md` remain
 authoritative. This document records confirmed defects, agreed follow-up work,
@@ -32,7 +27,6 @@ The final fresh-review pass additionally closed:
 
 - operation-aware queue keys for cyclic or inaccessible symlinks;
 - sequential future add/delete replay in hard-link dead-update proofs;
-- cancellation preservation inside Tree-sitter parsing; and
 - source-entry device selection for pure-move strategy planning.
 
 The implementation pass also corrected destination-relative target resolution
@@ -50,9 +44,7 @@ The final feedback pass:
 - reported parent-directory and temporary-entry effects without claiming that
   no filesystem change occurred;
 - removed model-facing committed-prefix and diff-availability terminology;
-- stopped repeating old or replacement patch blocks in model feedback; and
-- deduplicated byte-identical matcher candidates before exhaustive-search
-  limits.
+- stopped repeating old or replacement patch blocks in model feedback.
 
 The subsequent presentation pass added a default-off `applyPatchDebug`
 setting. Completed collapsed results can show the exact model-facing text,
@@ -63,9 +55,8 @@ The full feedback contract is recorded in
 
 ## Dictionary
 
-- **Strict matching path:** The official Codex-compatible exact,
-  trailing-whitespace, fully trimmed, and Unicode matching path used before
-  the currently disabled formatter-tolerant recovery.
+- **Strict matching path:** The sole text matcher: official Codex-compatible
+  exact, trailing-whitespace, fully trimmed, and Unicode matching.
 - **EXDEV:** The operating-system error returned when a native rename crosses
   filesystem boundaries and must instead use copy-and-unlink behavior.
 - **Mutation-queue alias:** A different path or physical identity that can
@@ -91,12 +82,6 @@ this tracker:
   first;
 - pure moves have path-only history and rendering.
 
-The formatter implementation retained exact-token, opaque-replacement,
-candidate-enumeration, Markdown-table, typed-fence, and structured-diagnostic
-machinery from this work. Those paths are not authorized to mutate files
-during containment; the safety remediation tracker governs their redesign and
-re-enablement.
-
 The following previously rejected review proposals remain rejected:
 
 - requiring a dedicated `UnknownResult` data type rather than an equivalent
@@ -104,10 +89,8 @@ The following previously rejected review proposals remain rejected:
 - rejecting grammar-valid bare or repeated `@@` chunks merely because
   Codex's streaming parser rejects them;
 - accepting an update because its requested replacement already appears;
-- heuristic candidate ranking;
 - language-specific contextual-keyword blacklists;
-- generic Markdown prose recovery; and
-- sub-line or single-token structural recovery.
+- generic formatter or syntax-aware recovery.
 
 ## Workstream 1: Preserve CRLF on the strict matching path
 
@@ -120,27 +103,20 @@ source lines therefore end in `\r`. Its trailing-whitespace matching tier can
 match those lines against patch lines without `\r`, after which the patch's new
 lines are inserted without `\r` and the result is joined with `\n`.
 
-Our strict path currently follows that behavior. For example:
+Our strict path deliberately preserves the local line ending instead:
 
 ```text
 source: old\r\nnext\r\n
 patch:  old -> new
-result: new\nnext\r\n
+result: new\r\nnext\r\n
 ```
 
-Official Codex therefore has the same mixed-line-ending behavior. We have
-already decided to improve on it rather than preserve this defect.
+This does not change which source lines match.
 
 ### Existing CRLF fix
 
-The existing fix applies only after strict matching fails:
-
-- line replacements use `lineEndingForLine`;
-- insertions use `lineEndingAtBoundary`; and
-- structural replacements inspect the matched source line ending.
-
-These retained formatter-tolerant paths preserve local CRLF correctly, but are
-currently disabled. The strict-path correction remains active.
+The strict matcher uses `lineEndingForLine` for replacements and
+`lineEndingAtBoundary` for insertions. No formatter-recovery path exists.
 
 ### Required implementation
 
@@ -432,8 +408,6 @@ unlimited source-ordered `Patch instruction results:` ledger.
   effect; report an unverified final state instead of an incomplete
   replacement when neither execution nor inspection verifies the result.
 - Include the raw target pathname when a resulting entry is a symlink.
-- Give every formatter-matcher failure a direct `apply_patch` retry
-  instruction.
 - Distinguish cancelled and stopped execution, setup failure, rejected input,
   and malformed patch syntax.
 - Model-facing move labels use `->`, not a Unicode arrow.
@@ -508,13 +482,6 @@ preflight simultaneously, and mutate shared state without serialization.
 - existing symlink-parent aliases use one logical queue; and
 - deterministic multi-key ordering prevents deadlocks.
 
-## Accepted non-work: Structural source/token bounds
-
-No new source-size or token-count limit is required. Existing candidate and
-mapping bounds remain. Deterministic scanning and cancellation checks should
-not be weakened, but this tracker does not require an additional file-size
-policy.
-
 ## Additional required test coverage
 
 **Status:** Complete on supported host facilities; block-device coverage runs
@@ -523,12 +490,10 @@ when a block-device entry is available.
 The following gaps must be closed in addition to the workstream-specific
 tests:
 
-- cancellation before queue acquisition, after queue acquisition, during
-  matcher work, before the first mutation, and between mutations;
+- cancellation before queue acquisition, after queue acquisition, before the
+  first mutation, and between mutations;
 - FIFO, Unix socket, character-device, block-device where available, and
   directory rejection;
-- parser initialization failure followed by a successful retry;
-- grammar-language load failure followed by a successful retry;
 - mutation-queue path participation for every source and move destination;
 - missing-tail paths below symlinked parents;
 - native move failure with no committed mutation;
@@ -551,22 +516,20 @@ injectable filesystem operations rather than silently remaining uncovered.
   can replace preview entries, while runtime hunks are executed sequentially.
 - Expand the deliberate-differences section to include identity no-ops,
   identical-add no-ops, self-moves, operation-specific symlink behavior,
-  semantic preflight, dead-operation handling, and formatter recovery.
+  semantic preflight, and dead-operation handling.
 - Mark the strict CRLF, cross-filesystem, history, queue, and remaining test
   requirements accurately until completed.
-- Keep the exact-token, opaque-replacement, and no-heuristic decisions
-  unchanged.
+- Keep the official matching-mode priority and first-match behavior unchanged.
 
 ### `README.md`
 
 - Replace “symlinks follow normal host filesystem semantics” with the
   operation-specific policies.
 - Document move-only opaque moves, sequential repeated-path behavior, no-op and
-  dead instructions, exact formatter recovery boundaries, and failure
-  rendering.
+  dead instructions, official strict matching, and failure rendering.
 - Describe mutation-queue scope accurately.
-- Explain that optional punctuation differences and plain Markdown reflow are
-  intentionally rejected.
+- Explain that no matcher runs after the official Codex-compatible line
+  matcher.
 
 ### `CHANGELOG.md`
 
@@ -592,15 +555,12 @@ injectable filesystem operations rather than silently remaining uncovered.
 
 ## Completion criteria
 
-These were the completion criteria for the historical follow-up. The
-formatter-tolerant portion of criterion 3 is now governed by the safety
-remediation tracker.
+These were the completion criteria for the historical follow-up.
 
 1. every agreed workstream has implementation and regression tests;
 2. every open decision above is resolved and recorded in the semantic
    reference;
-3. the strict path preserves the agreed line-ending behavior, and any
-   re-enabled formatter-tolerant path must do the same;
+3. the strict path preserves the agreed line-ending behavior;
 4. virtual and executed hard-link topology agree for native and
    cross-filesystem moves;
 5. symlink entry deletion never records target bytes as deleted;

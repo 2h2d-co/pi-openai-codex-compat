@@ -1,6 +1,6 @@
 import type { ProductionApplyPatchFixture } from "./apply-patch-production-contracts.ts";
 
-export const PRODUCTION_APPLY_PATCH_FORMATTER_RECOVERY_FIXTURES: ProductionApplyPatchFixture[] = [
+export const PRODUCTION_APPLY_PATCH_STRICT_MISMATCH_FIXTURES: ProductionApplyPatchFixture[] = [
   {
     id: "current-session formatter-reflowed engine method",
     sourceFingerprints: ["684cab162b03aa44"],
@@ -9,7 +9,7 @@ export const PRODUCTION_APPLY_PATCH_FORMATTER_RECOVERY_FIXTURES: ProductionApply
     characteristics: [
       "current-session failure",
       "formatter-reflowed TypeScript",
-      "single structural replacement",
+      "multiline strict mismatch",
       "punctuation-changing formatter reflow",
       "intentional rejection",
     ],
@@ -57,7 +57,7 @@ export const PRODUCTION_APPLY_PATCH_FORMATTER_RECOVERY_FIXTURES: ProductionApply
     characteristics: [
       "current-session failure",
       "formatter-reflowed TypeScript",
-      "single structural replacement",
+      "multiline strict mismatch",
       "punctuation-changing formatter reflow",
       "intentional rejection",
     ],
@@ -101,7 +101,7 @@ export const PRODUCTION_APPLY_PATCH_FORMATTER_RECOVERY_FIXTURES: ProductionApply
       "pure insertion",
       "formatter-collapsed preceding context",
       "repeated blank-line boundary",
-      "temporary strict-only containment",
+      "official strict mismatch",
     ],
     initialFiles: [
       {
@@ -190,7 +190,7 @@ export const PRODUCTION_APPLY_PATCH_FORMATTER_RECOVERY_FIXTURES: ProductionApply
       "Markdown table alignment",
       "pure insertion",
       "cell-equivalent context",
-      "temporary strict-only containment",
+      "official strict mismatch",
     ],
     initialFiles: [
       {

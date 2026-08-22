@@ -1,5 +1,4 @@
 import { isAbsolute, relative, sep } from "node:path";
-import type { FormatterMatchFailureDetails } from "../apply-patch-matcher.ts";
 import type {
   ApplyPatchDetails,
   ApplyPatchFileEntryDetails,
@@ -35,45 +34,6 @@ export function feedbackPath(path: string, cwd: string): string {
     isAbsolute(relativePath)
     ? path
     : relativePath;
-}
-
-export function matcherRangeLabel(range: { startLine: number; endLine: number }): string {
-  return range.startLine === range.endLine
-    ? `line ${range.startLine}`
-    : `lines ${range.startLine}-${range.endLine}`;
-}
-
-export const UPDATED_PATCH_GUIDANCE =
-  "Use apply_patch again with more specific surrounding context or smaller changes if needed.";
-
-export function matcherInstructionFeedback(matcher: FormatterMatchFailureDetails): string {
-  const ranges = matcher.candidates.map(matcherRangeLabel).join(" and ");
-  switch (matcher.reason) {
-    case "no-candidate": {
-      const replacements = matcher.replacementCandidates?.map(matcherRangeLabel).join(" and ");
-      return replacements
-        ? `Requested replacement found at ${replacements}, but old content was not found. Inspect the reported lines and use apply_patch again with updated instructions if needed.`
-        : "Old content was not found. Read the current file and use apply_patch again with updated instructions if needed.";
-    }
-    case "no-ordered-mapping": {
-      const previous = matcher.previousCandidates?.map(matcherRangeLabel).join(" and ");
-      if (matcher.reverseOrdered) {
-        return `The requested changes match in reverse source-file order at ${ranges} and ${previous}. Use apply_patch again with the requested changes in source-file order if needed.`;
-      }
-      if (matcher.overlapping) {
-        return `The requested changes overlap at ${ranges} and ${previous}. Use apply_patch again with non-overlapping changes if needed.`;
-      }
-      return `The requested changes cannot be matched in source-file order; matches were found at ${ranges} and ${previous}. Use apply_patch again with the requested changes in source-file order if needed.`;
-    }
-    case "too-many-candidates":
-      return `${matcher.candidateCount} matching locations exceed the 64-location limit. ${UPDATED_PATCH_GUIDANCE}`;
-    case "ambiguous-output":
-      return `Matching locations${ranges ? ` at ${ranges}` : ""} produce different results. ${UPDATED_PATCH_GUIDANCE}`;
-    case "mapping-limit":
-      return `More than 256 possible ways to apply the requested changes were found. ${UPDATED_PATCH_GUIDANCE}`;
-    case "overlapping-edits":
-      return `The requested changes${ranges ? ` at ${ranges}` : ""} overlap. Use apply_patch again with non-overlapping changes if needed.`;
-  }
 }
 
 export function conciseInstructionError(error: string): string {
@@ -237,8 +197,7 @@ export function formatApplyPatchInstructionFeedback(
     clauses.push(instructionEffectFeedback(effect, instruction, cwd));
   }
   if (instruction.status === "failed") {
-    if (instruction.matcher) clauses.push(matcherInstructionFeedback(instruction.matcher));
-    else if (instruction.error) clauses.push(conciseInstructionError(instruction.error));
+    if (instruction.error) clauses.push(conciseInstructionError(instruction.error));
     const effectPaths = new Set((instruction.effects ?? []).map((effect) => effect.path));
     const replacementPaths = new Set(
       (instruction.effects ?? []).flatMap((effect) =>

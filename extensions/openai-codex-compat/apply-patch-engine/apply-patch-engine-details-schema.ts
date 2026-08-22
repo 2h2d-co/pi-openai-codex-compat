@@ -1,5 +1,4 @@
 import type { Static } from "typebox";
-import { FORMATTER_MATCH_FAILURE_SCHEMA } from "../apply-patch-matcher/apply-patch-matcher-failure-schema.ts";
 
 const INTEGER_ARRAY_SCHEMA = {
   type: "array",
@@ -255,7 +254,6 @@ export const APPLY_PATCH_INSTRUCTION_SCHEMA = {
       type: "array",
       items: APPLY_PATCH_FINAL_PATH_STATE_SCHEMA,
     },
-    matcher: FORMATTER_MATCH_FAILURE_SCHEMA,
     changeIndexes: INTEGER_ARRAY_SCHEMA,
     error: { type: "string" },
   },
@@ -271,7 +269,6 @@ export const APPLY_PATCH_FAILURE_SCHEMA = {
     phase: { enum: ["input", "parse", "preflight", "execution"] },
     message: { type: "string" },
     failedInstruction: { type: "integer" },
-    matcher: FORMATTER_MATCH_FAILURE_SCHEMA,
   },
   required: ["phase", "message"],
 } as const;

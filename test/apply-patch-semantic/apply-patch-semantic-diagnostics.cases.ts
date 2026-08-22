@@ -14,7 +14,6 @@ import {
   workspace,
   patch,
   type ApplyPatchDetails,
-  type FormatterMatchFailureDetails,
 } from "./apply-patch-semantic-harness.ts";
 
 test("accepts grammar-valid empty and identity updates as no-ops", async (t) => {
@@ -270,118 +269,6 @@ test("uses explicit filesystem metadata failure terminology", () => {
     formatApplyPatchFailureSummary(details, cwd),
     /1\. \[FAILED\] Update metadata\.txt - Failed to read filesystem metadata for \/workspace\/metadata\.txt: permission denied\./u,
   );
-});
-
-test("gives actionable guidance for every formatter matcher failure", () => {
-  const base = {
-    path: "matcher.ts",
-    groupCount: 2,
-    candidateCount: 2,
-    candidates: [{ startLine: 10, endLine: 12 }],
-  };
-  const cases: Array<{ matcher: FormatterMatchFailureDetails; expected: RegExp }> = [
-    {
-      matcher: { ...base, reason: "no-candidate", candidateCount: 0, candidates: [] },
-      expected:
-        /Old content was not found\. Read the current file and use apply_patch again with updated instructions if needed\./u,
-    },
-    {
-      matcher: {
-        ...base,
-        reason: "no-candidate",
-        candidateCount: 0,
-        candidates: [],
-        replacementCandidateCount: 1,
-        replacementCandidates: [{ startLine: 40, endLine: 44 }],
-      },
-      expected:
-        /Requested replacement found at lines 40-44, but old content was not found\. Inspect the reported lines and use apply_patch again with updated instructions if needed\./u,
-    },
-    {
-      matcher: {
-        ...base,
-        reason: "no-ordered-mapping",
-        groupIndex: 2,
-        previousGroupIndex: 1,
-        previousCandidates: [{ startLine: 30, endLine: 32 }],
-        reverseOrdered: true,
-      },
-      expected:
-        /The requested changes match in reverse source-file order at lines 10-12 and lines 30-32\. Use apply_patch again with the requested changes in source-file order if needed\./u,
-    },
-    {
-      matcher: {
-        ...base,
-        reason: "no-ordered-mapping",
-        groupIndex: 2,
-        previousGroupIndex: 1,
-        previousCandidates: [{ startLine: 11, endLine: 13 }],
-        overlapping: true,
-      },
-      expected:
-        /The requested changes overlap at lines 10-12 and lines 11-13\. Use apply_patch again with non-overlapping changes if needed\./u,
-    },
-    {
-      matcher: {
-        ...base,
-        reason: "no-ordered-mapping",
-        groupIndex: 2,
-        previousGroupIndex: 1,
-        previousCandidates: [{ startLine: 20, endLine: 22 }],
-      },
-      expected:
-        /The requested changes cannot be matched in source-file order; matches were found at lines 10-12 and lines 20-22\. Use apply_patch again with the requested changes in source-file order if needed\./u,
-    },
-    {
-      matcher: { ...base, reason: "too-many-candidates", candidateCount: 65 },
-      expected:
-        /65 matching locations exceed the 64-location limit\. Use apply_patch again with more specific surrounding context or smaller changes if needed\./u,
-    },
-    {
-      matcher: { ...base, reason: "ambiguous-output" },
-      expected:
-        /Matching locations at lines 10-12 produce different results\. Use apply_patch again with more specific surrounding context or smaller changes if needed\./u,
-    },
-    {
-      matcher: { ...base, reason: "mapping-limit" },
-      expected:
-        /More than 256 possible ways to apply the requested changes were found\. Use apply_patch again with more specific surrounding context or smaller changes if needed\./u,
-    },
-    {
-      matcher: { ...base, reason: "overlapping-edits" },
-      expected:
-        /The requested changes at lines 10-12 overlap\. Use apply_patch again with non-overlapping changes if needed\./u,
-    },
-  ];
-
-  for (const { matcher, expected } of cases) {
-    const details: ApplyPatchDetails = {
-      status: "failed",
-      exact: true,
-      changes: [],
-      added: [],
-      modified: [],
-      deleted: [],
-      instructions: [
-        {
-          index: 1,
-          kind: "update",
-          path: "matcher.ts",
-          status: "failed",
-          matcher,
-          error: "matcher failure",
-        },
-      ],
-      failure: {
-        phase: "preflight",
-        message: "matcher failure",
-        failedInstruction: 1,
-        matcher,
-      },
-      error: "matcher failure",
-    };
-    assert.match(formatApplyPatchFailureSummary(details), expected);
-  }
 });
 
 test("reports every instruction to the model and TUI without a limit", async (t) => {

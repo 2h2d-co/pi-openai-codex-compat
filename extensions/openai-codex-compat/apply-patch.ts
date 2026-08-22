@@ -43,7 +43,6 @@ export {
   parsePatch,
   parsePatchDocument,
 } from "./apply-patch-engine.ts";
-export type { FormatterMatchFailureDetails } from "./apply-patch-matcher.ts";
 
 export const APPLY_PATCH_TOOL_NAME = "apply_patch";
 export const APPLY_PATCH_INPUT_PROPERTY = "patch";

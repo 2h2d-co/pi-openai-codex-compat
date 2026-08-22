@@ -120,7 +120,6 @@ async function buildPlan(
       message,
       instructions,
       error instanceof SemanticPlanningError ? error.failedInstruction : undefined,
-      error instanceof SemanticPlanningError ? error.matcher : undefined,
     );
     throw new ApplyPatchVerificationError(`apply_patch verification failed: ${message}`, details);
   }

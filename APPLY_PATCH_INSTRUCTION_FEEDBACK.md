@@ -17,8 +17,8 @@ Feedback must:
 1. retain the aggregate changed-file summary;
 2. when an instruction ledger is needed, report every instruction without a
    model-facing limit;
-3. attribute filesystem effects, errors, and matching evidence to the
-   instruction that produced them;
+3. attribute filesystem effects and errors to the instruction that produced
+   them;
 4. report failed and not-run instructions;
 5. use concise, simplified technical English;
 6. report deterministic facts rather than speculative outcomes; and
@@ -134,8 +134,7 @@ Add a short clause only for:
 - a failure;
 - a non-obvious externally visible filesystem effect;
 - a partial effect;
-- a final state that is not verified; or
-- concise matcher evidence.
+- a final state that is not verified.
 
 Do not include:
 
@@ -143,7 +142,6 @@ Do not include:
 - a diff-availability warning;
 - verbose proof sections;
 - a duplicated raw error section;
-- a detached matcher section; or
 - prose that merely restates an ordinary successful operation.
 
 ## Terminology
@@ -227,7 +225,6 @@ Each instruction result stores:
 - completed externally visible filesystem effects;
 - relevant final path states;
 - an optional error;
-- optional matcher evidence; and
 - related instruction numbers.
 
 The operation label is sufficient for ordinary successful effects. Explicit
@@ -346,45 +343,17 @@ Do not tell the model that previous content was unreadable, a diff is
 unavailable, history is incomplete, or the result is inexact. Diff
 availability is a TUI/history concern, not an operation result.
 
-## Matcher feedback
+## Matching failures
 
-Matcher feedback belongs to the failed update instruction. Do not emit a
-detached `Matcher diagnostics:` section or repeat old/replacement patch text.
-
-During formatter-recovery containment, strict mismatches carry no tolerant
-matcher evidence because tolerant candidate search does not run:
+A strict matching failure belongs to the failed update instruction. Do not
+emit a detached matcher-diagnostics section or repeat old/replacement patch
+text:
 
 ```text
 3. [FAILED] Update file.ts - Old content was not found.
 ```
 
-The remaining examples define the retained feedback schema for a future fully
-witnessed matcher; they are not currently reachable from the mutation path:
-
-```text
-3. [FAILED] Update file.ts - Old content was not found. Read the current file and use apply_patch again with updated instructions if needed.
-```
-
-```text
-3. [FAILED] Update file.ts - The requested changes match in reverse source-file order at lines 10-12 and lines 30-32. Use apply_patch again with the requested changes in source-file order if needed.
-```
-
-```text
-3. [FAILED] Update file.ts - Matching locations at lines 10-12 and lines 40-42 produce different results. Use apply_patch again with more specific surrounding context or smaller changes if needed.
-```
-
-```text
-3. [FAILED] Update file.ts - More than 256 possible ways to apply the requested changes were found. Use apply_patch again with more specific surrounding context or smaller changes if needed.
-```
-
-```text
-3. [FAILED] Update file.ts - Requested replacement found at lines 40-44, but old content was not found. Inspect the reported lines and use apply_patch again with updated instructions if needed.
-```
-
-The 64-location limit, different-result ambiguity, and 256-way limit use the
-same guidance because each requires more specific surrounding context or
-smaller requested changes. Reverse-order and overlap failures instead tell the
-model to reorder or separate the requested changes.
+Missing `@@` anchors analogously report `Context was not found.`.
 
 ## Not-run results
 
@@ -465,7 +434,6 @@ Expanded rendering nests these details beneath the relevant instruction:
 - applied textual diffs;
 - non-obvious filesystem effects;
 - final-state verification;
-- concise matcher locations; and
 - useful system-error details.
 
 Partial effects are not rendered as detached successful operations. Failed
@@ -491,7 +459,6 @@ type InstructionResult = {
   effects: InstructionEffect[];
   finalStates: FinalPathState[];
   error?: InstructionError;
-  matching?: MatchingEvidence;
   relatedInstructions?: number[];
 };
 ```
@@ -519,22 +486,6 @@ Only presentation differs:
 - expanded system-error details.
 
 Semantic wording and facts remain shared.
-
-## Matcher candidate deduplication
-
-This contract is dormant while formatter-tolerant mutation is contained. It is
-a requirement for re-enablement, not evidence that tolerant candidate
-enumeration currently runs.
-
-Before applying candidate and mapping limits:
-
-1. canonicalize candidates by complete byte-edit effect;
-2. remove byte-identical duplicate candidates;
-3. retain every semantically distinct candidate; and
-4. do not rank candidates or use heuristic preference.
-
-This prevents duplicate line-level and structural candidates from consuming
-the exhaustive mapping bound.
 
 ## Required tests
 
@@ -564,7 +515,6 @@ Generated model and TUI feedback does not contain:
 - `installed`
 - `dead`
 - `dominated`
-- `Matcher diagnostics`
 - the heading `Instructions:`
 
 When the conditional ledger is present, its heading is
@@ -595,10 +545,8 @@ Cover:
 - temporary entry remains without a false no-change statement; and
 - post-operation verification failure.
 
-Once formatter recovery is re-enabled, every formatter-matcher failure reason
-must be covered with its direct retry guidance. During containment, strict
-mismatch coverage verifies the source is unchanged and the original strict
-error is reported.
+Strict mismatch coverage verifies the source is unchanged and the original
+context or expected-lines error is reported.
 
 ### No patch-content repetition
 
@@ -615,12 +563,6 @@ With `applyPatchDebug` enabled:
 - a completed expanded result contains the normal visual summary and diffs;
 - changing the setting updates existing result components; and
 - partial previews remain unchanged.
-
-### Matcher deduplication
-
-Before re-enablement, a multi-group formatter-recovery fixture must prove
-duplicate candidates do not consume the mapping limit. During containment, the
-same shape must reject before candidate enumeration.
 
 ## Documentation
 

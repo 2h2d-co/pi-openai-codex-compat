@@ -11,7 +11,7 @@ export const PRODUCTION_APPLY_PATCH_FAIL_CLOSED_FIXTURES: ProductionApplyPatchFi
       "stale preceding context",
       "unique pure insertion",
       "extra unrelated bullet",
-      "temporary strict-only containment",
+      "official strict mismatch",
     ],
     initialFiles: [
       {
@@ -167,7 +167,7 @@ export const PRODUCTION_APPLY_PATCH_FAIL_CLOSED_FIXTURES: ProductionApplyPatchFi
       "context-only chunk",
       "stale no-effect anchor",
       "later unique insertion",
-      "temporary strict-only containment",
+      "official strict mismatch",
     ],
     initialFiles: [
       {
@@ -234,7 +234,7 @@ export const PRODUCTION_APPLY_PATCH_FAIL_CLOSED_FIXTURES: ProductionApplyPatchFi
       "stale Markdown heading context",
       "multiple ordered edit groups",
       "current heading preserved",
-      "temporary strict-only containment",
+      "official strict mismatch",
     ],
     initialFiles: [
       {

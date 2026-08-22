@@ -606,18 +606,17 @@ test("registers the Codex freeform tool with model, UI, and failed-history parit
         error.message,
         /1\. \[FAILED\] Update ordered\.md - Old content was not found\./u,
       );
-      assert.doesNotMatch(error.message, /Later anchor|Earlier anchor|Matcher diagnostics/u);
+      assert.doesNotMatch(error.message, /Later anchor|Earlier anchor/u);
       return true;
     },
   );
-  const matcherResult = toolResultHandler?.({
+  const strictMismatchResult = toolResultHandler?.({
     toolName: "apply_patch",
     toolCallId: "matcher-call",
   });
-  assert.ok(matcherResult);
-  assert.equal(matcherResult?.details.failure?.matcher, undefined);
+  assert.ok(strictMismatchResult);
   const matcherComponent = renderResult(
-    { content: [], details: matcherResult.details },
+    { content: [], details: strictMismatchResult.details },
     { expanded: false, isPartial: false },
     theme,
     {

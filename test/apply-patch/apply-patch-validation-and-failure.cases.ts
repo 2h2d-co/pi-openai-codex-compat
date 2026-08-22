@@ -74,24 +74,6 @@ test("rejects malformed optional and literal applied-change fields", () => {
 });
 
 test("validates complete nested apply-patch details from one schema", () => {
-  const matcher = {
-    reason: "ambiguous-output",
-    path: "source.txt",
-    groupCount: 2,
-    groupIndex: 1,
-    chunkCount: 3,
-    chunkIndex: 2,
-    candidateCount: 1,
-    candidates: [{ startLine: 4, endLine: 6 }],
-    previousGroupIndex: 0,
-    previousCandidates: [{ startLine: 1, endLine: 2 }],
-    reverseOrdered: false,
-    overlapping: true,
-    replacementCandidateCount: 1,
-    replacementCandidates: [{ startLine: 8, endLine: 9 }],
-    oldExcerpt: "old\n",
-    futureMatcherMetadata: true,
-  };
   const instruction = {
     index: 1,
     kind: "move",
@@ -115,7 +97,6 @@ test("validates complete nested apply-patch details from one schema", () => {
       { kind: "symlink-target-modified", path: "link.txt", target: "target.txt" },
     ],
     finalStates: [{ path: "destination.txt", state: "unchanged" }],
-    matcher,
     changeIndexes: [0],
     error: "diagnostic",
     futureInstructionMetadata: true,
@@ -132,7 +113,6 @@ test("validates complete nested apply-patch details from one schema", () => {
       phase: "execution",
       message: "Execution stopped.",
       failedInstruction: 1,
-      matcher,
     },
     error: "Execution stopped.",
     futureDetailsMetadata: true,
@@ -210,22 +190,6 @@ test("validates complete nested apply-patch details from one schema", () => {
         {
           ...instruction,
           finalStates: [{ path: "destination.txt", state: "unexpected" }],
-        },
-      ],
-    },
-    {
-      ...details,
-      instructions: [{ ...instruction, matcher: { ...matcher, groupCount: 1.5 } }],
-    },
-    {
-      ...details,
-      instructions: [
-        {
-          ...instruction,
-          matcher: {
-            ...matcher,
-            candidates: [{ startLine: 1.5, endLine: 2 }],
-          },
         },
       ],
     },

@@ -20,29 +20,15 @@ The objective is semantic correctness, not pedantic tool-call validation:
 
 ## Dictionary
 
-- **Candidate:** One proposed complete old-hunk witness and its derived edit
-  locations.
-- **Candidate superset:** Every location matched by any collected relation
-  before a later eligibility policy decides which relations may authorize
-  mutation.
 - **Directory entry:** A named filesystem entry such as a regular file or
   symlink. A pure move operates on this entry, not on decoded text.
 - **Dominating operation:** A later operation that unconditionally determines
   a path's state, making an earlier result at that path irrelevant.
-- **Edit group:** One contiguous run of added and deleted hunk lines, bounded
-  by unchanged context lines.
 - **Dead operation:** An operation whose removal provably leaves the same final
   observable filesystem state and does not change anything observed by an
   intervening operation.
-- **Formatter-tolerant matching:** Currently disabled recovery intended to
-  locate fully witnessed edit groups after formatting changed line boundaries
-  or nearby context.
 - **Identity update:** An update whose old and new line sequences are
   structurally identical and therefore has no content effect.
-- **Mapping:** One ordered, non-overlapping selection with one complete
-  candidate for each witnessed chunk.
-- **Mode evidence:** Every matching relation that proves one source location
-  corresponds to a patch line or sequence.
 - **Opaque content:** File content that has not been decoded as text. It may be
   valid UTF-8, binary data, or an empty byte sequence.
 - **Path alias:** A different path spelling that identifies the same directory
@@ -289,8 +275,7 @@ After a valid strict mapping is found, derive the complete requested output.
 If those derived bytes already equal the current file byte-for-byte, the
 update is a verified no-op. This does not claim that the patch's old text
 previously existed verbatim; it states only that applying the valid mapping
-would not change the file. Formatter-tolerant mappings may regain this
-behavior only after they prove the complete old hunk under the contract below.
+would not change the file.
 
 Pure insertion chunks require particular care: existing matching text does
 not by itself prove that another insertion would be a no-op because duplicate
@@ -306,188 +291,42 @@ operation in the same patch deleted or moved away its target. The update MUST
 NOT recreate the old target or redirect itself to a move destination. Empty
 and identity-only updates retain their no-op semantics.
 
-### Formatter-tolerant text matching
+### Official-compatible strict text matching
 
-**Containment status:** Formatter-tolerant mutation is disabled while the
-complete old-hunk proof is redesigned. After the established Codex line
-matcher fails, the current implementation returns the strict mismatch without
-running line-level, Markdown, Tree-sitter, candidate-enumeration, or
-output-equivalence recovery. No setting enables the contained path.
+Text matching uses the official Codex sequence algorithm and no additional
+fallback:
 
-The remainder of this section is the safety contract that any re-enabled
-formatter-tolerant implementation MUST satisfy. It is not a description of an
-active fallback. Recovery must remain subordinate to successful strict
-matching.
+1. search for an exact contiguous line sequence;
+2. if none exists, search after trimming trailing Rust whitespace;
+3. if none exists, search after trimming leading and trailing Rust
+   whitespace; and
+4. if none exists, search after trimming and normalizing Codex's supported
+   Unicode dashes, quotes, and spaces.
 
-The fallback MUST:
+The first location in the first successful tier is selected. A later exact
+match therefore takes precedence over an earlier trim-only match, and
+duplicate locations within one tier are not treated as ambiguous. These rules
+apply without file-type or syntax restrictions.
 
-1. preserve each hunk line's context, addition, or deletion role during
-   parsing;
-2. retain every chunk, including context-only checkpoints;
-3. establish a complete old-hunk witness before deriving any edit location;
-4. derive every edit group and insertion boundary from that witness;
-5. retain every eligible complete candidate without heuristic ranking;
-6. enumerate source-ordered, non-overlapping mappings;
-7. derive the final bytes for every retained mapping; and
-8. apply the patch only when the enumeration is exhaustive and every mapping
-   produces byte-identical final content.
+An `@@ context` value is matched with the same algorithm and advances the
+forward-search cursor to the following line. The chunk's complete `oldLines`
+sequence, containing every unchanged and deleted patch line, must then match
+contiguously at or after that cursor. An unmentioned source line between two
+old lines prevents a match.
 
-If no complete mapping exists, matching falls back to the original context
-error. If retained mappings produce different files, overlap, or exceed a
-bounded exhaustive-search limit, reject the update as ambiguous before any
-write.
+`*** End of File` starts sequence matching at the final legal source position.
+A pure addition with no old lines retains official behavior and is inserted
+at EOF, including when an `@@` anchor was supplied.
 
-The grammar does not provide line numbers. Matching therefore MUST NOT invent
-line-number semantics. An `@@ context` value is a textual anchor, while
-ordinary unchanged hunk lines are contextual evidence around an edit group.
+If a direct search fails and the old sequence ends in the empty
+trailing-newline sentinel, matching retries without that sentinel. No
+Tree-sitter, Markdown-table, typed-fence, formatter-reflow, candidate-ranking,
+ambiguity, or output-equivalence matcher runs afterward.
 
-`*** End of File` has the official Codex meaning: the complete old side of the
-chunk, including unchanged trailing context, MUST end at the end of the source
-file. Formatter-tolerant recovery may bridge formatter-controlled layout
-changes, but it MUST preserve this boundary. EOF insertions are placed at EOF;
-line, Markdown, and structural candidates in the middle of the file are
-ineligible.
-
-A supplied `@@ context` anchor MUST match. If it does not, tolerant recovery
-rejects rather than treating the chunk as unanchored. A matched anchor has
-positional force: candidates preceding it are ineligible, and source order
-between chunks includes the anchor checkpoint. The anchor is not merely a
-scoring bonus.
-
-#### Line-level recovery
-
-For ordinary line-level replacements and deletions, a candidate MUST map the
-complete old side as one contiguous source-line sequence. Every unchanged and
-deleted line receives an explicit source-line witness. Matching only deleted
-payload lines, dropping context-only chunks, or bridging an unmatched source
-line is forbidden. The existing exact, trailing-whitespace,
-trimmed-whitespace, and Unicode punctuation relations are all recorded by the
-proof-only candidate collector as a conservative superset. Collection does not
-decide that full trim or Unicode equivalence may authorize mutation; C-002 and
-C-003 eligibility remains a separate pre-reactivation decision.
-
-Strict matching retains Codex's matching-mode priority and first-match
-behavior, but preserves each matched region's local line ending when writing
-replacement lines. A strict edit of a CRLF or mixed-line-ending file MUST NOT
-convert the edited region to LF merely because patch instructions use LF.
-Tolerant collection has different semantics: it MUST scan every collected
-mode, union every resulting location, deduplicate identical locations while
-retaining all mode evidence, and never let an exact candidate suppress a trim
-or Unicode candidate.
-
-For pure insertions, ordinary context on both sides MUST belong to one complete
-contiguous old-side mapping; the insertion boundary is the position between
-those mapped lines. It is not the union of independently discovered before,
-after, and anchor boundaries. Genuine one-sided hunk context may establish its
-one boundary. With no ordinary context, a matched `@@ context` may establish
-the boundary immediately after the anchor, and `*** End of File` may establish
-EOF. An otherwise unanchored insertion MUST NOT be guessed.
-
-Only the nearest unchanged line on each side may directly establish an
-insertion boundary. If that line changed semantically, an older surviving line
-MUST NOT be treated as if it were adjacent; a language-aware block matcher may
-still recover the boundary when it proves the complete block equivalent.
-
-Line-level matching does not classify an unmatched intervening line as
-harmless formatter output. Structural or Markdown recovery may bridge physical
-layout only after it supplies an equivalence proof for the complete old side.
-No recovery mode permits an old deletion or required anchor to be absent.
-
-#### Structural token recovery
-
-When deleted lines no longer match because a formatter changed line
-boundaries, supported languages use the official `web-tree-sitter` runtime
-with grammar assets from `@2h2d/tree-sitter-wasms`.
-
-The supported extensions are:
-
-| Language   | Extensions              |
-| ---------- | ----------------------- |
-| JavaScript | `.js`, `.mjs`, `.cjs`   |
-| JSX        | `.jsx`                  |
-| TypeScript | `.ts`, `.mts`, `.cts`   |
-| TSX        | `.tsx`                  |
-| Python     | `.py`, `.pyi`           |
-| Go         | `.go`                   |
-| Java       | `.java`                 |
-| Scala      | `.scala`, `.sc`, `.sbt` |
-
-Both the current file and grammar-wrapped old fragment MUST parse without
-error. Every non-whitespace old-fragment byte MUST be represented by the
-concrete syntax tree. Candidate matching compares leaf token types, exact
-token text, and relative concrete-syntax-tree shape. The requested new lines
-are opaque replacement instructions and do not participate in structural
-matching.
-
-Structural recovery is a whole-line formatting bridge, not a sub-line editing
-mechanism. The old fragment MUST contain at least two concrete tokens, and its
-matching source token span MUST cover complete physical lines except for
-leading and trailing indentation. Non-whitespace source content before the
-first matched token or after the last matched token makes the candidate
-ineligible. The two-token requirement is only the activation floor for
-Tree-sitter recovery: for example, `foo;` has two concrete tokens and
-`foo();` has four. Single-token and partial-line structural candidates reject.
-
-Ordinary formatter-controlled whitespace is absent from leaf-token matching.
-Every concrete token remains exact, including commas and other punctuation,
-comments, identifiers, operators, keywords, string contents, numeric contents,
-and JSX text. Structural recovery therefore permits only whitespace and
-physical line-boundary differences on the old side.
-
-After the old-side mapping is proven unambiguous by its final bytes, its
-complete physical lines are replaced with the hunk's requested new lines
-exactly. Structural recovery MUST NOT parse, normalize, dedent, reindent,
-token-map, or otherwise reinterpret the new lines. It converts their line
-separators to the local source line ending, consistent with ordinary line-level
-recovery.
-
-Recovery validates where the old side maps; it does not lint, repair,
-reinterpret, or reject the replacement merely because the requested new code
-would be invalid in its surrounding language context. The implementation MUST
-nevertheless avoid corruption of its own making, including changing unaffected
-line endings or altering explicit replacement punctuation.
-
-Line-level, Markdown, and structural candidate sources MUST be considered
-together when one tier can produce a textual decoy for a viable structural
-location. A verbatim block in a comment or string MUST NOT silently suppress a
-different structural mapping; differing outcomes reject as ambiguous.
-
-Unsupported extensions retain line-level recovery but do not receive
-structural token recovery. The implementation does not run a formatter,
-consult source-control history, or search a previous file snapshot.
-
-Tree-sitter string input reports UTF-16 code-unit indices. Every syntax-node
-range MUST be converted to UTF-8 byte offsets before byte edits are planned.
-This conversion is required even when the changed token is ASCII because a
-multibyte character earlier in the file otherwise shifts the edit.
-
-#### Markdown recovery
-
-Markdown files (`.md` and `.markdown`) have two narrowly scoped recovery
-modes:
-
-1. Table rows may match after trimming cell-edge padding. Cell contents and
-   column count remain exact. Rows containing escaped pipes or inline code do
-   not use this recovery. The table fallback does not operate inside fenced
-   code blocks.
-2. Code inside a typed fenced block may use the structural grammar named by
-   the fence. Supported fence names are `js`, `javascript`, `jsx`, `ts`,
-   `typescript`, `tsx`, `py`, `python`, `go`, `java`, and `scala`.
-
-Plain-prose line-reflow recovery is unsupported. Markdown prose continues to
-use the ordinary Codex line matcher and conservative line-level recovery only;
-different physical line wrapping does not make prose equivalent.
-
-An unterminated fence, unknown fence language, malformed code block, or code
-edit without the typed opening fence in its hunk context remains unmatched.
-Multiple equivalent fenced blocks are subject to the same final-byte
-uniqueness rule as ordinary source files.
-
-A typed opening fence authorizes structural recovery only while the edit group
-is still inside that fence in the hunk context. An intervening closing fence
-ends that authorization. CommonMark fence whitespace, including a trailing
-tab on a closing fence, is recognized correctly. CRLF line endings do not
-weaken Markdown hard-break or other whitespace-sensitive exclusions.
+After a successful match, replacement and insertion lines adopt the local
+source line ending. This deliberately preserves CRLF or mixed-line-ending
+regions even though official Codex can convert an edited region to LF; it does
+not change which patches are eligible to match.
 
 ### Pure move
 
@@ -929,36 +768,29 @@ implementors do not have to reconstruct decisions from session history.
 
 ### Confirmed defects to fix
 
-The implementation MUST address these confirmed defect classes:
+The matcher findings from this review were resolved by removing every
+nonofficial fallback. The implementation uses only the source-traceable
+official sequence matcher described above.
 
-1. **Matcher constraints:** enforce complete-hunk EOF alignment and positional
-   `@@` anchors across line, insertion, Markdown, and structural recovery.
-2. **Matcher fidelity:** require complete-line structural matches, exact
-   old-side tokens, opaque new-side replacement lines, and preserved CRLF;
-   address ordinary-line decoys suppressing structural candidates, table
-   fallback inside fences, closed-fence grammar leakage, and closing-fence tab
-   handling.
-3. **Bounded work:** stop mapping traversal immediately when its exhaustive
-   candidate or mapping bound is exceeded and thread cancellation through
-   long matcher loops. No additional source-size or token-count limit is
-   required.
-4. **Entry identity:** prevent write-then-unlink data loss for case, Unicode,
+The implementation MUST address these remaining defect classes:
+
+1. **Entry identity:** prevent write-then-unlink data loss for case, Unicode,
    symlink-parent, and destination-link aliases; keep hard-link entries
    distinct; and make sequential virtual state coherent across equivalent path
    spellings and symlink targets.
-5. **Execution continuity:** account for link-count changes caused by the plan
+2. **Execution continuity:** account for link-count changes caused by the plan
    itself and for fresh destination identity after cross-filesystem moves, so
    valid later operations do not fail as apparent external drift.
-6. **Preflight:** reject predictable directory and unsupported-entry conflicts,
+3. **Preflight:** reject predictable directory and unsupported-entry conflicts,
    including write-through destinations that resolve to directories, before
    any mutation.
-7. **Failure accounting:** inspect partial writes, report destination loss
+4. **Failure accounting:** inspect partial writes, report destination loss
    during cross-filesystem replacement retries, attach completed effects to
    their failed instruction, and keep same-inode completion checks from masking
    a missing destination.
-8. **Diagnostics:** derive parse-failure instruction details with parser-aware
+5. **Diagnostics:** derive parse-failure instruction details with parser-aware
    line roles so header-looking context lines do not manufacture instructions.
-9. **Harness quality:** compare complete success and failure trees, including
+6. **Harness quality:** compare complete success and failure trees, including
    directories, symlinks, entry types, modes, and collateral paths.
 
 ### Intentional non-goals and rejected proposals
@@ -968,17 +800,11 @@ The implementation MUST NOT:
 - lint, repair, reinterpret, or reject replacement code merely because the LLM
   requested code that is invalid in its language context;
 - add language-specific contextual-keyword blacklists;
-- weaken the requirement that structural source documents and wrapped
-  fragments parse without error;
-- guess an unanchored tolerant insertion;
-- rank or discard eligible candidates using heuristic scores;
-- treat byte-identical final output as a substitute for a complete old-hunk
-  witness;
-- once recovery is re-enabled, reject exhaustively enumerated, fully witnessed
-  mappings solely because they produce byte-identical final content;
-- replace the original strict context error when tolerant matching declines;
-- scan beyond an unclosed CommonMark fence as though later fences were outside
-  it;
+- add file-type, syntax, ambiguity, or contextual restrictions to the official
+  trim and Unicode matching tiers;
+- add formatter-reflow, Tree-sitter, Markdown-table, typed-fence,
+  candidate-ranking, or output-equivalence matching after the official
+  matcher fails;
 - require production-fixture fingerprints to hash sanitized fixture text;
 - infer that fixture minimization or operation count caused an observed
   production failure without evidence; or
@@ -1097,9 +923,7 @@ designed and verified transactional mechanism exists.
 Cancellation is checked before validation, after queue acquisition, and between
 operations. It must not interrupt a native rename halfway, but may stop before
 the next operation and report every completed instruction and filesystem
-effect. Cancellation observed
-during Tree-sitter initialization or parsing remains cancellation; it MUST NOT
-be converted into a generic formatter-candidate failure.
+effect.
 
 ## Result history and rendering
 
@@ -1203,20 +1027,15 @@ This extension intentionally differs from official Codex in these areas:
    filesystem interpretation across preview, preflight, and execution.
 7. Inapplicable operations may be skipped only when exact read/write and
    filesystem-identity analysis proves them dead.
-8. Formatter recovery is temporarily disabled. Its retained design targets
-   exact-token whole-line reflow, typed Markdown fences, and exact-cell
-   Markdown tables without changing requested replacement lines, but none of
-   those tolerant mappings may mutate files until complete old-hunk proof is
-   restored.
-9. Strict edits preserve local CRLF or mixed line endings instead of retaining
+8. Strict edits preserve local CRLF or mixed line endings instead of retaining
    Codex's current edited-region LF conversion.
-10. Preflight classifies the complete operation sequence, models native versus
-    cross-filesystem topology, and reports structured no-op, dead, and failure
-    evidence.
+9. Preflight classifies the complete operation sequence, models native versus
+   cross-filesystem topology, and reports structured no-op, dead, and failure
+   evidence.
 
-These extensions retain Codex's strict matching-mode priority, first-match
-behavior, explicit EOF meaning, unrestricted path resolution, and
-line-oriented patch grammar unless a difference above says otherwise.
+Matching itself is aligned with Codex's mode priority, first-match behavior,
+anchor and pure-insertion placement, explicit EOF meaning, and unrestricted
+file-type eligibility.
 
 These differences do not authorize:
 
@@ -1294,61 +1113,23 @@ Every case must preserve source bytes exactly.
 - deletion-only text update leaves an existing zero-byte file;
 - deletion-only text update of an absent path rejects unless dead.
 
-### Formatter-tolerant matching
-
-During containment, every strict mismatch in the cases below must reject
-before writes, formatter parser initialization, or tolerant candidate search.
-The remaining recovery expectations are re-enablement gates: they become
-active only after every accepted mapping has a complete old-hunk witness.
+### Official-compatible strict matching
 
 - parsed update hunks retain context, addition, and deletion roles;
-- a uniquely located edit rejects when any required ordinary context is stale;
-- every supplied anchor matches, and context-only chunks preserve source order;
-- exact matches do not suppress complete trim or Unicode candidates, and
-  duplicate locations retain all matching-mode evidence;
-- pure insertion jointly maps its complete context to one boundary and rejects
-  an unanchored location;
-- multiple fully witnessed mappings with byte-identical final content succeed;
-- multiple mappings with different final content reject before writes;
-- candidate and mapping search limits reject rather than assume uniqueness;
-- JavaScript, JSX, TypeScript, TSX, Python, Go, Java, and Scala each recover a
-  whitespace-only formatter-reflowed edit through the packaged grammar;
-- structural recovery rejects single-token and partial-line candidates;
-- every old-side concrete token, including punctuation, remains exact;
-- requested new lines are applied exactly and may contain invalid syntax;
-- line-level insertions and replacements preserve the local source line
-  ending;
-- optional trailing-comma differences reject;
-- JavaScript array elisions remain exact punctuation;
-- comments and literal contents remain exact;
-- line-level decoys do not suppress divergent structural candidates;
-- malformed source or fragments reject structural recovery;
-- UTF-8 byte edits remain correct after multibyte UTF-16 characters;
-- full-line structural replacements apply requested indentation exactly and
-  preserve source line endings;
-- a present `@@` anchor excludes candidates before it;
-- `*** End of File` aligns the complete old side, including trailing context,
-  across line, Markdown, and structural recovery;
-- typed Markdown fences recover supported-language code reflow;
-- formatter-aligned Markdown tables match exact cell contents;
-- table recovery ignores fenced-code rows;
-- closed fences do not authorize later edit groups, and closing fences with
-  trailing tabs are recognized;
-- reflowed plain Markdown paragraphs reject;
-- a changed nearest insertion context is not bypassed using older context;
-- obsolete context-only chunks reject rather than disappearing before a later
-  uniquely located edit;
-- unsupported extensions retain conservative line matching; and
-- strict Codex matching behavior remains first and unchanged.
-
-### Bounded matching and cancellation
-
-- exact token extraction and signature comparison are linear in token count;
-- reaching the complete-mapping limit immediately stops traversal;
-- cancellation interrupts long structural and mapping loops with no writes;
-- cached parser or language initialization failures can be retried rather than
-  poisoning the process permanently; and
-- bounded-work failures remain conservative context or ambiguity failures.
+- exact, trailing-trim, full-trim, and Unicode matching run in official order;
+- a later exact location takes precedence over an earlier trim-only location;
+- the first location in the successful tier is selected without ambiguity
+  rejection;
+- anchors use the same matching tiers and advance the forward cursor;
+- complete old-line sequences are contiguous and cannot bridge an unmentioned
+  source line;
+- pure additions retain official EOF placement, including anchor-only
+  additions;
+- `*** End of File` searches only the final legal source position;
+- trailing-newline sentinels receive the official retry behavior;
+- no syntax-aware or formatter-recovery matcher runs after failure; and
+- successful insertions and replacements preserve the local source line
+  ending.
 
 ### Path identity
 
@@ -1416,6 +1197,6 @@ The implementation is complete when:
    proof;
 8. result history and rendering represent opaque moves without binary
    serialization;
-9. formatter-tolerant mutation is either disabled or accepts only complete
-   old-hunk mappings with exhaustively proven byte-equivalent outcomes; and
+9. matching uses only the official-compatible strict algorithm with no
+   formatter-recovery fallback; and
 10. tests cover every required scenario above.

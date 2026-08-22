@@ -7,12 +7,12 @@ formatter-tolerant matcher produced an ambiguous insertion around an
 unmentioned repository entry.
 
 The audit established that the observed failure itself was safe, but the same
-matching architecture can silently apply patches to unintended locations.
-Formatter flexibility is subordinate to correctness:
+matching architecture could silently apply patches to unintended locations.
+Kaan subsequently chose official strict matching instead of redesigning that
+fallback:
 
-> A relaxed match is acceptable only when the complete old hunk is proven to
-> correspond to the current source under a closed set of formatter-equivalent
-> transformations.
+> Matching stops after the official Codex-compatible exact, trailing-trim,
+> full-trim, and Unicode matcher. No formatter-recovery path remains.
 
 No implementation step begins until its scope is presented to Kaan. Kaan may
 approve it, reject it, or revise it through discussion. Approval applies only
@@ -26,6 +26,9 @@ Each step has one status:
 - **APPROVED** — approved by Kaan and ready to begin;
 - **IN PROGRESS** — implementation has started;
 - **COMPLETE** — implementation, tests, documentation, and validation pass;
+- **SUPERSEDED** — completed work was intentionally removed by a later
+  decision;
+- **CANCELED** — planned work will not be implemented;
 - **BLOCKED** — a decision or external dependency prevents progress.
 
 Before starting a step:
@@ -67,10 +70,10 @@ After completing a step:
   corresponds to a patch line or sequence.
 - **Output equivalence:** Different candidate mappings produce byte-identical
   final files.
-- **Strict matcher:** The official Codex-compatible matching path attempted
-  before formatter recovery.
-- **Tolerant matcher:** The formatter-recovery path attempted after strict
-  matching fails.
+- **Strict matcher:** The sole matching path, preserving official Codex mode
+  priority and first-match behavior.
+- **Tolerant matcher:** The removed historical formatter-recovery path that
+  ran after strict matching failed.
 - **Zero-width insertion boundary:** A position between source lines where an
   insertion can occur without replacing existing bytes.
 
@@ -103,7 +106,7 @@ below. They did not modify repository files.
 
 ## Executive finding
 
-The current formatter-tolerant matcher is unsafe.
+The removed formatter-tolerant matcher was unsafe.
 
 Its effective proof is:
 
@@ -116,8 +119,9 @@ The missing proof obligation is:
 
 > Every candidate must first be a valid mapping of the complete old hunk.
 
-Without that obligation, output equivalence proves determinism over an invalid
-or incomplete candidate set. It does not prove patch intent.
+Without that obligation, output equivalence proved determinism over an invalid
+or incomplete candidate set. It did not prove patch intent. The implementation
+was first contained and then removed permanently.
 
 ## Confirmed matcher defects
 
@@ -125,13 +129,13 @@ or incomplete candidate set. It does not prove patch intent.
 
 **Severity:** Critical
 
-**Status:** Contained; proof-only full-hunk replacement implemented
+**Status:** Resolved by permanent tolerant-matcher removal
 
 `editGroups()` retains context separately, but line and structural candidates
 map only deleted payload lines or tokens. Ordinary before/after context is not
 validated against replacement and deletion candidates.
 
-Relevant implementation:
+Removed historical implementation:
 
 - `extensions/openai-codex-compat/apply-patch-matcher/apply-patch-matcher-formatter-tolerant-content.ts`
   - `editGroups()`;
@@ -174,7 +178,7 @@ Required correction:
 
 **Severity:** Critical
 
-**Status:** Contained; proof-only full-hunk replacement implemented
+**Status:** Resolved by permanent tolerant-matcher removal
 
 When an `@@` anchor has no source match, `anchorLines()` returns no anchors and
 `candidateFollowsAnchor()` treats that as unrestricted matching.
@@ -200,7 +204,7 @@ Required correction:
 
 **Severity:** Critical
 
-**Status:** Contained; proof-only ordered-checkpoint replacement implemented
+**Status:** Resolved by permanent tolerant-matcher removal
 
 A context-only chunk creates no edit group and disappears from tolerant
 matching. Its source-order and positional constraints are lost.
@@ -238,7 +242,7 @@ Required correction:
 
 **Severity:** Critical
 
-**Status:** Contained; proof-only joint-boundary replacement implemented
+**Status:** Resolved by permanent tolerant-matcher removal
 
 Insertion candidates are independently proposed:
 
@@ -301,7 +305,7 @@ Required correction:
 
 **Severity:** Critical
 
-**Status:** Contained; proof-only exhaustive collector implemented
+**Status:** Resolved by permanent tolerant-matcher removal
 
 `findSequences()` returns matches from the first matching tier and omits
 matches from later tiers:
@@ -339,7 +343,7 @@ Required correction:
 
 **Severity:** Critical
 
-**Status:** Contained; remediation planned for Step 4
+**Status:** Resolved by permanent tolerant-matcher removal
 
 `parseStructuralDocument()` converts parser initialization, grammar loading,
 source parsing, and many unexpected failures into no structural document.
@@ -377,7 +381,7 @@ Required correction:
 
 **Severity:** Critical
 
-**Status:** Contained; remediation planned for Step 4
+**Status:** Resolved by permanent tolerant-matcher removal
 
 Ordinary line matches are returned before Markdown table-cell recovery.
 Ordinary exact matches can occur inside fenced blocks, while table recovery
@@ -408,7 +412,7 @@ Required correction:
 
 **Severity:** Critical
 
-**Status:** Contained; proof-only complete-EOF replacement implemented
+**Status:** Resolved by permanent tolerant-matcher removal
 
 The tolerant EOF condition checks:
 
@@ -451,7 +455,7 @@ Required correction:
 
 **Severity:** Critical
 
-**Status:** Contained; normative remediation planned for Step 5
+**Status:** Resolved by permanent tolerant-matcher removal
 
 Multiple mappings that produce one byte-identical output are currently
 accepted. This is safe only after every mapping has a full-hunk witness.
@@ -567,42 +571,32 @@ Required correction:
 - live filesystem spelling is insufficient after earlier planned operations;
 - add regression coverage for repeated paths and aliases.
 
-## Official-compatible safety decisions requiring review
+## Official-compatible safety decisions
 
-These behaviors precede formatter recovery but conflict with an absolute
-fail-closed policy.
+Kaan resolved every strict-path question in favor of official Codex
+compatibility. No stricter file-type, syntax, ambiguity, or placement policy
+is added.
 
 ### C-001 — Strict matching selects the first complete match
 
 Duplicate strict matches are not considered ambiguous. This is official Codex
 behavior and an explicit compatibility decision.
 
-Decision needed:
-
-- retain official first-match semantics; or
-- reject ambiguous strict matches for stronger safety.
+**Decision:** Retain official first-match semantics.
 
 ### C-002 — Strict trim matching can erase semantic indentation
 
 Full trim matching ignores leading indentation. Indentation can be semantic in
 Python, YAML, Markdown, and other formats.
 
-Decision needed:
-
-- retain unrestricted official trim behavior;
-- restrict it by file type or syntax proof; or
-- make it configurable.
+**Decision:** Retain unrestricted official trim behavior.
 
 ### C-003 — Unicode normalization can equate semantic punctuation
 
 Unicode matching equates smart and straight quotes, multiple dash/minus
 characters, and Unicode spaces. This also applies inside code and literals.
 
-Decision needed:
-
-- retain official behavior globally;
-- restrict it to non-code formats; or
-- require stronger surrounding context.
+**Decision:** Retain official Unicode behavior globally.
 
 ### C-004 — Anchor-only strict insertion appends at EOF
 
@@ -628,60 +622,22 @@ tail
 inserted
 ```
 
-Decision needed:
+**Decision:** Retain official anchor-only insertion placement at EOF.
 
-- retain official-compatible behavior;
-- reject anchor-only insertion without explicit EOF; or
-- define the anchor as the insertion boundary, intentionally deviating from
-  official behavior.
+## Retired bounded-work findings
 
-## Bounded-work and cancellation gaps
-
-### R-001 — Line scans are not cancellable
-
-`findSequences()` and related line scans do not receive or check an abort
-signal.
-
-### R-002 — Candidate limits are enforced after complete scans
-
-The 64-candidate limit bounds acceptance but does not stop source scanning as
-soon as the limit is exceeded.
-
-### R-003 — Fragment parsing is not cancellable
-
-`parseFragment()` does not receive an abort signal or Tree-sitter progress
-callback.
-
-### R-004 — Structural window matching can be multiplicative
-
-Sliding token-window comparison can approach:
-
-```text
-source token count × old-fragment token count
-```
-
-### R-005 — Markdown source scanning repeats per group
-
-Fence and table scans can repeat across many edit groups.
-
-Required correction:
-
-- thread cancellation through every potentially long loop;
-- stop candidate collection immediately after a fail-closed bound;
-- add source/token indexing where required;
-- preserve conservative failure on cancellation or limits.
+R-002 through R-005 applied only to the removed candidate, structural, and
+Markdown fallback. R-001 described the official-style synchronous line scan;
+no stricter cancellation or source-size rejection policy is added as part of
+strict matching parity.
 
 ## Existing safeguards that remain valuable
 
 The audit did not invalidate these mechanisms:
 
-- strict matching runs before tolerant recovery;
+- one source-traceable strict matcher determines text-update eligibility;
 - the complete patch is semantically planned before writes;
 - recognized conflicts prevent all writes;
-- candidate mappings are ordered and non-overlapping;
-- complete-mapping enumeration has a fail-closed bound;
-- structural old-side punctuation and token text are exact;
-- structural replacements cover complete physical lines;
 - replacement lines remain opaque;
 - line endings are preserved locally;
 - path identity models symlinks, hard links, case aliases, and Unicode aliases;
@@ -690,99 +646,63 @@ The audit did not invalidate these mechanisms:
 - low-level failures receive deterministic final-state inspection; and
 - confirmed partial effects are attributed to the responsible instruction.
 
-These safeguards do not compensate for invalid or incomplete matcher
-candidates.
-
 ## Required matching invariant
 
-For every tolerant update:
+Text updates use only the pinned official algorithm:
 
-1. every supplied `@@` anchor maps;
-2. every context-only chunk maps and preserves source order;
-3. every unchanged and deleted old-hunk element maps;
-4. adjacent old-hunk elements remain physically adjacent unless an approved
-   formatter transformation proves the intervening source bytes equivalent;
-5. every edit boundary derives from that complete mapping;
-6. EOF constrains both content and terminal position;
-7. every candidate admitted by the approved equivalence relation is retained;
-8. structural-runtime failure cannot shrink the candidate set into success;
-9. every complete candidate mapping is ordered and non-overlapping; and
-10. only then may byte-identical final output establish a unique result.
-
-Approved formatter transformations are limited to:
-
-- whitespace and physical line-boundary changes proven by exact Tree-sitter
-  tokens and concrete syntax shape;
-- Markdown table-cell padding with exact cell content and column count; and
-- local line-ending differences.
-
-The following are source drift, not formatter equivalence:
-
-- additional or removed semantic lines;
-- stale bullets, headings, repository entries, or prose;
-- absent anchors;
-- relocation to another scope or fenced block;
-- changed concrete tokens or punctuation;
-- parser/runtime unavailability; and
-- unrelated context-only checkpoints.
+1. exact, trailing-trim, full-trim, and Unicode tiers run in that order;
+2. the first location in the first successful tier is selected;
+3. `@@` anchors use the same matcher and advance the cursor;
+4. each nonempty `oldLines` sequence is contiguous;
+5. EOF matching starts at the final legal source position;
+6. pure additions are placed at EOF, including anchor-only additions;
+7. the official trailing-newline-sentinel retry is retained; and
+8. no other matcher runs after failure.
 
 ## Regression-test requirements
 
-Add direct regressions for every confirmed reproduction and the following
-metamorphic properties:
+Required strict-matcher regressions cover:
 
-1. changing any context line semantically cannot relocate an edit;
-2. adding an exact decoy cannot turn rejection into success;
-3. adding a lower-tier tolerant candidate cannot be hidden by an exact decoy;
-4. parser failure cannot turn rejection into success;
-5. missing anchors cannot weaken matching;
-6. context-only chunks preserve order;
-7. semantic content inserted between adjacent old-hunk lines causes rejection;
-8. EOF success implies that every trailing old-hunk line matched;
-9. already-present insertion content is never duplicated accidentally;
-10. fenced, table, comment, literal, and executable candidates are considered
-    without cross-scope suppression;
-11. every accepted insertion has one contextually proven physical boundary;
-12. every accepted replacement or deletion has a full-hunk witness;
-13. identity-chunk moves validate their supplied source state;
-14. entry-identity drift cannot change collateral hard links;
-15. no-change postconditions are revalidated; and
-16. repeated identical adds observe virtual state.
+1. all four official matching tiers;
+2. mode priority, including a later exact match over an earlier trim match;
+3. first-location selection within the successful tier;
+4. anchor cursor behavior;
+5. anchor-only insertion placement at EOF;
+6. an unmentioned line interrupting the complete old sequence;
+7. explicit EOF tail matching;
+8. trailing-newline-sentinel behavior; and
+9. local CRLF preservation after a successful match.
+
+The unrelated semantic and execution findings still require:
+
+10. identity-chunk moves validate their supplied source state;
+11. entry-identity drift cannot change collateral hard links;
+12. no-change postconditions are revalidated; and
+13. repeated identical adds observe virtual state.
 
 Tests must assert both:
 
 - the intended final file tree; and
 - that every unrelated path and source region remains byte-identical.
 
-## Existing fixtures requiring reconsideration
+## Existing fixture disposition
 
-Current success fixtures intentionally accept behavior that conflicts with the
-new invariant:
-
-- insertion after an extra unrelated Markdown bullet;
-- insertion after formatter-collapsed preceding context using only the
-  following boundary;
-- obsolete context-only chunk before insertion;
-- stale Markdown heading context with globally unique edit payloads; and
-- any same-output mapping lacking a complete old-hunk witness.
-
-Each fixture must be reviewed individually. It must either:
-
-- become a fail-closed fixture;
-- gain a complete formatter-equivalence proof; or
-- be removed with a recorded reason.
+Former formatter-recovery fixtures are strict-mismatch fixtures. They reject
+before writes and do not initialize or invoke another matcher.
 
 ## Remediation plan
 
 ### Step 1 — Immediate containment and contract reset
 
-**Status:** COMPLETE
+**Status:** SUPERSEDED
 
 Approved decision:
 
 > Disable formatter-tolerant mutation after strict failure until the complete
 > old-hunk mapper is available. Return the original strict mismatch with
 > concise diagnostics. Do not provide an unsafe opt-in.
+
+Step 4 superseded this temporary containment with permanent removal.
 
 Implementation:
 
@@ -804,7 +724,7 @@ Completion criteria:
 
 ### Step 2 — Full-hunk line and insertion mapping
 
-**Status:** COMPLETE
+**Status:** SUPERSEDED
 
 Scope:
 
@@ -839,9 +759,11 @@ Completion criteria:
 - no unmatched semantic line can be bridged;
 - all focused and complete tests pass.
 
+Step 4 removed this disconnected proof implementation and its tests.
+
 ### Step 3 — Candidate completeness and matching tiers
 
-**Status:** COMPLETE
+**Status:** SUPERSEDED
 
 Scope:
 
@@ -876,48 +798,50 @@ Completion criteria:
   candidate;
 - output-level preservation or ambiguity remains the Step 5 integration gate.
 
-### Step 4 — Structural and Markdown proof integration
+Step 4 removed this disconnected exhaustive collector and its tests.
 
-**Status:** PLANNED
+### Step 4 — Permanent strict-only matching
+
+**Status:** COMPLETE
+
+Approved decision:
+
+> Remove formatter-tolerant matching permanently. Keep the official Codex
+> exact, trailing-trim, full-trim, Unicode, mode-priority, first-match,
+> anchor, insertion, and EOF behavior without adding stricter eligibility or
+> ambiguity rules.
 
 Scope:
 
-- integrate structural mappings into the complete old-hunk proof;
-- fail closed on structural-runtime unavailability;
-- preserve typed-fence source scope;
-- consider ordinary, table, and structural Markdown candidates together;
-- validate complete table context and insertion boundaries; and
-- add M-006 and M-007 regressions.
+- remove the dormant formatter-tolerant, Tree-sitter, Markdown, exhaustive
+  candidate, full-hunk proof, output-equivalence, and matcher-diagnostic
+  implementations;
+- remove formatter-only dependencies, licenses, public API, result metadata,
+  tests, and documentation;
+- reduce the active matcher to a directly traceable implementation of the
+  official Codex matcher;
+- retain local CRLF preservation after a successful official-compatible
+  match;
+- retain focused no-write regressions for strict mismatches, including the
+  intervening-line failure that initiated this audit; and
+- leave symlink, hard-link, path-identity, mutation-queue, semantic-preflight,
+  move-planning, move-execution, and failure-inspection behavior unchanged.
 
 Completion criteria:
 
-- parser failure cannot authorize a write;
-- decoys in comments, literals, fences, tables, or other scopes cannot
-  suppress the intended candidate;
-- complete tests pass with packaged grammars.
+- no formatter-tolerant or structural matching implementation remains;
+- official mode priority and first-match behavior are covered directly;
+- strict insertion, anchor, trailing-newline, and EOF behavior matches the
+  pinned official implementation;
+- strict mismatches never enter another matching path;
+- focused and complete tests, checks, and package inspection pass.
 
 ### Step 5 — Output-equivalence policy
 
-**Status:** PLANNED
+**Status:** CANCELED
 
-Scope:
-
-- retain output equivalence only after complete candidate validity;
-- decide treatment of already-present requested new hunks;
-- distinguish insertion, replacement, and deletion semantics;
-- revise same-output normative language and fixtures; and
-- add M-009 regressions.
-
-Default recommendation:
-
-> Reject an insertion when its old hunk has no complete mapping, even if the
-> complete requested new hunk already appears. Do not infer duplication or
-> no-change intent.
-
-Completion criteria:
-
-- every accepted same-output mapping has a full-hunk witness;
-- no accepted mapping duplicates an already-present insertion accidentally.
+Output equivalence belonged only to the removed fallback. Strict matching does
+not enumerate alternative mappings.
 
 ### Step 6 — Identity move and virtual-state semantics
 
@@ -957,55 +881,26 @@ Completion criteria:
 
 ### Step 8 — Bounded work and cancellation
 
-**Status:** PLANNED
+**Status:** CANCELED
 
-Scope:
-
-- thread abort signals through line, Markdown, and fragment matching;
-- stop candidate collection at fail-closed bounds;
-- reduce multiplicative token-window work;
-- avoid repeated full-source scans where practical; and
-- add deterministic cancellation and workload tests.
-
-Completion criteria:
-
-- cancellation interrupts every long matcher phase before writes;
-- candidate and mapping limits bound actual work, not only acceptance;
-- complete tests remain stable.
+The candidate, Markdown, fragment, and token-window work was removed. The
+remaining synchronous line scan follows the official algorithm without a new
+source-size rejection policy.
 
 ### Step 9 — Official-compatible strict-policy decisions
 
-**Status:** PLANNED
+**Status:** COMPLETE
 
-Scope:
-
-- resolve C-001 through C-004 individually;
-- compare each change with official behavior;
-- document every retained deviation or accepted compatibility risk;
-- add tests for every decision.
-
-No strict-path behavior changes without separate approval.
+C-001 through C-004 retain official behavior without stricter eligibility,
+ambiguity, or placement rules. Step 4 includes their direct regressions.
 
 ### Step 10 — Final adversarial review and release documentation
 
-**Status:** PLANNED
+**Status:** CANCELED
 
-Scope:
-
-- rerun the complete adversarial matrix;
-- add randomized and metamorphic matching coverage;
-- review parser, planner, executor, queue, and failure paths after matcher
-  changes;
-- reconcile README, semantic reference, feedback reference, release
-  compatibility log, remaining-work tracker, and changelog;
-- run `npm run check`, `npm test`, and `npm run pack:dry`; and
-- record residual risks explicitly.
-
-Completion criteria:
-
-- no confirmed finding remains unresolved or undocumented;
-- every accepted tolerant case has a traceable full-hunk proof;
-- package contents and documentation match implemented behavior.
+The matcher-specific final review and documentation reconciliation were folded
+into Step 4. Unrelated S-series work remains separately approval-gated in
+Steps 6 and 7.
 
 ## Decision log
 
@@ -1014,13 +909,15 @@ Completion criteria:
 | 2026-08-20 | Step 1 | Disable all tolerant mutation after strict matching fails; retain no unsafe opt-in. | Kaan approved immediate fail-closed containment before matcher redesign. |
 | 2026-08-20 | Step 2 | Build the full-hunk line mapper behind containment; do not reactivate mutation.     | Candidate completeness and output-equivalence work remain pending.       |
 | 2026-08-20 | Step 3 | Collect all line-match modes as a proof superset without changing strict behavior.  | C-002/C-003 eligibility remains a separate pre-reactivation gate.        |
+| 2026-08-20 | Step 4 | Remove tolerant matching permanently and retain official strict behavior.           | Kaan rejected further flexible matching work and approved strict parity. |
 
 ## Progress log
 
-| Date       | Step              | Status   | Validation and notes                                                                                                                                                                                           |
-| ---------- | ----------------- | -------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 2026-08-20 | Audit             | COMPLETE | Read-only audit; `npm run check` passed; `npm test` passed with 320 tests and 2 skips; critical silent-misapplication probes reproduced in temporary directories.                                              |
-| 2026-08-20 | Tracking document | COMPLETE | Findings, invariants, decisions, tests, and approval-gated remediation plan recorded.                                                                                                                          |
-| 2026-08-20 | Step 1            | COMPLETE | Disabled tolerant mutation with no opt-in; all 77 focused tests and the full 328-test suite passed with 2 live tests skipped; `npm run check` passed.                                                          |
-| 2026-08-20 | Step 2            | COMPLETE | Added a proof-only full-hunk line mapper and M-001/M-002/M-003/M-004/M-008 regressions; all 88 focused tests and 339 full-suite tests passed with 2 live tests skipped; `npm run check` passed.                |
-| 2026-08-20 | Step 3            | COMPLETE | Added exhaustive mode collection and M-005 regressions without changing strict or production behavior; all 96 focused tests and 347 full-suite tests passed with 2 live tests skipped; `npm run check` passed. |
+| Date       | Step              | Status   | Validation and notes                                                                                                                                                                                                    |
+| ---------- | ----------------- | -------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 2026-08-20 | Audit             | COMPLETE | Read-only audit; `npm run check` passed; `npm test` passed with 320 tests and 2 skips; critical silent-misapplication probes reproduced in temporary directories.                                                       |
+| 2026-08-20 | Tracking document | COMPLETE | Findings, invariants, decisions, tests, and approval-gated remediation plan recorded.                                                                                                                                   |
+| 2026-08-20 | Step 1            | COMPLETE | Disabled tolerant mutation with no opt-in; all 77 focused tests and the full 328-test suite passed with 2 live tests skipped; `npm run check` passed.                                                                   |
+| 2026-08-20 | Step 2            | COMPLETE | Added a proof-only full-hunk line mapper and M-001/M-002/M-003/M-004/M-008 regressions; all 88 focused tests and 339 full-suite tests passed with 2 live tests skipped; `npm run check` passed.                         |
+| 2026-08-20 | Step 3            | COMPLETE | Added exhaustive mode collection and M-005 regressions without changing strict or production behavior; all 96 focused tests and 347 full-suite tests passed with 2 live tests skipped; `npm run check` passed.          |
+| 2026-08-20 | Step 4            | COMPLETE | Removed all nonofficial matching, proof, diagnostic, dependency, and result-schema machinery; 9 focused tests and 283 full-suite tests passed with 2 live tests skipped; `npm run check` and `npm run pack:dry` passed. |

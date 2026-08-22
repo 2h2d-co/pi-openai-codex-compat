@@ -1,5 +1,4 @@
 import { generateDiffString } from "@earendil-works/pi-coding-agent";
-import type { FormatterMatchFailureDetails } from "../apply-patch-matcher.ts";
 import type {
   AppliedPatchChange,
   ApplyPatchDetails,
@@ -135,19 +134,6 @@ export function emptyDetails(): ApplyPatchDetails {
 }
 
 export function cloneApplyPatchDetails(details: ApplyPatchDetails): ApplyPatchDetails {
-  const cloneMatcher = (matcher: FormatterMatchFailureDetails): FormatterMatchFailureDetails => {
-    const cloned: FormatterMatchFailureDetails = {
-      ...matcher,
-      candidates: matcher.candidates.map((range) => ({ ...range })),
-    };
-    if (matcher.previousCandidates) {
-      cloned.previousCandidates = matcher.previousCandidates.map((range) => ({ ...range }));
-    }
-    if (matcher.replacementCandidates) {
-      cloned.replacementCandidates = matcher.replacementCandidates.map((range) => ({ ...range }));
-    }
-    return cloned;
-  };
   const cloneEffect = (effect: ApplyPatchInstructionEffect): ApplyPatchInstructionEffect =>
     effect.kind === "replaced"
       ? {
@@ -172,9 +158,6 @@ export function cloneApplyPatchDetails(details: ApplyPatchDetails): ApplyPatchDe
       if (instruction.finalStates) {
         clonedInstruction.finalStates = instruction.finalStates.map((state) => ({ ...state }));
       }
-      if (instruction.matcher) {
-        clonedInstruction.matcher = cloneMatcher(instruction.matcher);
-      }
       if (instruction.changeIndexes) {
         clonedInstruction.changeIndexes = [...instruction.changeIndexes];
       }
@@ -193,9 +176,6 @@ export function cloneApplyPatchDetails(details: ApplyPatchDetails): ApplyPatchDe
   }
   if (details.failure) {
     const failure: ApplyPatchFailureDetails = { ...details.failure };
-    if (details.failure.matcher) {
-      failure.matcher = cloneMatcher(details.failure.matcher);
-    }
     cloned.failure = failure;
   }
   return cloned;
@@ -226,7 +206,6 @@ export function failedApplyPatchDetails(
   message: string,
   instructions: readonly ApplyPatchInstructionDetails[],
   failedInstruction?: number,
-  matcher?: FormatterMatchFailureDetails,
 ): ApplyPatchDetails {
   const details = emptyDetails();
   details.status = "failed";
@@ -243,7 +222,6 @@ export function failedApplyPatchDetails(
   }
   const failure: ApplyPatchFailureDetails = { phase, message };
   if (failedInstruction !== undefined) failure.failedInstruction = failedInstruction;
-  if (matcher) failure.matcher = matcher;
   details.failure = failure;
   return details;
 }

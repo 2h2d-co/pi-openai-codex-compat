@@ -40,7 +40,6 @@ import type { SemanticPlan } from "../../extensions/openai-codex-compat/apply-pa
 import { resolveOperations } from "../../extensions/openai-codex-compat/apply-patch-engine/apply-patch-engine-operation-semantics.ts";
 import { SemanticPlanner } from "../../extensions/openai-codex-compat/apply-patch-engine/apply-patch-engine-semantic-planner.ts";
 import { ApplyPatchDiffComponent } from "../../extensions/openai-codex-compat/apply-patch-diff-render.ts";
-import type { FormatterMatchFailureDetails } from "../../extensions/openai-codex-compat/apply-patch-matcher.ts";
 import { formatApplyPatchRenderText } from "../../extensions/openai-codex-compat/apply-patch-render.ts";
 
 export const execFileAsync = promisify(execFile);
@@ -124,4 +123,4 @@ export {
   ApplyPatchDiffComponent,
   formatApplyPatchRenderText,
 };
-export type { TestContext, Theme, ApplyPatchDetails, FormatterMatchFailureDetails };
+export type { TestContext, Theme, ApplyPatchDetails };
