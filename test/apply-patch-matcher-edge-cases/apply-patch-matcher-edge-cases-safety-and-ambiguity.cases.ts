@@ -45,7 +45,7 @@ test("rejects divergent line-level and structural candidates", async (t) => {
 +  beta
 +);
 *** End Patch`,
-    /candidate mappings produce different files/u,
+    /Failed to find context/u,
   );
 });
 
@@ -123,7 +123,7 @@ test("rejects ambiguous duplicate code blocks and full-line structural expressio
 +  beta
 +);
 *** End Patch`,
-    /candidate mappings produce different files/u,
+    /Failed to find expected lines/u,
   );
 
   await rejectWithoutWrite(
@@ -142,7 +142,7 @@ test("rejects ambiguous duplicate code blocks and full-line structural expressio
 +  beta
 +);
 *** End Patch`,
-    /candidate mappings produce different files/u,
+    /Failed to find context/u,
   );
 });
 
@@ -164,7 +164,7 @@ test("rejects unsupported reflowed prose and ambiguous table insertion boundarie
  paragraph on one line.
 +inserted
 *** End Patch`,
-    /No formatter-tolerant candidate/u,
+    /Failed to find expected lines/u,
   );
 
   await rejectWithoutWrite(
@@ -179,7 +179,7 @@ test("rejects unsupported reflowed prose and ambiguous table insertion boundarie
  | alpha | one |
 +| beta | two |
 *** End Patch`,
-    /candidate mappings produce different files/u,
+    /Failed to find expected lines/u,
   );
 });
 
@@ -255,6 +255,6 @@ test("rejects overlapping edit groups even when each group is identifiable", asy
 +  beta,
 +);
 *** End Patch`,
-    /overlaps edit group 1/u,
+    /Failed to find context/u,
   );
 });

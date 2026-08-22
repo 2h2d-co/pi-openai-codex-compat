@@ -8,16 +8,15 @@ import {
   workspace,
 } from "./apply-patch-matcher-edge-cases-harness.ts";
 
-test("preserves multibyte prefixes and CRLF around structural replacements", async (t) => {
+test("contains structural replacements with multibyte prefixes and CRLF", async (t) => {
   const cwd = await workspace(t);
-  await writeFile(
-    join(cwd, "unicode.ts"),
-    'const emoji = "😀";\r\nconst result = combine(alpha, beta);\r\n',
-  );
+  const content = 'const emoji = "😀";\r\nconst result = combine(alpha, beta);\r\n';
+  await writeFile(join(cwd, "unicode.ts"), content);
 
-  await applyPatch(
-    cwd,
-    `*** Begin Patch
+  await assert.rejects(
+    applyPatch(
+      cwd,
+      `*** Begin Patch
 *** Update File: unicode.ts
 @@
 -const result = combine(
@@ -29,33 +28,33 @@ test("preserves multibyte prefixes and CRLF around structural replacements", asy
 +  beta
 +);
 *** End Patch`,
+    ),
+    /Failed to find expected lines/u,
   );
 
-  assert.equal(
-    await readFile(join(cwd, "unicode.ts"), "utf8"),
-    'const emoji = "😀";\r\nconst result = merge(\r\n  alpha,\r\n  beta\r\n);\r\n',
-  );
+  assert.equal(await readFile(join(cwd, "unicode.ts"), "utf8"), content);
 });
 
-test("preserves CRLF during line-level recovery", async (t) => {
+test("contains stale-context line recovery in CRLF files", async (t) => {
   const cwd = await workspace(t);
-  await writeFile(join(cwd, "line-recovery.txt"), "current context\r\nold\r\n");
+  const content = "current context\r\nold\r\n";
+  await writeFile(join(cwd, "line-recovery.txt"), content);
 
-  await applyPatch(
-    cwd,
-    `*** Begin Patch
+  await assert.rejects(
+    applyPatch(
+      cwd,
+      `*** Begin Patch
 *** Update File: line-recovery.txt
 @@
  stale context
 -old
 +new
 *** End Patch`,
+    ),
+    /Failed to find expected lines/u,
   );
 
-  assert.equal(
-    await readFile(join(cwd, "line-recovery.txt"), "utf8"),
-    "current context\r\nnew\r\n",
-  );
+  assert.equal(await readFile(join(cwd, "line-recovery.txt"), "utf8"), content);
 });
 
 test("preserves local line endings during strict matching", async (t) => {

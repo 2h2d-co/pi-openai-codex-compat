@@ -159,30 +159,6 @@ for (const fixture of PRODUCTION_APPLY_PATCH_FIXTURES) {
       await assert.rejects(applyPatch(materialized.cwd, materialized.patch), (error: unknown) => {
         assert.ok(error instanceof ApplyPatchVerificationError);
         assert.match(error.message, expected.messagePattern);
-        if (fixture.sourceFingerprints.includes("fb56a75092a777bc")) {
-          assert.deepEqual(error.details.failure?.matcher, {
-            reason: "no-ordered-mapping",
-            path: materialize("<CWD>/semantics.md", materialized.root, materialized.cwd),
-            groupCount: 2,
-            groupIndex: 2,
-            chunkCount: 2,
-            chunkIndex: 2,
-            candidateCount: 1,
-            candidates: [{ startLine: 6, endLine: 6 }],
-            previousGroupIndex: 1,
-            previousCandidates: [{ startLine: 12, endLine: 12 }],
-            reverseOrdered: true,
-          });
-          assert.match(error.message, /hunks may be in reverse source order or overlap/u);
-        }
-        if (fixture.sourceFingerprints.includes("0e900184894b9986")) {
-          assert.equal(error.details.failure?.matcher?.reason, "no-candidate");
-          assert.equal(error.details.failure?.matcher?.groupIndex, 2);
-          assert.deepEqual(error.details.failure?.matcher?.replacementCandidates, [
-            { startLine: 1, endLine: 1 },
-          ]);
-          assert.match(error.message, /requested replacement already appears at line 1/u);
-        }
         return true;
       });
       assert.deepEqual(await snapshotTree(materialized.root), before);

@@ -115,7 +115,7 @@ test("does not anchor an insertion to older context after nearer context changed
   );
 });
 
-test("fails closed when eligible locations exceed the candidate limit", async (t) => {
+test("containment rejects before formatter candidate-limit recovery", async (t) => {
   const cwd = await workspace(t);
   const content = `${Array.from({ length: 65 }, () => "target").join("\n")}\n`;
   await rejectWithoutWrite(
@@ -128,25 +128,24 @@ test("fails closed when eligible locations exceed the candidate limit", async (t
 -target
 +changed
 *** End Patch`,
-    /65 eligible locations exceed the 64-candidate limit/u,
+    /Failed to find context/u,
   );
 });
 
-test("does not count byte-identical line and structural candidates twice", async (t) => {
+test("containment rejects before formatter candidate deduplication", async (t) => {
   const cwd = await workspace(t);
   const exactLines = Array.from({ length: 9 }, (_, index) => `const value${index} = old${index};`);
-  await writeFile(
-    join(cwd, "deduplicated-candidates.js"),
-    [...exactLines, "const result = combine(alpha, beta);", ""].join("\n"),
-  );
+  const content = [...exactLines, "const result = combine(alpha, beta);", ""].join("\n");
   const exactGroups = exactLines.map(
     (line, index) => `@@
 -${line}
 +const value${index} = next${index};`,
   );
 
-  await applyPatch(
+  await rejectWithoutWrite(
     cwd,
+    "deduplicated-candidates.js",
+    content,
     `*** Begin Patch
 *** Update File: deduplicated-candidates.js
 ${exactGroups.join("\n")}
@@ -157,19 +156,11 @@ ${exactGroups.join("\n")}
 -);
 +const result = merge(alpha, beta);
 *** End Patch`,
-  );
-
-  assert.equal(
-    await readFile(join(cwd, "deduplicated-candidates.js"), "utf8"),
-    [
-      ...Array.from({ length: 9 }, (_, index) => `const value${index} = next${index};`),
-      "const result = merge(alpha, beta);",
-      "",
-    ].join("\n"),
+    /Failed to find expected lines/u,
   );
 });
 
-test("fails closed when equivalent mappings exceed the exhaustive-search limit", async (t) => {
+test("containment rejects before exhaustive mapping-limit recovery", async (t) => {
   const cwd = await workspace(t);
   await rejectWithoutWrite(
     cwd,
@@ -184,11 +175,11 @@ test("fails closed when equivalent mappings exceed the exhaustive-search limit",
 @@ stale three
 -
 *** End Patch`,
-    /more than 256 candidate mappings/u,
+    /Failed to find context/u,
   );
 });
 
-test("bounds exhaustive mapping work at the configured limit", async (t) => {
+test("containment avoids exhaustive formatter mapping work", async (t) => {
   const cwd = await workspace(t);
   const groups = Array.from({ length: 6 }, (_, index) => `@@ stale ${index + 1}\n-\n`).join("");
   const startedAt = performance.now();
@@ -199,9 +190,9 @@ test("bounds exhaustive mapping work at the configured limit", async (t) => {
     `*** Begin Patch
 *** Update File: bounded-mappings.txt
 ${groups}*** End Patch`,
-    /more than 256 candidate mappings/u,
+    /Failed to find context/u,
   );
-  assert.ok(performance.now() - startedAt < 1_000, "mapping limit should bound traversal work");
+  assert.ok(performance.now() - startedAt < 1_000, "containment should avoid formatter traversal");
 });
 
 test("reports ambiguity as a preflight failure with no committed instructions", async (t) => {

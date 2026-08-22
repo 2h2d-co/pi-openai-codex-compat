@@ -29,8 +29,9 @@ The objective is semantic correctness, not pedantic tool-call validation:
 - **Dead operation:** An operation whose removal provably leaves the same final
   observable filesystem state and does not change anything observed by an
   intervening operation.
-- **Formatter-tolerant matching:** Recovery that locates uniquely determined
-  edit groups after formatting changed line boundaries or nearby context.
+- **Formatter-tolerant matching:** Currently disabled recovery intended to
+  locate fully witnessed edit groups after formatting changed line boundaries
+  or nearby context.
 - **Identity update:** An update whose old and new line sequences are
   structurally identical and therefore has no content effect.
 - **Mapping:** One ordered, non-overlapping selection of candidate locations,
@@ -277,11 +278,12 @@ requested replacement text in the current file does not prove that this update
 was previously applied and MUST NOT make the operation a no-op. Replacement
 locations MAY be reported only as diagnostic evidence.
 
-After a valid strict or formatter-tolerant mapping is found, derive the
-complete requested output. If those derived bytes already equal the current
-file byte-for-byte, the update is a verified no-op. This does not claim that
-the patch's old text previously existed verbatim; it states only that applying
-the valid mapping would not change the file.
+After a valid strict mapping is found, derive the complete requested output.
+If those derived bytes already equal the current file byte-for-byte, the
+update is a verified no-op. This does not claim that the patch's old text
+previously existed verbatim; it states only that applying the valid mapping
+would not change the file. Formatter-tolerant mappings may regain this
+behavior only after they prove the complete old hunk under the contract below.
 
 Pure insertion chunks require particular care: existing matching text does
 not by itself prove that another insertion would be a no-op because duplicate
@@ -299,8 +301,15 @@ and identity-only updates retain their no-op semantics.
 
 ### Formatter-tolerant text matching
 
-Formatter-tolerant matching is a conservative fallback after the established
-Codex line matcher fails. It does not replace or weaken successful strict
+**Containment status:** Formatter-tolerant mutation is disabled while the
+complete old-hunk proof is redesigned. After the established Codex line
+matcher fails, the current implementation returns the strict mismatch without
+running line-level, Markdown, Tree-sitter, candidate-enumeration, or
+output-equivalence recovery. No setting enables the contained path.
+
+The remainder of this section is the safety contract that any re-enabled
+formatter-tolerant implementation MUST satisfy. It is not a description of an
+active fallback. Recovery must remain subordinate to successful strict
 matching.
 
 The fallback MUST:
@@ -941,7 +950,10 @@ The implementation MUST NOT:
   fragments parse without error;
 - guess an unanchored tolerant insertion;
 - rank or discard eligible candidates using heuristic scores;
-- reject exhaustive mappings that produce byte-identical final content;
+- treat byte-identical final output as a substitute for a complete old-hunk
+  witness;
+- once recovery is re-enabled, reject exhaustively enumerated, fully witnessed
+  mappings solely because they produce byte-identical final content;
 - replace the original strict context error when tolerant matching declines;
 - scan beyond an unclosed CommonMark fence as though later fences were outside
   it;
@@ -1169,9 +1181,11 @@ This extension intentionally differs from official Codex in these areas:
    filesystem interpretation across preview, preflight, and execution.
 7. Inapplicable operations may be skipped only when exact read/write and
    filesystem-identity analysis proves them dead.
-8. Conservative formatter recovery supports exact-token whole-line reflow,
-   typed Markdown fences, and exact-cell Markdown tables without changing
-   requested replacement lines.
+8. Formatter recovery is temporarily disabled. Its retained design targets
+   exact-token whole-line reflow, typed Markdown fences, and exact-cell
+   Markdown tables without changing requested replacement lines, but none of
+   those tolerant mappings may mutate files until complete old-hunk proof is
+   restored.
 9. Strict edits preserve local CRLF or mixed line endings instead of retaining
    Codex's current edited-region LF conversion.
 10. Preflight classifies the complete operation sequence, models native versus
@@ -1259,6 +1273,12 @@ Every case must preserve source bytes exactly.
 - deletion-only text update of an absent path rejects unless dead.
 
 ### Formatter-tolerant matching
+
+During containment, every strict mismatch in the cases below must reject
+before writes, formatter parser initialization, or tolerant candidate search.
+The positive recovery expectations remain re-enablement gates: they become
+active requirements only after every accepted mapping has a complete old-hunk
+witness.
 
 - parsed update hunks retain context, addition, and deletion roles;
 - a uniquely located edit survives unrelated stale context;
@@ -1370,6 +1390,6 @@ The implementation is complete when:
    proof;
 8. result history and rendering represent opaque moves without binary
    serialization;
-9. formatter-tolerant matching accepts only exhaustively proven
-   byte-equivalent outcomes; and
+9. formatter-tolerant mutation is either disabled or accepts only complete
+   old-hunk mappings with exhaustively proven byte-equivalent outcomes; and
 10. tests cover every required scenario above.

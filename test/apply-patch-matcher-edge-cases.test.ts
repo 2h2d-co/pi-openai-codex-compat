@@ -5,3 +5,4 @@ import "./apply-patch-matcher-edge-cases/apply-patch-matcher-edge-cases-structur
 import "./apply-patch-matcher-edge-cases/apply-patch-matcher-edge-cases-boundary-constraints.cases.ts";
 import "./apply-patch-matcher-edge-cases/apply-patch-matcher-edge-cases-safety-and-ambiguity.cases.ts";
 import "./apply-patch-matcher-edge-cases/apply-patch-matcher-edge-cases-fail-closed-limits.cases.ts";
+import "./apply-patch-matcher-edge-cases/apply-patch-matcher-edge-cases-containment.cases.ts";

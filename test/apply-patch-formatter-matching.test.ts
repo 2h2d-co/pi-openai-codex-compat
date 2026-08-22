@@ -52,7 +52,7 @@ test("retains context, addition, and deletion roles while parsing update hunks",
   ]);
 });
 
-test("retries parser initialization and grammar loading after transient failures", async (t) => {
+test("does not initialize formatter parsers while tolerant mutation is contained", async (t) => {
   const cwd = await workspace(t);
   const source = "const result = combine(alpha, beta);\n";
   const patch = updatePatch(
@@ -72,14 +72,11 @@ test("retries parser initialization and grammar loading after transient failures
   });
   try {
     await assert.rejects(applyPatch(cwd, patch), ApplyPatchVerificationError);
-    assert.equal(initializationAttempts, 1);
+    assert.equal(initializationAttempts, 0);
     assert.equal(await readFile(join(cwd, "retry.js"), "utf8"), source);
-    await applyPatch(cwd, patch);
-    assert.equal(initializationAttempts, 2);
-    assert.equal(
-      await readFile(join(cwd, "retry.js"), "utf8"),
-      "const result = merge(\n  alpha,\n  beta\n);\n",
-    );
+    await assert.rejects(applyPatch(cwd, patch), ApplyPatchVerificationError);
+    assert.equal(initializationAttempts, 0);
+    assert.equal(await readFile(join(cwd, "retry.js"), "utf8"), source);
   } finally {
     restoreInitialization();
   }
@@ -100,20 +97,17 @@ test("retries parser initialization and grammar loading after transient failures
   });
   try {
     await assert.rejects(applyPatch(cwd, languagePatch), ApplyPatchVerificationError);
-    assert.equal(languageAttempts, 1);
+    assert.equal(languageAttempts, 0);
     assert.equal(await readFile(join(cwd, "retry-language.js"), "utf8"), source);
-    await applyPatch(cwd, languagePatch);
-    assert.equal(languageAttempts, 2);
-    assert.equal(
-      await readFile(join(cwd, "retry-language.js"), "utf8"),
-      "const result = merge(\n  alpha,\n  beta\n);\n",
-    );
+    await assert.rejects(applyPatch(cwd, languagePatch), ApplyPatchVerificationError);
+    assert.equal(languageAttempts, 0);
+    assert.equal(await readFile(join(cwd, "retry-language.js"), "utf8"), source);
   } finally {
     restoreLanguage();
   }
 });
 
-test("uses packaged Tree-sitter grammars to recover formatter-reflowed edits", async (t) => {
+test("contains formatter-reflowed edits for every packaged Tree-sitter grammar", async (t) => {
   const cwd = await workspace(t);
   const fixtures = [
     {
@@ -201,25 +195,33 @@ test("uses packaged Tree-sitter grammars to recover formatter-reflowed edits", a
   for (const fixture of fixtures) {
     const path = join(cwd, fixture.path);
     await writeFile(path, fixture.current);
-    await applyPatch(cwd, updatePatch(fixture.path, fixture.oldLines, fixture.newLines));
-    assert.equal(await readFile(path, "utf8"), fixture.expected, fixture.path);
+    await assert.rejects(
+      applyPatch(cwd, updatePatch(fixture.path, fixture.oldLines, fixture.newLines)),
+      ApplyPatchVerificationError,
+      fixture.path,
+    );
+    assert.equal(await readFile(path, "utf8"), fixture.current, fixture.path);
   }
 });
 
-test("accepts only a unique formatter-tolerant final file", async (t) => {
+test("contains formatter-tolerant mappings even when their final file is unique", async (t) => {
   const cwd = await workspace(t);
   await writeFile(join(cwd, "same-output.txt"), "alpha\n\n\nomega\n");
+  const sameOutputBefore = await readFile(join(cwd, "same-output.txt"));
 
-  await applyPatch(
-    cwd,
-    `*** Begin Patch
+  await assert.rejects(
+    applyPatch(
+      cwd,
+      `*** Begin Patch
 *** Update File: same-output.txt
 @@
  stale context
 -
 *** End Patch`,
+    ),
+    ApplyPatchVerificationError,
   );
-  assert.equal(await readFile(join(cwd, "same-output.txt"), "utf8"), "alpha\n\nomega\n");
+  assert.deepEqual(await readFile(join(cwd, "same-output.txt")), sameOutputBefore);
 
   await writeFile(join(cwd, "ambiguous.txt"), "first\ntarget\nextra\nsecond\ntarget\nextra\n");
   const before = await readFile(join(cwd, "ambiguous.txt"));
@@ -237,7 +239,7 @@ test("accepts only a unique formatter-tolerant final file", async (t) => {
     ),
     (error: unknown) => {
       assert.ok(error instanceof ApplyPatchVerificationError);
-      assert.match(error.message, /candidate mappings produce different files/);
+      assert.match(error.message, /Failed to find expected lines/u);
       return true;
     },
   );
@@ -260,7 +262,7 @@ test("rejects insertions with multiple eligible boundaries", async (t) => {
  after
 *** End Patch`,
     ),
-    /candidate mappings produce different files/u,
+    /Failed to find expected lines/u,
   );
   assert.deepEqual(await readFile(join(cwd, "unique.txt")), uniqueBefore);
 
@@ -280,7 +282,7 @@ test("rejects insertions with multiple eligible boundaries", async (t) => {
  after
 *** End Patch`,
     ),
-    /candidate mappings produce different files/,
+    /Failed to find expected lines/u,
   );
   assert.deepEqual(await readFile(join(cwd, "repeated.txt")), before);
 });
@@ -327,53 +329,59 @@ test("does not ignore comments, literals, or unsupported-language reflow", async
   assert.equal((await lstat(join(cwd, "comment.ts"))).isFile(), true);
 });
 
-test("treats structurally recovered replacement lines as opaque instructions", async (t) => {
+test("contains structurally recovered opaque replacement lines", async (t) => {
   const cwd = await workspace(t);
-  await writeFile(join(cwd, "opaque.ts"), "const result = combine(alpha, beta);\n");
+  const source = "const result = combine(alpha, beta);\n";
+  await writeFile(join(cwd, "opaque.ts"), source);
 
-  await applyPatch(
-    cwd,
-    updatePatch(
-      "opaque.ts",
-      ["const result = combine(", "  alpha,", "  beta", ");"],
-      ["const result = merge(", "  alpha,"],
+  await assert.rejects(
+    applyPatch(
+      cwd,
+      updatePatch(
+        "opaque.ts",
+        ["const result = combine(", "  alpha,", "  beta", ");"],
+        ["const result = merge(", "  alpha,"],
+      ),
     ),
+    ApplyPatchVerificationError,
   );
 
-  assert.equal(await readFile(join(cwd, "opaque.ts"), "utf8"), "const result = merge(\n  alpha,\n");
+  assert.equal(await readFile(join(cwd, "opaque.ts"), "utf8"), source);
 });
 
-test("applies explicit punctuation additions and deletions from replacement lines", async (t) => {
+test("contains structurally recovered punctuation additions and deletions", async (t) => {
   const cwd = await workspace(t);
-  await writeFile(join(cwd, "punctuation.ts"), "const result = combine(alpha, beta);\n");
+  const additionSource = "const result = combine(alpha, beta);\n";
+  await writeFile(join(cwd, "punctuation.ts"), additionSource);
 
-  await applyPatch(
-    cwd,
-    updatePatch(
-      "punctuation.ts",
-      ["const result = combine(", "  alpha,", "  beta", ");"],
-      ["const result = combine(", "  alpha,", "  beta,", ");"],
+  await assert.rejects(
+    applyPatch(
+      cwd,
+      updatePatch(
+        "punctuation.ts",
+        ["const result = combine(", "  alpha,", "  beta", ");"],
+        ["const result = combine(", "  alpha,", "  beta,", ");"],
+      ),
     ),
+    ApplyPatchVerificationError,
   );
 
-  assert.equal(
-    await readFile(join(cwd, "punctuation.ts"), "utf8"),
-    "const result = combine(\n  alpha,\n  beta,\n);\n",
-  );
+  assert.equal(await readFile(join(cwd, "punctuation.ts"), "utf8"), additionSource);
 
-  await writeFile(join(cwd, "punctuation-removal.ts"), "const result = combine(alpha, beta,);\n");
-  await applyPatch(
-    cwd,
-    updatePatch(
-      "punctuation-removal.ts",
-      ["const result = combine(", "  alpha,", "  beta,", ");"],
-      ["const result = combine(", "  alpha,", "  beta", ");"],
+  const removalSource = "const result = combine(alpha, beta,);\n";
+  await writeFile(join(cwd, "punctuation-removal.ts"), removalSource);
+  await assert.rejects(
+    applyPatch(
+      cwd,
+      updatePatch(
+        "punctuation-removal.ts",
+        ["const result = combine(", "  alpha,", "  beta,", ");"],
+        ["const result = combine(", "  alpha,", "  beta", ");"],
+      ),
     ),
+    ApplyPatchVerificationError,
   );
-  assert.equal(
-    await readFile(join(cwd, "punctuation-removal.ts"), "utf8"),
-    "const result = combine(\n  alpha,\n  beta\n);\n",
-  );
+  assert.equal(await readFile(join(cwd, "punctuation-removal.ts"), "utf8"), removalSource);
 });
 
 test("requires exact old-side punctuation during structural recovery", async (t) => {

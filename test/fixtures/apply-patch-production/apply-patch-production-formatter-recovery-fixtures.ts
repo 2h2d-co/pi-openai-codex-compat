@@ -46,7 +46,7 @@ export const PRODUCTION_APPLY_PATCH_FORMATTER_RECOVERY_FIXTURES: ProductionApply
 *** End Patch`,
     expected: {
       outcome: "verification-error",
-      messagePattern: /No formatter-tolerant candidate/u,
+      messagePattern: /Failed to find expected lines/u,
     },
   },
   {
@@ -88,7 +88,7 @@ export const PRODUCTION_APPLY_PATCH_FORMATTER_RECOVERY_FIXTURES: ProductionApply
 *** End Patch`,
     expected: {
       outcome: "verification-error",
-      messagePattern: /No formatter-tolerant candidate/u,
+      messagePattern: /Failed to find expected lines/u,
     },
   },
   {
@@ -101,6 +101,7 @@ export const PRODUCTION_APPLY_PATCH_FORMATTER_RECOVERY_FIXTURES: ProductionApply
       "pure insertion",
       "formatter-collapsed preceding context",
       "repeated blank-line boundary",
+      "temporary strict-only containment",
     ],
     initialFiles: [
       {
@@ -132,26 +133,8 @@ export const PRODUCTION_APPLY_PATCH_FORMATTER_RECOVERY_FIXTURES: ProductionApply
  void test("ambiguity", () => {});
 *** End Patch`,
     expected: {
-      outcome: "success",
-      files: [
-        {
-          path: "<CWD>/matcher.test.ts",
-          content: [
-            'void test("tail", () => {',
-            '  assert.equal(result, "appended");',
-            "});",
-            "",
-            'void test("empty", () => {',
-            '  assert.equal(result, "");',
-            "});",
-            "",
-            'void test("ambiguity", () => {});',
-            "",
-          ].join("\n"),
-        },
-      ],
-      absent: [],
-      changeKinds: ["update"],
+      outcome: "verification-error",
+      messagePattern: /Failed to find expected lines/u,
     },
   },
   {
@@ -194,7 +177,7 @@ export const PRODUCTION_APPLY_PATCH_FORMATTER_RECOVERY_FIXTURES: ProductionApply
 *** End Patch`,
     expected: {
       outcome: "verification-error",
-      messagePattern: /No formatter-tolerant candidate/u,
+      messagePattern: /Failed to find expected lines/u,
     },
   },
   {
@@ -207,6 +190,7 @@ export const PRODUCTION_APPLY_PATCH_FORMATTER_RECOVERY_FIXTURES: ProductionApply
       "Markdown table alignment",
       "pure insertion",
       "cell-equivalent context",
+      "temporary strict-only containment",
     ],
     initialFiles: [
       {
@@ -232,24 +216,8 @@ export const PRODUCTION_APPLY_PATCH_FORMATTER_RECOVERY_FIXTURES: ProductionApply
  | Release finalization | No | Yes | No |
 *** End Patch`,
     expected: {
-      outcome: "success",
-      files: [
-        {
-          path: "<CWD>/SECURITY.md",
-          content: [
-            "| Job                         | Read | Write | OIDC |",
-            "| --------------------------- | ---- | ----- | ---- |",
-            "| Pull-request validation     | Yes  | No    | No   |",
-            "| Release construction        | Yes  | No    | No   |",
-            "| Package publication         | No   | No    | Yes  |",
-            "| Public-package integration | Yes | No | No |",
-            "| Release finalization        | No   | Yes   | No   |",
-            "",
-          ].join("\n"),
-        },
-      ],
-      absent: [],
-      changeKinds: ["update"],
+      outcome: "verification-error",
+      messagePattern: /Failed to find expected lines/u,
     },
   },
 ];

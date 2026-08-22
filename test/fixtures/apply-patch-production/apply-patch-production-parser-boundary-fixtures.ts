@@ -91,7 +91,7 @@ export const PRODUCTION_APPLY_PATCH_PARSER_BOUNDARY_FIXTURES: ProductionApplyPat
 *** End Patch`,
     expected: {
       outcome: "verification-error",
-      messagePattern: /candidate mappings produce different files/u,
+      messagePattern: /Failed to find expected lines/u,
     },
   },
 ];

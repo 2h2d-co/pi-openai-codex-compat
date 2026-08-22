@@ -9,18 +9,22 @@ import {
   rejectWithoutWrite,
 } from "./apply-patch-matcher-edge-cases-harness.ts";
 
-test("recovers reflowed code inside a typed Markdown fence", async (t) => {
+test("contains reflowed code inside a typed Markdown fence", async (t) => {
   const cwd = await workspace(t);
-  await writeFile(
-    join(cwd, "README.md"),
-    ["# API", "", "```ts", 'const value = new URL("@scope/pkg", import.meta.url);', "```", ""].join(
-      "\n",
-    ),
-  );
+  const content = [
+    "# API",
+    "",
+    "```ts",
+    'const value = new URL("@scope/pkg", import.meta.url);',
+    "```",
+    "",
+  ].join("\n");
+  await writeFile(join(cwd, "README.md"), content);
 
-  await applyPatch(
-    cwd,
-    `*** Begin Patch
+  await assert.rejects(
+    applyPatch(
+      cwd,
+      `*** Begin Patch
 *** Update File: README.md
 @@
  \`\`\`ts
@@ -33,42 +37,31 @@ test("recovers reflowed code inside a typed Markdown fence", async (t) => {
 +);
  \`\`\`
 *** End Patch`,
+    ),
+    /Failed to find expected lines/u,
   );
 
-  assert.equal(
-    await readFile(join(cwd, "README.md"), "utf8"),
-    [
-      "# API",
-      "",
-      "```ts",
-      "const value = new URL(",
-      '  import.meta.resolve("@scope/pkg"),',
-      ");",
-      "```",
-      "",
-    ].join("\n"),
-  );
+  assert.equal(await readFile(join(cwd, "README.md"), "utf8"), content);
 });
 
-test("scopes fenced recovery to the declared language", async (t) => {
+test("contains fenced recovery even when the language scope is unique", async (t) => {
   const cwd = await workspace(t);
-  await writeFile(
-    join(cwd, "languages.md"),
-    [
-      "```js",
-      "const value = combine(alpha, beta);",
-      "```",
-      "",
-      "```ts",
-      "const value: string = combine(alpha, beta);",
-      "```",
-      "",
-    ].join("\n"),
-  );
+  const content = [
+    "```js",
+    "const value = combine(alpha, beta);",
+    "```",
+    "",
+    "```ts",
+    "const value: string = combine(alpha, beta);",
+    "```",
+    "",
+  ].join("\n");
+  await writeFile(join(cwd, "languages.md"), content);
 
-  await applyPatch(
-    cwd,
-    `*** Begin Patch
+  await assert.rejects(
+    applyPatch(
+      cwd,
+      `*** Begin Patch
 *** Update File: languages.md
 @@
  \`\`\`ts
@@ -82,44 +75,30 @@ test("scopes fenced recovery to the declared language", async (t) => {
 +);
  \`\`\`
 *** End Patch`,
+    ),
+    /Failed to find expected lines/u,
   );
 
-  assert.equal(
-    await readFile(join(cwd, "languages.md"), "utf8"),
-    [
-      "```js",
-      "const value = combine(alpha, beta);",
-      "```",
-      "",
-      "```ts",
-      "const value: string = merge(",
-      "  alpha,",
-      "  beta",
-      ");",
-      "```",
-      "",
-    ].join("\n"),
-  );
+  assert.equal(await readFile(join(cwd, "languages.md"), "utf8"), content);
 });
 
-test("matches formatter-aligned Markdown table rows by cells", async (t) => {
+test("contains formatter-aligned Markdown table rows", async (t) => {
   const cwd = await workspace(t);
-  await writeFile(
-    join(cwd, "SECURITY.md"),
-    [
-      "| Job                        | Read | Write | OIDC |",
-      "| -------------------------- | ---- | ----- | ---- |",
-      "| Pull-request validation    | Yes  | No    | No   |",
-      "| Release construction       | Yes  | No    | No   |",
-      "| npm publication            | No   | No    | Yes  |",
-      "| GitHub release finalization | No   | Yes   | No   |",
-      "",
-    ].join("\n"),
-  );
+  const content = [
+    "| Job                        | Read | Write | OIDC |",
+    "| -------------------------- | ---- | ----- | ---- |",
+    "| Pull-request validation    | Yes  | No    | No   |",
+    "| Release construction       | Yes  | No    | No   |",
+    "| npm publication            | No   | No    | Yes  |",
+    "| GitHub release finalization | No   | Yes   | No   |",
+    "",
+  ].join("\n");
+  await writeFile(join(cwd, "SECURITY.md"), content);
 
-  await applyPatch(
-    cwd,
-    `*** Begin Patch
+  await assert.rejects(
+    applyPatch(
+      cwd,
+      `*** Begin Patch
 *** Update File: SECURITY.md
 @@
  | Pull-request validation | Yes | No | No |
@@ -128,12 +107,11 @@ test("matches formatter-aligned Markdown table rows by cells", async (t) => {
 +| Public-package integration | Yes | No | No |
  | GitHub release finalization | No | Yes | No |
 *** End Patch`,
+    ),
+    /Failed to find expected lines/u,
   );
 
-  assert.match(
-    await readFile(join(cwd, "SECURITY.md"), "utf8"),
-    /\| npm publication {12}\| No {3}\| No {4}\| Yes {2}\|\n\| Public-package integration \| Yes \| No \| No \|\n\| GitHub release/u,
-  );
+  assert.equal(await readFile(join(cwd, "SECURITY.md"), "utf8"), content);
 });
 
 test("rejects reflowed plain Markdown paragraphs", async (t) => {
@@ -161,6 +139,6 @@ test("rejects reflowed plain Markdown paragraphs", async (t) => {
 +The replacement paragraph is
 +intentionally wrapped.
 *** End Patch`,
-    /No formatter-tolerant candidate/u,
+    /Failed to find expected lines/u,
   );
 });

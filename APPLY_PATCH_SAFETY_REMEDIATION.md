@@ -771,23 +771,24 @@ Each fixture must be reviewed individually. It must either:
 
 ### Step 1 — Immediate containment and contract reset
 
-**Status:** PLANNED
+**Status:** COMPLETE
 
-Present for approval:
-
-- whether tolerant mutation should be disabled entirely while remediation is
-  incomplete;
-- whether it may remain available only for cases already converted to a
-  complete old-hunk proof;
-- updates to normative documents that remove unsafe acceptance requirements;
-- conversion of unsafe success fixtures into fail-closed expectations; and
-- the user-visible changelog entry.
-
-Default recommendation:
+Approved decision:
 
 > Disable formatter-tolerant mutation after strict failure until the complete
 > old-hunk mapper is available. Return the original strict mismatch with
-> concise diagnostics.
+> concise diagnostics. Do not provide an unsafe opt-in.
+
+Implementation:
+
+- strict matching is the only active text-update matching path;
+- strict mismatches do not initialize Tree-sitter or enumerate tolerant
+  candidates;
+- every M-series reproduction is a no-write containment regression;
+- former tolerant-success fixtures now expect strict verification failure;
+- normative, compatibility, feedback, and user documentation record the
+  temporary containment; and
+- the user-visible change is recorded under `Unreleased`.
 
 Completion criteria:
 
@@ -967,9 +968,9 @@ Completion criteria:
 
 ## Decision log
 
-| Date    | Step | Decision                                 | Rationale                                           |
-| ------- | ---- | ---------------------------------------- | --------------------------------------------------- |
-| Pending | —    | No implementation decision recorded yet. | Steps require individual presentation and approval. |
+| Date       | Step   | Decision                                                                            | Rationale                                                                |
+| ---------- | ------ | ----------------------------------------------------------------------------------- | ------------------------------------------------------------------------ |
+| 2026-08-20 | Step 1 | Disable all tolerant mutation after strict matching fails; retain no unsafe opt-in. | Kaan approved immediate fail-closed containment before matcher redesign. |
 
 ## Progress log
 
@@ -977,3 +978,4 @@ Completion criteria:
 | ---------- | ----------------- | -------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | 2026-08-20 | Audit             | COMPLETE | Read-only audit; `npm run check` passed; `npm test` passed with 320 tests and 2 skips; critical silent-misapplication probes reproduced in temporary directories. |
 | 2026-08-20 | Tracking document | COMPLETE | Findings, invariants, decisions, tests, and approval-gated remediation plan recorded.                                                                             |
+| 2026-08-20 | Step 1            | COMPLETE | Disabled tolerant mutation with no opt-in; all 77 focused tests and the full 328-test suite passed with 2 live tests skipped; `npm run check` passed.             |

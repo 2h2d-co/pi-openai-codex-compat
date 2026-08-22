@@ -9,16 +9,15 @@ import {
   rejectWithoutWrite,
 } from "./apply-patch-matcher-edge-cases-harness.ts";
 
-test("applies structurally recovered replacement indentation exactly", async (t) => {
+test("contains structurally recovered replacement indentation", async (t) => {
   const cwd = await workspace(t);
-  await writeFile(
-    join(cwd, "tokens.ts"),
-    "function values() {\n  const result = [alpha, beta];\n}\n",
-  );
+  const content = "function values() {\n  const result = [alpha, beta];\n}\n";
+  await writeFile(join(cwd, "tokens.ts"), content);
 
-  await applyPatch(
-    cwd,
-    `*** Begin Patch
+  await assert.rejects(
+    applyPatch(
+      cwd,
+      `*** Begin Patch
 *** Update File: tokens.ts
 @@
 -  const result = [
@@ -31,30 +30,22 @@ test("applies structurally recovered replacement indentation exactly", async (t)
 +    gamma,
 +  ];
 *** End Patch`,
+    ),
+    /Failed to find expected lines/u,
   );
 
-  assert.equal(
-    await readFile(join(cwd, "tokens.ts"), "utf8"),
-    [
-      "function values() {",
-      "  const result = [",
-      "    alpha,",
-      "    beta,",
-      "    gamma,",
-      "  ];",
-      "}",
-      "",
-    ].join("\n"),
-  );
+  assert.equal(await readFile(join(cwd, "tokens.ts"), "utf8"), content);
 });
 
-test("recovers only complete formatter-collapsed line content", async (t) => {
+test("contains complete formatter-collapsed line content", async (t) => {
   const cwd = await workspace(t);
-  await writeFile(join(cwd, "Complete.java"), "class Complete {\n  void func() { return a; }\n}\n");
+  const content = "class Complete {\n  void func() { return a; }\n}\n";
+  await writeFile(join(cwd, "Complete.java"), content);
 
-  await applyPatch(
-    cwd,
-    `*** Begin Patch
+  await assert.rejects(
+    applyPatch(
+      cwd,
+      `*** Begin Patch
 *** Update File: Complete.java
 @@ stale
 -void func() {
@@ -64,11 +55,10 @@ test("recovers only complete formatter-collapsed line content", async (t) => {
 +    return b;
 +  }
 *** End Patch`,
+    ),
+    /Failed to find context/u,
   );
-  assert.equal(
-    await readFile(join(cwd, "Complete.java"), "utf8"),
-    "class Complete {\n  void func() {\n    return b;\n  }\n}\n",
-  );
+  assert.equal(await readFile(join(cwd, "Complete.java"), "utf8"), content);
 
   await rejectWithoutWrite(
     cwd,
@@ -84,7 +74,7 @@ test("recovers only complete formatter-collapsed line content", async (t) => {
 +  return b;
 +}
 *** End Patch`,
-    /No formatter-tolerant candidate/u,
+    /Failed to find context/u,
   );
 });
 
@@ -107,7 +97,7 @@ test("rejects structural matches that cover only part of a source line", async (
 +  gamma,
 +)
 *** End Patch`,
-    /No formatter-tolerant candidate/u,
+    /Failed to find context/u,
   );
 });
 
@@ -123,7 +113,7 @@ test("rejects single-token structural recovery", async (t) => {
 -value
 +replacement
 *** End Patch`,
-    /No formatter-tolerant candidate/u,
+    /Failed to find context/u,
   );
 });
 

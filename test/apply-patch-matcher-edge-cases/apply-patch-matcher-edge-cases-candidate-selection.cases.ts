@@ -9,28 +9,26 @@ import {
   rejectWithoutWrite,
 } from "./apply-patch-matcher-edge-cases-harness.ts";
 
-test("ignores a stale context-only chunk when the actual insertion is unique", async (t) => {
+test("contains a stale context-only chunk even when the insertion is unique", async (t) => {
   const cwd = await workspace(t);
-  await writeFile(
-    join(cwd, "runbook.md"),
-    "Current introduction.\n\nThe practical risk is transient load, not data loss.\n",
-  );
+  const content = "Current introduction.\n\nThe practical risk is transient load, not data loss.\n";
+  await writeFile(join(cwd, "runbook.md"), content);
 
-  await applyPatch(
-    cwd,
-    `*** Begin Patch
+  await assert.rejects(
+    applyPatch(
+      cwd,
+      `*** Begin Patch
 *** Update File: runbook.md
 @@ obsolete introduction
 @@
  The practical risk is transient load, not data loss.
 +Add the operational follow-up.
 *** End Patch`,
+    ),
+    /Failed to find context/u,
   );
 
-  assert.equal(
-    await readFile(join(cwd, "runbook.md"), "utf8"),
-    "Current introduction.\n\nThe practical risk is transient load, not data loss.\nAdd the operational follow-up.\n",
-  );
+  assert.equal(await readFile(join(cwd, "runbook.md"), "utf8"), content);
 });
 
 test("does not use contextual preference to choose among structural matches", async (t) => {
@@ -62,7 +60,7 @@ test("does not use contextual preference to choose among structural matches", as
 +  );
  }
 *** End Patch`,
-    /candidate mappings produce different files/u,
+    /Failed to find expected lines/u,
   );
 });
 
@@ -105,20 +103,19 @@ test("does not let stronger context hide a structural decoy", async (t) => {
 +const marker = fresh(
 +);
 *** End Patch`,
-    /candidate mappings produce different files/u,
+    /Failed to find context/u,
   );
 });
 
-test("applies ordered non-overlapping structural groups against one snapshot", async (t) => {
+test("contains ordered non-overlapping structural groups", async (t) => {
   const cwd = await workspace(t);
-  await writeFile(
-    join(cwd, "groups.ts"),
-    "const first = combine(alpha, beta);\nconst second = combine(gamma, delta);\n",
-  );
+  const content = "const first = combine(alpha, beta);\nconst second = combine(gamma, delta);\n";
+  await writeFile(join(cwd, "groups.ts"), content);
 
-  await applyPatch(
-    cwd,
-    `*** Begin Patch
+  await assert.rejects(
+    applyPatch(
+      cwd,
+      `*** Begin Patch
 *** Update File: groups.ts
 @@
 -const first = combine(
@@ -139,20 +136,9 @@ test("applies ordered non-overlapping structural groups against one snapshot", a
 +  delta
 +);
 *** End Patch`,
+    ),
+    /Failed to find expected lines/u,
   );
 
-  assert.equal(
-    await readFile(join(cwd, "groups.ts"), "utf8"),
-    [
-      "const first = merge(",
-      "  alpha,",
-      "  beta",
-      ");",
-      "const second = merge(",
-      "  gamma,",
-      "  delta",
-      ");",
-      "",
-    ].join("\n"),
-  );
+  assert.equal(await readFile(join(cwd, "groups.ts"), "utf8"), content);
 });

@@ -9,7 +9,7 @@ import {
   rejectWithoutWrite,
 } from "./apply-patch-matcher-edge-cases-harness.ts";
 
-test("honors explicit end-of-file constraints during recovery", async (t) => {
+test("contains explicit end-of-file recovery after strict mismatch", async (t) => {
   const cwd = await workspace(t);
   await writeFile(join(cwd, "tail.txt"), "target\nnot-the-tail\n");
   await assert.rejects(
@@ -27,36 +27,42 @@ test("honors explicit end-of-file constraints during recovery", async (t) => {
   );
   assert.equal(await readFile(join(cwd, "tail.txt"), "utf8"), "target\nnot-the-tail\n");
 
-  await applyPatch(
-    cwd,
-    `*** Begin Patch
+  await assert.rejects(
+    applyPatch(
+      cwd,
+      `*** Begin Patch
 *** Update File: tail.txt
 @@ stale
 +appended
 *** End of File
 *** End Patch`,
+    ),
+    /Failed to find context/u,
   );
-  assert.equal(await readFile(join(cwd, "tail.txt"), "utf8"), "target\nnot-the-tail\nappended\n");
+  assert.equal(await readFile(join(cwd, "tail.txt"), "utf8"), "target\nnot-the-tail\n");
 });
 
-test("does not invent a blank line when recovering into an empty file", async (t) => {
+test("contains formatter recovery into an empty file", async (t) => {
   const cwd = await workspace(t);
   await writeFile(join(cwd, "empty.txt"), "");
 
-  await applyPatch(
-    cwd,
-    `*** Begin Patch
+  await assert.rejects(
+    applyPatch(
+      cwd,
+      `*** Begin Patch
 *** Update File: empty.txt
 @@ stale
 +first
 *** End of File
 *** End Patch`,
+    ),
+    /Failed to find context/u,
   );
 
-  assert.equal(await readFile(join(cwd, "empty.txt"), "utf8"), "first\n");
+  assert.equal(await readFile(join(cwd, "empty.txt"), "utf8"), "");
 });
 
-test("applies end-of-file to the complete recovered chunk", async (t) => {
+test("contains end-of-file recovery for complete chunks", async (t) => {
   const cwd = await workspace(t);
   await rejectWithoutWrite(
     cwd,
@@ -78,10 +84,12 @@ test("applies end-of-file to the complete recovered chunk", async (t) => {
     /Failed to find context/u,
   );
 
-  await writeFile(join(cwd, "tail-context.txt"), "head\nold\nfooter\n");
-  await applyPatch(
-    cwd,
-    `*** Begin Patch
+  const tailContent = "head\nold\nfooter\n";
+  await writeFile(join(cwd, "tail-context.txt"), tailContent);
+  await assert.rejects(
+    applyPatch(
+      cwd,
+      `*** Begin Patch
 *** Update File: tail-context.txt
 @@ stale
 -old
@@ -89,8 +97,10 @@ test("applies end-of-file to the complete recovered chunk", async (t) => {
  footer
 *** End of File
 *** End Patch`,
+    ),
+    /Failed to find context/u,
   );
-  assert.equal(await readFile(join(cwd, "tail-context.txt"), "utf8"), "head\nnew\nfooter\n");
+  assert.equal(await readFile(join(cwd, "tail-context.txt"), "utf8"), tailContent);
 
   await writeFile(join(cwd, "append.txt"), "anchor\nmiddle\ntail\n");
   await rejectWithoutWrite(
@@ -142,12 +152,14 @@ test("rejects tolerant candidates before a present anchor", async (t) => {
   );
 });
 
-test("applies exact indentation and preserves CRLF for structural replacements", async (t) => {
+test("contains structural indentation and CRLF recovery", async (t) => {
   const cwd = await workspace(t);
-  await writeFile(join(cwd, "indent.ts"), "function run() {\n  combine(alpha, beta);\n}\n");
-  await applyPatch(
-    cwd,
-    `*** Begin Patch
+  const indentContent = "function run() {\n  combine(alpha, beta);\n}\n";
+  await writeFile(join(cwd, "indent.ts"), indentContent);
+  await assert.rejects(
+    applyPatch(
+      cwd,
+      `*** Begin Patch
 *** Update File: indent.ts
 @@ stale
 -  combine(
@@ -160,21 +172,17 @@ test("applies exact indentation and preserves CRLF for structural replacements",
 +    gamma,
 +  );
 *** End Patch`,
-  );
-  assert.equal(
-    await readFile(join(cwd, "indent.ts"), "utf8"),
-    ["function run() {", "  merge(", "    alpha,", "    beta,", "    gamma,", "  );", "}", ""].join(
-      "\n",
     ),
+    /Failed to find context/u,
   );
+  assert.equal(await readFile(join(cwd, "indent.ts"), "utf8"), indentContent);
 
-  await writeFile(
-    join(cwd, "crlf.ts"),
-    "function run() {\r\n  return combine(alpha, beta);\r\n}\r\n",
-  );
-  await applyPatch(
-    cwd,
-    `*** Begin Patch
+  const crlfContent = "function run() {\r\n  return combine(alpha, beta);\r\n}\r\n";
+  await writeFile(join(cwd, "crlf.ts"), crlfContent);
+  await assert.rejects(
+    applyPatch(
+      cwd,
+      `*** Begin Patch
 *** Update File: crlf.ts
 @@ stale
 -  return combine(
@@ -187,9 +195,8 @@ test("applies exact indentation and preserves CRLF for structural replacements",
 +    gamma,
 +  );
 *** End Patch`,
+    ),
+    /Failed to find context/u,
   );
-  assert.equal(
-    await readFile(join(cwd, "crlf.ts"), "utf8"),
-    "function run() {\r\n  return merge(\r\n    alpha,\r\n    beta,\r\n    gamma,\r\n  );\r\n}\r\n",
-  );
+  assert.equal(await readFile(join(cwd, "crlf.ts"), "utf8"), crlfContent);
 });

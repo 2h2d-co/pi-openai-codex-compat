@@ -2,8 +2,15 @@
 
 ## Status
 
-All agreed work in this tracker is complete. It records the implementation and
-test decisions identified by the fresh review after commit `9efb4dc`.
+All work originally agreed in this historical tracker was completed. A later
+adversarial review found unsafe formatter-tolerant matching behavior, so its
+formatter-recovery completion claims are superseded by
+`APPLY_PATCH_SAFETY_REMEDIATION.md`.
+
+Formatter-tolerant mutation is currently contained: after strict matching
+fails, `apply_patch` rejects without invoking tolerant recovery. The
+non-formatter workstreams and historical decisions in this document remain
+implemented unless the remediation tracker says otherwise.
 
 The semantic decisions in `APPLY_PATCH_SEMANTIC_OPERATIONS.md` remain
 authoritative. This document records confirmed defects, agreed follow-up work,
@@ -58,7 +65,7 @@ The full feedback contract is recorded in
 
 - **Strict matching path:** The official Codex-compatible exact,
   trailing-whitespace, fully trimmed, and Unicode matching path used before
-  formatter-tolerant recovery.
+  the currently disabled formatter-tolerant recovery.
 - **EXDEV:** The operating-system error returned when a native rename crosses
   filesystem boundaries and must instead use copy-and-unlink behavior.
 - **Mutation-queue alias:** A different path or physical identity that can
@@ -69,7 +76,8 @@ The full feedback contract is recorded in
 
 ## Completed foundation
 
-The following decisions are implemented and are not reopened by this tracker:
+The following non-formatter decisions are implemented and are not reopened by
+this tracker:
 
 - grammar-valid empty and move-only updates are accepted;
 - harmless operations become no-ops;
@@ -81,17 +89,13 @@ The following decisions are implemented and are not reopened by this tracker:
   implemented for the covered same-filesystem paths;
 - official Codex strict matching priority and first-match behavior remain
   first;
-- formatter recovery uses exhaustive final-byte equivalence without candidate
-  scoring;
-- Tree-sitter recovery requires complete physical lines and at least two
-  concrete old-side tokens;
-- every old-side token, including punctuation, is exact;
-- replacement lines are opaque instructions and are not parsed, normalized,
-  dedented, reindented, or token-mapped;
-- optional-comma normalization and Markdown prose recovery are removed;
-- rigid Markdown table and typed-fence recovery remain;
-- formatter failures have structured matcher diagnostics; and
 - pure moves have path-only history and rendering.
+
+The formatter implementation retained exact-token, opaque-replacement,
+candidate-enumeration, Markdown-table, typed-fence, and structured-diagnostic
+machinery from this work. Those paths are not authorized to mutate files
+during containment; the safety remediation tracker governs their redesign and
+re-enablement.
 
 The following previously rejected review proposals remain rejected:
 
@@ -135,8 +139,8 @@ The existing fix applies only after strict matching fails:
 - insertions use `lineEndingAtBoundary`; and
 - structural replacements inspect the matched source line ending.
 
-These formatter-tolerant paths preserve local CRLF correctly. They are bypassed
-when strict matching succeeds.
+These retained formatter-tolerant paths preserve local CRLF correctly, but are
+currently disabled. The strict-path correction remains active.
 
 ### Required implementation
 
@@ -588,13 +592,15 @@ injectable filesystem operations rather than silently remaining uncovered.
 
 ## Completion criteria
 
-This follow-up is complete when:
+These were the completion criteria for the historical follow-up. The
+formatter-tolerant portion of criterion 3 is now governed by the safety
+remediation tracker.
 
 1. every agreed workstream has implementation and regression tests;
 2. every open decision above is resolved and recorded in the semantic
    reference;
-3. strict and formatter-tolerant paths preserve the agreed line-ending
-   behavior;
+3. the strict path preserves the agreed line-ending behavior, and any
+   re-enabled formatter-tolerant path must do the same;
 4. virtual and executed hard-link topology agree for native and
    cross-filesystem moves;
 5. symlink entry deletion never records target bytes as deleted;

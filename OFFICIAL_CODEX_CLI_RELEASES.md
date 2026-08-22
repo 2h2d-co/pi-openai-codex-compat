@@ -68,7 +68,8 @@ The detailed `apply_patch` contracts remain normative:
 - **Safe semantic extensions are intentional.** This includes move-only
   updates, harmless no-change instructions, repeated paths, and exactly proven
   skipped operations.
-- **Formatter recovery is conservative, exhaustive, and never heuristic.**
+- **Formatter recovery must be conservative, exhaustive, and never heuristic;
+  it is currently disabled until complete old-hunk proof is restored.**
 - **The complete patch is validated before writes.**
 - **Filesystem behavior explicitly accounts for symlinks, hard links, opaque
   files, and cross-filesystem moves.**
@@ -241,11 +242,18 @@ The detailed `apply_patch` contracts remain normative:
 
 ### A-003 — Formatter recovery must be exhaustive, not heuristic
 
-- **Our choice:** Run formatter recovery only after strict matching fails.
-  Accept it only when every valid mapping produces byte-identical final output.
-  Tree-sitter matching is exact-token and whole-line. Markdown support is
-  limited to typed code fences and exact-cell tables. Replacement text stays
-  opaque. Strict edits preserve local CRLF.
+- **Our policy:** Formatter recovery may run only after strict matching fails
+  and may accept only complete old-hunk mappings whose exhaustive enumeration
+  produces byte-identical final output. Tree-sitter matching must be
+  exact-token and whole-line. Markdown support is limited to typed code fences
+  and exact-cell tables. Replacement text stays opaque. Strict edits preserve
+  local CRLF.
+- **Current containment:** A safety audit found that the retained matcher did
+  not prove complete ordinary context, anchors, insertion boundaries, and EOF
+  content before using output equivalence. Formatter-tolerant mutation is
+  therefore disabled with no opt-in; strict mismatches reject before tolerant
+  candidate search. Re-enablement is tracked in
+  `APPLY_PATCH_SAFETY_REMEDIATION.md`.
 - **Official Codex:** Does not provide this recovery and can convert an edited
   CRLF region to LF.
 - **Why:** Formatters frequently change line layout, but guessing between

@@ -604,7 +604,7 @@ test("registers the Codex freeform tool with model, UI, and failed-history parit
       assert.match(error.message, /No files were changed\./u);
       assert.match(
         error.message,
-        /1\. \[FAILED\] Update ordered\.md - The requested changes match in reverse source-file order at line 4 and line 8\. Use apply_patch again with the requested changes in source-file order if needed\./u,
+        /1\. \[FAILED\] Update ordered\.md - Old content was not found\./u,
       );
       assert.doesNotMatch(error.message, /Later anchor|Earlier anchor|Matcher diagnostics/u);
       return true;
@@ -615,7 +615,7 @@ test("registers the Codex freeform tool with model, UI, and failed-history parit
     toolCallId: "matcher-call",
   });
   assert.ok(matcherResult);
-  assert.equal(matcherResult?.details.failure?.matcher?.reason, "no-ordered-mapping");
+  assert.equal(matcherResult?.details.failure?.matcher, undefined);
   const matcherComponent = renderResult(
     { content: [], details: matcherResult.details },
     { expanded: false, isPartial: false },
@@ -636,10 +636,7 @@ test("registers the Codex freeform tool with model, UI, and failed-history parit
     },
   );
   const matcherText = stripAnsi(matcherComponent.render(120).join("\n"));
-  assert.match(
-    matcherText,
-    /1\. \[FAILED\] Update ordered\.md — The requested changes match in reverse source-file order at line 4 and line 8\. Use\s+apply_patch again with the requested changes in source-file order if needed\./u,
-  );
+  assert.match(matcherText, /1\. \[FAILED\] Update ordered\.md — Old content was not found\./u);
   assert.doesNotMatch(
     matcherText,
     /Matcher:|Candidates:|Previous group:|Later anchor|Earlier anchor/u,

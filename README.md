@@ -297,8 +297,8 @@ Compatibility behavior:
 - `*** Add File` overwrites an existing file, matching Codex.
 - `*** Move to` overwrites an existing destination, matching Codex.
 - Hunk matching retries exact text, trailing-whitespace-insensitive text, fully trimmed text, and Codex's Unicode punctuation normalization.
-- After strict matching fails, uniquely determined formatter-only line reflow can recover through exact Tree-sitter tokens for JavaScript, JSX, TypeScript, TSX, Python, Go, Java, and Scala. Requested replacement lines remain opaque and exact.
-- Markdown recovery is limited to exact-cell tables and supported code inside typed fences. Plain prose reflow, optional punctuation differences, single-token structural recovery, and partial-line structural recovery reject.
+- Formatter-tolerant mutation is temporarily disabled while complete old-hunk proof is redesigned. If strict matching fails, the complete patch rejects before any write; there is no setting that enables the contained path.
+- Tree-sitter reflow and Markdown table/fence recovery are therefore currently unavailable. Plain prose reflow, optional punctuation differences, single-token structural recovery, and partial-line structural recovery also reject.
 - The parser accepts Codex's lenient marker whitespace, blank update-context lines, and direct heredoc wrappers.
 - Empty and identity updates, identical adds, absent deletes, self-moves, and same-patch fulfilled moves succeed with concise `NO CHANGE` results. Inapplicable operations are `SKIPPED` only when later operations deterministically make every effect unobservable.
 - Model-facing results retain the aggregate A/M/D summary. When any instruction is not applied or an applied instruction has feedback, they list every source-ordered instruction under `Patch instruction results:` as `N. [STATUS] operation`, without an instruction limit; ordinary all-applied results omit the ledger.
@@ -308,7 +308,7 @@ Compatibility behavior:
 - Opaque moves and symlink deletions use path-only history, so binary bytes and link-target bytes are not serialized as textual deletions.
 - The TUI retains Codex-style changed-file summaries and uses the same conditional instruction ledger; when present, `Ctrl+O` nests complete diffs beneath the instruction that produced them.
 - With `applyPatchDebug` enabled, the tool title becomes `apply_patch (debug)` and a completed collapsed result shows the exact text returned to the model without an extra renderer-only heading; expanding it with `Ctrl+O` still shows the normal visual summary and complete diffs.
-- Failed instruction feedback colocates its error, completed effects, final path states, and concise matcher evidence without repeating patch text or using speculative language. Matcher failures include direct guidance for retrying with updated, source-ordered, non-overlapping, or more specific instructions.
+- Failed instruction feedback colocates its error, completed effects, final path states, and available concise matcher evidence without repeating patch text or using speculative language. During formatter containment, failures report the original strict mismatch without tolerant matcher evidence.
 
 Filesystem behavior:
 
@@ -317,7 +317,7 @@ Filesystem behavior:
 - Text updates follow live symlinks; adds replace live or dangling symlinks without writing through them; deletes remove only the symlink; pure moves move the source symlink; and state-changing moves create a regular file at the destination without writing updated text through a source or destination symlink.
 - Entry-only operations and no-op updates do not dereference cyclic or inaccessible symlink targets during mutation-queue acquisition.
 - Same-filesystem pure moves use native rename topology. Cross-filesystem moves copy through a temporary entry, create or replace the destination, and then unlink the source, producing an inode independent from remaining source hard links.
-- Strict and formatter-recovered edits preserve the matched region's local CRLF or mixed line endings.
+- Strict edits preserve the matched region's local CRLF or mixed line endings. Formatter-recovered edits are currently disabled.
 - The extension does not add path filtering, sandboxing, or approval prompts.
 - Every hunk is parsed and validated before filesystem writes begin.
 - Mutations participate in Pi's per-file mutation queue and an extension-local logical queue for case, Unicode, symlink-parent, and hard-link aliases. Both queues coordinate only concurrent `apply_patch` calls in the same Pi process and module instance; they do not coordinate separate Pi sessions, other processes, or unrelated edit/write tools.

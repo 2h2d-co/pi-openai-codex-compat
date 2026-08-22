@@ -351,7 +351,15 @@ availability is a TUI/history concern, not an operation result.
 Matcher feedback belongs to the failed update instruction. Do not emit a
 detached `Matcher diagnostics:` section or repeat old/replacement patch text.
 
-Examples:
+During formatter-recovery containment, strict mismatches carry no tolerant
+matcher evidence because tolerant candidate search does not run:
+
+```text
+3. [FAILED] Update file.ts - Old content was not found.
+```
+
+The remaining examples define the retained feedback schema for a future fully
+witnessed matcher; they are not currently reachable from the mutation path:
 
 ```text
 3. [FAILED] Update file.ts - Old content was not found. Read the current file and use apply_patch again with updated instructions if needed.
@@ -514,6 +522,10 @@ Semantic wording and facts remain shared.
 
 ## Matcher candidate deduplication
 
+This contract is dormant while formatter-tolerant mutation is contained. It is
+a requirement for re-enablement, not evidence that tolerant candidate
+enumeration currently runs.
+
 Before applying candidate and mapping limits:
 
 1. canonicalize candidates by complete byte-edit effect;
@@ -583,8 +595,10 @@ Cover:
 - temporary entry remains without a false no-change statement; and
 - post-operation verification failure.
 
-Every formatter-matcher failure reason is covered with its direct retry
-guidance.
+Once formatter recovery is re-enabled, every formatter-matcher failure reason
+must be covered with its direct retry guidance. During containment, strict
+mismatch coverage verifies the source is unchanged and the original strict
+error is reported.
 
 ### No patch-content repetition
 
@@ -604,8 +618,9 @@ With `applyPatchDebug` enabled:
 
 ### Matcher deduplication
 
-A multi-group formatter-recovery fixture proves duplicate candidates do not
-consume the mapping limit.
+Before re-enablement, a multi-group formatter-recovery fixture must prove
+duplicate candidates do not consume the mapping limit. During containment, the
+same shape must reject before candidate enumeration.
 
 ## Documentation
 

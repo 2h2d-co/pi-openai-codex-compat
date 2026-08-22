@@ -11,6 +11,7 @@ export const PRODUCTION_APPLY_PATCH_FAIL_CLOSED_FIXTURES: ProductionApplyPatchFi
       "stale preceding context",
       "unique pure insertion",
       "extra unrelated bullet",
+      "temporary strict-only containment",
     ],
     initialFiles: [
       {
@@ -36,24 +37,8 @@ export const PRODUCTION_APPLY_PATCH_FAIL_CLOSED_FIXTURES: ProductionApplyPatchFi
 +The initial publication follows a separately reviewed bootstrap process.
 *** End Patch`,
     expected: {
-      outcome: "success",
-      files: [
-        {
-          path: "<CWD>/policy.md",
-          content: [
-            "- publisher identity is bound to the workflow;",
-            "- registry provenance is recorded;",
-            "- artifact attestations are retained.",
-            "",
-            "These controls preserve exact-artifact authorization.",
-            "",
-            "The initial publication follows a separately reviewed bootstrap process.",
-            "",
-          ].join("\n"),
-        },
-      ],
-      absent: [],
-      changeKinds: ["update"],
+      outcome: "verification-error",
+      messagePattern: /Failed to find expected lines/u,
     },
   },
   {
@@ -84,7 +69,7 @@ export const PRODUCTION_APPLY_PATCH_FAIL_CLOSED_FIXTURES: ProductionApplyPatchFi
 *** End Patch`,
     expected: {
       outcome: "verification-error",
-      messagePattern: /No formatter-tolerant candidate/u,
+      messagePattern: /Failed to find expected lines/u,
     },
   },
   {
@@ -182,6 +167,7 @@ export const PRODUCTION_APPLY_PATCH_FAIL_CLOSED_FIXTURES: ProductionApplyPatchFi
       "context-only chunk",
       "stale no-effect anchor",
       "later unique insertion",
+      "temporary strict-only containment",
     ],
     initialFiles: [
       {
@@ -199,16 +185,8 @@ export const PRODUCTION_APPLY_PATCH_FAIL_CLOSED_FIXTURES: ProductionApplyPatchFi
 +The follow-up runbook records how to validate that risk.
 *** End Patch`,
     expected: {
-      outcome: "success",
-      files: [
-        {
-          path: "<CWD>/follow-up.md",
-          content:
-            "Current introduction.\n\nThe practical risk is transient load rather than data loss.\n\nThe follow-up runbook records how to validate that risk.\n",
-        },
-      ],
-      absent: [],
-      changeKinds: ["update"],
+      outcome: "verification-error",
+      messagePattern: /Failed to find context/u,
     },
   },
   {
@@ -256,6 +234,7 @@ export const PRODUCTION_APPLY_PATCH_FAIL_CLOSED_FIXTURES: ProductionApplyPatchFi
       "stale Markdown heading context",
       "multiple ordered edit groups",
       "current heading preserved",
+      "temporary strict-only containment",
     ],
     initialFiles: [
       {
@@ -289,26 +268,8 @@ export const PRODUCTION_APPLY_PATCH_FAIL_CLOSED_FIXTURES: ProductionApplyPatchFi
  - If \`P\` is absent, it is created along with missing parent directories.
 *** End Patch`,
     expected: {
-      outcome: "success",
-      files: [
-        {
-          path: "<CWD>/semantics.md",
-          content: [
-            "### Add file",
-            "",
-            "`Add File: P` unconditionally writes its grammar-provided content to `P`.",
-            "It establishes a regular-file entry at the exact requested path spelling.",
-            "",
-            "- If `P` already contains exactly the requested bytes, the operation is a",
-            "  no-op only when `P` is already a regular file at the requested exact",
-            "  spelling.",
-            "- If `P` is absent, it is created along with missing parent directories.",
-            "",
-          ].join("\n"),
-        },
-      ],
-      absent: [],
-      changeKinds: ["update"],
+      outcome: "verification-error",
+      messagePattern: /Failed to find expected lines/u,
     },
   },
   {
