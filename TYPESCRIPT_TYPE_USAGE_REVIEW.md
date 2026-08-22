@@ -441,7 +441,7 @@ made these additional improvements:
 - The two production definite-assignment assertions used to capture Promise
   resolvers were replaced by explicit invariant checks.
 - The shared function capability predicate now narrows to an `UnknownFunction`
-  with `never` parameters and a discarded `void` result instead of the broad legacy
+  with `never` parameters and an `unknown` result instead of the broad legacy
   `CallableFunction` interface.
 - Dead wrappers, exports, aliases, and helpers found during the pass were
   removed.
@@ -461,9 +461,15 @@ APIs based on ambiguity and call-site readability instead.
 
 **Oxlint checkpoint:** No rule was added for `CallableFunction`. It appeared
 once, and banning that global name would enforce a project style rather than a
-general correctness property. The replacement makes unchecked direct
-argument passing and result consumption impossible while preserving exact
-signatures at all capability check call sites.
+general correctness property. The replacement prevents unchecked argument
+passing and requires result narrowing while preserving exact signatures at all
+capability check call sites.
+
+The shared `2h2d/no-unknown-returns` rule moved from the strict preset to the
+advisory preset in `@2h2d/oxlint-config` `0.1.0-alpha.9`. A syntax rule cannot
+distinguish an application boundary that should parse a known domain from a
+generic decoder or opaque callable contract where `unknown` is the truthful,
+safe result.
 
 ## Approaches to Avoid
 
