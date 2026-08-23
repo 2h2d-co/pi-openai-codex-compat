@@ -1,4 +1,3 @@
-import { basename, dirname, resolve } from "node:path";
 import type {
   ApplyPatchExecutionFilesystem,
   ApplyPatchFileEntryDetails,
@@ -7,11 +6,9 @@ import type {
   ApplyPatchInstructionEffect,
 } from "./apply-patch-engine-contracts.ts";
 import { errorMessage, isNotFound } from "./apply-patch-engine-errors.ts";
+import { currentExecutionEntry } from "./apply-patch-engine-commit-evidence.ts";
 import {
-  ABSENT_ENTRY,
   buffersEqual,
-  entryType,
-  fingerprint,
   sameFingerprintExceptLinkCount,
   samePhysicalEntry,
   type ExistingFileEntry,
@@ -102,48 +99,6 @@ export function entriesHaveSameIdentity(actual: VirtualEntry, expected: VirtualE
     );
   }
   return actual.kind === "absent" && expected.kind === "absent";
-}
-
-export async function currentExecutionEntry(
-  path: string,
-  filesystem: ApplyPatchExecutionFilesystem,
-): Promise<VirtualEntry> {
-  try {
-    const metadata = await filesystem.lstat(path);
-    const entryFingerprint = fingerprint(metadata);
-    if (metadata.isFile()) {
-      return {
-        kind: "regular",
-        id: "",
-        entryPath: path,
-        entryName: basename(path),
-        fingerprint: entryFingerprint,
-        content: { planned: false },
-      };
-    }
-    if (metadata.isSymbolicLink()) {
-      const target = await filesystem.readlink(path);
-      return {
-        kind: "symlink",
-        id: "",
-        entryPath: path,
-        entryName: basename(path),
-        fingerprint: entryFingerprint,
-        target,
-        targetPath: resolve(dirname(path), target),
-        content: { planned: false },
-      };
-    }
-    if (metadata.isDirectory()) return { kind: "directory", fingerprint: entryFingerprint };
-    return {
-      kind: "unsupported",
-      entryType: entryType(metadata),
-      fingerprint: entryFingerprint,
-    };
-  } catch (error) {
-    if (isNotFound(error)) return ABSENT_ENTRY;
-    throw error;
-  }
 }
 
 export type ApplyPatchFinalPathInspection = {

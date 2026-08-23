@@ -14,6 +14,12 @@ import {
   emptyDetails,
 } from "./apply-patch-engine-details.ts";
 import {
+  commitEvidenceForExistingEntry,
+  committedEntryFromEvidence,
+  currentExecutionEntry,
+  entryMatchesCommitEvidence,
+} from "./apply-patch-engine-commit-evidence.ts";
+import {
   ApplyPatchExecutionError,
   errorMessage,
   isNotFound,
@@ -35,8 +41,10 @@ import {
   samePhysicalEntry,
   type CommittedEntryMutation,
   type CommittedPhysicalLinkDelta,
+  type EntryCommitEvidence,
   type ExistingFileEntry,
   type ParentPlan,
+  type PathCommitEvidence,
   type PlannedEntryMutation,
   type PlannedMutation,
   type PlannedNoChangeAssertion,
@@ -235,13 +243,25 @@ export async function assertMutationEntryMatches(
 export async function captureCommittedEntryMutations(
   mutations: readonly PlannedEntryMutation[],
   mutationIndex: number,
+  evidenceByPath: ReadonlyMap<string, EntryCommitEvidence>,
+  filesystem: ApplyPatchExecutionFilesystem,
 ): Promise<CommittedEntryMutation[]> {
   const committed: CommittedEntryMutation[] = [];
   for (const mutation of mutations) {
-    const expected = await currentEntry(mutation.path);
-    if (expected.kind !== mutation.kind) {
+    const evidence = evidenceByPath.get(mutation.path);
+    if (!evidence || evidence.kind !== mutation.kind) {
       throw new Error(`Filesystem changed while committing apply_patch at ${mutation.path}`);
     }
+    const actual = await currentExecutionEntry(mutation.path, filesystem);
+    if (
+      !(await entryMatchesCommitEvidence(mutation.path, actual, evidence, filesystem)) ||
+      (evidence.kind !== "absent" &&
+        evidence.exactSpelling &&
+        !(await exactSpellingExists(mutation.path, filesystem)))
+    ) {
+      throw new Error(`Filesystem changed while committing apply_patch at ${mutation.path}`);
+    }
+    const expected = committedEntryFromEvidence(actual, evidence);
     const committedMutation: CommittedEntryMutation = {
       path: mutation.path,
       key: mutation.key,
@@ -251,6 +271,25 @@ export async function captureCommittedEntryMutations(
     committed.push(committedMutation);
   }
   return committed;
+}
+
+function recordCommitEvidence(
+  evidenceByPath: Map<string, EntryCommitEvidence>,
+  entries: readonly PathCommitEvidence[],
+): void {
+  for (const { path, evidence } of entries) evidenceByPath.set(path, evidence);
+}
+
+async function assertExistingEntryContinuity(
+  path: string,
+  expected: ExistingFileEntry,
+  filesystem: ApplyPatchExecutionFilesystem,
+): Promise<void> {
+  const evidence = commitEvidenceForExistingEntry(expected, "except-link-count");
+  const actual = await currentExecutionEntry(path, filesystem);
+  if (!(await entryMatchesCommitEvidence(path, actual, evidence, filesystem))) {
+    throw new Error(`Filesystem changed while apply_patch moved ${path}`);
+  }
 }
 
 async function assertRouteMatches(
@@ -348,7 +387,7 @@ async function executeInPlaceTextUpdate(
   priorMutations: readonly CommittedEntryMutation[],
   physicalLinkDeltas: readonly CommittedPhysicalLinkDelta[],
   onMutationStart: () => void,
-): Promise<void> {
+): Promise<Extract<EntryCommitEvidence, { kind: "regular" }>> {
   await assertMutationEntryMatches(
     mutation.operation.absolutePath,
     mutation.sourceKey,
@@ -435,6 +474,13 @@ async function executeInPlaceTextUpdate(
       resultingTargetFingerprint,
       filesystem,
     );
+    return {
+      kind: "regular",
+      fingerprint: resultingTargetFingerprint,
+      fingerprintMatch: "exact",
+      exactSpelling: false,
+      content: mutation.content,
+    };
   } finally {
     await handle.close();
   }
@@ -847,6 +893,7 @@ export async function executePlan(
       }
       const mutation = action.mutation;
       const mutationIndex = action.mutationIndex;
+      const commitEvidence = new Map<string, EntryCommitEvidence>();
       if (mutation.kind === "add") {
         await assertMutationEntryMatches(
           mutation.operation.absolutePath,
@@ -858,13 +905,17 @@ export async function executePlan(
         await assertParentPlanMatches(mutation.parents);
         try {
           activeFilesystemMutationStarted = true;
-          await createPlannedParents(mutation.parents, filesystem);
-          await replaceRegularFile(
+          recordCommitEvidence(
+            commitEvidence,
+            await createPlannedParents(mutation.parents, filesystem),
+          );
+          const targetEvidence = await replaceRegularFile(
             mutation.operation.absolutePath,
             mutation.content,
             filesystem,
             mutation.replacementMode,
           );
+          commitEvidence.set(mutation.operation.absolutePath, targetEvidence);
         } catch (error) {
           details.exact = false;
           if (error instanceof RegularFileReplacementError) {
@@ -900,6 +951,7 @@ export async function executePlan(
         try {
           activeFilesystemMutationStarted = true;
           await filesystem.unlink(mutation.operation.absolutePath);
+          commitEvidence.set(mutation.operation.absolutePath, { kind: "absent" });
         } catch (error) {
           throw new Error(
             `Failed to delete file ${mutation.operation.absolutePath}: ${errorMessage(error)}`,
@@ -923,12 +975,13 @@ export async function executePlan(
           const moveTo = mutation.operation.moveTo;
           try {
             activeFilesystemMutationStarted = true;
-            await replaceRegularFile(
+            const destinationEvidence = await replaceRegularFile(
               mutation.operation.absolutePath,
               mutation.content,
               filesystem,
               mutation.replacementMode,
             );
+            commitEvidence.set(moveAbsolutePath, destinationEvidence);
           } catch (error) {
             details.exact = false;
             if (error instanceof RegularFileReplacementError) {
@@ -988,13 +1041,17 @@ export async function executePlan(
           await assertParentPlanMatches(mutation.parents);
           try {
             activeFilesystemMutationStarted = true;
-            await createPlannedParents(mutation.parents, filesystem);
-            await replaceRegularFile(
+            recordCommitEvidence(
+              commitEvidence,
+              await createPlannedParents(mutation.parents, filesystem),
+            );
+            const destinationEvidence = await replaceRegularFile(
               mutation.operation.moveAbsolutePath,
               mutation.content,
               filesystem,
               mutation.replacementMode,
             );
+            commitEvidence.set(mutation.operation.moveAbsolutePath, destinationEvidence);
           } catch (error) {
             details.exact = false;
             if (error instanceof RegularFileReplacementError) {
@@ -1020,7 +1077,33 @@ export async function executePlan(
           }
           appendChange(details, provisionalChange, mutation.instructionIndex);
           try {
+            const expectedSource = effectiveExpectedEntry(
+              mutation.operation.absolutePath,
+              mutation.sourceKey,
+              mutation.expectedSource,
+              committedEntryMutations,
+              committedPhysicalLinkDeltas,
+            );
+            if (expectedSource.kind !== "regular" && expectedSource.kind !== "symlink") {
+              throw new Error(
+                `Could not verify the planned source entry for ${mutation.operation.absolutePath}`,
+              );
+            }
+            await assertExistingEntryContinuity(
+              mutation.operation.absolutePath,
+              expectedSource,
+              filesystem,
+            );
+          } catch (error) {
+            details.exact = false;
+            throw new Error(
+              `Failed to verify original ${mutation.operation.absolutePath} before removal: ${errorMessage(error)}`,
+              { cause: error },
+            );
+          }
+          try {
             await filesystem.unlink(mutation.operation.absolutePath);
+            commitEvidence.set(mutation.operation.absolutePath, { kind: "absent" });
           } catch (error) {
             details.exact = false;
             throw new Error(
@@ -1039,7 +1122,7 @@ export async function executePlan(
           details.modified.push(moveTo);
         } else {
           try {
-            await executeInPlaceTextUpdate(
+            const targetEvidence = await executeInPlaceTextUpdate(
               mutation,
               filesystem,
               committedEntryMutations,
@@ -1048,6 +1131,7 @@ export async function executePlan(
                 activeFilesystemMutationStarted = true;
               },
             );
+            commitEvidence.set(mutation.writePlan.targetPath, targetEvidence);
           } catch (error) {
             details.exact = false;
             if (!activeFilesystemMutationStarted) throw error;
@@ -1076,10 +1160,28 @@ export async function executePlan(
           committedPhysicalLinkDeltas,
         );
         await assertParentPlanMatches(mutation.parents);
+        const expectedMoveSource = effectiveExpectedEntry(
+          mutation.operation.absolutePath,
+          mutation.sourceKey,
+          mutation.expectedSource,
+          committedEntryMutations,
+          committedPhysicalLinkDeltas,
+        );
+        if (expectedMoveSource.kind !== "regular" && expectedMoveSource.kind !== "symlink") {
+          throw new Error(
+            `Could not verify the planned move source for ${mutation.operation.absolutePath}`,
+          );
+        }
         try {
           activeFilesystemMutationStarted = true;
-          await createPlannedParents(mutation.parents, filesystem);
-          await executePureMove(mutation, filesystem);
+          recordCommitEvidence(
+            commitEvidence,
+            await createPlannedParents(mutation.parents, filesystem),
+          );
+          recordCommitEvidence(
+            commitEvidence,
+            await executePureMove(mutation, expectedMoveSource, filesystem),
+          );
         } catch (error) {
           if (error instanceof PureMoveExecutionError) {
             activeTemporaryPath = error.temporaryPath;
@@ -1124,7 +1226,12 @@ export async function executePlan(
       if (activeInstruction) recordAppliedInstructionEffects(mutation, activeInstruction);
       try {
         committedEntryMutations.push(
-          ...(await captureCommittedEntryMutations(mutation.entryMutations, mutationIndex)),
+          ...(await captureCommittedEntryMutations(
+            mutation.entryMutations,
+            mutationIndex,
+            commitEvidence,
+            filesystem,
+          )),
         );
         committedPhysicalLinkDeltas.push(
           ...mutation.physicalLinkDeltas.map((change) => ({ ...change, mutationIndex })),

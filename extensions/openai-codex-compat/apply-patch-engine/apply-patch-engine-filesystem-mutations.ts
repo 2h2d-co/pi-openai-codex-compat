@@ -18,8 +18,20 @@ import {
 } from "node:fs/promises";
 import { basename, dirname, join, resolve } from "node:path";
 import type { ApplyPatchExecutionFilesystem } from "./apply-patch-engine-contracts.ts";
+import {
+  commitEvidenceForExistingEntry,
+  currentExecutionEntry,
+  entryMatchesCommitEvidence,
+} from "./apply-patch-engine-commit-evidence.ts";
 import { errorMessage, hasErrorCode, isNotFound } from "./apply-patch-engine-errors.ts";
-import type { ParentPlan, PlannedMutation } from "./apply-patch-engine-filesystem-model.ts";
+import {
+  fingerprint,
+  type EntryCommitEvidence,
+  type ExistingFileEntry,
+  type ParentPlan,
+  type PathCommitEvidence,
+  type PlannedMutation,
+} from "./apply-patch-engine-filesystem-model.ts";
 
 export const DEFAULT_EXECUTION_FILESYSTEM: ApplyPatchExecutionFilesystem = {
   chmod,
@@ -54,12 +66,83 @@ export class RegularFileReplacementError extends Error {
   }
 }
 
+async function validatedMoveSourceEvidence(
+  path: string,
+  expected: ExistingFileEntry,
+  filesystem: ApplyPatchExecutionFilesystem,
+): Promise<{
+  continuity: Extract<EntryCommitEvidence, { kind: "regular" | "symlink" }>;
+  destination: Extract<EntryCommitEvidence, { kind: "regular" | "symlink" }>;
+}> {
+  const actual = await currentExecutionEntry(path, filesystem);
+  const expectedEvidence = commitEvidenceForExistingEntry(expected, "exact");
+  if (!(await entryMatchesCommitEvidence(path, actual, expectedEvidence, filesystem))) {
+    throw new Error(`Filesystem changed after apply_patch preflight at ${path}`);
+  }
+  if (
+    (actual.kind !== "regular" && actual.kind !== "symlink") ||
+    actual.fingerprint === undefined
+  ) {
+    throw new Error(`Could not capture move source identity at ${path}`);
+  }
+  if (actual.kind === "symlink") {
+    const continuity: Extract<EntryCommitEvidence, { kind: "symlink" }> = {
+      kind: "symlink",
+      fingerprint: actual.fingerprint,
+      fingerprintMatch: "exact",
+      exactSpelling: true,
+      target: actual.target,
+    };
+    if (expectedEvidence.kind === "symlink" && expectedEvidence.content) {
+      continuity.content = expectedEvidence.content;
+    }
+    return {
+      continuity,
+      destination: {
+        kind: "symlink",
+        fingerprint: continuity.fingerprint,
+        fingerprintMatch: "except-link-count",
+        exactSpelling: true,
+        target: continuity.target,
+      },
+    };
+  }
+  const continuity: Extract<EntryCommitEvidence, { kind: "regular" }> = {
+    kind: "regular",
+    fingerprint: actual.fingerprint,
+    fingerprintMatch: "exact",
+    exactSpelling: true,
+  };
+  if (expectedEvidence.kind === "regular" && expectedEvidence.content) {
+    continuity.content = expectedEvidence.content;
+  }
+  return {
+    continuity,
+    destination: { ...continuity, fingerprintMatch: "except-link-count" },
+  };
+}
+
+async function assertMoveSourceContinuity(
+  path: string,
+  evidence: Extract<EntryCommitEvidence, { kind: "regular" | "symlink" }>,
+  filesystem: ApplyPatchExecutionFilesystem,
+  allowLinkCountChange = false,
+): Promise<void> {
+  const expected = allowLinkCountChange
+    ? { ...evidence, fingerprintMatch: "except-link-count" as const }
+    : evidence;
+  const actual = await currentExecutionEntry(path, filesystem);
+  if (!(await entryMatchesCommitEvidence(path, actual, expected, filesystem))) {
+    throw new Error(`Filesystem changed while apply_patch moved ${path}`);
+  }
+}
+
 export async function replaceRegularFile(
   path: string,
   content: Buffer,
   filesystem: ApplyPatchExecutionFilesystem,
   mode?: number,
-): Promise<void> {
+): Promise<Extract<EntryCommitEvidence, { kind: "regular" }>> {
   const temporaryPath = resolve(
     dirname(path),
     `.${basename(path)}.apply-patch-${randomUUID()}.tmp`,
@@ -67,9 +150,21 @@ export async function replaceRegularFile(
   let destinationChanged = false;
   let temporaryEntryRemains = false;
   let pendingError: unknown;
+  let commitEvidence: Extract<EntryCommitEvidence, { kind: "regular" }> | undefined;
   try {
     await filesystem.writeFile(temporaryPath, content);
     if (mode !== undefined) await filesystem.chmod(temporaryPath, mode & 0o7777);
+    const temporaryMetadata = await filesystem.lstat(temporaryPath);
+    if (!temporaryMetadata.isFile()) {
+      throw new Error(`temporary replacement entry is not a regular file at ${temporaryPath}`);
+    }
+    commitEvidence = {
+      kind: "regular",
+      fingerprint: fingerprint(temporaryMetadata),
+      fingerprintMatch: "exact",
+      exactSpelling: true,
+      content,
+    };
     await filesystem.rename(temporaryPath, path);
     destinationChanged = true;
     await establishExactSpelling(path, filesystem);
@@ -93,6 +188,13 @@ export async function replaceRegularFile(
       pendingError,
     );
   }
+  if (!commitEvidence) {
+    throw new RegularFileReplacementError(
+      `Replacement commit evidence was not captured for ${path}`,
+      destinationChanged,
+    );
+  }
+  return commitEvidence;
 }
 
 export function namesPotentiallyAlias(left: string, right: string): boolean {
@@ -141,9 +243,26 @@ export async function establishExactSpelling(
 export async function createPlannedParents(
   parents: ParentPlan,
   filesystem: ApplyPatchExecutionFilesystem,
-): Promise<void> {
+): Promise<PathCommitEvidence[]> {
   const deepest = parents.createdPaths.at(-1);
   if (deepest) await filesystem.mkdir(deepest, { recursive: true });
+  const evidence: PathCommitEvidence[] = [];
+  for (const path of parents.createdPaths) {
+    const metadata = await filesystem.lstat(path);
+    if (!metadata.isDirectory()) {
+      throw new Error(`Planned parent is not a directory after creation at ${path}`);
+    }
+    evidence.push({
+      path,
+      evidence: {
+        kind: "directory",
+        fingerprint: fingerprint(metadata),
+        fingerprintMatch: "physical",
+        exactSpelling: true,
+      },
+    });
+  }
+  return evidence;
 }
 
 export async function exactSpellingExists(
@@ -209,8 +328,9 @@ export class PureMoveExecutionError extends Error {
 
 export async function executeCrossDeviceMove(
   mutation: Extract<PlannedMutation, { kind: "move" }>,
+  expectedSource: ExistingFileEntry,
   filesystem: ApplyPatchExecutionFilesystem,
-): Promise<void> {
+): Promise<PathCommitEvidence[]> {
   const sourcePath = mutation.operation.absolutePath;
   const destinationPath = mutation.operation.moveAbsolutePath;
   const temporaryPath = resolve(
@@ -221,17 +341,49 @@ export async function executeCrossDeviceMove(
   let destinationRemoved = false;
   let temporaryEntryRemains = false;
   let pendingError: unknown;
+  let sourceEvidence: Extract<EntryCommitEvidence, { kind: "regular" | "symlink" }> | undefined;
+  let destinationEvidence:
+    | Extract<EntryCommitEvidence, { kind: "regular" | "symlink" }>
+    | undefined;
   try {
-    if (mutation.expectedSource.kind === "regular") {
+    const validatedSource = await validatedMoveSourceEvidence(
+      sourcePath,
+      expectedSource,
+      filesystem,
+    );
+    sourceEvidence = validatedSource.continuity;
+    if (sourceEvidence.kind === "regular") {
       await filesystem.copyFile(sourcePath, temporaryPath, constants.COPYFILE_EXCL);
-      if (mutation.expectedSource.fingerprint) {
-        await filesystem.chmod(temporaryPath, mutation.expectedSource.fingerprint.mode);
-        const metadata = await filesystem.lstat(sourcePath);
-        await filesystem.utimes(temporaryPath, metadata.atime, metadata.mtime);
+      await assertMoveSourceContinuity(sourcePath, sourceEvidence, filesystem);
+      await filesystem.chmod(temporaryPath, sourceEvidence.fingerprint.mode);
+      const metadata = await filesystem.lstat(sourcePath);
+      await assertMoveSourceContinuity(sourcePath, sourceEvidence, filesystem);
+      await filesystem.utimes(temporaryPath, metadata.atime, metadata.mtime);
+      const temporaryMetadata = await filesystem.lstat(temporaryPath);
+      if (!temporaryMetadata.isFile()) {
+        throw new Error(`temporary move entry is not a regular file at ${temporaryPath}`);
       }
+      destinationEvidence = {
+        ...sourceEvidence,
+        fingerprint: fingerprint(temporaryMetadata),
+        fingerprintMatch: "exact",
+      };
     } else {
-      await filesystem.symlink(await filesystem.readlink(sourcePath), temporaryPath);
+      await filesystem.symlink(sourceEvidence.target, temporaryPath);
+      await assertMoveSourceContinuity(sourcePath, sourceEvidence, filesystem);
+      const temporaryMetadata = await filesystem.lstat(temporaryPath);
+      if (!temporaryMetadata.isSymbolicLink()) {
+        throw new Error(`temporary move entry is not a symlink at ${temporaryPath}`);
+      }
+      destinationEvidence = {
+        kind: "symlink",
+        fingerprint: fingerprint(temporaryMetadata),
+        fingerprintMatch: "exact",
+        exactSpelling: true,
+        target: sourceEvidence.target,
+      };
     }
+    await assertMoveSourceContinuity(sourcePath, sourceEvidence, filesystem);
 
     try {
       await filesystem.rename(temporaryPath, destinationPath);
@@ -249,6 +401,7 @@ export async function executeCrossDeviceMove(
       await filesystem.rename(temporaryPath, destinationPath);
     }
     destinationChanged = true;
+    await assertMoveSourceContinuity(sourcePath, sourceEvidence, filesystem, true);
     await filesystem.unlink(sourcePath);
   } catch (error) {
     pendingError = error;
@@ -280,18 +433,33 @@ export async function executeCrossDeviceMove(
       pendingError,
     );
   }
+  if (!destinationEvidence) {
+    throw new PureMoveExecutionError(
+      `Move commit evidence was not captured for ${destinationPath}`,
+      destinationChanged
+        ? mutation.expectedDestination.kind === "absent"
+          ? "created"
+          : "replaced"
+        : "unchanged",
+    );
+  }
+  return [
+    { path: sourcePath, evidence: { kind: "absent" } },
+    { path: destinationPath, evidence: destinationEvidence },
+  ];
 }
 
 export async function executePureMove(
   mutation: Extract<PlannedMutation, { kind: "move" }>,
+  expectedSource: ExistingFileEntry,
   filesystem: ApplyPatchExecutionFilesystem,
-): Promise<void> {
+): Promise<PathCommitEvidence[]> {
   const sourcePath = mutation.operation.absolutePath;
   const destinationPath = mutation.operation.moveAbsolutePath;
   if (mutation.moveStrategy === "copy-unlink") {
-    await executeCrossDeviceMove(mutation, filesystem);
-    return;
+    return executeCrossDeviceMove(mutation, expectedSource, filesystem);
   }
+  const sourceEvidence = await validatedMoveSourceEvidence(sourcePath, expectedSource, filesystem);
   try {
     await filesystem.rename(sourcePath, destinationPath);
   } catch (error) {
@@ -328,4 +496,8 @@ export async function executePureMove(
       error,
     );
   }
+  return [
+    { path: sourcePath, evidence: { kind: "absent" } },
+    { path: destinationPath, evidence: sourceEvidence.destination },
+  ];
 }

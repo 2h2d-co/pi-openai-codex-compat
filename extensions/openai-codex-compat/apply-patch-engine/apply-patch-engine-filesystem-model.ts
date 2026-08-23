@@ -17,6 +17,35 @@ export type EntryFingerprint = {
   modifiedMs: number;
 };
 
+export type EntryCommitEvidence =
+  | { kind: "absent" }
+  | {
+      kind: "directory";
+      fingerprint: EntryFingerprint;
+      fingerprintMatch: "physical";
+      exactSpelling: boolean;
+    }
+  | {
+      kind: "regular";
+      fingerprint: EntryFingerprint;
+      fingerprintMatch: "exact" | "except-link-count";
+      exactSpelling: boolean;
+      content?: Buffer;
+    }
+  | {
+      kind: "symlink";
+      fingerprint: EntryFingerprint;
+      fingerprintMatch: "exact" | "except-link-count";
+      exactSpelling: boolean;
+      target: string;
+      content?: Buffer;
+    };
+
+export type PathCommitEvidence = {
+  path: string;
+  evidence: EntryCommitEvidence;
+};
+
 export type KnownContent = {
   bytes: Buffer;
   text?: string;

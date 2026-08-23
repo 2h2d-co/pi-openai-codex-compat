@@ -1,3 +1,4 @@
+import "./apply-patch-semantic/apply-patch-semantic-commit-continuity.cases.ts";
 import "./apply-patch-semantic/apply-patch-semantic-diagnostics.cases.ts";
 import "./apply-patch-semantic/apply-patch-semantic-generated-sequences.cases.ts";
 import "./apply-patch-semantic/apply-patch-semantic-no-change-revalidation.cases.ts";

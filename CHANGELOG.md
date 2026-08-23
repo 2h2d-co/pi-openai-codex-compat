@@ -4,6 +4,11 @@
 
 ### Fixed
 
+- Verify `apply_patch` results against operation-owned entry identity, content,
+  symlink target, and exact-spelling evidence before committing them to later
+  instructions; reject same-type substitutions across replacements,
+  descriptor-bound writes, created parents, and native or cross-filesystem
+  moves, and revalidate move sources before unlinking them.
 - Classify repeated identical `apply_patch` adds from source-ordered virtual
   content and exact spelling, avoiding redundant replacements after earlier
   adds or moves while preserving case, Unicode, and symlink-parent identity.

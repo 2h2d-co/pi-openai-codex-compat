@@ -917,6 +917,28 @@ earlier instruction creates an entry or parent directory whose inode could not
 exist during preflight, execution captures its committed identity for later
 instructions.
 
+Every mutation MUST establish operation-owned commit evidence before its
+instruction becomes `APPLIED` or its result becomes trusted virtual state:
+
+- replacement writes retain the temporary regular-file identity, requested
+  bytes, and requested final spelling through destination rename;
+- created parents retain the directory identities established by recursive
+  creation;
+- descriptor-bound writes retain the resulting descriptor identity and bytes
+  without requiring an alias spelling to change;
+- native moves retain the validated source entry identity and raw symlink
+  target at the exact destination spelling;
+- cross-filesystem moves retain the temporary copied entry identity, preserve
+  known bytes or the raw symlink target, and revalidate source continuity
+  before source removal; and
+- successful deletes and move-source removals still require an absent source.
+
+Entry type alone is not commit evidence. If a same-type entry has replaced an
+operation result, the instruction MUST fail and partial-effect inspection MUST
+report the observed final state. A state-changing text move also revalidates
+the original source identity and constrained bytes immediately before unlink,
+after writing its independent destination.
+
 Unrelated processes can still mutate filesystem state because the extension
 does not own an operating-system transaction or cross-process lock.
 Descriptor-bound writing prevents a pathname replacement after opening from

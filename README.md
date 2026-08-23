@@ -332,6 +332,11 @@ Filesystem behavior:
   the replacement bytes are identical. The write is bound to the validated
   open file descriptor so a later pathname swap cannot redirect it to a
   replacement inode.
+- Before an instruction succeeds, replacement files, created parents,
+  descriptor-bound writes, and native or cross-filesystem moves must still
+  match identity evidence produced by that operation. Same-type substitutions
+  fail rather than becoming trusted state for later instructions, and move
+  sources are revalidated before copy-and-unlink removal.
 - The extension does not add path filtering, sandboxing, or approval prompts.
 - Every hunk is parsed and validated before filesystem writes begin.
 - Read-only no-change assertions are interleaved with mutations in patch order,
