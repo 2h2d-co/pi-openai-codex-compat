@@ -28,6 +28,7 @@ import {
   samePhysicalEntry,
   type PlannedMutation,
   type SemanticPlan,
+  type VirtualEntry,
 } from "./apply-patch-engine-filesystem-model.ts";
 import {
   PureMoveExecutionError,
@@ -121,11 +122,7 @@ async function assertPureMoveResult(
 ): Promise<void> {
   const sourcePath = mutation.operation.absolutePath;
   const destinationPath = mutation.operation.moveAbsolutePath;
-  if (mutation.sourceAliasesDestination) {
-    await assertExactSpellingAbsent(sourcePath, filesystem);
-  } else {
-    await assertEntryAbsent(sourcePath, filesystem);
-  }
+  await assertExactSpellingAbsent(sourcePath, filesystem);
   if (!(await exactSpellingExists(destinationPath, filesystem))) {
     postconditionFailed(destinationPath, "establish the requested exact spelling");
   }
@@ -171,6 +168,10 @@ async function assertPureMoveResult(
   }
 }
 
+function regularEntryMode(entry: VirtualEntry): number | undefined {
+  return entry.kind === "regular" ? entry.fingerprint?.mode : undefined;
+}
+
 async function assertAppliedMutationPostconditions(
   mutation: PlannedMutation,
   filesystem: ApplyPatchExecutionFilesystem,
@@ -179,7 +180,7 @@ async function assertAppliedMutationPostconditions(
     await assertRegularFileResult(mutation.operation.absolutePath, mutation.content, filesystem, {
       exactSpelling: true,
       followSymlink: false,
-      expectedMode: mutation.replacementMode,
+      expectedMode: regularEntryMode(mutation.expectedTarget),
       allowUnreadable: true,
     });
     return;
@@ -200,12 +201,7 @@ async function assertAppliedMutationPostconditions(
   await assertRegularFileResult(destinationPath, mutation.content, filesystem, {
     exactSpelling: mutation.moveMode !== "none",
     followSymlink: mutation.moveMode === "none",
-    expectedMode:
-      mutation.moveMode === "none"
-        ? mutation.expectedSource.kind === "regular"
-          ? mutation.expectedSource.fingerprint?.mode
-          : undefined
-        : mutation.replacementMode,
+    expectedMode: regularEntryMode(mutation.expectedSource),
     allowUnreadable: mutation.moveMode !== "none",
   });
   if (mutation.moveMode === "same-entry" && mutation.sameEntryMove === "rename") {
@@ -299,52 +295,28 @@ export async function executePlan(
   const details = emptyDetails();
   details.exact = plan.exact;
   details.instructions = plan.instructions.map((instruction) => ({ ...instruction }));
-  for (const checkpoint of plan.noChangeCheckpoints) {
-    const instruction = details.instructions[checkpoint.instructionIndex];
+  for (const action of plan.actions) {
+    if (action.kind !== "no-change") continue;
+    const instruction = details.instructions[action.instructionIndex];
     if (!instruction) {
       throw new Error(
-        `No apply_patch instruction exists for no-change checkpoint ${checkpoint.instructionIndex + 1}`,
+        `No apply_patch instruction exists for no-change checkpoint ${action.instructionIndex + 1}`,
       );
     }
     instruction.status = "planned";
   }
 
-  const executionActions: Array<
-    | {
-        kind: "mutation";
-        instructionIndex: number;
-        mutation: PlannedMutation;
-      }
-    | {
-        kind: "no-change";
-        instructionIndex: number;
-      }
-  > = [
-    ...plan.mutations.map((mutation) => ({
-      kind: "mutation" as const,
-      instructionIndex: mutation.instructionIndex,
-      mutation,
-    })),
-    ...plan.noChangeCheckpoints.map((checkpoint) => ({
-      kind: "no-change" as const,
-      instructionIndex: checkpoint.instructionIndex,
-    })),
-  ].toSorted((left, right) => left.instructionIndex - right.instructionIndex);
-
   let activeInstruction: ApplyPatchInstructionDetails | undefined;
   let activeMutation: PlannedMutation | undefined;
   let activeTemporaryPath: string | undefined;
-  let activeFilesystemMutationStarted = false;
   try {
-    for (const action of executionActions) {
+    for (const action of plan.actions) {
       activeInstruction = details.instructions[action.instructionIndex];
-      activeMutation = action.kind === "mutation" ? action.mutation : undefined;
+      activeMutation = action.kind === "no-change" ? undefined : action;
       activeTemporaryPath = undefined;
-      activeFilesystemMutationStarted = false;
       throwIfAborted(signal);
 
       if (action.kind === "no-change") {
-        throwIfAborted(signal);
         if (activeInstruction) {
           activeInstruction.status = "no-op";
           delete activeInstruction.error;
@@ -353,16 +325,15 @@ export async function executePlan(
         continue;
       }
 
-      const mutation = action.mutation;
+      const mutation = action;
       if (mutation.kind === "add") {
         try {
-          activeFilesystemMutationStarted = true;
           await createPlannedParents(mutation.createdParentPaths, filesystem);
           await replaceRegularFile(
             mutation.operation.absolutePath,
             mutation.content,
             filesystem,
-            mutation.replacementMode,
+            regularEntryMode(mutation.expectedTarget),
           );
         } catch (error) {
           details.exact = false;
@@ -390,7 +361,6 @@ export async function executePlan(
         appendChange(details, mutation.change, mutation.instructionIndex);
       } else if (mutation.kind === "delete") {
         try {
-          activeFilesystemMutationStarted = true;
           await filesystem.unlink(mutation.operation.absolutePath);
         } catch (error) {
           throw new Error(
@@ -405,12 +375,11 @@ export async function executePlan(
           const moveAbsolutePath = mutation.operation.moveAbsolutePath;
           const moveTo = mutation.operation.moveTo;
           try {
-            activeFilesystemMutationStarted = true;
             await replaceRegularFile(
               mutation.operation.absolutePath,
               mutation.content,
               filesystem,
-              mutation.replacementMode,
+              regularEntryMode(mutation.expectedSource),
             );
           } catch (error) {
             details.exact = false;
@@ -461,13 +430,12 @@ export async function executePlan(
           const provisionalChange = mutation.provisionalChange;
           const moveTo = mutation.operation.moveTo;
           try {
-            activeFilesystemMutationStarted = true;
             await createPlannedParents(mutation.createdParentPaths, filesystem);
             await replaceRegularFile(
               mutation.operation.moveAbsolutePath,
               mutation.content,
               filesystem,
-              mutation.replacementMode,
+              regularEntryMode(mutation.expectedSource),
             );
           } catch (error) {
             details.exact = false;
@@ -513,7 +481,6 @@ export async function executePlan(
           details.modified.push(moveTo);
         } else {
           try {
-            activeFilesystemMutationStarted = true;
             await filesystem.writeFile(mutation.operation.absolutePath, mutation.content);
           } catch (error) {
             details.exact = false;
@@ -527,9 +494,8 @@ export async function executePlan(
       } else {
         const moveTo = mutation.operation.moveTo;
         try {
-          activeFilesystemMutationStarted = true;
           await createPlannedParents(mutation.createdParentPaths, filesystem);
-          await executePureMove(mutation, mutation.expectedSource, filesystem);
+          await executePureMove(mutation, filesystem);
         } catch (error) {
           if (error instanceof PureMoveExecutionError) {
             activeTemporaryPath = error.temporaryPath;
@@ -597,7 +563,6 @@ export async function executePlan(
           activeMutation,
           activeInstruction,
           filesystem,
-          activeFilesystemMutationStarted,
           activeTemporaryPath,
         );
       }

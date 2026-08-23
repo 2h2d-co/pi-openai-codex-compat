@@ -24,11 +24,9 @@ export type KnownContent = {
 
 export type ContentCell = {
   value?: KnownContent;
-  planned: boolean;
 };
 
 export type PhysicalFileState = {
-  id: string;
   linkCount: number;
 };
 
@@ -70,7 +68,6 @@ type PlannedTextUpdateBase = {
   expectedSource: ExistingFileEntry;
   createdParentPaths: string[];
   content: Buffer;
-  replacementMode?: number;
   change: Extract<AppliedPatchChange, { kind: "update" }>;
 };
 
@@ -104,7 +101,6 @@ export type PlannedMutation = (
       expectedTarget: ReplaceableFileEntry;
       createdParentPaths: string[];
       content: Buffer;
-      replacementMode?: number;
       change: Extract<AppliedPatchChange, { kind: "add" }>;
     }
   | {
@@ -120,7 +116,6 @@ export type PlannedMutation = (
       expectedSource: ExistingFileEntry;
       expectedDestination: ReplaceableFileEntry;
       createdParentPaths: string[];
-      sourceAliasesDestination: boolean;
       moveStrategy: "rename" | "copy-unlink";
       change: Extract<AppliedPatchChange, { kind: "move" }>;
     }
@@ -128,13 +123,15 @@ export type PlannedMutation = (
   instructionIndex: number;
 };
 
-export type PlannedNoChangeCheckpoint = {
-  instructionIndex: number;
-};
+export type PlannedAction =
+  | PlannedMutation
+  | {
+      kind: "no-change";
+      instructionIndex: number;
+    };
 
 export type SemanticPlan = {
-  mutations: PlannedMutation[];
-  noChangeCheckpoints: PlannedNoChangeCheckpoint[];
+  actions: PlannedAction[];
   exact: boolean;
   instructions: ApplyPatchInstructionDetails[];
 };

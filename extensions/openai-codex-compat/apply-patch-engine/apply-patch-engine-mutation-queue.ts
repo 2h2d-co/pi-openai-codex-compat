@@ -70,9 +70,11 @@ export async function canonicalMutationQueuePaths(
 ): Promise<string[]> {
   const canonicalPaths = await Promise.all(
     targets.map(async ({ path, followSymlink }) => {
+      let isSymlink = false;
       try {
         const metadata = await operations.lstat(path);
-        if (metadata.isSymbolicLink() && !followSymlink) {
+        isSymlink = metadata.isSymbolicLink();
+        if (isSymlink && !followSymlink) {
           return await operations.symlinkEntryQueuePath(path);
         }
       } catch (error) {
@@ -84,11 +86,7 @@ export async function canonicalMutationQueuePaths(
         if (isNotFound(error) || hasErrorCode(error, "ENOTDIR")) {
           return operations.realpathWithMissingTail(path);
         }
-        try {
-          if ((await operations.lstat(path)).isSymbolicLink()) {
-            return await operations.symlinkEntryQueuePath(path);
-          }
-        } catch {} // oxlint-disable-line preserve-caught-error -- This secondary probe only selects a more precise queue path; the original realpath failure remains authoritative.
+        if (isSymlink) return await operations.symlinkEntryQueuePath(path);
         throw error;
       }
     }),

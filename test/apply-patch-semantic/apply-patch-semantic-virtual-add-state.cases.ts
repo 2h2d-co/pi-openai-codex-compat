@@ -38,8 +38,13 @@ test("plans one mutation followed by no change for repeated identical adds", asy
   );
 
   const plan = await buildSemanticPlan(cwd, document);
-  assert.equal(plan.mutations.length, 1);
-  assert.deepEqual(plan.noChangeCheckpoints, [{ instructionIndex: 1 }]);
+  assert.deepEqual(
+    plan.actions.map(({ kind, instructionIndex }) => ({ kind, instructionIndex })),
+    [
+      { kind: "add", instructionIndex: 0 },
+      { kind: "no-change", instructionIndex: 1 },
+    ],
+  );
   assert.deepEqual(
     plan.instructions.map(({ status, reason }) => [status, reason?.code]),
     [
@@ -85,8 +90,14 @@ test("keeps a different second add as a replacement before an identical no-op", 
   );
 
   const plan = await buildSemanticPlan(cwd, document);
-  assert.equal(plan.mutations.length, 2);
-  assert.deepEqual(plan.noChangeCheckpoints, [{ instructionIndex: 2 }]);
+  assert.deepEqual(
+    plan.actions.map(({ kind, instructionIndex }) => ({ kind, instructionIndex })),
+    [
+      { kind: "add", instructionIndex: 0 },
+      { kind: "add", instructionIndex: 1 },
+      { kind: "no-change", instructionIndex: 2 },
+    ],
+  );
 
   const details = await applyPatch(cwd, document);
   assert.deepEqual(
@@ -245,8 +256,13 @@ test("uses virtual spelling through symlink-parent aliases and earlier moves", a
     "*** Add File: alias/shared.txt\n+same\n",
   );
   const aliasPlan = await buildSemanticPlan(cwd, aliasDocument);
-  assert.equal(aliasPlan.mutations.length, 1);
-  assert.equal(aliasPlan.noChangeCheckpoints.length, 1);
+  assert.deepEqual(
+    aliasPlan.actions.map(({ kind, instructionIndex }) => ({ kind, instructionIndex })),
+    [
+      { kind: "add", instructionIndex: 0 },
+      { kind: "no-change", instructionIndex: 1 },
+    ],
+  );
   const aliasDetails = await applyPatch(cwd, aliasDocument);
   assert.deepEqual(
     aliasDetails.instructions?.map(({ status }) => status),
@@ -260,8 +276,13 @@ test("uses virtual spelling through symlink-parent aliases and earlier moves", a
     "*** Add File: move-destination.txt\n+moved\n",
   );
   const movePlan = await buildSemanticPlan(cwd, moveDocument);
-  assert.equal(movePlan.mutations.length, 1);
-  assert.deepEqual(movePlan.noChangeCheckpoints, [{ instructionIndex: 1 }]);
+  assert.deepEqual(
+    movePlan.actions.map(({ kind, instructionIndex }) => ({ kind, instructionIndex })),
+    [
+      { kind: "move", instructionIndex: 0 },
+      { kind: "no-change", instructionIndex: 1 },
+    ],
+  );
   const moveDetails = await applyPatch(cwd, moveDocument);
   assert.deepEqual(
     moveDetails.instructions?.map(({ status }) => status),

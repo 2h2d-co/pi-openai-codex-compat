@@ -18,11 +18,7 @@ import {
 import { basename, dirname, join, resolve } from "node:path";
 import type { ApplyPatchExecutionFilesystem } from "./apply-patch-engine-contracts.ts";
 import { errorMessage, hasErrorCode, isNotFound } from "./apply-patch-engine-errors.ts";
-import {
-  buffersEqual,
-  type ExistingFileEntry,
-  type PlannedMutation,
-} from "./apply-patch-engine-filesystem-model.ts";
+import { buffersEqual, type PlannedMutation } from "./apply-patch-engine-filesystem-model.ts";
 
 export const DEFAULT_EXECUTION_FILESYSTEM: ApplyPatchExecutionFilesystem = {
   chmod,
@@ -75,10 +71,6 @@ export async function replaceRegularFile(
       throw new Error(`temporary replacement content differs at ${temporaryPath}`);
     }
     if (mode !== undefined) await filesystem.chmod(temporaryPath, mode & 0o7777);
-    const temporaryMetadata = await filesystem.lstat(temporaryPath);
-    if (!temporaryMetadata.isFile()) {
-      throw new Error(`temporary replacement entry is not a regular file at ${temporaryPath}`);
-    }
     await filesystem.rename(temporaryPath, path);
     destinationChanged = true;
     await establishExactSpelling(path, filesystem);
@@ -153,17 +145,11 @@ export async function createPlannedParents(
 ): Promise<void> {
   const deepest = createdParentPaths.at(-1);
   if (deepest) await filesystem.mkdir(deepest, { recursive: true });
-  for (const path of createdParentPaths) {
-    const metadata = await filesystem.lstat(path);
-    if (!metadata.isDirectory()) {
-      throw new Error(`Planned parent is not a directory after creation at ${path}`);
-    }
-  }
 }
 
 export async function exactSpellingExists(
   path: string,
-  filesystem: Pick<ApplyPatchExecutionFilesystem, "readdir"> = DEFAULT_EXECUTION_FILESYSTEM,
+  filesystem: Pick<ApplyPatchExecutionFilesystem, "readdir">,
 ): Promise<boolean> {
   try {
     return (await filesystem.readdir(dirname(path))).includes(basename(path));
@@ -224,7 +210,6 @@ export class PureMoveExecutionError extends Error {
 
 export async function executeCrossDeviceMove(
   mutation: Extract<PlannedMutation, { kind: "move" }>,
-  expectedSource: ExistingFileEntry,
   filesystem: ApplyPatchExecutionFilesystem,
 ): Promise<void> {
   const sourcePath = mutation.operation.absolutePath;
@@ -238,21 +223,13 @@ export async function executeCrossDeviceMove(
   let temporaryEntryRemains = false;
   let pendingError: unknown;
   try {
-    if (expectedSource.kind === "regular") {
+    if (mutation.expectedSource.kind === "regular") {
       const sourceMetadata = await filesystem.lstat(sourcePath);
       await filesystem.copyFile(sourcePath, temporaryPath, constants.COPYFILE_EXCL);
       await filesystem.chmod(temporaryPath, sourceMetadata.mode);
       await filesystem.utimes(temporaryPath, sourceMetadata.atime, sourceMetadata.mtime);
-      const temporaryMetadata = await filesystem.lstat(temporaryPath);
-      if (!temporaryMetadata.isFile()) {
-        throw new Error(`temporary move entry is not a regular file at ${temporaryPath}`);
-      }
     } else {
-      await filesystem.symlink(expectedSource.target, temporaryPath);
-      const temporaryMetadata = await filesystem.lstat(temporaryPath);
-      if (!temporaryMetadata.isSymbolicLink()) {
-        throw new Error(`temporary move entry is not a symlink at ${temporaryPath}`);
-      }
+      await filesystem.symlink(mutation.expectedSource.target, temporaryPath);
     }
 
     try {
@@ -306,13 +283,12 @@ export async function executeCrossDeviceMove(
 
 export async function executePureMove(
   mutation: Extract<PlannedMutation, { kind: "move" }>,
-  expectedSource: ExistingFileEntry,
   filesystem: ApplyPatchExecutionFilesystem,
 ): Promise<void> {
   const sourcePath = mutation.operation.absolutePath;
   const destinationPath = mutation.operation.moveAbsolutePath;
   if (mutation.moveStrategy === "copy-unlink") {
-    return executeCrossDeviceMove(mutation, expectedSource, filesystem);
+    return executeCrossDeviceMove(mutation, filesystem);
   }
   try {
     await filesystem.rename(sourcePath, destinationPath);

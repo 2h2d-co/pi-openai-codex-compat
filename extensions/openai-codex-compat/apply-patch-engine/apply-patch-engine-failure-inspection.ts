@@ -261,7 +261,6 @@ export async function recordFailureInspection(
   mutation: PlannedMutation,
   instruction: ApplyPatchInstructionDetails,
   filesystem: ApplyPatchExecutionFilesystem,
-  filesystemMutationStarted: boolean,
   temporaryPath?: string,
 ): Promise<void> {
   const inspected: ApplyPatchFinalPathInspection[] = [];
@@ -324,7 +323,6 @@ export async function recordFailureInspection(
   for (const inspection of inspected) {
     addInstructionFinalState(instruction, inspection.finalState);
   }
-  if (!filesystemMutationStarted) return;
 
   const sourceInspection = inspected.find(
     ({ finalState }) => finalState.path === mutation.operation.path,

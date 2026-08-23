@@ -51,12 +51,32 @@ test("keeps canonical queue-path helper failures inside their intended scopes", 
     ["/canonical/target.txt"],
   );
 
+  const inaccessibleTargetOperations: CanonicalMutationQueuePathOperations = {
+    async lstat() {
+      return { isSymbolicLink: () => true };
+    },
+    async realpath() {
+      throw filesystemError("EACCES", "inaccessible symlink target");
+    },
+    async realpathWithMissingTail() {
+      throw new Error("missing-tail fallback should not run");
+    },
+    async symlinkEntryQueuePath() {
+      return "/canonical/symlink-entry.txt";
+    },
+  };
+  assert.deepEqual(
+    await canonicalMutationQueuePaths(
+      [{ path: "/requested/target.txt", followSymlink: true }],
+      inaccessibleTargetOperations,
+    ),
+    ["/canonical/symlink-entry.txt"],
+  );
+
   const primaryError = filesystemError("EACCES", "primary realpath failure");
-  let lstatCalls = 0;
   const authoritativeErrorOperations: CanonicalMutationQueuePathOperations = {
     async lstat() {
-      lstatCalls += 1;
-      return { isSymbolicLink: () => lstatCalls === 2 };
+      return { isSymbolicLink: () => false };
     },
     async realpath() {
       throw primaryError;
@@ -65,7 +85,7 @@ test("keeps canonical queue-path helper failures inside their intended scopes", 
       throw new Error("missing-tail fallback should not run");
     },
     async symlinkEntryQueuePath() {
-      throw filesystemError("EIO", "secondary symlink-path failure");
+      throw new Error("symlink entry path should not be inspected");
     },
   };
   await assert.rejects(

@@ -22,7 +22,7 @@ export async function currentExecutionEntry(
         entryPath: path,
         entryName: basename(path),
         fingerprint: entryFingerprint,
-        content: { planned: false },
+        content: {},
       };
     }
     if (metadata.isSymbolicLink()) {
@@ -35,7 +35,7 @@ export async function currentExecutionEntry(
         fingerprint: entryFingerprint,
         target,
         targetPath: resolve(dirname(path), target),
-        content: { planned: false },
+        content: {},
       };
     }
     if (metadata.isDirectory()) return { kind: "directory", fingerprint: entryFingerprint };
