@@ -10,6 +10,7 @@ import {
   join,
   test,
   applyPatch,
+  ApplyPatchVerificationError,
   buildSemanticPlan,
   formatApplyPatchSummary,
   workspace,
@@ -174,6 +175,63 @@ test("tracks exact case and Unicode names according to host alias behavior", asy
     const updatedNames = await readdir(cwd);
     assert.ok(updatedNames.includes("updated.txt"));
     assert.ok(!updatedNames.includes("Updated.txt"));
+  }
+});
+
+test("uses actual entry spelling for dead proofs and fulfilled same-entry moves", async (t) => {
+  const cwd = await workspace(t);
+  const composed = "\u00e9";
+  const decomposed = "e\u0301";
+  const aliases = [
+    {
+      actual: "Proof.txt",
+      alias: "proof.txt",
+      supported: await hostAliasesNames(cwd, "CaseProof", "caseproof"),
+    },
+    {
+      actual: `Proof-${composed}.txt`,
+      alias: `Proof-${decomposed}.txt`,
+      supported: await hostAliasesNames(
+        cwd,
+        `Unicode-${composed}-proof`,
+        `Unicode-${decomposed}-proof`,
+      ),
+    },
+  ].filter(({ supported }) => supported);
+  if (aliases.length === 0) {
+    t.skip("host filesystem does not alias case or Unicode-normalized names");
+    return;
+  }
+
+  for (const [index, names] of aliases.entries()) {
+    const actual = `${index}-${names.actual}`;
+    const alias = `${index}-${names.alias}`;
+    await writeFile(join(cwd, actual), "before\n");
+    await assert.rejects(
+      applyPatch(
+        cwd,
+        patch(
+          `*** Update File: ${alias}\n@@\n-missing\n+after\n`,
+          `*** Add File: ${actual}\n+before\n`,
+        ),
+      ),
+      ApplyPatchVerificationError,
+    );
+    assert.equal(await readFile(join(cwd, actual), "utf8"), "before\n");
+
+    const moveActual = `move-${actual}`;
+    const moveAlias = `move-${alias}`;
+    await writeFile(join(cwd, moveActual), "moved\n");
+    const details = await applyPatch(
+      cwd,
+      patch(`*** Update File: ${moveAlias}\n*** Move to: ${moveActual}\n`),
+    );
+    assert.deepEqual(
+      details.instructions?.map(({ status, reason }) => [status, reason?.code]),
+      [["no-op", "same-entry-move"]],
+    );
+    assert.deepEqual(details.changes, []);
+    assert.equal(await readFile(join(cwd, moveActual), "utf8"), "moved\n");
   }
 });
 

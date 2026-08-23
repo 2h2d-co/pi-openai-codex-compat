@@ -329,8 +329,8 @@ export class SemanticPlanner {
     }
   }
 
-  private virtualSpellingSatisfied(entryPath: string, requestedPath: string): boolean {
-    return basename(entryPath) === basename(requestedPath);
+  private virtualSpellingSatisfied(entryName: string, requestedPath: string): boolean {
+    return entryName === basename(requestedPath);
   }
 
   private snapshot<T extends VirtualEntry>(entry: T): T {
@@ -640,7 +640,7 @@ export class SemanticPlanner {
             buffersEqual(
               await this.readBytes(entry, operation.absolutePath),
               Buffer.from(operation.content, "utf8"),
-            ) && this.virtualSpellingSatisfied(entry.entryPath, operation.absolutePath);
+            ) && this.virtualSpellingSatisfied(entry.entryName, operation.absolutePath);
           if (addIsNoOp) {
             // Whether this add replaces the entry would depend on the unknown update.
             return undefined;
@@ -711,7 +711,7 @@ export class SemanticPlanner {
             await this.readBytes(entry, operation.absolutePath),
             Buffer.from(operation.content, "utf8"),
           ) &&
-          this.virtualSpellingSatisfied(entry.entryPath, operation.absolutePath)
+          this.virtualSpellingSatisfied(entry.entryName, operation.absolutePath)
         ) {
           return false;
         }
@@ -1181,7 +1181,7 @@ export class SemanticPlanner {
       }
       if (
         (source.kind === "regular" || source.kind === "symlink") &&
-        this.virtualSpellingSatisfied(source.entryPath, destinationPath)
+        this.virtualSpellingSatisfied(source.entryName, destinationPath)
       ) {
         this.markNoOp(instructionIndex, "same-entry-move");
         this.addNoChangeCheckpoint(instructionIndex);

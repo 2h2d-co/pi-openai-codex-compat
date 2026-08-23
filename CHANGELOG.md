@@ -10,6 +10,9 @@
 - Classify repeated identical `apply_patch` adds from source-ordered virtual
   content and exact spelling, avoiding redundant replacements after earlier
   adds or moves while preserving case, Unicode, and symlink-parent identity.
+- Use actual or planned directory-entry spelling when proving dead
+  `apply_patch` operations and classifying same-entry moves on case-insensitive
+  or Unicode-normalizing filesystems.
 - Validate supplied identity and context chunks before `apply_patch` moves while preserving chunkless opaque moves and successful symlink and hard-link topology.
 - Remove formatter-tolerant `apply_patch` matching permanently and rely exclusively on the official Codex-compatible exact, trailing-trim, full-trim, and Unicode matcher.
 - Treat streamed Codex misalignment-policy violations as terminal without retrying and preserve the provider's error message.
