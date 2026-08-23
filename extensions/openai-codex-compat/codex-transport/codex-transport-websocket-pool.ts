@@ -112,7 +112,7 @@ export function recordWebSocketFailure(
 export function closeSocket(socket: WebSocketLike, reason = "done"): void {
   try {
     socket.close(1_000, reason);
-  } catch {}
+  } catch {} // oxlint-disable-line preserve-caught-error -- Socket closure is best-effort cleanup and must not replace the request's completion or primary failure.
 }
 
 export function socketReusable(socket: WebSocketLike): boolean {

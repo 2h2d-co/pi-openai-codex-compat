@@ -308,6 +308,7 @@ export function compressBody(body: string): Uint8Array | undefined {
       params: { [zlib.constants.ZSTD_c_compressionLevel]: REQUEST_COMPRESSION_ZSTD_LEVEL },
     });
     return new Uint8Array(compressed.buffer, compressed.byteOffset, compressed.byteLength);
+    // oxlint-disable-next-line preserve-caught-error -- Compression is opportunistic; failure intentionally falls back to the original request body.
   } catch {
     return undefined;
   }

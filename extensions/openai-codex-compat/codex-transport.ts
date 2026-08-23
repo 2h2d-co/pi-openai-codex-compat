@@ -20,6 +20,7 @@ import type {
 } from "./codex-transport/codex-transport-contracts.ts";
 import {
   cacheUsageDiagnostic,
+  diagnosticError,
   shouldReportRequestDiagnostic,
   sseRecoveryAttempt,
   transportDiagnostic,
@@ -231,6 +232,7 @@ export class CodexTransport {
         details: {
           outcome: "failed",
           continuationReady: false,
+          error: diagnosticError(error),
           ...diagnosticDetails(),
         },
       });

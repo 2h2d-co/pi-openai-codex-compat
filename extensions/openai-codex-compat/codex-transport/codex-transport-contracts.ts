@@ -94,6 +94,7 @@ export type CodexTransportPrewarmDiagnostic = {
   details: {
     outcome: "completed" | "failed" | "skipped";
     continuationReady: boolean;
+    error?: CodexTransportFailureDiagnostic["error"];
     reason?: "sse_configured" | "sticky_sse_fallback";
     cache?: CodexCacheDiagnosticContext;
     turnStateAvailableAtStart?: boolean;

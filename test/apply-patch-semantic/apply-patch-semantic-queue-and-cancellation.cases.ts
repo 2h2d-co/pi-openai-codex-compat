@@ -502,7 +502,11 @@ test(
         if ((await lstat("/dev/null")).isCharacterDevice()) {
           specialPaths.push({ path: "/dev/null", kind: "character device" });
         }
-      } catch {}
+      } catch (error) {
+        t.diagnostic(
+          `Could not inspect /dev/null for the optional character-device case: ${error instanceof Error ? error.message : String(error)}`,
+        );
+      }
       try {
         for (const name of await readdir("/dev")) {
           const candidate = join("/dev", name);
@@ -511,7 +515,11 @@ test(
             break;
           }
         }
-      } catch {}
+      } catch (error) {
+        t.diagnostic(
+          `Could not inspect /dev for an optional block-device case: ${error instanceof Error ? error.message : String(error)}`,
+        );
+      }
 
       for (const special of specialPaths) {
         await assert.rejects(

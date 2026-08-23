@@ -438,8 +438,10 @@ async function executeInPlaceTextUpdate(
   }
 }
 
-function noChangeAssertionFailed(path: string): never {
-  throw new Error(`Filesystem changed after apply_patch preflight at ${path}`);
+function noChangeAssertionFailed(path: string, cause?: unknown): never {
+  const message = `Filesystem changed after apply_patch preflight at ${path}`;
+  if (cause === undefined) throw new Error(message);
+  throw new Error(message, { cause });
 }
 
 async function assertIdenticalAddStillPresent(
@@ -501,8 +503,8 @@ async function currentTextForNoChangeAssertion(
   const bytes = await filesystem.readFile(path);
   try {
     return { bytes, text: UTF8_DECODER.decode(bytes) };
-  } catch {
-    noChangeAssertionFailed(path);
+  } catch (error) {
+    noChangeAssertionFailed(path, error);
   }
 }
 

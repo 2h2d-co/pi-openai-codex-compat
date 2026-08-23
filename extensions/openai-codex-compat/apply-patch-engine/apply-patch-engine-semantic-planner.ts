@@ -226,6 +226,7 @@ export class SemanticPlanner {
           }
         }
       }
+      // oxlint-disable-next-line preserve-caught-error -- Filesystem spelling discovery is best-effort; known planner identities remain the authoritative fallback.
     } catch {
       for (const [knownPath, knownKey] of this.pathKeys) {
         const knownParent = await realpathWithMissingTail(dirname(knownPath));
@@ -503,6 +504,7 @@ export class SemanticPlanner {
       const text = UTF8_DECODER.decode(bytes);
       entry.content.value = { bytes, text };
       return text;
+      // oxlint-disable-next-line preserve-caught-error -- Previous content is optional result metadata; an unreadable or non-text entry must not block replacement.
     } catch {
       return undefined;
     }
@@ -823,6 +825,7 @@ export class SemanticPlanner {
     } else if (destinationParent.kind === "symlink") {
       try {
         destinationParentsReproduced = (await stat(destinationParent.entryPath)).isDirectory();
+        // oxlint-disable-next-line preserve-caught-error -- A failed parent probe only makes dead-operation proof unavailable; the original planning failure remains authoritative.
       } catch {
         return undefined;
       }
@@ -917,6 +920,7 @@ export class SemanticPlanner {
           });
           return;
         }
+        // oxlint-disable-next-line preserve-caught-error -- This no-op probe is optional; execution can still replace the entry and records that the resulting details are inexact.
       } catch {
         this.exact = false;
       }

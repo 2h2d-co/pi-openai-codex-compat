@@ -214,6 +214,7 @@ export const APPLY_PATCH_FINAL_PATH_STATE_SCHEMA = {
   type: "object",
   properties: {
     path: { type: "string" },
+    error: { type: "string" },
     state: {
       enum: [
         "absent",

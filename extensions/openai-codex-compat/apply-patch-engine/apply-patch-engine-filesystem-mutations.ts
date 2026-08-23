@@ -315,12 +315,19 @@ export async function executePureMove(
     await finishSameInodeRename(sourcePath, destinationPath, filesystem);
   } catch (error) {
     let destinationChanged = false;
+    let destinationInspectionError: unknown;
     try {
       await filesystem.lstat(destinationPath);
       destinationChanged = true;
-    } catch {}
+    } catch (inspectionError) {
+      if (!isNotFound(inspectionError)) destinationInspectionError = inspectionError;
+    }
+    const inspectionFailure =
+      destinationInspectionError === undefined
+        ? ""
+        : `; could not inspect destination state: ${errorMessage(destinationInspectionError)}`;
     throw new PureMoveExecutionError(
-      errorMessage(error),
+      `${errorMessage(error)}${inspectionFailure}`,
       destinationChanged
         ? mutation.expectedDestination.kind === "absent"
           ? "created"

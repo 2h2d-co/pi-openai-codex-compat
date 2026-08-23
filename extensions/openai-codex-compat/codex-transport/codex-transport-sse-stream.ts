@@ -29,6 +29,14 @@ import {
   validateRetryDelay,
 } from "./codex-transport-retry.ts";
 
+async function cancelReaderBestEffort(
+  reader: Pick<ReadableStreamDefaultReader<Uint8Array>, "cancel">,
+): Promise<void> {
+  try {
+    await reader.cancel();
+  } catch {} // oxlint-disable-line preserve-caught-error -- Reader cancellation is best-effort cleanup and must not replace the stream's completion or primary failure.
+}
+
 export async function* parseSse(
   response: {
     body: {
@@ -44,7 +52,7 @@ export async function* parseSse(
   const reader = response.body.getReader();
   const decoder = new TextDecoder();
   let buffer = "";
-  const onAbort = () => void reader.cancel().catch(() => {});
+  const onAbort = () => void cancelReaderBestEffort(reader);
   signal?.addEventListener("abort", onAbort, { once: true });
 
   try {
@@ -92,10 +100,10 @@ export async function* parseSse(
     }
   } finally {
     signal?.removeEventListener("abort", onAbort);
-    await reader.cancel().catch(() => {});
+    await cancelReaderBestEffort(reader);
     try {
       reader.releaseLock();
-    } catch {}
+    } catch {} // oxlint-disable-line preserve-caught-error -- Reader cleanup must not replace the stream's completion or primary failure.
   }
 }
 

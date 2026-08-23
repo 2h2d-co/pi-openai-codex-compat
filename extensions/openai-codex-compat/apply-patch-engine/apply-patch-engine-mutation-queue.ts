@@ -139,9 +139,8 @@ export async function logicalMutationQueueKeys(
           if (targetMetadata.isFile()) {
             keys.add(`physical:${targetMetadata.dev}:${targetMetadata.ino}`);
           }
-        } catch {
-          // The semantic planner reports inaccessible, dangling, or cyclic targets.
-        }
+          // oxlint-disable-next-line preserve-caught-error -- Target inspection is a queue-key enhancement; the semantic planner reports inaccessible, dangling, or cyclic targets.
+        } catch {}
       }
     } catch (error) {
       if (!isNotFound(error) && !hasErrorCode(error, "ENOTDIR")) throw error;
@@ -163,7 +162,7 @@ export async function canonicalMutationQueuePaths(
       try {
         const metadata = await lstat(path);
         if (metadata.isSymbolicLink() && !followSymlink) {
-          return symlinkEntryQueuePath(path);
+          return await symlinkEntryQueuePath(path);
         }
       } catch (error) {
         if (!isNotFound(error) && !hasErrorCode(error, "ENOTDIR")) throw error;
@@ -176,9 +175,9 @@ export async function canonicalMutationQueuePaths(
         }
         try {
           if ((await lstat(path)).isSymbolicLink()) {
-            return symlinkEntryQueuePath(path);
+            return await symlinkEntryQueuePath(path);
           }
-        } catch {}
+        } catch {} // oxlint-disable-line preserve-caught-error -- This secondary probe only selects a more precise queue path; the original realpath failure remains authoritative.
         throw error;
       }
     }),

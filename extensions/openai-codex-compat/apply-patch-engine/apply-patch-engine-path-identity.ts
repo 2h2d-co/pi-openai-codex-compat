@@ -31,6 +31,7 @@ export async function directoryIsCaseInsensitive(
               lstat(join(dirname(candidate), toggled)),
             ]);
             return original.dev === alias.dev && original.ino === alias.ino;
+            // oxlint-disable-next-line preserve-caught-error -- Case-sensitivity detection is a best-effort capability probe; an inaccessible candidate falls back to its parent.
           } catch {
             candidate = dirname(candidate);
             continue;

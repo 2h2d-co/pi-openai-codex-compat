@@ -1,6 +1,6 @@
 import { isString } from "./value-contracts.ts";
 import { createHash } from "node:crypto";
-import { type JsonRecord, type JsonValue } from "./codex-protocol.ts";
+import type { JsonRecord, JsonValue } from "./codex-protocol.ts";
 import { usesResponsesLite } from "./responses-lite.ts";
 
 type Fingerprint = {

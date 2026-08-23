@@ -6,7 +6,7 @@ import type {
   ApplyPatchInstructionDetails,
   ApplyPatchInstructionEffect,
 } from "./apply-patch-engine-contracts.ts";
-import { isNotFound } from "./apply-patch-engine-errors.ts";
+import { errorMessage, isNotFound } from "./apply-patch-engine-errors.ts";
 import {
   ABSENT_ENTRY,
   buffersEqual,
@@ -153,10 +153,11 @@ export function finalPathInspection(
   path: string,
   state: ApplyPatchFinalPathState["state"],
   entry?: VirtualEntry,
+  inspectionError?: unknown,
 ): ApplyPatchFinalPathInspection {
-  const inspection: ApplyPatchFinalPathInspection = {
-    finalState: { path, state },
-  };
+  const finalState: ApplyPatchFinalPathState = { path, state };
+  if (inspectionError !== undefined) finalState.error = errorMessage(inspectionError);
+  const inspection: ApplyPatchFinalPathInspection = { finalState };
   if (entry) inspection.entry = entry;
   return inspection;
 }
@@ -200,11 +201,12 @@ export async function inspectFinalPath(
           }
         }
         return finalPathInspection(displayPath, "different-from-requested-content", actual);
-      } catch {
+      } catch (error) {
         return finalPathInspection(
           displayPath,
           physicalEntryChanged ? "different-entry" : "not-verified",
           actual,
+          error,
         );
       }
     }
@@ -225,8 +227,8 @@ export async function inspectFinalPath(
             : "different-from-previous-content",
           actual,
         );
-      } catch {
-        return finalPathInspection(displayPath, "not-verified", actual);
+      } catch (error) {
+        return finalPathInspection(displayPath, "not-verified", actual, error);
       }
     }
     if (entriesHaveSameIdentity(actual, expected)) {
@@ -245,8 +247,8 @@ export async function inspectFinalPath(
       return finalPathInspection(displayPath, "different-entry", actual);
     }
     return finalPathInspection(displayPath, currentEntryFinalState(actual), actual);
-  } catch {
-    return finalPathInspection(displayPath, "not-verified");
+  } catch (error) {
+    return finalPathInspection(displayPath, "not-verified", undefined, error);
   }
 }
 
@@ -503,7 +505,14 @@ export async function recordFailureInspection(
       if ((await filesystem.lstat(parent)).isDirectory()) {
         addInstructionEffect(instruction, { kind: "directory-created", path: parent });
       }
-    } catch {}
+    } catch (error) {
+      addInstructionFinalState(
+        instruction,
+        isNotFound(error)
+          ? { path: parent, state: "absent" }
+          : { path: parent, state: "not-verified", error: errorMessage(error) },
+      );
+    }
   }
 
   if (temporaryPath) {
@@ -513,6 +522,14 @@ export async function recordFailureInspection(
         kind: "temporary-entry-remains",
         path: temporaryPath,
       });
-    } catch {}
+    } catch (error) {
+      if (!isNotFound(error)) {
+        addInstructionFinalState(instruction, {
+          path: temporaryPath,
+          state: "not-verified",
+          error: errorMessage(error),
+        });
+      }
+    }
   }
 }

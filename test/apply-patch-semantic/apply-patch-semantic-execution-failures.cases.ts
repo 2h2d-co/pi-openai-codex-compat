@@ -266,6 +266,12 @@ test("executes planned move strategies and reports every injected failure prefix
     ),
     (error: unknown) => {
       assert.ok(error instanceof ApplyPatchExecutionError);
+      const destinationState = error.details.instructions?.[0]?.finalStates?.find(
+        ({ path }) => path === "unverified-move-destination.txt",
+      );
+      assert.ok(destinationState);
+      assert.equal(destinationState.state, "not-verified");
+      assert.equal(destinationState.error, "injected final-state inspection failure");
       const feedback = formatApplyPatchFailureSummary(error.details, cwd);
       assert.match(feedback, /Files changed:\nA unverified-move-destination\.txt/u);
       assert.match(

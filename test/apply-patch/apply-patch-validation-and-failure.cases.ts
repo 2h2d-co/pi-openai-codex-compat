@@ -96,7 +96,10 @@ test("validates complete nested apply-patch details from one schema", () => {
       },
       { kind: "symlink-target-modified", path: "link.txt", target: "target.txt" },
     ],
-    finalStates: [{ path: "destination.txt", state: "unchanged" }],
+    finalStates: [
+      { path: "destination.txt", state: "unchanged" },
+      { path: "unverified.txt", state: "not-verified", error: "inspection failed" },
+    ],
     changeIndexes: [0],
     error: "diagnostic",
     futureInstructionMetadata: true,
@@ -190,6 +193,15 @@ test("validates complete nested apply-patch details from one schema", () => {
         {
           ...instruction,
           finalStates: [{ path: "destination.txt", state: "unexpected" }],
+        },
+      ],
+    },
+    {
+      ...details,
+      instructions: [
+        {
+          ...instruction,
+          finalStates: [{ path: "destination.txt", state: "not-verified", error: 42 }],
         },
       ],
     },

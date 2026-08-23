@@ -413,6 +413,7 @@ export class CodexProviderRuntime {
           options.diagnostics.push(diagnostic);
         },
       });
+      // oxlint-disable-next-line preserve-caught-error -- CodexTransport.prewarm emits a structured failure diagnostic, including the caught error, before this best-effort boundary.
     } catch {
       // Warmup is best-effort. The transport has already activated sticky SSE
       // after exhausting its WebSocket retry budget.
