@@ -5,7 +5,6 @@ import type {
 import { renderApplyPatchResult } from "../../extensions/openai-codex-compat/apply-patch-render.ts";
 import {
   assert,
-  writeFileSync,
   readFile,
   writeFile,
   join,
@@ -334,6 +333,7 @@ test("registers the Codex freeform tool with model, UI, and failed-history parit
   assert.equal(requireApplyPatchDetails(failedResult.details).status, "completed");
   await writeFile(join(cwd, "partial-first.txt"), "before\n");
   await writeFile(join(cwd, "partial-second.txt"), "before\n");
+  const failedController = new AbortController();
   let failedModelFeedback = "";
   await assert.rejects(
     tool.execute(
@@ -341,10 +341,10 @@ test("registers the Codex freeform tool with model, UI, and failed-history parit
       {
         patch: failedPatch,
       },
-      undefined,
+      failedController.signal,
       (partial) => {
         if (requireApplyPatchDetails(partial.details).changes.length === 1) {
-          writeFileSync(join(cwd, "partial-second.txt"), "external\n");
+          failedController.abort();
         }
       },
       { cwd },
@@ -357,11 +357,8 @@ test("registers the Codex freeform tool with model, UI, and failed-history parit
       assert.match(error.message, /Files changed:\nM partial-first\.txt/u);
       assert.match(error.message, /1\. \[APPLIED\] Update partial-first\.txt/u);
       assert.match(error.message, /2\. \[FAILED\] Update partial-second\.txt/u);
-      assert.match(error.message, /Filesystem changed after validation/u);
-      assert.match(
-        error.message,
-        /The content at partial-second\.txt matches neither the requested content nor the previously observed content/u,
-      );
+      assert.match(error.message, /apply_patch was cancelled/u);
+      assert.match(error.message, /partial-second\.txt is unchanged/u);
       assert.doesNotMatch(error.message, /Committed prefix|exact|inexact|earlier change/u);
       assert.doesNotMatch(error.message, /[✓✘○↷→—]/u);
       return true;
@@ -406,10 +403,7 @@ test("registers the Codex freeform tool with model, UI, and failed-history parit
   assert.doesNotMatch(failedText, /again/);
   assert.match(failedText, /✘ Failed to apply patch/);
   assert.match(failedText, /Patch failed at instruction 2 of 2\./);
-  assert.match(
-    failedText,
-    /2\. \[FAILED\] Update partial-second\.txt — Filesystem changed after validation/,
-  );
+  assert.match(failedText, /2\. \[FAILED\] Update partial-second\.txt — apply_patch was cancelled/);
   assert.doesNotMatch(failedText, /Committed prefix|exact|inexact|Preflight/);
 
   applyPatchDebug = true;

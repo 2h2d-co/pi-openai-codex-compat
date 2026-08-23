@@ -20,11 +20,7 @@ import {
   fingerprint,
   samePhysicalEntry,
   type ContentCell,
-  type InPlaceWritePlan,
-  type ParentPlan,
-  type PlannedEntryMutation,
-  type PlannedNoChangeAssertion,
-  type PlannedPhysicalLinkDelta,
+  type PlannedNoChangeCheckpoint,
   type PhysicalFileState,
   type PlannedMutation,
   type SemanticPlan,
@@ -73,7 +69,7 @@ export class SemanticPlanner {
     { content: ContentCell; physical: PhysicalFileState }
   >();
   private readonly mutations: PlannedMutation[] = [];
-  private readonly noChangeAssertions: PlannedNoChangeAssertion[] = [];
+  private readonly noChangeCheckpoints: PlannedNoChangeCheckpoint[] = [];
   private readonly fulfilledMoves = new Map<
     string,
     { destinationKey: string; destinationEntryId: string; instruction: number }
@@ -153,7 +149,7 @@ export class SemanticPlanner {
     }
     return {
       mutations: this.mutations,
-      noChangeAssertions: this.noChangeAssertions,
+      noChangeCheckpoints: this.noChangeCheckpoints,
       exact: this.exact,
       instructions: this.instructions.map((instruction) => ({ ...instruction })),
     };
@@ -188,8 +184,8 @@ export class SemanticPlanner {
     ).reason = instructionReason(code);
   }
 
-  private addNoChangeAssertion(assertion: PlannedNoChangeAssertion): void {
-    this.noChangeAssertions.push(assertion);
+  private addNoChangeCheckpoint(instructionIndex: number): void {
+    this.noChangeCheckpoints.push({ instructionIndex });
   }
 
   private async directoryIsCaseInsensitive(directory: string): Promise<boolean> {
@@ -347,101 +343,6 @@ export class SemanticPlanner {
     };
   }
 
-  private physicalLinkDeltas(
-    changes: ReadonlyArray<{ entry: VirtualEntry; delta: number }>,
-  ): PlannedPhysicalLinkDelta[] {
-    const deltas = new Map<string, PlannedPhysicalLinkDelta>();
-    for (const { entry, delta } of changes) {
-      if (
-        delta === 0 ||
-        (entry.kind !== "regular" && entry.kind !== "symlink") ||
-        !entry.fingerprint
-      ) {
-        continue;
-      }
-      const key = `${entry.fingerprint.device}:${entry.fingerprint.inode}`;
-      const existing = deltas.get(key);
-      if (existing) {
-        existing.delta += delta;
-      } else {
-        deltas.set(key, { fingerprint: entry.fingerprint, delta });
-      }
-    }
-    return [...deltas.values()].filter(({ delta }) => delta !== 0);
-  }
-
-  private async parentEntryMutations(parents: ParentPlan): Promise<PlannedEntryMutation[]> {
-    return Promise.all(
-      parents.createdPaths.map(async (path) => ({
-        path,
-        key: await this.pathKey(path),
-        kind: "directory" as const,
-      })),
-    );
-  }
-
-  private ancestorPaths(path: string): string[] {
-    const root = parse(path).root;
-    const ancestors = [root];
-    let current = dirname(path);
-    const tail: string[] = [];
-    while (current !== root) {
-      tail.push(current);
-      current = dirname(current);
-    }
-    ancestors.push(...tail.toReversed());
-    return ancestors;
-  }
-
-  private async inPlaceWritePlan(path: string): Promise<InPlaceWritePlan> {
-    const route: InPlaceWritePlan["route"] = [];
-    const seenRoutePaths = new Set<string>();
-    const appendRouteEntry = async (routePath: string, entry: VirtualEntry): Promise<void> => {
-      if (seenRoutePaths.has(routePath)) return;
-      if (entry.kind !== "directory" && entry.kind !== "symlink") {
-        throw new Error(`Failed to resolve the write route for ${path} at ${routePath}`);
-      }
-      seenRoutePaths.add(routePath);
-      route.push({
-        path: routePath,
-        key: await this.pathKey(routePath),
-        expected: this.snapshot(entry),
-      });
-    };
-    const appendAncestors = async (targetPath: string): Promise<void> => {
-      for (const ancestor of this.ancestorPaths(targetPath)) {
-        await appendRouteEntry(ancestor, await this.stateAt(ancestor));
-      }
-    };
-
-    await appendAncestors(path);
-    let targetPath = path;
-    let target = await this.stateAt(targetPath);
-    const visitedSymlinks = new Set<string>();
-    while (target.kind === "symlink") {
-      const key = await this.pathKey(targetPath);
-      if (visitedSymlinks.has(key)) {
-        throw new Error(`Failed to resolve the write route for ${path}: symlink cycle`);
-      }
-      visitedSymlinks.add(key);
-      await appendRouteEntry(targetPath, target);
-      targetPath = target.targetPath;
-      await appendAncestors(targetPath);
-      target = await this.stateAt(targetPath);
-    }
-    if (target.kind !== "regular") {
-      throw new Error(`Failed to resolve the regular-file write target for ${path}`);
-    }
-    const expectedTarget = this.snapshot(target);
-    expectedTarget.content.planned = true;
-    return {
-      route,
-      targetPath,
-      targetKey: await this.pathKey(targetPath),
-      expectedTarget,
-    };
-  }
-
   private async readBytes(
     entry: Extract<VirtualEntry, { kind: "regular" | "symlink" }>,
     path: string,
@@ -511,28 +412,24 @@ export class SemanticPlanner {
     }
   }
 
-  private async ensureParents(targetPath: string): Promise<ParentPlan> {
+  private async ensureParents(targetPath: string): Promise<string[]> {
     const missing: string[] = [];
-    const expectations: ParentPlan["expectations"] = [];
     const root = parse(targetPath).root;
     let parent = dirname(targetPath);
     while (parent !== root) {
       const entry = await this.stateAt(parent);
       if (entry.kind === "absent") {
-        expectations.push({ path: parent, kind: "absent" });
         missing.push(parent);
         parent = dirname(parent);
         continue;
       }
       if (entry.kind === "directory") {
-        expectations.push({ path: parent, kind: "directory" });
         break;
       }
       if (entry.kind === "symlink") {
         try {
           const metadata = await stat(entry.sourcePath ?? parent);
           if (metadata.isDirectory()) {
-            expectations.push({ path: parent, kind: "directory-symlink" });
             break;
           }
         } catch (cause) {
@@ -546,7 +443,7 @@ export class SemanticPlanner {
 
     const created = missing.toReversed();
     for (const path of created) await this.setState(path, { kind: "directory" });
-    return { createdPaths: created, expectations };
+    return created;
   }
 
   private async entryFilesystemDevice(path: string): Promise<number> {
@@ -913,12 +810,7 @@ export class SemanticPlanner {
           target.entryName === basename(operation.absolutePath)
         ) {
           this.markNoOp(instructionIndex, "content-already-present");
-          this.addNoChangeAssertion({
-            kind: "identical-add",
-            instructionIndex,
-            operation,
-            content,
-          });
+          this.addNoChangeCheckpoint(instructionIndex);
           return;
         }
         // oxlint-disable-next-line preserve-caught-error -- This no-op probe is optional; execution can still replace the entry and records that the resulting details are inexact.
@@ -928,9 +820,7 @@ export class SemanticPlanner {
     }
 
     const parents =
-      target.kind === "absent"
-        ? await this.ensureParents(operation.absolutePath)
-        : { createdPaths: [], expectations: [] };
+      target.kind === "absent" ? await this.ensureParents(operation.absolutePath) : [];
     const overwrittenContent =
       target.kind === "regular" || target.kind === "symlink"
         ? await this.optionalText(target, operation.absolutePath)
@@ -943,22 +833,13 @@ export class SemanticPlanner {
       ...diffDetails("", operation.content),
     };
     if (overwrittenContent !== undefined) change.overwrittenContent = overwrittenContent;
-    const targetKey = await this.pathKey(operation.absolutePath);
-    const entryMutation: PlannedEntryMutation = {
-      path: operation.absolutePath,
-      key: targetKey,
-      kind: "regular",
-    };
     const mutation: Extract<PlannedMutation, { kind: "add" }> = {
       instructionIndex,
       kind: "add",
       operation,
       expectedTarget,
-      parents,
+      createdParentPaths: parents,
       content,
-      targetKey,
-      entryMutations: [...(await this.parentEntryMutations(parents)), entryMutation],
-      physicalLinkDeltas: this.physicalLinkDeltas([{ entry: target, delta: -1 }]),
       change,
     };
     if (target.kind === "regular" && target.fingerprint) {
@@ -986,11 +867,7 @@ export class SemanticPlanner {
     const target = await this.stateAt(operation.absolutePath);
     if (target.kind === "absent") {
       this.markNoOp(index, "path-already-absent");
-      this.addNoChangeAssertion({
-        kind: "absent-delete",
-        instructionIndex: index,
-        operation,
-      });
+      this.addNoChangeCheckpoint(index);
       return;
     }
     if (target.kind === "directory" || target.kind === "unsupported") {
@@ -1022,20 +899,11 @@ export class SemanticPlanner {
       change.additions = details.additions;
       change.deletions = details.deletions;
     }
-    const targetKey = await this.pathKey(operation.absolutePath);
-    const entryMutation: PlannedEntryMutation = {
-      path: operation.absolutePath,
-      key: targetKey,
-      kind: "absent",
-    };
     this.mutations.push({
       instructionIndex: index,
       kind: "delete",
       operation,
       expectedTarget,
-      targetKey,
-      entryMutations: [entryMutation],
-      physicalLinkDeltas: this.physicalLinkDeltas([{ entry: target, delta: -1 }]),
       change,
     });
     this.releasePhysicalLink(target);
@@ -1071,11 +939,7 @@ export class SemanticPlanner {
           await this.validatePureMoveChunks(operation, await this.stateAt(operation.absolutePath));
           this.markNoOp(instructionIndex, "same-entry-move");
           if (operation.chunks.length > 0) {
-            this.addNoChangeAssertion({
-              kind: "same-entry-move",
-              instructionIndex,
-              operation,
-            });
+            this.addNoChangeCheckpoint(instructionIndex);
           }
         }
       } else {
@@ -1119,18 +983,13 @@ export class SemanticPlanner {
       )
     ) {
       this.markNoOp(instructionIndex, "update-result-unchanged");
-      this.addNoChangeAssertion({
-        kind: "unchanged-update",
-        instructionIndex,
-        operation,
-      });
+      this.addNoChangeCheckpoint(instructionIndex);
       return;
     }
 
     if (semanticMove === undefined) {
       const expectedSource = this.snapshot(source);
       expectedSource.content.planned = true;
-      const writePlan = await this.inPlaceWritePlan(operation.absolutePath);
       const change: Extract<AppliedPatchChange, { kind: "update" }> = {
         kind: "update",
         path: operation.path,
@@ -1143,19 +1002,9 @@ export class SemanticPlanner {
         kind: "text-update",
         moveMode: "none",
         operation,
-        writePlan,
         expectedSource,
-        parents: { createdPaths: [], expectations: [] },
+        createdParentPaths: [],
         content,
-        sourceKey,
-        entryMutations: [
-          {
-            path: writePlan.targetPath,
-            key: writePlan.targetKey,
-            kind: "regular",
-          },
-        ],
-        physicalLinkDeltas: [],
         change,
       });
       source.content.value = { bytes: content, text: newContent };
@@ -1196,11 +1045,6 @@ export class SemanticPlanner {
         newContent,
         ...diffDetails(oldContent, newContent),
       };
-      const entryMutation: PlannedEntryMutation = {
-        path: destinationPath,
-        key: destinationKey,
-        kind: "regular",
-      };
       const mutation: Extract<PlannedMutation, { kind: "text-update" }> = {
         instructionIndex,
         kind: "text-update",
@@ -1208,13 +1052,9 @@ export class SemanticPlanner {
         operation: semanticMove,
         expectedSource,
         expectedDestination: expectedSource,
-        parents: { createdPaths: [], expectations: [] },
+        createdParentPaths: [],
         content,
-        sourceKey,
-        destinationKey,
         sameEntryMove,
-        entryMutations: [entryMutation],
-        physicalLinkDeltas: this.physicalLinkDeltas([{ entry: source, delta: -1 }]),
         change,
         provisionalChange: {
           kind: "update",
@@ -1255,10 +1095,7 @@ export class SemanticPlanner {
         `Cannot move update to ${destinationPath}: destination is ${destination.kind === "directory" ? "a directory" : `a ${destination.entryType}`}`,
       );
     }
-    const parents =
-      destination.kind === "absent"
-        ? await this.ensureParents(destinationPath)
-        : { createdPaths: [], expectations: [] };
+    const parents = destination.kind === "absent" ? await this.ensureParents(destinationPath) : [];
     const overwrittenMoveContent =
       destination.kind === "regular" || destination.kind === "symlink"
         ? await this.optionalText(destination, destinationPath)
@@ -1286,16 +1123,6 @@ export class SemanticPlanner {
     if (overwrittenMoveContent !== undefined) {
       provisionalChange.overwrittenContent = overwrittenMoveContent;
     }
-    const sourceEntryMutation: PlannedEntryMutation = {
-      path: operation.absolutePath,
-      key: sourceKey,
-      kind: "absent",
-    };
-    const destinationEntryMutation: PlannedEntryMutation = {
-      path: destinationPath,
-      key: destinationKey,
-      kind: "regular",
-    };
     const mutation: Extract<PlannedMutation, { kind: "text-update" }> = {
       instructionIndex,
       kind: "text-update",
@@ -1303,19 +1130,8 @@ export class SemanticPlanner {
       operation: semanticMove,
       expectedSource,
       expectedDestination,
-      parents,
+      createdParentPaths: parents,
       content,
-      sourceKey,
-      destinationKey,
-      entryMutations: [
-        ...(await this.parentEntryMutations(parents)),
-        sourceEntryMutation,
-        destinationEntryMutation,
-      ],
-      physicalLinkDeltas: this.physicalLinkDeltas([
-        { entry: source, delta: -1 },
-        { entry: destination, delta: -1 },
-      ]),
       change,
       provisionalChange,
     };
@@ -1359,11 +1175,7 @@ export class SemanticPlanner {
       if (operation.absolutePath === destinationPath) {
         this.markNoOp(instructionIndex, "same-entry-move");
         if (operation.chunks.length > 0) {
-          this.addNoChangeAssertion({
-            kind: "same-entry-move",
-            instructionIndex,
-            operation,
-          });
+          this.addNoChangeCheckpoint(instructionIndex);
         }
         return;
       }
@@ -1372,11 +1184,7 @@ export class SemanticPlanner {
         this.virtualSpellingSatisfied(source.entryPath, destinationPath)
       ) {
         this.markNoOp(instructionIndex, "same-entry-move");
-        this.addNoChangeAssertion({
-          kind: "same-entry-move",
-          instructionIndex,
-          operation,
-        });
+        this.addNoChangeCheckpoint(instructionIndex);
         return;
       }
       if ((await this.sameEntryMoveEffect(operation.absolutePath, destinationPath)) === "rename") {
@@ -1403,18 +1211,9 @@ export class SemanticPlanner {
           operation,
           expectedSource,
           expectedDestination: this.snapshot(source),
-          parents: { createdPaths: [], expectations: [] },
-          sourceKey,
-          destinationKey,
+          createdParentPaths: [],
+          sourceAliasesDestination: true,
           moveStrategy: "rename",
-          entryMutations: [
-            {
-              path: destinationPath,
-              key: destinationKey,
-              kind: expectedSource.kind,
-            },
-          ],
-          physicalLinkDeltas: [],
           change,
         });
         await this.setState(destinationPath, {
@@ -1425,11 +1224,7 @@ export class SemanticPlanner {
         return;
       }
       this.markNoOp(instructionIndex, "same-entry-move");
-      this.addNoChangeAssertion({
-        kind: "same-entry-move",
-        instructionIndex,
-        operation,
-      });
+      this.addNoChangeCheckpoint(instructionIndex);
       return;
     }
 
@@ -1446,14 +1241,7 @@ export class SemanticPlanner {
           this.instructions[instructionIndex],
           "The fulfilled move instruction is missing.",
         ).reason = moveAlreadyFulfilledReason(fulfilled.instruction);
-        this.addNoChangeAssertion({
-          kind: "fulfilled-move",
-          instructionIndex,
-          operation,
-          sourceKey,
-          destinationKey,
-          expectedDestination: this.snapshot(destination),
-        });
+        this.addNoChangeCheckpoint(instructionIndex);
         return;
       }
       throw new Error(
@@ -1474,9 +1262,7 @@ export class SemanticPlanner {
       );
     }
     const parents =
-      expectedDestination.kind === "absent"
-        ? await this.ensureParents(destinationPath)
-        : { createdPaths: [], expectations: [] };
+      expectedDestination.kind === "absent" ? await this.ensureParents(destinationPath) : [];
     const [sourceDevice, destinationDevice] = await Promise.all([
       source.fingerprint?.device ?? this.entryFilesystemDevice(operation.absolutePath),
       this.entryFilesystemDevice(destinationPath),
@@ -1499,46 +1285,15 @@ export class SemanticPlanner {
       additions: 0,
       deletions: 0,
     };
-    const sourceEntryMutation: PlannedEntryMutation = {
-      path: operation.absolutePath,
-      key: sourceKey,
-      kind: "absent",
-    };
-    const destinationEntryMutation: PlannedEntryMutation = {
-      path: destinationPath,
-      key: destinationKey,
-      kind: expectedSource.kind === "regular" ? "regular" : "symlink",
-    };
-    const sourceAndDestinationShareInode =
-      (expectedDestination.kind === "regular" || expectedDestination.kind === "symlink") &&
-      source.fingerprint !== undefined &&
-      expectedDestination.fingerprint !== undefined &&
-      samePhysicalEntry(source.fingerprint, expectedDestination.fingerprint);
-    const physicalLinkChanges: Array<{ entry: VirtualEntry; delta: number }> = [];
-    if (moveStrategy === "copy-unlink") {
-      physicalLinkChanges.push({ entry: source, delta: -1 });
-      physicalLinkChanges.push({ entry: expectedDestination, delta: -1 });
-    } else if (sourceAndDestinationShareInode) {
-      physicalLinkChanges.push({ entry: source, delta: -1 });
-    } else {
-      physicalLinkChanges.push({ entry: expectedDestination, delta: -1 });
-    }
     this.mutations.push({
       instructionIndex,
       kind: "move",
       operation,
       expectedSource,
       expectedDestination: destinationSnapshot,
-      parents,
-      sourceKey,
-      destinationKey,
+      createdParentPaths: parents,
+      sourceAliasesDestination: false,
       moveStrategy,
-      entryMutations: [
-        ...(await this.parentEntryMutations(parents)),
-        sourceEntryMutation,
-        destinationEntryMutation,
-      ],
-      physicalLinkDeltas: this.physicalLinkDeltas(physicalLinkChanges),
       change,
     });
     this.releasePhysicalLink(expectedDestination);

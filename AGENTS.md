@@ -6,6 +6,7 @@
 - Preserve canonical `openai-codex` assistant history when changing fast-mode request behavior.
 - Native Codex compaction must fail closed and must not intercept `/tree` branch summarization.
 - `apply_patch` must validate all hunks before writes and participate in Pi's file mutation queue.
+- `apply_patch` assumes relevant filesystem state is not modified outside its queued execution window. Keep execution simple: trust standard Node filesystem operations, verify direct result postconditions, and do not add cross-process drift, inode-continuity, or extension-local alias-locking machinery.
 - When asked to check a new official Codex CLI release, follow `OFFICIAL_CODEX_CLI_RELEASES.md`, compare the newest stable tag with the previous reviewed stable tag, and append the protocol and `apply_patch` decisions without silently reopening recorded deviations.
 - When explaining model/provider context layouts, use concrete, traceable history transformations rather than mixing context with control flow: define a compact symbol legend, show each request/response as an ordered item list, walk each case independently, contrast valid and invalid layouts, and state which items are committed, discarded, compacted, or carried forward. Distinguish the logical full context from transport optimizations such as `previous_response_id` plus a suffix, and end with the key invariant or concise before/after summary.
 - Add changelog entries for user-visible changes under `Unreleased`.

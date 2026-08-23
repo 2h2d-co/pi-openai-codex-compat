@@ -1,6 +1,5 @@
 import {
   assert,
-  writeFileSync,
   lstat,
   mkdir,
   readFile,
@@ -11,7 +10,6 @@ import {
   join,
   test,
   applyPatch,
-  ApplyPatchExecutionError,
   buildSemanticPlan,
   formatApplyPatchSummary,
   workspace,
@@ -40,10 +38,7 @@ test("plans one mutation followed by no change for repeated identical adds", asy
 
   const plan = await buildSemanticPlan(cwd, document);
   assert.equal(plan.mutations.length, 1);
-  assert.deepEqual(
-    plan.noChangeAssertions.map(({ kind, instructionIndex }) => ({ kind, instructionIndex })),
-    [{ kind: "identical-add", instructionIndex: 1 }],
-  );
+  assert.deepEqual(plan.noChangeCheckpoints, [{ instructionIndex: 1 }]);
   assert.deepEqual(
     plan.instructions.map(({ status, reason }) => [status, reason?.code]),
     [
@@ -90,10 +85,7 @@ test("keeps a different second add as a replacement before an identical no-op", 
 
   const plan = await buildSemanticPlan(cwd, document);
   assert.equal(plan.mutations.length, 2);
-  assert.deepEqual(
-    plan.noChangeAssertions.map(({ kind, instructionIndex }) => ({ kind, instructionIndex })),
-    [{ kind: "identical-add", instructionIndex: 2 }],
-  );
+  assert.deepEqual(plan.noChangeCheckpoints, [{ instructionIndex: 2 }]);
 
   const details = await applyPatch(cwd, document);
   assert.deepEqual(
@@ -196,7 +188,7 @@ test("uses virtual spelling through symlink-parent aliases and earlier moves", a
   );
   const aliasPlan = await buildSemanticPlan(cwd, aliasDocument);
   assert.equal(aliasPlan.mutations.length, 1);
-  assert.equal(aliasPlan.noChangeAssertions.length, 1);
+  assert.equal(aliasPlan.noChangeCheckpoints.length, 1);
   const aliasDetails = await applyPatch(cwd, aliasDocument);
   assert.deepEqual(
     aliasDetails.instructions?.map(({ status }) => status),
@@ -211,13 +203,7 @@ test("uses virtual spelling through symlink-parent aliases and earlier moves", a
   );
   const movePlan = await buildSemanticPlan(cwd, moveDocument);
   assert.equal(movePlan.mutations.length, 1);
-  assert.deepEqual(
-    movePlan.noChangeAssertions.map(({ kind, instructionIndex }) => ({
-      kind,
-      instructionIndex,
-    })),
-    [{ kind: "identical-add", instructionIndex: 1 }],
-  );
+  assert.deepEqual(movePlan.noChangeCheckpoints, [{ instructionIndex: 1 }]);
   const moveDetails = await applyPatch(cwd, moveDocument);
   assert.deepEqual(
     moveDetails.instructions?.map(({ status }) => status),
@@ -225,35 +211,4 @@ test("uses virtual spelling through symlink-parent aliases and earlier moves", a
   );
   assert.equal(moveDetails.changes[0]?.kind, "move");
   assert.equal(await readFile(join(cwd, "move-destination.txt"), "utf8"), "moved\n");
-});
-
-test("fails a repeated-add assertion closed when the first result drifts", async (t) => {
-  const cwd = await workspace(t);
-  const targetPath = join(cwd, "drifted.txt");
-  let changed = false;
-
-  await assert.rejects(
-    applyPatch(
-      cwd,
-      patch("*** Add File: drifted.txt\n+same\n", "*** Add File: drifted.txt\n+same\n"),
-      undefined,
-      {
-        onProgress() {
-          if (changed) return;
-          changed = true;
-          writeFileSync(targetPath, "external\n");
-        },
-      },
-    ),
-    (error: unknown) => {
-      assert.ok(error instanceof ApplyPatchExecutionError);
-      assert.deepEqual(
-        error.details.instructions?.map(({ status }) => status),
-        ["applied", "failed"],
-      );
-      assert.equal(error.details.changes.length, 1);
-      return true;
-    },
-  );
-  assert.equal(await readFile(targetPath, "utf8"), "external\n");
 });

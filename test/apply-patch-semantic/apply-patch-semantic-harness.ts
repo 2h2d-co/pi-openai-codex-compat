@@ -1,7 +1,6 @@
 import { isString } from "../../extensions/openai-codex-compat/value-contracts.ts";
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
-import { writeFileSync } from "node:fs";
 import {
   chmod,
   link,
@@ -15,7 +14,6 @@ import {
   rm,
   stat,
   symlink,
-  type FileHandle,
   unlink,
   writeFile,
 } from "node:fs/promises";
@@ -89,14 +87,9 @@ export function pathLikeBasename(path: unknown): string {
   return "";
 }
 
-export function isFileHandle(value: unknown): value is FileHandle {
-  return typeof value === "object" && value !== null && "fd" in value;
-}
-
 export {
   assert,
   execFile,
-  writeFileSync,
   chmod,
   link,
   lstat,

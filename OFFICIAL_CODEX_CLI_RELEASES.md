@@ -312,17 +312,17 @@ The detailed `apply_patch` contracts remain normative:
 ### A-006 — Every affected path participates in mutation queues
 
 - **Our choice:** Queue every source and destination through Pi's mutation
-  queue. Also use deterministic process-local keys for proven case, Unicode,
-  symlink-parent, and hard-link aliases.
+  queue for the complete preflight-and-execution window. Acquire multiple
+  queue paths deterministically and retain operation-specific symlink-entry
+  handling. Do not add a second extension-local alias queue.
 - **Official Codex:** Uses its own execution and sandbox orchestration rather
   than Pi's queue contract.
-- **Why:** Concurrent in-process patches must not preflight the same physical
-  state independently.
-- **Known limit:** This does not coordinate separate Pi processes or unrelated
-  Pi mutation tools. Standard Node pathname operations also cannot make
-  `rename` or `unlink` conditional on the inode checked immediately beforehand,
-  so an uncoordinated replacement inside that check/use window remains an
-  accepted race.
+- **Why:** Pi's queue coordinates ordinary same-target mutation tools without
+  duplicating lock identity and lifecycle logic in this extension.
+- **Operating model:** Relevant filesystem state is not modified outside the
+  queued execution window. Separate processes, hard-link aliases not
+  canonicalized by Pi, callbacks, and injected filesystem hooks must not
+  mutate that state.
 - **Revisit only if:** Pi provides a broader shared mutation transaction.
 
 ### A-007 — Do not simulate Codex sandbox or approval orchestration
@@ -334,7 +334,8 @@ The detailed `apply_patch` contracts remain normative:
   approval, and sandbox systems.
 - **Why:** A confirmation-shaped UI without enforcement would provide false
   assurance. Our safety boundary is semantic preflight, mutation queues,
-  execution-time identity checks, and fail-closed behavior.
+  direct result postconditions, partial-failure inspection, and fail-closed
+  behavior inside the single-writer operating model.
 - **Revisit only if:** Pi provides an enforceable sandbox and approval
   lifecycle.
 
@@ -439,9 +440,8 @@ Excluded because the runtime is absent:
    following when otherwise-required sandbox enforcement is unavailable;
    standalone `apply_patch` still follows symlinks by default. The package
    retains its operation-specific A-005 symlink semantics and does not copy a
-   sandbox fallback without the A-007 runtime. The upstream tests provide an
-   additional ancestor-symlink replacement scenario for the existing S-002
-   execution-identity remediation item.
+   sandbox fallback without the A-007 runtime. Ancestor replacement during
+   execution is outside the queued single-writer model recorded in A-006.
 5. **Permission orchestration:** Official core handling avoids widening a
    selected environment's write permissions for patch execution. This remains
    excluded under A-007; Pi extensions run with host process permissions.
@@ -453,9 +453,9 @@ Excluded because the runtime is absent:
   message.
 - Unbounded connection retries were reviewed and deliberately not
   implemented; P-012 records the bounded policy and revisit condition.
-- No `apply_patch` implementation change was adopted. The strict matcher,
-  repeated-path extension, line-ending policy, symlink semantics, move
-  semantics, and mutation queues remain unchanged.
+- No `apply_patch` implementation change was adopted as part of this release
+  review. The strict matcher, repeated-path extension, line-ending policy,
+  symlink semantics, and move semantics remain unchanged.
 - The README and Responses Lite report were advanced to the official
   `0.149.0` baseline.
 

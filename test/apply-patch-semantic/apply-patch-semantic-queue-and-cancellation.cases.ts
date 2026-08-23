@@ -5,13 +5,11 @@ import {
 import {
   assert,
   chmod,
-  link,
   lstat,
   mkdir,
   readFile,
   readlink,
   readdir,
-  rm,
   symlink,
   writeFile,
   join,
@@ -94,7 +92,7 @@ test("does not expose missing previous-content history to the model", async (t) 
   assert.doesNotMatch(feedback, /previous content|diff|history|Committed prefix|exact|inexact/u);
 });
 
-test("serializes same-process filesystem aliases with deterministic logical keys", async (t) => {
+test("serializes canonical Pi mutation queue paths in deterministic order", async (t) => {
   const cwd = await workspace(t);
 
   const assertAliasAddsSerialize = async (firstPath: string, secondPath: string): Promise<void> => {
@@ -120,92 +118,7 @@ test("serializes same-process filesystem aliases with deterministic logical keys
     assert.equal(await readFile(join(cwd, secondPath), "utf8"), "second\n");
   };
 
-  const caseProbe = join(cwd, "CaseProbe");
-  await writeFile(caseProbe, "");
-  const caseAliases =
-    (await lstat(caseProbe)).ino ===
-    (await lstat(join(cwd, "caseprobe")).catch(() => ({ ino: -1 }))).ino;
-  await rm(caseProbe);
-  if (caseAliases) await assertAliasAddsSerialize("MissingCase.txt", "missingcase.txt");
-
-  const composed = "caf\u00e9-probe";
-  const decomposed = "cafe\u0301-probe";
-  await writeFile(join(cwd, composed), "");
-  const unicodeAliases =
-    (await lstat(join(cwd, composed))).ino ===
-    (await lstat(join(cwd, decomposed)).catch(() => ({ ino: -1 }))).ino;
-  await rm(join(cwd, composed));
-  if (unicodeAliases) {
-    await assertAliasAddsSerialize("caf\u00e9-missing.txt", "cafe\u0301-missing.txt");
-  }
-
-  await writeFile(join(cwd, "hard-a.txt"), "before\n");
-  await link(join(cwd, "hard-a.txt"), join(cwd, "hard-b.txt"));
-  const firstHardStarted = deferred();
-  const releaseHard = deferred();
-  let secondHardStarted = false;
-  const firstHard = applyPatch(
-    cwd,
-    patch("*** Update File: hard-a.txt\n@@\n-before\n+one\n"),
-    undefined,
-    {
-      async onExecutionStart() {
-        firstHardStarted.resolve();
-        await releaseHard.promise;
-      },
-    },
-  );
-  await firstHardStarted.promise;
-  const secondHard = applyPatch(
-    cwd,
-    patch("*** Update File: hard-b.txt\n@@\n-one\n+two\n"),
-    undefined,
-    {
-      onExecutionStart() {
-        secondHardStarted = true;
-      },
-    },
-  );
-  await delay(25);
-  assert.equal(secondHardStarted, false);
-  releaseHard.resolve();
-  await Promise.all([firstHard, secondHard]);
-  assert.equal(await readFile(join(cwd, "hard-a.txt"), "utf8"), "two\n");
-  assert.equal(await readFile(join(cwd, "hard-b.txt"), "utf8"), "two\n");
-
-  await writeFile(join(cwd, "replace-a.txt"), "shared\n");
-  await link(join(cwd, "replace-a.txt"), join(cwd, "replace-b.txt"));
-  const replaceStarted = deferred();
-  const releaseReplace = deferred();
-  let aliasUpdateStarted = false;
-  const replacement = applyPatch(
-    cwd,
-    patch("*** Add File: replace-a.txt\n+independent\n"),
-    undefined,
-    {
-      async onExecutionStart() {
-        replaceStarted.resolve();
-        await releaseReplace.promise;
-      },
-    },
-  );
-  await replaceStarted.promise;
-  const aliasUpdate = applyPatch(
-    cwd,
-    patch("*** Update File: replace-b.txt\n@@\n-shared\n+remaining\n"),
-    undefined,
-    {
-      onExecutionStart() {
-        aliasUpdateStarted = true;
-      },
-    },
-  );
-  await delay(25);
-  assert.equal(aliasUpdateStarted, false);
-  releaseReplace.resolve();
-  await Promise.all([replacement, aliasUpdate]);
-  assert.equal(await readFile(join(cwd, "replace-a.txt"), "utf8"), "independent\n");
-  assert.equal(await readFile(join(cwd, "replace-b.txt"), "utf8"), "remaining\n");
+  await assertAliasAddsSerialize("same-target.txt", "same-target.txt");
 
   await mkdir(join(cwd, "real-parent"));
   await symlink("real-parent", join(cwd, "alias-parent"));
@@ -348,7 +261,7 @@ test("serializes same-process filesystem aliases with deterministic logical keys
   await Promise.race([
     Promise.all([ordered, reversed]),
     delay(2_000).then(() => {
-      throw new Error("reverse-order logical queue acquisition deadlocked");
+      throw new Error("reverse-order Pi mutation queue acquisition deadlocked");
     }),
   ]);
   assert.equal(await readFile(join(cwd, "order-a.txt"), "utf8"), "a2\n");

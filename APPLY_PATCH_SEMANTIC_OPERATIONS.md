@@ -819,29 +819,29 @@ Text decoding is lazy:
   its text.
 
 All source and destination paths, including move destinations, MUST
-participate in Pi's file mutation queue. They also participate in an
-extension-local logical-key queue that collapses proven case, Unicode,
-symlink-parent, and physical hard-link aliases. Distinct hard-link
-directory entries retain distinct entry keys while sharing a physical inode
-key. Queue acquisition order MUST be deterministic to avoid deadlocks.
+participate in Pi's file mutation queue for the complete preflight-and-
+execution window. Queue acquisition order MUST be deterministic to avoid
+deadlocks. The implementation does not add an extension-local alias queue.
 
 Queue identity is operation-aware. Entry-only adds, deletes, identity updates
 without a move, and chunkless pure moves MUST NOT dereference a symlink target
 merely to choose a queue key. State-changing text updates and pure moves with
-supplied chunks do acquire the physical identity of a live regular-file
-target. Cyclic, dangling, or inaccessible targets are left for semantic
-preflight so genuinely entry-only operations and no-ops remain valid.
+supplied chunks queue the live regular-file target they validate. Cyclic,
+dangling, or inaccessible targets are left for semantic preflight so genuinely
+entry-only operations and no-ops remain valid.
 
-Both queues are in-memory and process-local. They coordinate concurrent
-`apply_patch` calls sharing one Pi process and module instance. They do not
-coordinate separately launched Pi sessions, other processes, or unrelated Pi
-`edit` and `write` tools.
+Pi's queue is in-memory and process-local. It coordinates tools using the same
+canonical target path, including built-in `edit` and `write`; it does not
+coordinate separately launched Pi sessions or physical hard-link aliases
+presented through distinct paths.
 
+The operating model requires relevant filesystem state to remain unchanged
+outside the queued `apply_patch` execution window. This includes source and
+destination entries, ancestors, symlink targets, hard-link aliases, callbacks,
+injected filesystem hooks, separate Pi sessions, and external processes.
 After queues are acquired, preflight reads the required state and constructs
-the complete plan. Before executing each mutation, the implementation SHOULD
-verify that the relevant directory entry still matches the planned identity
-and metadata. External changes observed during these checks or later commit
-verification cause a conflict rather than being accepted as trusted state.
+the authoritative complete plan. The executor does not revalidate that state
+for concurrent drift.
 
 ## Execution and failure behavior
 
@@ -851,116 +851,64 @@ Execute planned mutations in source order. Do not collapse operations in a way
 that changes move chains, overwrite order, or intermediate observations.
 
 Dead operations and unconditional no-ops produce no filesystem calls.
-State-dependent no-ops may perform read-only assertions but never mutate the
-filesystem.
+State-dependent no-ops retain ordered execution checkpoints but perform no
+filesystem calls.
 
-### No-change assertions
+### No-change checkpoints
 
-Every state-dependent no-change classification MUST be revalidated at its
-source-order position. Assertions and mutations are one ordered execution
-sequence; checking all no-change postconditions only at completion is invalid
-because a later same-patch mutation may intentionally change that state.
-
-The required assertions are:
-
-- an identical add still resolves at the exact requested spelling to a regular
-  file containing the requested bytes;
-- an absent delete target is still absent;
-- an unchanged update still maps through the official-compatible strict
-  matcher and derives bytes equal to the current bytes;
-- a nontrivial same-entry move still resolves its case, Unicode, or
-  symlink-parent aliases to one directory entry, with supplied chunks still
-  matching; and
-- a fulfilled move still has an absent source and the exact destination entry
-  committed by the referenced earlier instruction, with supplied chunks still
-  matching.
-
-Identical-add validation is postcondition-based: a different regular-file
-inode remains valid when the exact spelling and bytes are unchanged because no
-write occurs. Unchanged-update validation replays the operation against the
-current file rather than requiring an unchanged whole-file snapshot, so
-unconstrained lines may change only when strict reapplication still proves the
-operation has no effect. A fulfilled chunkless move constrains entry provenance
-and path state, not bytes; supplied chunks add their documented text
-preconditions.
+Every state-dependent no-change classification MUST retain a source-ordered
+execution checkpoint. Checkpoints and mutations are one ordered execution
+sequence, but checkpoints trust the virtual state proven during complete
+preflight and do not reread the filesystem.
 
 Empty updates without moves, identity updates without moves, and chunkless
-lexical self-moves are unconditional and require no filesystem assertion.
+lexical self-moves are unconditional and require no checkpoint.
 
-If an assertion fails, execution MUST fail closed. It MUST NOT promote the
-instruction into a mutation because every later virtual-state decision was
-planned with that instruction producing no effect. Assertions after an earlier
-failure are `NOT RUN`; assertions that succeed retain `NO CHANGE`. Stable
-assertions perform no filesystem mutation.
+A checkpoint reached in source order becomes `NO CHANGE`. Checkpoints after an
+earlier failure become `NOT RUN`. A checkpoint MUST NOT be promoted into a
+mutation because every later virtual-state decision was planned with that
+instruction producing no effect.
 
-### In-place write identity
+### Mutation execution and result postconditions
 
-An ordinary text update that does not move or replace its entry MUST remain
-bound to the filesystem topology observed during preflight:
+An ordinary text update that does not move or replace its entry uses a direct
+path write. This follows a live source symlink and keeps ordinary hard-link
+visibility. Adds and state-changing moves continue to write through a
+temporary regular file and rename it over the destination so they replace the
+named entry rather than writing through a symlink.
 
-1. preflight records the named source entry, every traversed ancestor directory
-   and symlink, the resolved regular-file target, its bytes, and its link count;
-2. execution rejects a changed source entry, route entry, resolved target
-   inode, content, or unexplained link count;
-3. byte equality MUST NOT authorize a different inode or route;
-4. execution opens the target without truncating, verifies the opened
-   descriptor, and revalidates the source and route before writing;
-5. the content write and truncation use that descriptor rather than resolving
-   the pathname again; and
-6. the resulting descriptor identity, link count, route, and pathname binding
-   are revalidated after writing.
+Before a mutation is reported as `APPLIED`, the executor verifies simple
+operation-specific result postconditions:
 
-Physical link-count changes from earlier committed instructions are accepted
-only when their exact net delta explains the observed count. A generic
-“earlier operation released this inode” condition is insufficient. When an
-earlier instruction creates an entry or parent directory whose inode could not
-exist during preflight, execution captures its committed identity for later
-instructions.
+- an add has the exact requested spelling, regular-file type, requested mode
+  when one is preserved, and the complete requested bytes;
+- an in-place text update resolves to a regular file containing the complete
+  requested bytes;
+- a state-changing move has a removed source and an exact-spelling regular-file
+  destination containing the complete requested bytes;
+- a delete has an absent target;
+- a native pure move has the expected destination type and exact spelling,
+  removed source spelling, preserved physical identity when preflight had one,
+  known bytes when available, and raw symlink target; and
+- a cross-filesystem pure move has the expected destination type and spelling,
+  removed source, preserved mode, known bytes when available, and raw symlink
+  target.
 
-Every mutation MUST establish operation-owned commit evidence before its
-instruction becomes `APPLIED` or its result becomes trusted virtual state:
+For adds and text updates, “complete requested bytes” means equality between
+the entire final file buffer and the exact entire output buffer derived during
+strict preflight. It is never a substring, modified-range, or candidate search;
+requested text appearing in a duplicate or unrelated region cannot satisfy the
+postcondition.
 
-- replacement writes retain the temporary regular-file identity, requested
-  bytes, and requested final spelling through destination rename;
-- created parents retain the directory identities established by recursive
-  creation;
-- descriptor-bound writes retain the resulting descriptor identity and bytes
-  without requiring an alias spelling to change;
-- native moves retain the validated source entry identity and raw symlink
-  target at the exact destination spelling;
-- cross-filesystem moves retain the temporary copied entry identity, preserve
-  known bytes or the raw symlink target, and revalidate source continuity
-  before source removal; and
-- successful deletes and move-source removals still require an absent source.
+Replacement bytes are also read back from the temporary file before any
+restrictive preserved mode is applied. If the final replacement cannot be read
+because that mode denies access, the successful temporary verification and
+rename are trusted under the single-writer operating model.
 
-Entry type alone is not commit evidence. If a same-type entry has replaced an
-operation result, the instruction MUST fail and partial-effect inspection MUST
-report the observed final state. A state-changing text move also revalidates
-the original source identity and constrained bytes immediately before unlink,
-after writing its independent destination.
-
-Unrelated processes can still mutate filesystem state because the extension
-does not own an operating-system transaction or cross-process lock.
-Descriptor-bound writing prevents a pathname replacement after opening from
-redirecting the write to the replacement inode. If the final pathname or route
-no longer binds to the validated inode, execution fails and normal
-partial-failure inspection reports the completed effect.
-
-`rename` and `unlink` remain pathname-based host operations. Standard Node
-filesystem APIs cannot condition either operation on the device and inode
-verified immediately beforehand. An uncoordinated actor can therefore replace
-a source or destination after the final check but before the pathname syscall
-takes effect. The syscall can remove or overwrite that replacement while the
-requested final pathname state still appears valid, leaving no observable
-evidence that identifies the intervening entry.
-
-This check/use race is an accepted limitation. The implementation does not
-replace native rename and unlink semantics with a multi-step quarantine
-protocol, does not introduce platform-specific native filesystem helpers, and
-does not claim cross-process transactional isolation. Operation-owned commit
-evidence detects substituted results that remain observable afterward; it
-cannot recover an entry already removed or overwritten inside a successful
-pathname operation.
+The executor trusts standard Node filesystem operations and does not retain
+operation-owned inode evidence, reconcile runtime link-count changes, bind
+writes to preflighted descriptors, or repeatedly revalidate move sources.
+Behavior is not defined when the single-writer operating model is violated.
 
 ### Native rename
 
@@ -979,8 +927,9 @@ Low-level failures can still complete part of an instruction, especially for:
 
 - cross-filesystem copy-and-unlink fallback;
 - destination creation or replacement followed by failure to unlink the source;
-- permission changes between preflight and execution; or
-- external filesystem races.
+- partial writes;
+- permission and capacity failures; or
+- destination-replacement retry failures.
 
 The tool result MUST attach every completed filesystem effect to the
 instruction that produced it. After a low-level failure, inspect each relevant
@@ -1233,12 +1182,11 @@ Every case must preserve source bytes exactly.
 - any conflict prevents all writes;
 - all involved paths participate in mutation queues;
 - missing-tail paths below symlink parents use the same in-process queue;
-- external drift observed at execution or commit-verification points is
-  detected;
-- pathname replacement between the final check and a successful `rename` or
-  `unlink` remains an accepted cross-process race;
-- link-count changes caused by earlier planned operations do not masquerade as
-  external drift;
+- preflight is authoritative under the queued single-writer operating model;
+- state-dependent no-change checkpoints preserve source-order status without
+  filesystem rereads;
+- complete final buffers, rather than matching substrings or line ranges,
+  verify add and text-update results;
 - native move failure leaves source intact when no mutation committed;
 - cross-filesystem move followed by update, delete, or another move succeeds;
 - cross-filesystem partial failure reports every completed effect on the

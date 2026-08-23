@@ -305,10 +305,10 @@ Compatibility behavior:
 - Repeated identical adds use source-ordered virtual content and exact
   spelling, so an earlier add or move can satisfy a later add without a
   redundant replacement.
-- State-dependent `NO CHANGE` results are revalidated in source order before
-  success. Stale assertions fail rather than becoming unplanned mutations;
-  empty updates, identity updates without moves, and chunkless lexical
-  self-moves remain unconditional.
+- State-dependent `NO CHANGE` results retain source-ordered execution
+  checkpoints without rereading the filesystem. A checkpoint after an earlier
+  failure is `NOT RUN`; empty updates, identity updates without moves, and
+  chunkless lexical self-moves remain unconditional.
 - Model-facing results retain the aggregate A/M/D summary. When any instruction is not applied or an applied instruction has feedback, they list every source-ordered instruction under `Patch instruction results:` as `N. [STATUS] operation`, without an instruction limit; ordinary all-applied results omit the ledger.
 - Combined text updates and moves are labeled `Update & Move`; move-only operations remain `Move`.
 - Replacement feedback always identifies the verified previous and resulting entry types. Symlink feedback also uses the raw target pathname stored in the symlink.
@@ -327,30 +327,29 @@ Filesystem behavior:
 - Same-filesystem pure moves use native rename topology. Cross-filesystem moves copy through a temporary entry, create or replace the destination, and then unlink the source, producing an inode independent from remaining source hard links.
 - Supplied identity or context chunks validate a pure move through the text matcher without rewriting the moved entry. A blank `@@` therefore requires valid UTF-8; omit chunks for arbitrary binary content.
 - Strict edits preserve the matched region's local CRLF or mixed line endings.
-- In-place text updates reject changed source or resolved-target inodes,
-  changed directory/symlink routes, and unexplained hard-link counts even when
-  the replacement bytes are identical. The write is bound to the validated
-  open file descriptor so a later pathname swap cannot redirect it to a
-  replacement inode.
-- Before an instruction succeeds, replacement files, created parents,
-  descriptor-bound writes, and native or cross-filesystem moves must still
-  match identity evidence produced by that operation. Same-type substitutions
-  fail rather than becoming trusted state for later instructions, and move
-  sources are revalidated before copy-and-unlink removal.
+- In-place text updates use a direct path write, following source symlinks and
+  preserving normal hard-link visibility.
+- Adds and text updates verify the complete expected final byte buffer
+  byte-for-byte before succeeding. This is whole-file equality, not a
+  substring search, so duplicate or unrelated regions cannot satisfy the
+  postcondition. Deletes verify absence; moves verify their source,
+  destination type, exact destination spelling, native identity where
+  available, known bytes, and raw symlink target.
 - The extension does not add path filtering, sandboxing, or approval prompts.
 - Every hunk is parsed and validated before filesystem writes begin.
-- Read-only no-change assertions are interleaved with mutations in patch order,
-  so a later instruction may intentionally change an earlier assertion's
-  postcondition.
-- Mutations participate in Pi's per-file mutation queue and an extension-local logical queue for case, Unicode, symlink-parent, and hard-link aliases. Both queues coordinate only concurrent `apply_patch` calls in the same Pi process and module instance; they do not coordinate separate Pi sessions, other processes, or unrelated edit/write tools.
+- No-change checkpoints are interleaved with mutations in patch order, so
+  later checkpoints are not reported as completed after an earlier failure.
+- Mutations participate in Pi's per-file mutation queue for the complete
+  preflight-and-execution window. Queue paths are acquired deterministically,
+  follow operation-specific symlink semantics, and include every move source
+  and destination. There is no additional extension-local alias queue.
 
-Accepted limitation: Node's pathname-based `rename` and `unlink` operations
-cannot be conditioned on the inode verified immediately beforehand. An
-uncoordinated process or tool can replace an entry between that check and the
-filesystem call; the call can then overwrite or remove the replacement while
-the requested final pathname state still appears valid. The extension retains
-native pathname semantics rather than adding a multi-step quarantine protocol
-or platform-specific filesystem helper.
+Operating model: relevant filesystem state is not modified outside the queued
+`apply_patch` execution window. This includes ancestor paths, symlink targets,
+hard-link aliases, callbacks, injected filesystem hooks, separate Pi sessions,
+and external processes. Preflight is authoritative under this model; the
+executor does not attempt cross-process drift detection or transactional
+isolation.
 
 A low-level I/O failure can still complete part of an instruction. The failed
 instruction reports every confirmed effect and final path state; when a path

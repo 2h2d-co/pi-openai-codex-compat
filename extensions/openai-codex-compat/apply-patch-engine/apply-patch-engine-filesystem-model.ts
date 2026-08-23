@@ -17,58 +17,9 @@ export type EntryFingerprint = {
   modifiedMs: number;
 };
 
-export type EntryCommitEvidence =
-  | { kind: "absent" }
-  | {
-      kind: "directory";
-      fingerprint: EntryFingerprint;
-      fingerprintMatch: "physical";
-      exactSpelling: boolean;
-    }
-  | {
-      kind: "regular";
-      fingerprint: EntryFingerprint;
-      fingerprintMatch: "exact" | "except-link-count";
-      exactSpelling: boolean;
-      content?: Buffer;
-    }
-  | {
-      kind: "symlink";
-      fingerprint: EntryFingerprint;
-      fingerprintMatch: "exact" | "except-link-count";
-      exactSpelling: boolean;
-      target: string;
-      content?: Buffer;
-    };
-
-export type PathCommitEvidence = {
-  path: string;
-  evidence: EntryCommitEvidence;
-};
-
 export type KnownContent = {
   bytes: Buffer;
   text?: string;
-};
-
-export type PlannedEntryMutation = {
-  path: string;
-  key: string;
-  kind: "absent" | "directory" | "regular" | "symlink";
-};
-
-export type CommittedEntryMutation = Omit<PlannedEntryMutation, "kind"> & {
-  expected: VirtualEntry;
-  mutationIndex: number;
-};
-
-export type PlannedPhysicalLinkDelta = {
-  fingerprint: EntryFingerprint;
-  delta: number;
-};
-
-export type CommittedPhysicalLinkDelta = PlannedPhysicalLinkDelta & {
-  mutationIndex: number;
 };
 
 export type ContentCell = {
@@ -114,32 +65,12 @@ export type ReplaceableFileEntry = Extract<
   { kind: "absent" | "regular" | "symlink" }
 >;
 
-export type ParentPlan = {
-  createdPaths: string[];
-  expectations: Array<{ path: string; kind: "absent" | "directory" | "directory-symlink" }>;
-};
-
-export type RouteEntryExpectation = {
-  path: string;
-  key: string;
-  expected: Extract<VirtualEntry, { kind: "directory" | "symlink" }>;
-};
-
-export type InPlaceWritePlan = {
-  route: RouteEntryExpectation[];
-  targetPath: string;
-  targetKey: string;
-  expectedTarget: Extract<VirtualEntry, { kind: "regular" }>;
-};
-
 type PlannedTextUpdateBase = {
   kind: "text-update";
   expectedSource: ExistingFileEntry;
-  parents: ParentPlan;
+  createdParentPaths: string[];
   content: Buffer;
   replacementMode?: number;
-  sourceKey: string;
-  entryMutations: PlannedEntryMutation[];
   change: Extract<AppliedPatchChange, { kind: "update" }>;
 };
 
@@ -147,27 +78,21 @@ type PlannedTextUpdate =
   | (PlannedTextUpdateBase & {
       moveMode: "none";
       operation: Extract<ResolvedOperation, { kind: "update" }>;
-      writePlan: InPlaceWritePlan;
       expectedDestination?: never;
-      destinationKey?: never;
       sameEntryMove?: never;
       provisionalChange?: never;
     })
   | (PlannedTextUpdateBase & {
       moveMode: "same-entry";
       operation: ResolvedMoveUpdateOperation;
-      writePlan?: never;
       expectedDestination: ExistingFileEntry;
-      destinationKey: string;
       sameEntryMove: "rename" | "satisfied";
       provisionalChange: Extract<AppliedPatchChange, { kind: "update" }>;
     })
   | (PlannedTextUpdateBase & {
       moveMode: "destination";
       operation: ResolvedMoveUpdateOperation;
-      writePlan?: never;
       expectedDestination: ReplaceableFileEntry;
-      destinationKey: string;
       sameEntryMove?: never;
       provisionalChange: Extract<AppliedPatchChange, { kind: "add" }>;
     });
@@ -177,19 +102,15 @@ export type PlannedMutation = (
       kind: "add";
       operation: Extract<ResolvedOperation, { kind: "add" }>;
       expectedTarget: ReplaceableFileEntry;
-      parents: ParentPlan;
+      createdParentPaths: string[];
       content: Buffer;
       replacementMode?: number;
-      targetKey: string;
-      entryMutations: PlannedEntryMutation[];
       change: Extract<AppliedPatchChange, { kind: "add" }>;
     }
   | {
       kind: "delete";
       operation: Extract<ResolvedOperation, { kind: "delete" }>;
       expectedTarget: ExistingFileEntry;
-      targetKey: string;
-      entryMutations: PlannedEntryMutation[];
       change: Extract<AppliedPatchChange, { kind: "delete" }>;
     }
   | PlannedTextUpdate
@@ -198,52 +119,22 @@ export type PlannedMutation = (
       operation: ResolvedMoveUpdateOperation;
       expectedSource: ExistingFileEntry;
       expectedDestination: ReplaceableFileEntry;
-      parents: ParentPlan;
-      sourceKey: string;
-      destinationKey: string;
+      createdParentPaths: string[];
+      sourceAliasesDestination: boolean;
       moveStrategy: "rename" | "copy-unlink";
-      entryMutations: PlannedEntryMutation[];
       change: Extract<AppliedPatchChange, { kind: "move" }>;
     }
 ) & {
   instructionIndex: number;
-  physicalLinkDeltas: PlannedPhysicalLinkDelta[];
 };
 
-export type PlannedNoChangeAssertion =
-  | {
-      kind: "identical-add";
-      instructionIndex: number;
-      operation: Extract<ResolvedOperation, { kind: "add" }>;
-      content: Buffer;
-    }
-  | {
-      kind: "absent-delete";
-      instructionIndex: number;
-      operation: Extract<ResolvedOperation, { kind: "delete" }>;
-    }
-  | {
-      kind: "unchanged-update";
-      instructionIndex: number;
-      operation: Extract<ResolvedOperation, { kind: "update" }>;
-    }
-  | {
-      kind: "same-entry-move";
-      instructionIndex: number;
-      operation: ResolvedMoveUpdateOperation;
-    }
-  | {
-      kind: "fulfilled-move";
-      instructionIndex: number;
-      operation: ResolvedMoveUpdateOperation;
-      sourceKey: string;
-      destinationKey: string;
-      expectedDestination: ExistingFileEntry;
-    };
+export type PlannedNoChangeCheckpoint = {
+  instructionIndex: number;
+};
 
 export type SemanticPlan = {
   mutations: PlannedMutation[];
-  noChangeAssertions: PlannedNoChangeAssertion[];
+  noChangeCheckpoints: PlannedNoChangeCheckpoint[];
   exact: boolean;
   instructions: ApplyPatchInstructionDetails[];
 };
@@ -259,17 +150,6 @@ export function fingerprint(metadata: Stats): EntryFingerprint {
     size: metadata.size,
     modifiedMs: metadata.mtimeMs,
   };
-}
-
-export function sameFingerprint(left: EntryFingerprint, right: EntryFingerprint): boolean {
-  return (
-    left.device === right.device &&
-    left.inode === right.inode &&
-    left.mode === right.mode &&
-    left.linkCount === right.linkCount &&
-    left.size === right.size &&
-    left.modifiedMs === right.modifiedMs
-  );
 }
 
 export function sameFingerprintExceptLinkCount(

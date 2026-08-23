@@ -21,7 +21,6 @@ import {
   assertMissing,
   patch,
   filesystemError,
-  isFileHandle,
   pathLikeBasename,
 } from "./apply-patch-semantic-harness.ts";
 
@@ -459,7 +458,7 @@ test("reports deterministic file states after write failures", async (t) => {
         {
           filesystem: {
             async writeFile(target, data, options) {
-              if (isFileHandle(target)) {
+              if (target === path) {
                 if (fixture.mutate) await writeFile(path, fixture.mutation, options);
                 throw filesystemError("EIO", `injected ${fixture.name} write failure`);
               }
@@ -496,7 +495,7 @@ test("reports deterministic file states after write failures", async (t) => {
       {
         filesystem: {
           async writeFile(target, data, options) {
-            if (isFileHandle(target)) {
+            if (target === unverifiedPath) {
               await writeFile(unverifiedPath, data, options);
               throw filesystemError("EIO", "injected unverified write failure");
             }
@@ -537,7 +536,7 @@ test("reports deterministic file states after write failures", async (t) => {
       {
         filesystem: {
           async writeFile(path, data, options) {
-            if (isFileHandle(path)) {
+            if (path === changedEntryPath) {
               await writeFile(replacementEntryPath, "before\n");
               await rename(replacementEntryPath, changedEntryPath);
               throw filesystemError("EIO", "injected same-content entry replacement");
@@ -569,7 +568,7 @@ test("reports deterministic file states after write failures", async (t) => {
       {
         filesystem: {
           async writeFile(path, data, options) {
-            if (isFileHandle(path)) {
+            if (path === changedTypePath) {
               await unlink(changedTypePath);
               await mkdir(changedTypePath);
               throw filesystemError("EIO", "injected entry-type write failure");
@@ -715,7 +714,7 @@ test("reports parent, temporary, and post-operation failure effects", async (t) 
       );
       assert.match(
         feedback,
-        /Filesystem changed after the operation; post-operation-destination\.txt is unchanged\./u,
+        /apply_patch did not establish the requested exact spelling .*; post-operation-destination\.txt is unchanged\./u,
       );
       return true;
     },

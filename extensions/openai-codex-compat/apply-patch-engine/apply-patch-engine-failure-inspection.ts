@@ -6,7 +6,7 @@ import type {
   ApplyPatchInstructionEffect,
 } from "./apply-patch-engine-contracts.ts";
 import { errorMessage, isNotFound } from "./apply-patch-engine-errors.ts";
-import { currentExecutionEntry } from "./apply-patch-engine-commit-evidence.ts";
+import { currentExecutionEntry } from "./apply-patch-engine-filesystem-inspection.ts";
 import {
   buffersEqual,
   sameFingerprintExceptLinkCount,
@@ -456,7 +456,7 @@ export async function recordFailureInspection(
     }
   }
 
-  const createdParents = "parents" in mutation ? mutation.parents.createdPaths : [];
+  const createdParents = mutation.kind === "delete" ? [] : mutation.createdParentPaths;
   for (const parent of createdParents) {
     try {
       if ((await filesystem.lstat(parent)).isDirectory()) {

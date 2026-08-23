@@ -1,5 +1,4 @@
 import assert from "node:assert/strict";
-import { writeFileSync } from "node:fs";
 import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
 import { join, parse } from "node:path";
@@ -45,7 +44,6 @@ export function requireApplyPatchDetails(value: unknown): ApplyPatchDetails {
 
 export {
   assert,
-  writeFileSync,
   mkdir,
   mkdtemp,
   readFile,

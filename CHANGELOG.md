@@ -4,21 +4,12 @@
 
 ### Fixed
 
-- Verify `apply_patch` results against operation-owned entry identity, content,
-  symlink target, and exact-spelling evidence before committing them to later
-  instructions; reject same-type substitutions across replacements,
-  descriptor-bound writes, created parents, and native or cross-filesystem
-  moves, and revalidate move sources before unlinking them.
+- Verify the complete final byte buffer after `apply_patch` adds and text
+  updates, so requested bytes appearing in a duplicate or unrelated region
+  cannot satisfy the result postcondition.
 - Classify repeated identical `apply_patch` adds from source-ordered virtual
   content and exact spelling, avoiding redundant replacements after earlier
   adds or moves while preserving case, Unicode, and symlink-parent identity.
-- Revalidate state-dependent `apply_patch` no-change results in source order,
-  failing stale identical adds, absent deletes, unchanged updates, same-entry
-  moves, and fulfilled moves without promoting them into unplanned mutations.
-- Bind in-place `apply_patch` text writes to the preflighted inode and route,
-  rejecting byte-identical entry replacement, symlink-ancestor redirection,
-  and unexplained hard-link changes without rejecting exact topology changes
-  produced by earlier patch instructions.
 - Validate supplied identity and context chunks before `apply_patch` moves while preserving chunkless opaque moves and successful symlink and hard-link topology.
 - Remove formatter-tolerant `apply_patch` matching permanently and rely exclusively on the official Codex-compatible exact, trailing-trim, full-trim, and Unicode matcher.
 - Treat streamed Codex misalignment-policy violations as terminal without retrying and preserve the provider's error message.
@@ -30,6 +21,11 @@
 
 ### Changed
 
+- Simplify `apply_patch` for its queued single-writer operating model: retain
+  Pi's mutation queue, remove the extension-local alias queue and
+  preflight-to-execution drift machinery, use direct writes for in-place text
+  updates, and preserve source-ordered no-change checkpoints without
+  filesystem revalidation.
 - Adopt the shared 2h2d Oxlint policy and exact supported Oxlint and Oxfmt versions.
 - Run isolated test files across four workers, bypass unasserted wall-clock response-retry waits in integration coverage, and assert the retry-delay calculation directly.
 

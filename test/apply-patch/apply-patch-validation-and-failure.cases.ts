@@ -2,7 +2,6 @@ import { Value } from "typebox/value";
 import { APPLY_PATCH_DETAILS_SCHEMA } from "../../extensions/openai-codex-compat/apply-patch-engine/apply-patch-engine-details-schema.ts";
 import {
   assert,
-  writeFileSync,
   mkdir,
   readFile,
   symlink,
@@ -277,6 +276,7 @@ test("prevalidates all hunks but preserves committed-prefix history after runtim
 +second after
 *** End Patch`;
   const lifecycle: string[] = [];
+  const secondPath = join(cwd, "second.txt");
   await assert.rejects(
     applyPatch(cwd, runtimeFailurePatch, undefined, {
       onExecutionStart() {
@@ -284,7 +284,14 @@ test("prevalidates all hunks but preserves committed-prefix history after runtim
       },
       onProgress() {
         lifecycle.push("progress");
-        writeFileSync(join(cwd, "second.txt"), "external change\n");
+      },
+      filesystem: {
+        async writeFile(target, data, options) {
+          if (target === secondPath) {
+            throw Object.assign(new Error("injected second write failure"), { code: "EIO" });
+          }
+          await writeFile(target, data, options);
+        },
       },
     }),
     (error: unknown) => {
@@ -303,7 +310,7 @@ test("prevalidates all hunks but preserves committed-prefix history after runtim
   );
   assert.deepEqual(lifecycle, ["execution-start", "progress"]);
   assert.equal(await readFile(join(cwd, "first.txt"), "utf8"), "first after\n");
-  assert.equal(await readFile(join(cwd, "second.txt"), "utf8"), "external change\n");
+  assert.equal(await readFile(join(cwd, "second.txt"), "utf8"), "second before\n");
 });
 
 test("reports parse and preflight failures by instruction", async (t) => {

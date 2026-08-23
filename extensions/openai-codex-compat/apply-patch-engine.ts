@@ -18,9 +18,7 @@ import { DEFAULT_EXECUTION_FILESYSTEM } from "./apply-patch-engine/apply-patch-e
 import type { SemanticPlan } from "./apply-patch-engine/apply-patch-engine-filesystem-model.ts";
 import {
   mutationQueueTargets,
-  logicalMutationQueueKeys,
   canonicalMutationQueuePaths,
-  withLogicalMutationQueues,
   withMutationQueues,
 } from "./apply-patch-engine/apply-patch-engine-mutation-queue.ts";
 import {
@@ -160,21 +158,18 @@ export async function applyPatch(
 
   try {
     const queueTargets = mutationQueueTargets(operations);
-    const logicalKeys = await logicalMutationQueueKeys(queueTargets);
     const queuePaths = await canonicalMutationQueuePaths(queueTargets);
     const filesystem: ApplyPatchExecutionFilesystem = {
       ...DEFAULT_EXECUTION_FILESYSTEM,
       ...hooks.filesystem,
     };
 
-    return await withLogicalMutationQueues(logicalKeys, () => {
-      return withMutationQueues(queuePaths, async () => {
-        throwIfAborted(signal);
-        const plan = await buildPlan(operations, signal, hooks.selectMoveStrategy);
-        throwIfAborted(signal);
-        await hooks.onExecutionStart?.();
-        return executePlan(plan, signal, filesystem, hooks.onProgress);
-      });
+    return await withMutationQueues(queuePaths, async () => {
+      throwIfAborted(signal);
+      const plan = await buildPlan(operations, signal, hooks.selectMoveStrategy);
+      throwIfAborted(signal);
+      await hooks.onExecutionStart?.();
+      return executePlan(plan, signal, filesystem, hooks.onProgress);
     });
   } catch (error) {
     if (

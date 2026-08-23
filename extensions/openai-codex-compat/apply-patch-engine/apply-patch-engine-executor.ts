@@ -1,7 +1,3 @@
-import { constants } from "node:fs";
-import { lstat, readFile, readlink, stat } from "node:fs/promises";
-import { basename, dirname, resolve } from "node:path";
-import { deriveNewContent, type UpdateChunk } from "../apply-patch-matcher.ts";
 import type {
   ApplyPatchDetails,
   ApplyPatchExecutionFilesystem,
@@ -14,14 +10,9 @@ import {
   emptyDetails,
 } from "./apply-patch-engine-details.ts";
 import {
-  commitEvidenceForExistingEntry,
-  committedEntryFromEvidence,
-  currentExecutionEntry,
-  entryMatchesCommitEvidence,
-} from "./apply-patch-engine-commit-evidence.ts";
-import {
   ApplyPatchExecutionError,
   errorMessage,
+  hasErrorCode,
   isNotFound,
   throwIfAborted,
 } from "./apply-patch-engine-errors.ts";
@@ -32,25 +23,11 @@ import {
   replacedInstructionEffect,
 } from "./apply-patch-engine-failure-inspection.ts";
 import {
-  ABSENT_ENTRY,
-  UTF8_DECODER,
   buffersEqual,
-  entryType,
   fingerprint,
-  sameFingerprint,
   samePhysicalEntry,
-  type CommittedEntryMutation,
-  type CommittedPhysicalLinkDelta,
-  type EntryCommitEvidence,
-  type ExistingFileEntry,
-  type ParentPlan,
-  type PathCommitEvidence,
-  type PlannedEntryMutation,
   type PlannedMutation,
-  type PlannedNoChangeAssertion,
-  type RouteEntryExpectation,
   type SemanticPlan,
-  type VirtualEntry,
 } from "./apply-patch-engine-filesystem-model.ts";
 import {
   PureMoveExecutionError,
@@ -61,685 +38,180 @@ import {
   finishSameInodeRename,
   replaceRegularFile,
 } from "./apply-patch-engine-filesystem-mutations.ts";
-import { logicalEntryQueueKey } from "./apply-patch-engine-mutation-queue.ts";
 
-export async function currentEntry(path: string): Promise<VirtualEntry> {
-  try {
-    const metadata = await lstat(path);
-    const entryFingerprint = fingerprint(metadata);
-    if (metadata.isFile()) {
-      return {
-        kind: "regular",
-        id: "",
-        entryPath: path,
-        entryName: basename(path),
-        fingerprint: entryFingerprint,
-        content: { planned: false },
-      };
-    }
-    if (metadata.isSymbolicLink()) {
-      const target = await readlink(path);
-      return {
-        kind: "symlink",
-        id: "",
-        entryPath: path,
-        entryName: basename(path),
-        fingerprint: entryFingerprint,
-        target,
-        targetPath: resolve(dirname(path), target),
-        content: { planned: false },
-      };
-    }
-    if (metadata.isDirectory()) return { kind: "directory", fingerprint: entryFingerprint };
-    return {
-      kind: "unsupported",
-      entryType: entryType(metadata),
-      fingerprint: entryFingerprint,
-    };
-  } catch (error) {
-    if (isNotFound(error)) return ABSENT_ENTRY;
-    throw error;
-  }
-}
-
-export async function assertEntryMatches(path: string, expected: VirtualEntry): Promise<void> {
-  let actual: VirtualEntry;
-  try {
-    actual = await currentEntry(path);
-  } catch (error) {
-    throw new Error(`Failed to verify ${path} before mutation: ${errorMessage(error)}`, {
-      cause: error,
-    });
-  }
-  if (actual.kind !== expected.kind) {
-    throw new Error(`Filesystem changed after apply_patch preflight at ${path}`);
-  }
-  if (
-    "fingerprint" in expected &&
-    expected.fingerprint &&
-    "fingerprint" in actual &&
-    actual.fingerprint &&
-    !sameFingerprint(expected.fingerprint, actual.fingerprint)
-  ) {
-    throw new Error(`Filesystem changed after apply_patch preflight at ${path}`);
-  }
-  if (expected.kind === "symlink" && actual.kind === "symlink") {
-    if (expected.target !== actual.target) {
-      throw new Error(`Filesystem changed after apply_patch preflight at ${path}`);
-    }
-    if (
-      expected.content.planned &&
-      expected.content.value &&
-      !buffersEqual(await readFile(path), expected.content.value.bytes)
-    ) {
-      throw new Error(`Filesystem changed after apply_patch preflight at ${path}`);
-    }
-  }
-  if (
-    expected.kind === "regular" &&
-    actual.kind === "regular" &&
-    expected.content.planned &&
-    expected.content.value &&
-    !buffersEqual(await readFile(path), expected.content.value.bytes)
-  ) {
-    throw new Error(`Filesystem changed after apply_patch preflight at ${path}`);
-  }
-}
-
-function mergeExpectedWithCommittedEntry(
-  path: string,
-  expected: VirtualEntry,
-  prior: CommittedEntryMutation | undefined,
-): VirtualEntry {
-  if (!prior) return expected;
-  if (prior.expected.kind !== expected.kind) {
-    throw new Error(`Filesystem state created by apply_patch changed unexpectedly at ${path}`);
-  }
-  if (
-    (expected.kind === "regular" || expected.kind === "symlink") &&
-    (prior.expected.kind === "regular" || prior.expected.kind === "symlink")
-  ) {
-    const content = expected.content.planned ? expected.content : prior.expected.content;
-    if (expected.kind === "symlink" && prior.expected.kind === "symlink") {
-      return {
-        ...prior.expected,
-        target: expected.target,
-        targetPath: expected.targetPath,
-        content,
-      };
-    }
-    if (expected.kind === "regular" && prior.expected.kind === "regular") {
-      return { ...prior.expected, content };
-    }
-  }
-  return prior.expected;
-}
-
-function expectedAfterPhysicalLinkDeltas(
-  expected: VirtualEntry,
-  afterMutationIndex: number,
-  physicalLinkDeltas: readonly CommittedPhysicalLinkDelta[],
-): VirtualEntry {
-  if ((expected.kind !== "regular" && expected.kind !== "symlink") || !expected.fingerprint) {
-    return expected;
-  }
-  const expectedFingerprint = expected.fingerprint;
-  const linkCountDelta = physicalLinkDeltas.reduce((total, change) => {
-    return change.mutationIndex > afterMutationIndex &&
-      samePhysicalEntry(expectedFingerprint, change.fingerprint)
-      ? total + change.delta
-      : total;
-  }, 0);
-  if (linkCountDelta === 0) return expected;
-  return {
-    ...expected,
-    fingerprint: {
-      ...expected.fingerprint,
-      linkCount: expected.fingerprint.linkCount + linkCountDelta,
-    },
-  };
-}
-
-function effectiveExpectedEntry(
-  path: string,
-  key: string,
-  expected: VirtualEntry,
-  priorMutations: readonly CommittedEntryMutation[],
-  physicalLinkDeltas: readonly CommittedPhysicalLinkDelta[],
-): VirtualEntry {
-  const priorByKey = priorMutations.findLast((mutation) => mutation.key === key);
-  let priorByPhysicalEntry: CommittedEntryMutation | undefined;
-  if ((expected.kind === "regular" || expected.kind === "symlink") && expected.fingerprint) {
-    const expectedFingerprint = expected.fingerprint;
-    priorByPhysicalEntry = priorMutations.findLast((mutation) => {
-      return (
-        (mutation.expected.kind === "regular" || mutation.expected.kind === "symlink") &&
-        mutation.expected.fingerprint !== undefined &&
-        samePhysicalEntry(expectedFingerprint, mutation.expected.fingerprint)
-      );
-    });
-  }
-  const prior = priorByKey ?? priorByPhysicalEntry;
-  return expectedAfterPhysicalLinkDeltas(
-    mergeExpectedWithCommittedEntry(path, expected, prior),
-    prior?.mutationIndex ?? -1,
-    physicalLinkDeltas,
-  );
-}
-
-export async function assertMutationEntryMatches(
-  path: string,
-  key: string,
-  expected: VirtualEntry,
-  priorMutations: readonly CommittedEntryMutation[],
-  physicalLinkDeltas: readonly CommittedPhysicalLinkDelta[],
-): Promise<void> {
-  await assertEntryMatches(
-    path,
-    effectiveExpectedEntry(path, key, expected, priorMutations, physicalLinkDeltas),
-  );
-}
-
-export async function captureCommittedEntryMutations(
-  mutations: readonly PlannedEntryMutation[],
-  mutationIndex: number,
-  evidenceByPath: ReadonlyMap<string, EntryCommitEvidence>,
-  filesystem: ApplyPatchExecutionFilesystem,
-): Promise<CommittedEntryMutation[]> {
-  const committed: CommittedEntryMutation[] = [];
-  for (const mutation of mutations) {
-    const evidence = evidenceByPath.get(mutation.path);
-    if (!evidence || evidence.kind !== mutation.kind) {
-      throw new Error(`Filesystem changed while committing apply_patch at ${mutation.path}`);
-    }
-    const actual = await currentExecutionEntry(mutation.path, filesystem);
-    if (
-      !(await entryMatchesCommitEvidence(mutation.path, actual, evidence, filesystem)) ||
-      (evidence.kind !== "absent" &&
-        evidence.exactSpelling &&
-        !(await exactSpellingExists(mutation.path, filesystem)))
-    ) {
-      throw new Error(`Filesystem changed while committing apply_patch at ${mutation.path}`);
-    }
-    const expected = committedEntryFromEvidence(actual, evidence);
-    const committedMutation: CommittedEntryMutation = {
-      path: mutation.path,
-      key: mutation.key,
-      expected,
-      mutationIndex,
-    };
-    committed.push(committedMutation);
-  }
-  return committed;
-}
-
-function recordCommitEvidence(
-  evidenceByPath: Map<string, EntryCommitEvidence>,
-  entries: readonly PathCommitEvidence[],
-): void {
-  for (const { path, evidence } of entries) evidenceByPath.set(path, evidence);
-}
-
-async function assertExistingEntryContinuity(
-  path: string,
-  expected: ExistingFileEntry,
-  filesystem: ApplyPatchExecutionFilesystem,
-): Promise<void> {
-  const evidence = commitEvidenceForExistingEntry(expected, "except-link-count");
-  const actual = await currentExecutionEntry(path, filesystem);
-  if (!(await entryMatchesCommitEvidence(path, actual, evidence, filesystem))) {
-    throw new Error(`Filesystem changed while apply_patch moved ${path}`);
-  }
-}
-
-async function assertRouteMatches(
-  route: readonly RouteEntryExpectation[],
-  priorMutations: readonly CommittedEntryMutation[],
-  physicalLinkDeltas: readonly CommittedPhysicalLinkDelta[],
-): Promise<void> {
-  for (const expectation of route) {
-    const expected = effectiveExpectedEntry(
-      expectation.path,
-      expectation.key,
-      expectation.expected,
-      priorMutations,
-      physicalLinkDeltas,
-    );
-    const actual = await currentEntry(expectation.path);
-    if (actual.kind !== expected.kind) {
-      throw new Error(
-        `Filesystem route changed after apply_patch preflight at ${expectation.path}`,
-      );
-    }
-    if (
-      (actual.kind !== "directory" && actual.kind !== "symlink") ||
-      (expected.kind !== "directory" && expected.kind !== "symlink") ||
-      !actual.fingerprint ||
-      !expected.fingerprint ||
-      !samePhysicalEntry(actual.fingerprint, expected.fingerprint) ||
-      (actual.kind === "symlink" &&
-        expected.kind === "symlink" &&
-        actual.target !== expected.target)
-    ) {
-      throw new Error(
-        `Filesystem route changed after apply_patch preflight at ${expectation.path}`,
-      );
-    }
-  }
-}
-
-async function writeCompleteBuffer(
-  handle: Awaited<ReturnType<ApplyPatchExecutionFilesystem["open"]>>,
-  content: Buffer,
-  filesystem: ApplyPatchExecutionFilesystem,
-): Promise<void> {
-  await filesystem.writeFile(handle, content);
-  await handle.truncate(content.length);
-}
-
-async function readCompleteBuffer(
-  handle: Awaited<ReturnType<ApplyPatchExecutionFilesystem["open"]>>,
-  size: number,
-): Promise<Buffer> {
-  const content = Buffer.alloc(size);
-  let offset = 0;
-  while (offset < content.length) {
-    const { bytesRead } = await handle.read(content, offset, content.length - offset, offset);
-    if (bytesRead === 0) break;
-    offset += bytesRead;
-  }
-  return offset === content.length ? content : content.subarray(0, offset);
-}
-
-async function assertPathStillBindsToOpenedTarget(
-  path: string,
-  expectedSource: ExistingFileEntry,
-  openedTargetFingerprint: ReturnType<typeof fingerprint>,
-  filesystem: ApplyPatchExecutionFilesystem,
-): Promise<void> {
-  const sourceMetadata = await filesystem.lstat(path);
-  if (expectedSource.kind === "regular") {
-    if (
-      !sourceMetadata.isFile() ||
-      !samePhysicalEntry(fingerprint(sourceMetadata), openedTargetFingerprint)
-    ) {
-      throw new Error(`Filesystem changed while apply_patch updated ${path}`);
-    }
-  } else {
-    if (
-      !sourceMetadata.isSymbolicLink() ||
-      !expectedSource.fingerprint ||
-      !samePhysicalEntry(fingerprint(sourceMetadata), expectedSource.fingerprint) ||
-      (await filesystem.readlink(path)) !== expectedSource.target
-    ) {
-      throw new Error(`Filesystem changed while apply_patch updated ${path}`);
-    }
-  }
-  const resolvedMetadata = await filesystem.stat(path);
-  if (!samePhysicalEntry(fingerprint(resolvedMetadata), openedTargetFingerprint)) {
-    throw new Error(`Filesystem changed while apply_patch updated ${path}`);
-  }
-}
-
-async function executeInPlaceTextUpdate(
-  mutation: Extract<PlannedMutation, { kind: "text-update"; moveMode: "none" }>,
-  filesystem: ApplyPatchExecutionFilesystem,
-  priorMutations: readonly CommittedEntryMutation[],
-  physicalLinkDeltas: readonly CommittedPhysicalLinkDelta[],
-  onMutationStart: () => void,
-): Promise<Extract<EntryCommitEvidence, { kind: "regular" }>> {
-  await assertMutationEntryMatches(
-    mutation.operation.absolutePath,
-    mutation.sourceKey,
-    mutation.expectedSource,
-    priorMutations,
-    physicalLinkDeltas,
-  );
-  await assertRouteMatches(mutation.writePlan.route, priorMutations, physicalLinkDeltas);
-
-  const expectedTarget = effectiveExpectedEntry(
-    mutation.writePlan.targetPath,
-    mutation.writePlan.targetKey,
-    mutation.writePlan.expectedTarget,
-    priorMutations,
-    physicalLinkDeltas,
-  );
-  if (
-    expectedTarget.kind !== "regular" ||
-    !expectedTarget.fingerprint ||
-    !expectedTarget.content.value
-  ) {
-    throw new Error(
-      `Could not verify the planned regular-file write target for ${mutation.operation.absolutePath}`,
-    );
-  }
-
-  const handle = await filesystem.open(mutation.operation.absolutePath, constants.O_RDWR);
-  try {
-    const openedTargetFingerprint = fingerprint(await handle.stat());
-    if (!sameFingerprint(openedTargetFingerprint, expectedTarget.fingerprint)) {
-      throw new Error(
-        `Filesystem changed after apply_patch preflight at ${mutation.operation.absolutePath}`,
-      );
-    }
-    if (
-      !buffersEqual(
-        await readCompleteBuffer(handle, openedTargetFingerprint.size),
-        expectedTarget.content.value.bytes,
-      )
-    ) {
-      throw new Error(
-        `Filesystem changed after apply_patch preflight at ${mutation.operation.absolutePath}`,
-      );
-    }
-
-    // Recheck after opening so a pathname swap during open cannot authorize a
-    // write. A later swap cannot redirect the descriptor-bound mutation.
-    await assertMutationEntryMatches(
-      mutation.operation.absolutePath,
-      mutation.sourceKey,
-      mutation.expectedSource,
-      priorMutations,
-      physicalLinkDeltas,
-    );
-    await assertRouteMatches(mutation.writePlan.route, priorMutations, physicalLinkDeltas);
-
-    onMutationStart();
-    await writeCompleteBuffer(handle, mutation.content, filesystem);
-    const resultingTargetFingerprint = fingerprint(await handle.stat());
-    if (
-      !samePhysicalEntry(resultingTargetFingerprint, expectedTarget.fingerprint) ||
-      resultingTargetFingerprint.linkCount !== expectedTarget.fingerprint.linkCount
-    ) {
-      throw new Error(
-        `Filesystem changed while apply_patch updated ${mutation.operation.absolutePath}`,
-      );
-    }
-    await assertRouteMatches(mutation.writePlan.route, priorMutations, physicalLinkDeltas);
-    const expectedSource = effectiveExpectedEntry(
-      mutation.operation.absolutePath,
-      mutation.sourceKey,
-      mutation.expectedSource,
-      priorMutations,
-      physicalLinkDeltas,
-    );
-    if (expectedSource.kind !== "regular" && expectedSource.kind !== "symlink") {
-      throw new Error(
-        `Could not verify the planned source entry for ${mutation.operation.absolutePath}`,
-      );
-    }
-    await assertPathStillBindsToOpenedTarget(
-      mutation.operation.absolutePath,
-      expectedSource,
-      resultingTargetFingerprint,
-      filesystem,
-    );
-    return {
-      kind: "regular",
-      fingerprint: resultingTargetFingerprint,
-      fingerprintMatch: "exact",
-      exactSpelling: false,
-      content: mutation.content,
-    };
-  } finally {
-    await handle.close();
-  }
-}
-
-function noChangeAssertionFailed(path: string, cause?: unknown): never {
-  const message = `Filesystem changed after apply_patch preflight at ${path}`;
+function postconditionFailed(path: string, description: string, cause?: unknown): never {
+  const message = `apply_patch did not ${description} at ${path}`;
   if (cause === undefined) throw new Error(message);
   throw new Error(message, { cause });
 }
 
-async function assertIdenticalAddStillPresent(
-  assertion: Extract<PlannedNoChangeAssertion, { kind: "identical-add" }>,
-  filesystem: ApplyPatchExecutionFilesystem,
-): Promise<void> {
-  const path = assertion.operation.absolutePath;
-  if (!(await exactSpellingExists(path, filesystem))) noChangeAssertionFailed(path);
-
-  const entryMetadata = await filesystem.lstat(path);
-  if (!entryMetadata.isFile()) noChangeAssertionFailed(path);
-
-  const handle = await filesystem.open(path, constants.O_RDONLY);
-  try {
-    const openedFingerprint = fingerprint(await handle.stat());
-    if (
-      !samePhysicalEntry(fingerprint(entryMetadata), openedFingerprint) ||
-      !buffersEqual(await readCompleteBuffer(handle, openedFingerprint.size), assertion.content) ||
-      !(await exactSpellingExists(path, filesystem))
-    ) {
-      noChangeAssertionFailed(path);
-    }
-    const finalMetadata = await filesystem.lstat(path);
-    if (
-      !finalMetadata.isFile() ||
-      !samePhysicalEntry(fingerprint(finalMetadata), openedFingerprint)
-    ) {
-      noChangeAssertionFailed(path);
-    }
-  } finally {
-    await handle.close();
-  }
-}
-
-async function assertDeleteTargetStillAbsent(
-  assertion: Extract<PlannedNoChangeAssertion, { kind: "absent-delete" }>,
+async function assertEntryAbsent(
+  path: string,
   filesystem: ApplyPatchExecutionFilesystem,
 ): Promise<void> {
   try {
-    await filesystem.lstat(assertion.operation.absolutePath);
+    await filesystem.lstat(path);
   } catch (error) {
     if (isNotFound(error)) return;
-    throw error;
+    postconditionFailed(path, "establish an absent entry", error);
   }
-  noChangeAssertionFailed(assertion.operation.absolutePath);
+  postconditionFailed(path, "establish an absent entry");
 }
 
-async function currentTextForNoChangeAssertion(
+async function assertExactSpellingAbsent(
   path: string,
   filesystem: ApplyPatchExecutionFilesystem,
-): Promise<{ bytes: Buffer; text: string }> {
-  const sourceMetadata = await filesystem.lstat(path);
-  if (!sourceMetadata.isFile() && !sourceMetadata.isSymbolicLink()) {
-    noChangeAssertionFailed(path);
+): Promise<void> {
+  if (await exactSpellingExists(path, filesystem)) {
+    postconditionFailed(path, "remove the exact source spelling");
   }
-  if (sourceMetadata.isSymbolicLink() && !(await filesystem.stat(path)).isFile()) {
-    noChangeAssertionFailed(path);
+}
+
+type RegularFilePostcondition = {
+  exactSpelling: boolean;
+  followSymlink: boolean;
+  expectedMode: number | undefined;
+  allowUnreadable?: boolean;
+};
+
+async function assertRegularFileResult(
+  path: string,
+  expectedContent: Buffer,
+  filesystem: ApplyPatchExecutionFilesystem,
+  options: RegularFilePostcondition,
+): Promise<void> {
+  if (options.exactSpelling && !(await exactSpellingExists(path, filesystem))) {
+    postconditionFailed(path, "establish the requested exact spelling");
   }
-  const bytes = await filesystem.readFile(path);
+
+  let metadata;
   try {
-    return { bytes, text: UTF8_DECODER.decode(bytes) };
+    metadata = options.followSymlink ? await filesystem.stat(path) : await filesystem.lstat(path);
   } catch (error) {
-    noChangeAssertionFailed(path, error);
+    postconditionFailed(path, "establish a regular file", error);
   }
-}
-
-async function assertTextChunksStillApply(
-  path: string,
-  chunks: readonly UpdateChunk[],
-  filesystem: ApplyPatchExecutionFilesystem,
-  signal: AbortSignal | undefined,
-  requireUnchangedOutput: boolean,
-): Promise<void> {
-  const { bytes, text } = await currentTextForNoChangeAssertion(path, filesystem);
-  const output = deriveNewContent(text, chunks, path, signal);
-  if (requireUnchangedOutput && !buffersEqual(Buffer.from(output, "utf8"), bytes)) {
-    noChangeAssertionFailed(path);
-  }
-}
-
-async function assertUnchangedUpdateStillNoOp(
-  assertion: Extract<PlannedNoChangeAssertion, { kind: "unchanged-update" }>,
-  filesystem: ApplyPatchExecutionFilesystem,
-  signal: AbortSignal | undefined,
-): Promise<void> {
-  await assertTextChunksStillApply(
-    assertion.operation.absolutePath,
-    assertion.operation.chunks,
-    filesystem,
-    signal,
-    true,
-  );
-}
-
-async function assertSameEntryMoveStillNoOp(
-  assertion: Extract<PlannedNoChangeAssertion, { kind: "same-entry-move" }>,
-  filesystem: ApplyPatchExecutionFilesystem,
-  signal: AbortSignal | undefined,
-): Promise<void> {
-  const operation = assertion.operation;
-  const caseInsensitiveDirectories = new Map<string, Promise<boolean>>();
-  const [sourceKey, destinationKey] = await Promise.all([
-    logicalEntryQueueKey(operation.absolutePath, caseInsensitiveDirectories),
-    logicalEntryQueueKey(operation.moveAbsolutePath, caseInsensitiveDirectories),
-  ]);
-  if (sourceKey !== destinationKey) noChangeAssertionFailed(operation.absolutePath);
-
-  const [source, destination] = await Promise.all([
-    currentEntry(operation.absolutePath),
-    currentEntry(operation.moveAbsolutePath),
-  ]);
-  if (source.kind === "absent") {
-    if (destination.kind !== "absent") noChangeAssertionFailed(operation.absolutePath);
-  } else {
-    if (
-      (source.kind !== "regular" && source.kind !== "symlink") ||
-      (destination.kind !== "regular" && destination.kind !== "symlink") ||
-      !source.fingerprint ||
-      !destination.fingerprint ||
-      !samePhysicalEntry(source.fingerprint, destination.fingerprint)
-    ) {
-      noChangeAssertionFailed(operation.absolutePath);
-    }
-  }
-
-  if (operation.chunks.length > 0) {
-    await assertTextChunksStillApply(
-      operation.absolutePath,
-      operation.chunks,
-      filesystem,
-      signal,
-      false,
-    );
-  }
-}
-
-async function assertFulfilledMoveStillNoOp(
-  assertion: Extract<PlannedNoChangeAssertion, { kind: "fulfilled-move" }>,
-  filesystem: ApplyPatchExecutionFilesystem,
-  priorMutations: readonly CommittedEntryMutation[],
-  physicalLinkDeltas: readonly CommittedPhysicalLinkDelta[],
-  signal: AbortSignal | undefined,
-): Promise<void> {
-  await assertMutationEntryMatches(
-    assertion.operation.absolutePath,
-    assertion.sourceKey,
-    ABSENT_ENTRY,
-    priorMutations,
-    physicalLinkDeltas,
-  );
-
-  const committedDestination = priorMutations.findLast(
-    (mutation) => mutation.key === assertion.destinationKey,
-  );
-  const actualDestination = await currentEntry(assertion.operation.moveAbsolutePath);
+  if (!metadata.isFile()) postconditionFailed(path, "establish a regular file");
   if (
-    !committedDestination ||
-    (assertion.expectedDestination.kind !== "regular" &&
-      assertion.expectedDestination.kind !== "symlink") ||
-    committedDestination.expected.kind !== assertion.expectedDestination.kind ||
-    actualDestination.kind !== assertion.expectedDestination.kind ||
-    (committedDestination.expected.kind !== "regular" &&
-      committedDestination.expected.kind !== "symlink") ||
-    !committedDestination.expected.fingerprint ||
-    !actualDestination.fingerprint ||
-    !samePhysicalEntry(committedDestination.expected.fingerprint, actualDestination.fingerprint) ||
-    !(await exactSpellingExists(assertion.operation.moveAbsolutePath, filesystem))
+    options.expectedMode !== undefined &&
+    (metadata.mode & 0o7777) !== (options.expectedMode & 0o7777)
   ) {
-    noChangeAssertionFailed(assertion.operation.moveAbsolutePath);
+    postconditionFailed(path, "preserve the requested file mode");
   }
 
-  if (assertion.operation.chunks.length > 0) {
-    await assertTextChunksStillApply(
-      assertion.operation.moveAbsolutePath,
-      assertion.operation.chunks,
-      filesystem,
-      signal,
-      false,
-    );
+  let actualContent: Buffer;
+  try {
+    actualContent = await filesystem.readFile(path);
+  } catch (error) {
+    if (
+      options.allowUnreadable &&
+      (hasErrorCode(error, "EACCES") || hasErrorCode(error, "EPERM"))
+    ) {
+      return;
+    }
+    postconditionFailed(path, "verify the complete requested bytes", error);
+  }
+  if (!buffersEqual(actualContent, expectedContent)) {
+    postconditionFailed(path, "produce the complete requested bytes");
   }
 }
 
-async function assertNoChangeStillHolds(
-  assertion: PlannedNoChangeAssertion,
+async function assertPureMoveResult(
+  mutation: Extract<PlannedMutation, { kind: "move" }>,
   filesystem: ApplyPatchExecutionFilesystem,
-  priorMutations: readonly CommittedEntryMutation[],
-  physicalLinkDeltas: readonly CommittedPhysicalLinkDelta[],
-  signal: AbortSignal | undefined,
 ): Promise<void> {
-  switch (assertion.kind) {
-    case "identical-add":
-      await assertIdenticalAddStillPresent(assertion, filesystem);
-      return;
-    case "absent-delete":
-      await assertDeleteTargetStillAbsent(assertion, filesystem);
-      return;
-    case "unchanged-update":
-      await assertUnchangedUpdateStillNoOp(assertion, filesystem, signal);
-      return;
-    case "same-entry-move":
-      await assertSameEntryMoveStillNoOp(assertion, filesystem, signal);
-      return;
-    case "fulfilled-move":
-      await assertFulfilledMoveStillNoOp(
-        assertion,
-        filesystem,
-        priorMutations,
-        physicalLinkDeltas,
-        signal,
-      );
-      return;
+  const sourcePath = mutation.operation.absolutePath;
+  const destinationPath = mutation.operation.moveAbsolutePath;
+  if (mutation.sourceAliasesDestination) {
+    await assertExactSpellingAbsent(sourcePath, filesystem);
+  } else {
+    await assertEntryAbsent(sourcePath, filesystem);
+  }
+  if (!(await exactSpellingExists(destinationPath, filesystem))) {
+    postconditionFailed(destinationPath, "establish the requested exact spelling");
+  }
+
+  let metadata;
+  try {
+    metadata = await filesystem.lstat(destinationPath);
+  } catch (error) {
+    postconditionFailed(destinationPath, "establish the moved entry", error);
+  }
+  if (mutation.expectedSource.kind === "symlink") {
+    if (!metadata.isSymbolicLink()) {
+      postconditionFailed(destinationPath, "establish the moved symlink");
+    }
+    const target = await filesystem.readlink(destinationPath);
+    if (target !== mutation.expectedSource.target) {
+      postconditionFailed(destinationPath, "preserve the moved symlink target");
+    }
+  } else {
+    if (!metadata.isFile()) postconditionFailed(destinationPath, "establish the moved file");
+    if (
+      mutation.expectedSource.fingerprint &&
+      (metadata.mode & 0o7777) !== (mutation.expectedSource.fingerprint.mode & 0o7777)
+    ) {
+      postconditionFailed(destinationPath, "preserve the moved file mode");
+    }
+    const expectedContent = mutation.expectedSource.content.value?.bytes;
+    if (expectedContent) {
+      await assertRegularFileResult(destinationPath, expectedContent, filesystem, {
+        exactSpelling: true,
+        followSymlink: false,
+        expectedMode: mutation.expectedSource.fingerprint?.mode,
+        allowUnreadable: true,
+      });
+    }
+  }
+  if (
+    mutation.moveStrategy === "rename" &&
+    mutation.expectedSource.fingerprint &&
+    !samePhysicalEntry(fingerprint(metadata), mutation.expectedSource.fingerprint)
+  ) {
+    postconditionFailed(destinationPath, "preserve native move identity");
   }
 }
 
-export async function assertParentPlanMatches(parents: ParentPlan): Promise<void> {
-  for (const expectation of parents.expectations) {
-    let actual: VirtualEntry;
-    try {
-      actual = await currentEntry(expectation.path);
-    } catch (error) {
-      throw new Error(
-        `Failed to verify parent ${expectation.path} before mutation: ${errorMessage(error)}`,
-        { cause: error },
-      );
-    }
-    if (expectation.kind === "absent") {
-      if (actual.kind !== "absent") {
-        throw new Error(`Filesystem changed after apply_patch preflight at ${expectation.path}`);
-      }
-      continue;
-    }
-    if (expectation.kind === "directory") {
-      if (actual.kind !== "directory") {
-        throw new Error(`Filesystem changed after apply_patch preflight at ${expectation.path}`);
-      }
-      continue;
-    }
-    if (actual.kind !== "symlink") {
-      throw new Error(`Filesystem changed after apply_patch preflight at ${expectation.path}`);
-    }
-    try {
-      if (!(await stat(expectation.path)).isDirectory()) {
-        throw new Error(`Filesystem changed after apply_patch preflight at ${expectation.path}`);
-      }
-    } catch (error) {
-      throw new Error(
-        `Failed to verify parent ${expectation.path} before mutation: ${errorMessage(error)}`,
-        { cause: error },
-      );
-    }
+async function assertAppliedMutationPostconditions(
+  mutation: PlannedMutation,
+  filesystem: ApplyPatchExecutionFilesystem,
+): Promise<void> {
+  if (mutation.kind === "add") {
+    await assertRegularFileResult(mutation.operation.absolutePath, mutation.content, filesystem, {
+      exactSpelling: true,
+      followSymlink: false,
+      expectedMode: mutation.replacementMode,
+      allowUnreadable: true,
+    });
+    return;
+  }
+  if (mutation.kind === "delete") {
+    await assertEntryAbsent(mutation.operation.absolutePath, filesystem);
+    return;
+  }
+  if (mutation.kind === "move") {
+    await assertPureMoveResult(mutation, filesystem);
+    return;
+  }
+
+  const destinationPath =
+    mutation.moveMode === "none"
+      ? mutation.operation.absolutePath
+      : mutation.operation.moveAbsolutePath;
+  await assertRegularFileResult(destinationPath, mutation.content, filesystem, {
+    exactSpelling: mutation.moveMode !== "none",
+    followSymlink: mutation.moveMode === "none",
+    expectedMode:
+      mutation.moveMode === "none"
+        ? mutation.expectedSource.kind === "regular"
+          ? mutation.expectedSource.fingerprint?.mode
+          : undefined
+        : mutation.replacementMode,
+    allowUnreadable: mutation.moveMode !== "none",
+  });
+  if (mutation.moveMode === "same-entry" && mutation.sameEntryMove === "rename") {
+    await assertExactSpellingAbsent(mutation.operation.absolutePath, filesystem);
+  } else if (mutation.moveMode === "destination") {
+    await assertEntryAbsent(mutation.operation.absolutePath, filesystem);
   }
 }
 
@@ -815,7 +287,6 @@ export function recordAppliedInstructionEffects(
           ),
         );
       }
-      return;
   }
 }
 
@@ -828,46 +299,42 @@ export async function executePlan(
   const details = emptyDetails();
   details.exact = plan.exact;
   details.instructions = plan.instructions.map((instruction) => ({ ...instruction }));
-  for (const assertion of plan.noChangeAssertions) {
-    const instruction = details.instructions[assertion.instructionIndex];
+  for (const checkpoint of plan.noChangeCheckpoints) {
+    const instruction = details.instructions[checkpoint.instructionIndex];
     if (!instruction) {
       throw new Error(
-        `No apply_patch instruction exists for no-change assertion ${assertion.instructionIndex + 1}`,
+        `No apply_patch instruction exists for no-change checkpoint ${checkpoint.instructionIndex + 1}`,
       );
     }
     instruction.status = "planned";
   }
+
   const executionActions: Array<
     | {
         kind: "mutation";
         instructionIndex: number;
-        mutationIndex: number;
         mutation: PlannedMutation;
       }
     | {
         kind: "no-change";
         instructionIndex: number;
-        assertion: PlannedNoChangeAssertion;
       }
   > = [
-    ...plan.mutations.map((mutation, mutationIndex) => ({
+    ...plan.mutations.map((mutation) => ({
       kind: "mutation" as const,
       instructionIndex: mutation.instructionIndex,
-      mutationIndex,
       mutation,
     })),
-    ...plan.noChangeAssertions.map((assertion) => ({
+    ...plan.noChangeCheckpoints.map((checkpoint) => ({
       kind: "no-change" as const,
-      instructionIndex: assertion.instructionIndex,
-      assertion,
+      instructionIndex: checkpoint.instructionIndex,
     })),
   ].toSorted((left, right) => left.instructionIndex - right.instructionIndex);
+
   let activeInstruction: ApplyPatchInstructionDetails | undefined;
   let activeMutation: PlannedMutation | undefined;
   let activeTemporaryPath: string | undefined;
   let activeFilesystemMutationStarted = false;
-  const committedEntryMutations: CommittedEntryMutation[] = [];
-  const committedPhysicalLinkDeltas: CommittedPhysicalLinkDelta[] = [];
   try {
     for (const action of executionActions) {
       activeInstruction = details.instructions[action.instructionIndex];
@@ -875,14 +342,8 @@ export async function executePlan(
       activeTemporaryPath = undefined;
       activeFilesystemMutationStarted = false;
       throwIfAborted(signal);
+
       if (action.kind === "no-change") {
-        await assertNoChangeStillHolds(
-          action.assertion,
-          filesystem,
-          committedEntryMutations,
-          committedPhysicalLinkDeltas,
-          signal,
-        );
         throwIfAborted(signal);
         if (activeInstruction) {
           activeInstruction.status = "no-op";
@@ -891,31 +352,18 @@ export async function executePlan(
         activeInstruction = undefined;
         continue;
       }
+
       const mutation = action.mutation;
-      const mutationIndex = action.mutationIndex;
-      const commitEvidence = new Map<string, EntryCommitEvidence>();
       if (mutation.kind === "add") {
-        await assertMutationEntryMatches(
-          mutation.operation.absolutePath,
-          mutation.targetKey,
-          mutation.expectedTarget,
-          committedEntryMutations,
-          committedPhysicalLinkDeltas,
-        );
-        await assertParentPlanMatches(mutation.parents);
         try {
           activeFilesystemMutationStarted = true;
-          recordCommitEvidence(
-            commitEvidence,
-            await createPlannedParents(mutation.parents, filesystem),
-          );
-          const targetEvidence = await replaceRegularFile(
+          await createPlannedParents(mutation.createdParentPaths, filesystem);
+          await replaceRegularFile(
             mutation.operation.absolutePath,
             mutation.content,
             filesystem,
             mutation.replacementMode,
           );
-          commitEvidence.set(mutation.operation.absolutePath, targetEvidence);
         } catch (error) {
           details.exact = false;
           if (error instanceof RegularFileReplacementError) {
@@ -941,17 +389,9 @@ export async function executePlan(
         }
         appendChange(details, mutation.change, mutation.instructionIndex);
       } else if (mutation.kind === "delete") {
-        await assertMutationEntryMatches(
-          mutation.operation.absolutePath,
-          mutation.targetKey,
-          mutation.expectedTarget,
-          committedEntryMutations,
-          committedPhysicalLinkDeltas,
-        );
         try {
           activeFilesystemMutationStarted = true;
           await filesystem.unlink(mutation.operation.absolutePath);
-          commitEvidence.set(mutation.operation.absolutePath, { kind: "absent" });
         } catch (error) {
           throw new Error(
             `Failed to delete file ${mutation.operation.absolutePath}: ${errorMessage(error)}`,
@@ -960,28 +400,18 @@ export async function executePlan(
         }
         appendChange(details, mutation.change, mutation.instructionIndex);
       } else if (mutation.kind === "text-update") {
-        if (mutation.moveMode !== "none") {
-          await assertMutationEntryMatches(
-            mutation.operation.absolutePath,
-            mutation.sourceKey,
-            mutation.expectedSource,
-            committedEntryMutations,
-            committedPhysicalLinkDeltas,
-          );
-        }
         if (mutation.moveMode === "same-entry") {
           const provisionalChange = mutation.provisionalChange;
           const moveAbsolutePath = mutation.operation.moveAbsolutePath;
           const moveTo = mutation.operation.moveTo;
           try {
             activeFilesystemMutationStarted = true;
-            const destinationEvidence = await replaceRegularFile(
+            await replaceRegularFile(
               mutation.operation.absolutePath,
               mutation.content,
               filesystem,
               mutation.replacementMode,
             );
-            commitEvidence.set(moveAbsolutePath, destinationEvidence);
           } catch (error) {
             details.exact = false;
             if (error instanceof RegularFileReplacementError) {
@@ -1028,30 +458,17 @@ export async function executePlan(
           details.changes[lastChangeIndex] = mutation.change;
           details.modified[lastModifiedIndex] = moveTo;
         } else if (mutation.moveMode === "destination") {
-          const destinationKey = mutation.destinationKey;
           const provisionalChange = mutation.provisionalChange;
           const moveTo = mutation.operation.moveTo;
-          await assertMutationEntryMatches(
-            mutation.operation.moveAbsolutePath,
-            destinationKey,
-            mutation.expectedDestination,
-            committedEntryMutations,
-            committedPhysicalLinkDeltas,
-          );
-          await assertParentPlanMatches(mutation.parents);
           try {
             activeFilesystemMutationStarted = true;
-            recordCommitEvidence(
-              commitEvidence,
-              await createPlannedParents(mutation.parents, filesystem),
-            );
-            const destinationEvidence = await replaceRegularFile(
+            await createPlannedParents(mutation.createdParentPaths, filesystem);
+            await replaceRegularFile(
               mutation.operation.moveAbsolutePath,
               mutation.content,
               filesystem,
               mutation.replacementMode,
             );
-            commitEvidence.set(mutation.operation.moveAbsolutePath, destinationEvidence);
           } catch (error) {
             details.exact = false;
             if (error instanceof RegularFileReplacementError) {
@@ -1077,33 +494,7 @@ export async function executePlan(
           }
           appendChange(details, provisionalChange, mutation.instructionIndex);
           try {
-            const expectedSource = effectiveExpectedEntry(
-              mutation.operation.absolutePath,
-              mutation.sourceKey,
-              mutation.expectedSource,
-              committedEntryMutations,
-              committedPhysicalLinkDeltas,
-            );
-            if (expectedSource.kind !== "regular" && expectedSource.kind !== "symlink") {
-              throw new Error(
-                `Could not verify the planned source entry for ${mutation.operation.absolutePath}`,
-              );
-            }
-            await assertExistingEntryContinuity(
-              mutation.operation.absolutePath,
-              expectedSource,
-              filesystem,
-            );
-          } catch (error) {
-            details.exact = false;
-            throw new Error(
-              `Failed to verify original ${mutation.operation.absolutePath} before removal: ${errorMessage(error)}`,
-              { cause: error },
-            );
-          }
-          try {
             await filesystem.unlink(mutation.operation.absolutePath);
-            commitEvidence.set(mutation.operation.absolutePath, { kind: "absent" });
           } catch (error) {
             details.exact = false;
             throw new Error(
@@ -1122,19 +513,10 @@ export async function executePlan(
           details.modified.push(moveTo);
         } else {
           try {
-            const targetEvidence = await executeInPlaceTextUpdate(
-              mutation,
-              filesystem,
-              committedEntryMutations,
-              committedPhysicalLinkDeltas,
-              () => {
-                activeFilesystemMutationStarted = true;
-              },
-            );
-            commitEvidence.set(mutation.writePlan.targetPath, targetEvidence);
+            activeFilesystemMutationStarted = true;
+            await filesystem.writeFile(mutation.operation.absolutePath, mutation.content);
           } catch (error) {
             details.exact = false;
-            if (!activeFilesystemMutationStarted) throw error;
             throw new Error(
               `Failed to write file ${mutation.operation.absolutePath}: ${errorMessage(error)}`,
               { cause: error },
@@ -1143,50 +525,16 @@ export async function executePlan(
           appendChange(details, mutation.change, mutation.instructionIndex);
         }
       } else {
-        const moveAbsolutePath = mutation.operation.moveAbsolutePath;
         const moveTo = mutation.operation.moveTo;
-        await assertMutationEntryMatches(
-          mutation.operation.absolutePath,
-          mutation.sourceKey,
-          mutation.expectedSource,
-          committedEntryMutations,
-          committedPhysicalLinkDeltas,
-        );
-        await assertMutationEntryMatches(
-          moveAbsolutePath,
-          mutation.destinationKey,
-          mutation.expectedDestination,
-          committedEntryMutations,
-          committedPhysicalLinkDeltas,
-        );
-        await assertParentPlanMatches(mutation.parents);
-        const expectedMoveSource = effectiveExpectedEntry(
-          mutation.operation.absolutePath,
-          mutation.sourceKey,
-          mutation.expectedSource,
-          committedEntryMutations,
-          committedPhysicalLinkDeltas,
-        );
-        if (expectedMoveSource.kind !== "regular" && expectedMoveSource.kind !== "symlink") {
-          throw new Error(
-            `Could not verify the planned move source for ${mutation.operation.absolutePath}`,
-          );
-        }
         try {
           activeFilesystemMutationStarted = true;
-          recordCommitEvidence(
-            commitEvidence,
-            await createPlannedParents(mutation.parents, filesystem),
-          );
-          recordCommitEvidence(
-            commitEvidence,
-            await executePureMove(mutation, expectedMoveSource, filesystem),
-          );
+          await createPlannedParents(mutation.createdParentPaths, filesystem);
+          await executePureMove(mutation, mutation.expectedSource, filesystem);
         } catch (error) {
           if (error instanceof PureMoveExecutionError) {
             activeTemporaryPath = error.temporaryPath;
           }
-          if (mutation.parents.createdPaths.length > 0) details.exact = false;
+          if (mutation.createdParentPaths.length > 0) details.exact = false;
           if (
             error instanceof PureMoveExecutionError &&
             (error.destinationState === "created" || error.destinationState === "replaced")
@@ -1223,24 +571,15 @@ export async function executePlan(
         }
         appendChange(details, mutation.change, mutation.instructionIndex);
       }
-      if (activeInstruction) recordAppliedInstructionEffects(mutation, activeInstruction);
+
       try {
-        committedEntryMutations.push(
-          ...(await captureCommittedEntryMutations(
-            mutation.entryMutations,
-            mutationIndex,
-            commitEvidence,
-            filesystem,
-          )),
-        );
-        committedPhysicalLinkDeltas.push(
-          ...mutation.physicalLinkDeltas.map((change) => ({ ...change, mutationIndex })),
-        );
+        await assertAppliedMutationPostconditions(mutation, filesystem);
       } catch (error) {
         details.exact = false;
         throw error;
       }
       if (activeInstruction) {
+        recordAppliedInstructionEffects(mutation, activeInstruction);
         activeInstruction.status = "applied";
         delete activeInstruction.error;
       }
