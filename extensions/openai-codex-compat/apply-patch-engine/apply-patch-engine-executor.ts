@@ -1,6 +1,7 @@
 import { constants } from "node:fs";
 import { lstat, readFile, readlink, stat } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
+import { deriveNewContent, type UpdateChunk } from "../apply-patch-matcher.ts";
 import type {
   ApplyPatchDetails,
   ApplyPatchExecutionFilesystem,
@@ -26,6 +27,7 @@ import {
 } from "./apply-patch-engine-failure-inspection.ts";
 import {
   ABSENT_ENTRY,
+  UTF8_DECODER,
   buffersEqual,
   entryType,
   fingerprint,
@@ -37,6 +39,7 @@ import {
   type ParentPlan,
   type PlannedEntryMutation,
   type PlannedMutation,
+  type PlannedNoChangeAssertion,
   type RouteEntryExpectation,
   type SemanticPlan,
   type VirtualEntry,
@@ -45,10 +48,12 @@ import {
   PureMoveExecutionError,
   RegularFileReplacementError,
   createPlannedParents,
+  exactSpellingExists,
   executePureMove,
   finishSameInodeRename,
   replaceRegularFile,
 } from "./apply-patch-engine-filesystem-mutations.ts";
+import { logicalEntryQueueKey } from "./apply-patch-engine-mutation-queue.ts";
 
 export async function currentEntry(path: string): Promise<VirtualEntry> {
   try {
@@ -433,6 +438,222 @@ async function executeInPlaceTextUpdate(
   }
 }
 
+function noChangeAssertionFailed(path: string): never {
+  throw new Error(`Filesystem changed after apply_patch preflight at ${path}`);
+}
+
+async function assertIdenticalAddStillPresent(
+  assertion: Extract<PlannedNoChangeAssertion, { kind: "identical-add" }>,
+  filesystem: ApplyPatchExecutionFilesystem,
+): Promise<void> {
+  const path = assertion.operation.absolutePath;
+  if (!(await exactSpellingExists(path, filesystem))) noChangeAssertionFailed(path);
+
+  const entryMetadata = await filesystem.lstat(path);
+  if (!entryMetadata.isFile()) noChangeAssertionFailed(path);
+
+  const handle = await filesystem.open(path, constants.O_RDONLY);
+  try {
+    const openedFingerprint = fingerprint(await handle.stat());
+    if (
+      !samePhysicalEntry(fingerprint(entryMetadata), openedFingerprint) ||
+      !buffersEqual(await readCompleteBuffer(handle, openedFingerprint.size), assertion.content) ||
+      !(await exactSpellingExists(path, filesystem))
+    ) {
+      noChangeAssertionFailed(path);
+    }
+    const finalMetadata = await filesystem.lstat(path);
+    if (
+      !finalMetadata.isFile() ||
+      !samePhysicalEntry(fingerprint(finalMetadata), openedFingerprint)
+    ) {
+      noChangeAssertionFailed(path);
+    }
+  } finally {
+    await handle.close();
+  }
+}
+
+async function assertDeleteTargetStillAbsent(
+  assertion: Extract<PlannedNoChangeAssertion, { kind: "absent-delete" }>,
+  filesystem: ApplyPatchExecutionFilesystem,
+): Promise<void> {
+  try {
+    await filesystem.lstat(assertion.operation.absolutePath);
+  } catch (error) {
+    if (isNotFound(error)) return;
+    throw error;
+  }
+  noChangeAssertionFailed(assertion.operation.absolutePath);
+}
+
+async function currentTextForNoChangeAssertion(
+  path: string,
+  filesystem: ApplyPatchExecutionFilesystem,
+): Promise<{ bytes: Buffer; text: string }> {
+  const sourceMetadata = await filesystem.lstat(path);
+  if (!sourceMetadata.isFile() && !sourceMetadata.isSymbolicLink()) {
+    noChangeAssertionFailed(path);
+  }
+  if (sourceMetadata.isSymbolicLink() && !(await filesystem.stat(path)).isFile()) {
+    noChangeAssertionFailed(path);
+  }
+  const bytes = await filesystem.readFile(path);
+  try {
+    return { bytes, text: UTF8_DECODER.decode(bytes) };
+  } catch {
+    noChangeAssertionFailed(path);
+  }
+}
+
+async function assertTextChunksStillApply(
+  path: string,
+  chunks: readonly UpdateChunk[],
+  filesystem: ApplyPatchExecutionFilesystem,
+  signal: AbortSignal | undefined,
+  requireUnchangedOutput: boolean,
+): Promise<void> {
+  const { bytes, text } = await currentTextForNoChangeAssertion(path, filesystem);
+  const output = deriveNewContent(text, chunks, path, signal);
+  if (requireUnchangedOutput && !buffersEqual(Buffer.from(output, "utf8"), bytes)) {
+    noChangeAssertionFailed(path);
+  }
+}
+
+async function assertUnchangedUpdateStillNoOp(
+  assertion: Extract<PlannedNoChangeAssertion, { kind: "unchanged-update" }>,
+  filesystem: ApplyPatchExecutionFilesystem,
+  signal: AbortSignal | undefined,
+): Promise<void> {
+  await assertTextChunksStillApply(
+    assertion.operation.absolutePath,
+    assertion.operation.chunks,
+    filesystem,
+    signal,
+    true,
+  );
+}
+
+async function assertSameEntryMoveStillNoOp(
+  assertion: Extract<PlannedNoChangeAssertion, { kind: "same-entry-move" }>,
+  filesystem: ApplyPatchExecutionFilesystem,
+  signal: AbortSignal | undefined,
+): Promise<void> {
+  const operation = assertion.operation;
+  const caseInsensitiveDirectories = new Map<string, Promise<boolean>>();
+  const [sourceKey, destinationKey] = await Promise.all([
+    logicalEntryQueueKey(operation.absolutePath, caseInsensitiveDirectories),
+    logicalEntryQueueKey(operation.moveAbsolutePath, caseInsensitiveDirectories),
+  ]);
+  if (sourceKey !== destinationKey) noChangeAssertionFailed(operation.absolutePath);
+
+  const [source, destination] = await Promise.all([
+    currentEntry(operation.absolutePath),
+    currentEntry(operation.moveAbsolutePath),
+  ]);
+  if (source.kind === "absent") {
+    if (destination.kind !== "absent") noChangeAssertionFailed(operation.absolutePath);
+  } else {
+    if (
+      (source.kind !== "regular" && source.kind !== "symlink") ||
+      (destination.kind !== "regular" && destination.kind !== "symlink") ||
+      !source.fingerprint ||
+      !destination.fingerprint ||
+      !samePhysicalEntry(source.fingerprint, destination.fingerprint)
+    ) {
+      noChangeAssertionFailed(operation.absolutePath);
+    }
+  }
+
+  if (operation.chunks.length > 0) {
+    await assertTextChunksStillApply(
+      operation.absolutePath,
+      operation.chunks,
+      filesystem,
+      signal,
+      false,
+    );
+  }
+}
+
+async function assertFulfilledMoveStillNoOp(
+  assertion: Extract<PlannedNoChangeAssertion, { kind: "fulfilled-move" }>,
+  filesystem: ApplyPatchExecutionFilesystem,
+  priorMutations: readonly CommittedEntryMutation[],
+  physicalLinkDeltas: readonly CommittedPhysicalLinkDelta[],
+  signal: AbortSignal | undefined,
+): Promise<void> {
+  await assertMutationEntryMatches(
+    assertion.operation.absolutePath,
+    assertion.sourceKey,
+    ABSENT_ENTRY,
+    priorMutations,
+    physicalLinkDeltas,
+  );
+
+  const committedDestination = priorMutations.findLast(
+    (mutation) => mutation.key === assertion.destinationKey,
+  );
+  const actualDestination = await currentEntry(assertion.operation.moveAbsolutePath);
+  if (
+    !committedDestination ||
+    (assertion.expectedDestination.kind !== "regular" &&
+      assertion.expectedDestination.kind !== "symlink") ||
+    committedDestination.expected.kind !== assertion.expectedDestination.kind ||
+    actualDestination.kind !== assertion.expectedDestination.kind ||
+    (committedDestination.expected.kind !== "regular" &&
+      committedDestination.expected.kind !== "symlink") ||
+    !committedDestination.expected.fingerprint ||
+    !actualDestination.fingerprint ||
+    !samePhysicalEntry(committedDestination.expected.fingerprint, actualDestination.fingerprint) ||
+    !(await exactSpellingExists(assertion.operation.moveAbsolutePath, filesystem))
+  ) {
+    noChangeAssertionFailed(assertion.operation.moveAbsolutePath);
+  }
+
+  if (assertion.operation.chunks.length > 0) {
+    await assertTextChunksStillApply(
+      assertion.operation.moveAbsolutePath,
+      assertion.operation.chunks,
+      filesystem,
+      signal,
+      false,
+    );
+  }
+}
+
+async function assertNoChangeStillHolds(
+  assertion: PlannedNoChangeAssertion,
+  filesystem: ApplyPatchExecutionFilesystem,
+  priorMutations: readonly CommittedEntryMutation[],
+  physicalLinkDeltas: readonly CommittedPhysicalLinkDelta[],
+  signal: AbortSignal | undefined,
+): Promise<void> {
+  switch (assertion.kind) {
+    case "identical-add":
+      await assertIdenticalAddStillPresent(assertion, filesystem);
+      return;
+    case "absent-delete":
+      await assertDeleteTargetStillAbsent(assertion, filesystem);
+      return;
+    case "unchanged-update":
+      await assertUnchangedUpdateStillNoOp(assertion, filesystem, signal);
+      return;
+    case "same-entry-move":
+      await assertSameEntryMoveStillNoOp(assertion, filesystem, signal);
+      return;
+    case "fulfilled-move":
+      await assertFulfilledMoveStillNoOp(
+        assertion,
+        filesystem,
+        priorMutations,
+        physicalLinkDeltas,
+        signal,
+      );
+      return;
+  }
+}
+
 export async function assertParentPlanMatches(parents: ParentPlan): Promise<void> {
   for (const expectation of parents.expectations) {
     let actual: VirtualEntry;
@@ -557,6 +778,40 @@ export async function executePlan(
   const details = emptyDetails();
   details.exact = plan.exact;
   details.instructions = plan.instructions.map((instruction) => ({ ...instruction }));
+  for (const assertion of plan.noChangeAssertions) {
+    const instruction = details.instructions[assertion.instructionIndex];
+    if (!instruction) {
+      throw new Error(
+        `No apply_patch instruction exists for no-change assertion ${assertion.instructionIndex + 1}`,
+      );
+    }
+    instruction.status = "planned";
+  }
+  const executionActions: Array<
+    | {
+        kind: "mutation";
+        instructionIndex: number;
+        mutationIndex: number;
+        mutation: PlannedMutation;
+      }
+    | {
+        kind: "no-change";
+        instructionIndex: number;
+        assertion: PlannedNoChangeAssertion;
+      }
+  > = [
+    ...plan.mutations.map((mutation, mutationIndex) => ({
+      kind: "mutation" as const,
+      instructionIndex: mutation.instructionIndex,
+      mutationIndex,
+      mutation,
+    })),
+    ...plan.noChangeAssertions.map((assertion) => ({
+      kind: "no-change" as const,
+      instructionIndex: assertion.instructionIndex,
+      assertion,
+    })),
+  ].toSorted((left, right) => left.instructionIndex - right.instructionIndex);
   let activeInstruction: ApplyPatchInstructionDetails | undefined;
   let activeMutation: PlannedMutation | undefined;
   let activeTemporaryPath: string | undefined;
@@ -564,12 +819,30 @@ export async function executePlan(
   const committedEntryMutations: CommittedEntryMutation[] = [];
   const committedPhysicalLinkDeltas: CommittedPhysicalLinkDelta[] = [];
   try {
-    for (const [mutationIndex, mutation] of plan.mutations.entries()) {
-      activeInstruction = details.instructions[mutation.instructionIndex];
-      activeMutation = mutation;
+    for (const action of executionActions) {
+      activeInstruction = details.instructions[action.instructionIndex];
+      activeMutation = action.kind === "mutation" ? action.mutation : undefined;
       activeTemporaryPath = undefined;
       activeFilesystemMutationStarted = false;
       throwIfAborted(signal);
+      if (action.kind === "no-change") {
+        await assertNoChangeStillHolds(
+          action.assertion,
+          filesystem,
+          committedEntryMutations,
+          committedPhysicalLinkDeltas,
+          signal,
+        );
+        throwIfAborted(signal);
+        if (activeInstruction) {
+          activeInstruction.status = "no-op";
+          delete activeInstruction.error;
+        }
+        activeInstruction = undefined;
+        continue;
+      }
+      const mutation = action.mutation;
+      const mutationIndex = action.mutationIndex;
       if (mutation.kind === "add") {
         await assertMutationEntryMatches(
           mutation.operation.absolutePath,

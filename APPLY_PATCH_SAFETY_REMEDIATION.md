@@ -6,9 +6,9 @@ Formatter-tolerant matching has been removed permanently. Text updates now use
 only the official Codex-compatible exact, trailing-trim, full-trim, and Unicode
 matcher.
 
-The matching incident that initiated this review is closed. S-001 and S-002
-are implemented and verified. Two independent semantic findings remain open.
-This document tracks those findings and their approval-gated implementation
+The matching incident that initiated this review is closed. S-001, S-002, and
+S-003 are implemented and verified. One independent semantic finding remains
+open. This document tracks that finding and its approval-gated implementation
 work.
 
 No open work described here has been approved for implementation. Before
@@ -26,6 +26,8 @@ starting a workstream:
   device and inode information that can affect hard-link topology.
 - **Identity chunk:** An update chunk whose old and replacement line sequences
   are structurally identical.
+- **No-change assertion:** A read-only execution step that proves a
+  state-dependent no-change classification still holds.
 - **No-change postcondition:** A filesystem state that made an instruction
   safely produce no mutation during planning.
 - **Virtual state:** The ordered in-memory filesystem model used to classify
@@ -161,10 +163,10 @@ Validation:
 
 **Severity:** High under concurrent mutation
 
-**Status:** Confirmed; implementation not approved
+**Status:** Implemented and verified
 
-No-change instructions create no planned mutation and therefore receive no
-execution-time final validation.
+Before the correction, no-change instructions created no planned mutation and
+therefore received no execution-time validation.
 
 Examples:
 
@@ -173,22 +175,38 @@ Examples:
 - an absent delete is classified `NO CHANGE`, the path is created before
   completion, and the patch still reports success.
 
-Required correction:
+Implemented correction:
 
-- externally observable no-change postconditions must be revalidated before
-  successful completion;
-- identical-add bytes, entry type, and exact spelling must still hold;
-- absent-delete paths must still be absent; and
-- fulfilled-move and unchanged-update postconditions require equivalent
-  review.
+- state-dependent no-change assertions execute in source order alongside
+  mutations rather than in one final pass;
+- identical adds revalidate bytes, regular-file type, and exact spelling while
+  allowing a byte-identical replacement inode;
+- absent deletes revalidate absence without dynamically promoting a stale
+  no-op into a deletion;
+- unchanged updates reapply only the official strict matcher and require the
+  current derived output to remain unchanged;
+- same-entry moves revalidate alias identity and supplied text chunks;
+- fulfilled moves require an absent source and the destination identity
+  committed by the referenced earlier instruction, while chunkless moves leave
+  content unconstrained; and
+- empty updates, identity updates without moves, and chunkless lexical
+  self-moves remain unconditional no-ops.
 
-Required tests:
+Validation:
 
-- identical-add drift is detected;
-- absent-delete drift is detected;
-- fulfilled-move drift is detected;
-- unchanged-update drift is detected; and
-- a stable no-change plan performs no mutation.
+- identical-add byte, type, and spelling drift rejects, while byte-identical
+  inode replacement remains accepted;
+- absent-delete creation drift rejects and source-order delete/add chains
+  remain valid;
+- unchanged-update constrained drift rejects while unrelated drift accepted by
+  strict reapplication remains valid;
+- same-entry alias and identity-chunk drift rejects;
+- fulfilled-move source recreation, destination replacement, and supplied
+  chunk drift reject;
+- fulfilled checks run before later same-patch mutations and chunkless content
+  remains unconstrained;
+- later state-dependent no-ops become `NOT RUN` after an earlier failure; and
+- a stable no-change plan performs no filesystem mutation.
 
 ### S-004 — Repeated identical adds ignore earlier virtual spelling
 
@@ -242,29 +260,26 @@ Completion criteria:
 
 ### Workstream 2 — Execution identity and no-change revalidation
 
-**Status:** Partially implemented; S-003 remains not approved
+**Status:** Completed
 
 Completed scope:
 
 - implemented S-002;
-- reject unsafe entry and route drift for in-place writes;
-- bind writes to a validated open descriptor;
-- preserve exact identity and link-count changes caused by the current plan;
-  and
-- add inode replacement, hard-link collateral, route drift, and descriptor
+- rejected unsafe entry and route drift for in-place writes;
+- bound writes to a validated open descriptor;
+- preserved exact identity and link-count changes caused by the current plan;
+- added inode replacement, hard-link collateral, route drift, and descriptor
   binding regressions.
-
-Remaining scope:
-
-- implement S-003 only after separate approval;
-- revalidate externally observable no-change postconditions; and
-- add its no-change drift regressions.
+- implemented S-003 with source-ordered, read-only assertions for every
+  state-dependent no-change classification;
+- preserved unconditional no-op semantics; and
+- added drift, ordering, compatibility, and no-mutation regressions.
 
 Completion criteria:
 
 - byte-identical external replacement cannot broaden the write set; and
-- no-change success depends on a postcondition still true immediately before
-  completion.
+- no-change success depends on a postcondition still true at the instruction's
+  source-order position.
 
 ## Safeguards that remain unchanged
 
@@ -303,6 +318,13 @@ The S-002 correction passed:
 - 293 full-suite tests, with 291 passed and 2 live tests skipped; and
 - `npm run check`.
 
+The S-003 correction passed:
+
+- all 58 semantic-planner and execution tests, including nine source-order,
+  drift, compatibility, and no-mutation cases;
+- 302 full-suite tests, with 300 passed and 2 live tests skipped; and
+- `npm run check`.
+
 ## Decision log
 
 | Date       | Decision                                                   | Rationale                                                                                            |
@@ -312,3 +334,4 @@ The S-002 correction passed:
 | 2026-08-22 | Retain only unresolved semantic and execution safety work. | Completed trackers and superseded matcher redesign plans duplicated current normative documentation. |
 | 2026-08-23 | Validate supplied chunks before pure moves.                | Text preconditions now constrain moves while chunkless syntax preserves opaque entry semantics.      |
 | 2026-08-23 | Bind in-place writes to validated filesystem identity.     | Matching bytes cannot authorize a different inode, route, or hard-link write set.                    |
+| 2026-08-23 | Revalidate state-dependent no-change results.              | A stale preflight no-op cannot silently report success or be promoted into an unplanned mutation.    |

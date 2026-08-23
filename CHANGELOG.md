@@ -4,6 +4,9 @@
 
 ### Fixed
 
+- Revalidate state-dependent `apply_patch` no-change results in source order,
+  failing stale identical adds, absent deletes, unchanged updates, same-entry
+  moves, and fulfilled moves without promoting them into unplanned mutations.
 - Bind in-place `apply_patch` text writes to the preflighted inode and route,
   rejecting byte-identical entry replacement, symlink-ancestor redirection,
   and unexplained hard-link changes without rejecting exact topology changes

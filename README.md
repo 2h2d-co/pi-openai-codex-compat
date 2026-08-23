@@ -302,6 +302,10 @@ Compatibility behavior:
 - Move identity and context chunks must match before the entry is moved; chunkless moves remain byte-opaque.
 - The parser accepts Codex's lenient marker whitespace, blank update-context lines, and direct heredoc wrappers.
 - Empty and identity updates, identical adds, absent deletes, self-moves, and same-patch fulfilled moves succeed with concise `NO CHANGE` results. Inapplicable operations are `SKIPPED` only when later operations deterministically make every effect unobservable.
+- State-dependent `NO CHANGE` results are revalidated in source order before
+  success. Stale assertions fail rather than becoming unplanned mutations;
+  empty updates, identity updates without moves, and chunkless lexical
+  self-moves remain unconditional.
 - Model-facing results retain the aggregate A/M/D summary. When any instruction is not applied or an applied instruction has feedback, they list every source-ordered instruction under `Patch instruction results:` as `N. [STATUS] operation`, without an instruction limit; ordinary all-applied results omit the ledger.
 - Combined text updates and moves are labeled `Update & Move`; move-only operations remain `Move`.
 - Replacement feedback always identifies the verified previous and resulting entry types. Symlink feedback also uses the raw target pathname stored in the symlink.
@@ -327,6 +331,9 @@ Filesystem behavior:
   replacement inode.
 - The extension does not add path filtering, sandboxing, or approval prompts.
 - Every hunk is parsed and validated before filesystem writes begin.
+- Read-only no-change assertions are interleaved with mutations in patch order,
+  so a later instruction may intentionally change an earlier assertion's
+  postcondition.
 - Mutations participate in Pi's per-file mutation queue and an extension-local logical queue for case, Unicode, symlink-parent, and hard-link aliases. Both queues coordinate only concurrent `apply_patch` calls in the same Pi process and module instance; they do not coordinate separate Pi sessions, other processes, or unrelated edit/write tools.
 
 A low-level I/O failure can still complete part of an instruction. The failed

@@ -24,6 +24,7 @@ import {
   type InPlaceWritePlan,
   type ParentPlan,
   type PlannedEntryMutation,
+  type PlannedNoChangeAssertion,
   type PlannedPhysicalLinkDelta,
   type PhysicalFileState,
   type PlannedMutation,
@@ -73,6 +74,7 @@ export class SemanticPlanner {
     { content: ContentCell; physical: PhysicalFileState }
   >();
   private readonly mutations: PlannedMutation[] = [];
+  private readonly noChangeAssertions: PlannedNoChangeAssertion[] = [];
   private readonly fulfilledMoves = new Map<
     string,
     { destinationKey: string; destinationEntryId: string; instruction: number }
@@ -152,6 +154,7 @@ export class SemanticPlanner {
     }
     return {
       mutations: this.mutations,
+      noChangeAssertions: this.noChangeAssertions,
       exact: this.exact,
       instructions: this.instructions.map((instruction) => ({ ...instruction })),
     };
@@ -184,6 +187,10 @@ export class SemanticPlanner {
       this.instructions[instructionIndex],
       "The apply_patch instruction to mark as a no-op is missing.",
     ).reason = instructionReason(code);
+  }
+
+  private addNoChangeAssertion(assertion: PlannedNoChangeAssertion): void {
+    this.noChangeAssertions.push(assertion);
   }
 
   private async directoryIsCaseInsensitive(directory: string): Promise<boolean> {
@@ -902,6 +909,12 @@ export class SemanticPlanner {
           (await requestedSpellingExists(operation.absolutePath))
         ) {
           this.markNoOp(instructionIndex, "content-already-present");
+          this.addNoChangeAssertion({
+            kind: "identical-add",
+            instructionIndex,
+            operation,
+            content,
+          });
           return;
         }
       } catch {
@@ -967,6 +980,11 @@ export class SemanticPlanner {
     const target = await this.stateAt(operation.absolutePath);
     if (target.kind === "absent") {
       this.markNoOp(index, "path-already-absent");
+      this.addNoChangeAssertion({
+        kind: "absent-delete",
+        instructionIndex: index,
+        operation,
+      });
       return;
     }
     if (target.kind === "directory" || target.kind === "unsupported") {
@@ -1046,6 +1064,13 @@ export class SemanticPlanner {
         } else {
           await this.validatePureMoveChunks(operation, await this.stateAt(operation.absolutePath));
           this.markNoOp(instructionIndex, "same-entry-move");
+          if (operation.chunks.length > 0) {
+            this.addNoChangeAssertion({
+              kind: "same-entry-move",
+              instructionIndex,
+              operation,
+            });
+          }
         }
       } else {
         this.markNoOp(
@@ -1088,6 +1113,11 @@ export class SemanticPlanner {
       )
     ) {
       this.markNoOp(instructionIndex, "update-result-unchanged");
+      this.addNoChangeAssertion({
+        kind: "unchanged-update",
+        instructionIndex,
+        operation,
+      });
       return;
     }
 
@@ -1319,6 +1349,13 @@ export class SemanticPlanner {
       await this.validatePureMoveChunks(operation, source);
       if (operation.absolutePath === destinationPath) {
         this.markNoOp(instructionIndex, "same-entry-move");
+        if (operation.chunks.length > 0) {
+          this.addNoChangeAssertion({
+            kind: "same-entry-move",
+            instructionIndex,
+            operation,
+          });
+        }
         return;
       }
       if (
@@ -1326,6 +1363,11 @@ export class SemanticPlanner {
         this.virtualSpellingSatisfied(source.entryPath, destinationPath)
       ) {
         this.markNoOp(instructionIndex, "same-entry-move");
+        this.addNoChangeAssertion({
+          kind: "same-entry-move",
+          instructionIndex,
+          operation,
+        });
         return;
       }
       if ((await this.sameEntryMoveEffect(operation.absolutePath, destinationPath)) === "rename") {
@@ -1370,6 +1412,11 @@ export class SemanticPlanner {
         return;
       }
       this.markNoOp(instructionIndex, "same-entry-move");
+      this.addNoChangeAssertion({
+        kind: "same-entry-move",
+        instructionIndex,
+        operation,
+      });
       return;
     }
 
@@ -1386,6 +1433,14 @@ export class SemanticPlanner {
           this.instructions[instructionIndex],
           "The fulfilled move instruction is missing.",
         ).reason = moveAlreadyFulfilledReason(fulfilled.instruction);
+        this.addNoChangeAssertion({
+          kind: "fulfilled-move",
+          instructionIndex,
+          operation,
+          sourceKey,
+          destinationKey,
+          expectedDestination: this.snapshot(destination),
+        });
         return;
       }
       throw new Error(

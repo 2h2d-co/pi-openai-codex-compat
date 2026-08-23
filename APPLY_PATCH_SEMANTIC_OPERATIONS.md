@@ -845,7 +845,48 @@ overwritten silently.
 Execute planned mutations in source order. Do not collapse operations in a way
 that changes move chains, overwrite order, or intermediate observations.
 
-No-op and dead operations produce no filesystem calls.
+Dead operations and unconditional no-ops produce no filesystem calls.
+State-dependent no-ops may perform read-only assertions but never mutate the
+filesystem.
+
+### No-change assertions
+
+Every state-dependent no-change classification MUST be revalidated at its
+source-order position. Assertions and mutations are one ordered execution
+sequence; checking all no-change postconditions only at completion is invalid
+because a later same-patch mutation may intentionally change that state.
+
+The required assertions are:
+
+- an identical add still resolves at the exact requested spelling to a regular
+  file containing the requested bytes;
+- an absent delete target is still absent;
+- an unchanged update still maps through the official-compatible strict
+  matcher and derives bytes equal to the current bytes;
+- a nontrivial same-entry move still resolves its case, Unicode, or
+  symlink-parent aliases to one directory entry, with supplied chunks still
+  matching; and
+- a fulfilled move still has an absent source and the exact destination entry
+  committed by the referenced earlier instruction, with supplied chunks still
+  matching.
+
+Identical-add validation is postcondition-based: a different regular-file
+inode remains valid when the exact spelling and bytes are unchanged because no
+write occurs. Unchanged-update validation replays the operation against the
+current file rather than requiring an unchanged whole-file snapshot, so
+unconstrained lines may change only when strict reapplication still proves the
+operation has no effect. A fulfilled chunkless move constrains entry provenance
+and path state, not bytes; supplied chunks add their documented text
+preconditions.
+
+Empty updates without moves, identity updates without moves, and chunkless
+lexical self-moves are unconditional and require no filesystem assertion.
+
+If an assertion fails, execution MUST fail closed. It MUST NOT promote the
+instruction into a mutation because every later virtual-state decision was
+planned with that instruction producing no effect. Assertions after an earlier
+failure are `NOT RUN`; assertions that succeed retain `NO CHANGE`. Stable
+assertions perform no filesystem mutation.
 
 ### In-place write identity
 

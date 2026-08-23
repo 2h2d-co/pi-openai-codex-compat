@@ -179,8 +179,40 @@ export type PlannedMutation = (
   physicalLinkDeltas: PlannedPhysicalLinkDelta[];
 };
 
+export type PlannedNoChangeAssertion =
+  | {
+      kind: "identical-add";
+      instructionIndex: number;
+      operation: Extract<ResolvedOperation, { kind: "add" }>;
+      content: Buffer;
+    }
+  | {
+      kind: "absent-delete";
+      instructionIndex: number;
+      operation: Extract<ResolvedOperation, { kind: "delete" }>;
+    }
+  | {
+      kind: "unchanged-update";
+      instructionIndex: number;
+      operation: Extract<ResolvedOperation, { kind: "update" }>;
+    }
+  | {
+      kind: "same-entry-move";
+      instructionIndex: number;
+      operation: ResolvedMoveUpdateOperation;
+    }
+  | {
+      kind: "fulfilled-move";
+      instructionIndex: number;
+      operation: ResolvedMoveUpdateOperation;
+      sourceKey: string;
+      destinationKey: string;
+      expectedDestination: ExistingFileEntry;
+    };
+
 export type SemanticPlan = {
   mutations: PlannedMutation[];
+  noChangeAssertions: PlannedNoChangeAssertion[];
   exact: boolean;
   instructions: ApplyPatchInstructionDetails[];
 };
