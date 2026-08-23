@@ -840,8 +840,8 @@ coordinate separately launched Pi sessions, other processes, or unrelated Pi
 After queues are acquired, preflight reads the required state and constructs
 the complete plan. Before executing each mutation, the implementation SHOULD
 verify that the relevant directory entry still matches the planned identity
-and metadata. Unexpected external changes cause a conflict rather than being
-overwritten silently.
+and metadata. External changes observed during these checks or later commit
+verification cause a conflict rather than being accepted as trusted state.
 
 ## Execution and failure behavior
 
@@ -945,6 +945,22 @@ Descriptor-bound writing prevents a pathname replacement after opening from
 redirecting the write to the replacement inode. If the final pathname or route
 no longer binds to the validated inode, execution fails and normal
 partial-failure inspection reports the completed effect.
+
+`rename` and `unlink` remain pathname-based host operations. Standard Node
+filesystem APIs cannot condition either operation on the device and inode
+verified immediately beforehand. An uncoordinated actor can therefore replace
+a source or destination after the final check but before the pathname syscall
+takes effect. The syscall can remove or overwrite that replacement while the
+requested final pathname state still appears valid, leaving no observable
+evidence that identifies the intervening entry.
+
+This check/use race is an accepted limitation. The implementation does not
+replace native rename and unlink semantics with a multi-step quarantine
+protocol, does not introduce platform-specific native filesystem helpers, and
+does not claim cross-process transactional isolation. Operation-owned commit
+evidence detects substituted results that remain observable afterward; it
+cannot recover an entry already removed or overwritten inside a successful
+pathname operation.
 
 ### Native rename
 
@@ -1217,7 +1233,10 @@ Every case must preserve source bytes exactly.
 - any conflict prevents all writes;
 - all involved paths participate in mutation queues;
 - missing-tail paths below symlink parents use the same in-process queue;
-- external drift after preflight is detected;
+- external drift observed at execution or commit-verification points is
+  detected;
+- pathname replacement between the final check and a successful `rename` or
+  `unlink` remains an accepted cross-process race;
 - link-count changes caused by earlier planned operations do not masquerade as
   external drift;
 - native move failure leaves source intact when no mutation committed;

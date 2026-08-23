@@ -319,7 +319,10 @@ The detailed `apply_patch` contracts remain normative:
 - **Why:** Concurrent in-process patches must not preflight the same physical
   state independently.
 - **Known limit:** This does not coordinate separate Pi processes or unrelated
-  Pi mutation tools.
+  Pi mutation tools. Standard Node pathname operations also cannot make
+  `rename` or `unlink` conditional on the inode checked immediately beforehand,
+  so an uncoordinated replacement inside that check/use window remains an
+  accepted race.
 - **Revisit only if:** Pi provides a broader shared mutation transaction.
 
 ### A-007 — Do not simulate Codex sandbox or approval orchestration

@@ -344,6 +344,14 @@ Filesystem behavior:
   postcondition.
 - Mutations participate in Pi's per-file mutation queue and an extension-local logical queue for case, Unicode, symlink-parent, and hard-link aliases. Both queues coordinate only concurrent `apply_patch` calls in the same Pi process and module instance; they do not coordinate separate Pi sessions, other processes, or unrelated edit/write tools.
 
+Accepted limitation: Node's pathname-based `rename` and `unlink` operations
+cannot be conditioned on the inode verified immediately beforehand. An
+uncoordinated process or tool can replace an entry between that check and the
+filesystem call; the call can then overwrite or remove the replacement while
+the requested final pathname state still appears valid. The extension retains
+native pathname semantics rather than adding a multi-step quarantine protocol
+or platform-specific filesystem helper.
+
 A low-level I/O failure can still complete part of an instruction. The failed
 instruction reports every confirmed effect and final path state; when a path
 cannot be inspected, it says that the final state was not verified.
