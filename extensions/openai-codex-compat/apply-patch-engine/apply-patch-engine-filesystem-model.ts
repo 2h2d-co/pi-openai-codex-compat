@@ -12,7 +12,6 @@ export type EntryFingerprint = {
   device: number;
   inode: number;
   mode: number;
-  linkCount: number;
   size: number;
   modifiedMs: number;
 };
@@ -37,20 +36,17 @@ export type VirtualEntry =
   | { kind: "unsupported"; entryType: string; fingerprint: EntryFingerprint }
   | {
       kind: "regular";
-      id: string;
       entryPath: string;
       entryName: string;
       sourcePath?: string;
       fingerprint?: EntryFingerprint;
       content: ContentCell;
-      physical?: PhysicalFileState;
+      physical: PhysicalFileState;
     }
   | {
       kind: "symlink";
-      id: string;
       entryPath: string;
       entryName: string;
-      sourcePath?: string;
       fingerprint?: EntryFingerprint;
       target: string;
       targetPath: string;
@@ -144,16 +140,12 @@ export function fingerprint(metadata: Stats): EntryFingerprint {
     device: metadata.dev,
     inode: metadata.ino,
     mode: metadata.mode,
-    linkCount: metadata.nlink,
     size: metadata.size,
     modifiedMs: metadata.mtimeMs,
   };
 }
 
-export function sameFingerprintExceptLinkCount(
-  left: EntryFingerprint,
-  right: EntryFingerprint,
-): boolean {
+export function sameFingerprint(left: EntryFingerprint, right: EntryFingerprint): boolean {
   return (
     left.device === right.device &&
     left.inode === right.inode &&

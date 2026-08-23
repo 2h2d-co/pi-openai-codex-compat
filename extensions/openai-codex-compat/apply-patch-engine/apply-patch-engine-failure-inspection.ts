@@ -6,10 +6,13 @@ import type {
   ApplyPatchInstructionEffect,
 } from "./apply-patch-engine-contracts.ts";
 import { errorMessage, isNotFound } from "./apply-patch-engine-errors.ts";
-import { currentExecutionEntry } from "./apply-patch-engine-filesystem-inspection.ts";
+import {
+  currentExecutionEntry,
+  type CurrentFilesystemEntry,
+} from "./apply-patch-engine-filesystem-inspection.ts";
 import {
   buffersEqual,
-  sameFingerprintExceptLinkCount,
+  sameFingerprint,
   samePhysicalEntry,
   type ExistingFileEntry,
   type PlannedMutation,
@@ -31,7 +34,14 @@ export function addInstructionEffect(
   }
 }
 
-export function fileEntryDetails(entry: ExistingFileEntry): ApplyPatchFileEntryDetails {
+type DescribedFileEntry =
+  | { kind: "regular" }
+  | {
+      kind: "symlink";
+      target: string;
+    };
+
+export function fileEntryDetails(entry: DescribedFileEntry): ApplyPatchFileEntryDetails {
   return entry.kind === "regular"
     ? { entryType: "regular-file" }
     : { entryType: "symlink", target: entry.target };
@@ -63,7 +73,9 @@ export function addInstructionFinalState(
   else instruction.finalStates[existing] = state;
 }
 
-export function currentEntryFinalState(entry: VirtualEntry): ApplyPatchFinalPathState["state"] {
+export function currentEntryFinalState(
+  entry: CurrentFilesystemEntry,
+): ApplyPatchFinalPathState["state"] {
   switch (entry.kind) {
     case "absent":
       return "absent";
@@ -78,14 +90,17 @@ export function currentEntryFinalState(entry: VirtualEntry): ApplyPatchFinalPath
   }
 }
 
-export function entriesHaveSameIdentity(actual: VirtualEntry, expected: VirtualEntry): boolean {
+export function entriesHaveSameIdentity(
+  actual: CurrentFilesystemEntry,
+  expected: VirtualEntry,
+): boolean {
   if (actual.kind !== expected.kind) return false;
   if (
     (actual.kind === "regular" || actual.kind === "symlink") &&
     (expected.kind === "regular" || expected.kind === "symlink")
   ) {
     if (actual.fingerprint && expected.fingerprint) {
-      return sameFingerprintExceptLinkCount(actual.fingerprint, expected.fingerprint);
+      return sameFingerprint(actual.fingerprint, expected.fingerprint);
     }
     return actual.kind === "symlink" && expected.kind === "symlink"
       ? actual.target === expected.target
@@ -95,7 +110,7 @@ export function entriesHaveSameIdentity(actual: VirtualEntry, expected: VirtualE
     return (
       actual.fingerprint !== undefined &&
       expected.fingerprint !== undefined &&
-      sameFingerprintExceptLinkCount(actual.fingerprint, expected.fingerprint)
+      sameFingerprint(actual.fingerprint, expected.fingerprint)
     );
   }
   return actual.kind === "absent" && expected.kind === "absent";
@@ -103,13 +118,13 @@ export function entriesHaveSameIdentity(actual: VirtualEntry, expected: VirtualE
 
 export type ApplyPatchFinalPathInspection = {
   finalState: ApplyPatchFinalPathState;
-  entry?: VirtualEntry;
+  entry?: CurrentFilesystemEntry;
 };
 
 export function finalPathInspection(
   path: string,
   state: ApplyPatchFinalPathState["state"],
-  entry?: VirtualEntry,
+  entry?: CurrentFilesystemEntry,
   inspectionError?: unknown,
 ): ApplyPatchFinalPathInspection {
   const finalState: ApplyPatchFinalPathState = { path, state };

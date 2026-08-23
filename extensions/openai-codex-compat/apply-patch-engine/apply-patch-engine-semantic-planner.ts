@@ -18,8 +18,8 @@ import {
   buffersEqual,
   entryType,
   fingerprint,
-  samePhysicalEntry,
   type ContentCell,
+  type ExistingFileEntry,
   type PlannedAction,
   type PhysicalFileState,
   type PlannedMutation,
@@ -71,9 +71,8 @@ export class SemanticPlanner {
   private readonly actions: PlannedAction[] = [];
   private readonly fulfilledMoves = new Map<
     string,
-    { destinationKey: string; destinationEntryId: string; instruction: number }
+    { destinationKey: string; destinationEntry: ExistingFileEntry; instruction: number }
   >();
-  private nextEntryId = 0;
   private exact = true;
   private readonly operations: readonly ResolvedOperation[];
   private readonly instructions: ApplyPatchInstructionDetails[];
@@ -149,22 +148,17 @@ export class SemanticPlanner {
     };
   }
 
-  private newEntryId(): string {
-    this.nextEntryId += 1;
-    return `planned-entry-${this.nextEntryId}`;
-  }
-
   private newPhysicalFile(mode: number, linkCount = 1): PhysicalFileState {
     return { linkCount, mode: mode & 0o7777 };
   }
 
   private regularFileMode(entry: VirtualEntry): number | undefined {
     if (entry.kind !== "regular") return undefined;
-    return entry.physical?.mode ?? entry.fingerprint?.mode;
+    return entry.physical.mode;
   }
 
   private releasePhysicalLink(entry: VirtualEntry): void {
-    if (entry.kind === "regular" && entry.physical && entry.physical.linkCount > 0) {
+    if (entry.kind === "regular" && entry.physical.linkCount > 0) {
       entry.physical.linkCount -= 1;
     }
   }
@@ -317,7 +311,6 @@ export class SemanticPlanner {
         }
         result = {
           kind: "regular",
-          id: this.newEntryId(),
           entryPath: path,
           entryName: basename(key),
           sourcePath: inspectionPath,
@@ -329,10 +322,8 @@ export class SemanticPlanner {
         const target = await readlink(inspectionPath);
         result = {
           kind: "symlink",
-          id: this.newEntryId(),
           entryPath: path,
           entryName: basename(key),
-          sourcePath: inspectionPath,
           fingerprint: entryFingerprint,
           target,
           targetPath: resolve(dirname(inspectionPath), target),
@@ -554,14 +545,7 @@ export class SemanticPlanner {
   ): Promise<boolean> {
     const sameEntry = (entry: VirtualEntry | undefined): boolean => {
       if (entry?.kind !== "regular") return false;
-      if (affected.physical && entry.physical) {
-        return affected.physical === entry.physical;
-      }
-      return (
-        affected.fingerprint !== undefined &&
-        entry.fingerprint !== undefined &&
-        samePhysicalEntry(affected.fingerprint, entry.fingerprint)
-      );
+      return affected.physical === entry.physical;
     };
     if (operation.kind === "update" && !chunksAreIdentity(operation.chunks)) {
       const target = await this.resolvedTextTarget(operation.absolutePath);
@@ -620,25 +604,15 @@ export class SemanticPlanner {
     }
 
     if (target.entry.kind !== "regular") return undefined;
-    const affectedFingerprint = target.entry.fingerprint;
     const affectedPhysical = target.entry.physical;
-    if (!affectedFingerprint && !affectedPhysical) return undefined;
-    const effectiveLinkCount = affectedPhysical?.linkCount ?? affectedFingerprint?.linkCount;
-    if (effectiveLinkCount === undefined) return undefined;
+    const effectiveLinkCount = affectedPhysical.linkCount;
     const affectedKey = await this.pathKey(target.path);
     const removedEntryInstructions = new Map<string, number>();
     const samePhysicalFile = (
       entry: VirtualEntry,
     ): entry is Extract<VirtualEntry, { kind: "regular" }> => {
       if (entry.kind !== "regular") return false;
-      if (affectedPhysical && entry.physical && affectedPhysical === entry.physical) {
-        return true;
-      }
-      return (
-        affectedFingerprint !== undefined &&
-        entry.fingerprint !== undefined &&
-        samePhysicalEntry(entry.fingerprint, affectedFingerprint)
-      );
+      return affectedPhysical === entry.physical;
     };
     type ProofEntryState = "absent" | "affected" | "other";
     const proofEntryStates = new Map<string, ProofEntryState>();
@@ -892,7 +866,6 @@ export class SemanticPlanner {
     const resultingMode = this.regularFileMode(target) ?? 0o666 & ~process.umask();
     await this.setState(operation.absolutePath, {
       kind: "regular",
-      id: this.newEntryId(),
       entryPath: operation.absolutePath,
       entryName: basename(operation.absolutePath),
       physical: this.newPhysicalFile(resultingMode),
@@ -1056,15 +1029,11 @@ export class SemanticPlanner {
       } else {
         const resultingEntry: Extract<VirtualEntry, { kind: "regular" }> = {
           kind: "regular",
-          id: this.newEntryId(),
           entryPath: operation.absolutePath,
           entryName: source.entryName,
           content: source.content,
+          physical: source.physical,
         };
-        if (source.fingerprint?.linkCount !== 1 && source.sourcePath !== undefined) {
-          resultingEntry.sourcePath = source.sourcePath;
-        }
-        if (source.physical) resultingEntry.physical = source.physical;
         await this.setState(operation.absolutePath, resultingEntry);
       }
       return;
@@ -1108,7 +1077,6 @@ export class SemanticPlanner {
       const resultingMode = this.regularFileMode(source) ?? 0o666 & ~process.umask();
       const resultingEntry: Extract<VirtualEntry, { kind: "regular" }> = {
         kind: "regular",
-        id: this.newEntryId(),
         entryPath: destinationPath,
         entryName: basename(destinationPath),
         physical: this.newPhysicalFile(resultingMode),
@@ -1119,7 +1087,7 @@ export class SemanticPlanner {
       await this.setState(destinationPath, resultingEntry);
       this.fulfilledMoves.set(sourceKey, {
         destinationKey,
-        destinationEntryId: resultingEntry.id,
+        destinationEntry: resultingEntry,
         instruction: instructionIndex + 1,
       });
       return;
@@ -1177,7 +1145,6 @@ export class SemanticPlanner {
     const resultingMode = this.regularFileMode(source) ?? 0o666 & ~process.umask();
     const resultingEntry: Extract<VirtualEntry, { kind: "regular" }> = {
       kind: "regular",
-      id: this.newEntryId(),
       entryPath: destinationPath,
       entryName: basename(destinationPath),
       physical: this.newPhysicalFile(resultingMode),
@@ -1188,7 +1155,7 @@ export class SemanticPlanner {
     await this.setState(destinationPath, resultingEntry);
     this.fulfilledMoves.set(sourceKey, {
       destinationKey,
-      destinationEntryId: resultingEntry.id,
+      destinationEntry: resultingEntry,
       instruction: instructionIndex + 1,
     });
   }
@@ -1265,7 +1232,7 @@ export class SemanticPlanner {
       if (
         fulfilled?.destinationKey === destinationKey &&
         (destination.kind === "regular" || destination.kind === "symlink") &&
-        fulfilled.destinationEntryId === destination.id
+        fulfilled.destinationEntry === destination
       ) {
         await this.validatePureMoveChunks(operation, destination);
         requiredValue(
@@ -1335,7 +1302,6 @@ export class SemanticPlanner {
       if (source.content.value) content.value = source.content.value;
       resultingEntry = {
         kind: "regular",
-        id: this.newEntryId(),
         entryPath: destinationPath,
         entryName: basename(destinationPath),
         sourcePath: source.sourcePath ?? source.entryPath,
@@ -1345,7 +1311,6 @@ export class SemanticPlanner {
     } else if (moveStrategy === "copy-unlink" && source.kind === "symlink") {
       resultingEntry = {
         kind: "symlink",
-        id: this.newEntryId(),
         entryPath: destinationPath,
         entryName: basename(destinationPath),
         target: source.target,
@@ -1355,7 +1320,6 @@ export class SemanticPlanner {
     } else if (source.kind === "symlink") {
       resultingEntry = {
         kind: "symlink",
-        id: source.id,
         entryPath: destinationPath,
         entryName: basename(destinationPath),
         target: source.target,
@@ -1373,7 +1337,7 @@ export class SemanticPlanner {
     await this.setState(destinationPath, resultingEntry);
     this.fulfilledMoves.set(sourceKey, {
       destinationKey,
-      destinationEntryId: resultingEntry.id,
+      destinationEntry: resultingEntry,
       instruction: instructionIndex + 1,
     });
   }
