@@ -415,6 +415,45 @@ test("preserves hard-link semantics across replacements, moves, and planned unli
   assert.equal(await readFile(join(cwd, "delete-b.txt"), "utf8"), "updated survivor\n");
 });
 
+test("preserves regular-file modes across sequential virtual replacements", async (t) => {
+  const cwd = await workspace(t);
+  await writeFile(join(cwd, "repeated-add.txt"), "before\n");
+  await chmod(join(cwd, "repeated-add.txt"), 0o600);
+  await writeFile(join(cwd, "updated-source.txt"), "before\n");
+  await chmod(join(cwd, "updated-source.txt"), 0o700);
+  await writeFile(join(cwd, "copied-source.txt"), "before\n");
+  await chmod(join(cwd, "copied-source.txt"), 0o741);
+
+  await applyPatch(
+    cwd,
+    patch(
+      "*** Add File: repeated-add.txt\n+middle\n",
+      "*** Add File: repeated-add.txt\n+after\n",
+      "*** Update File: updated-source.txt\n@@\n-before\n+middle\n",
+      "*** Update File: updated-source.txt\n",
+      "*** Move to: updated-destination.txt\n",
+      "@@\n",
+      "-middle\n",
+      "+after\n",
+      "*** Update File: copied-source.txt\n*** Move to: copied-middle.txt\n",
+      "*** Update File: copied-middle.txt\n",
+      "*** Move to: copied-destination.txt\n",
+      "@@\n",
+      "-before\n",
+      "+after\n",
+    ),
+    undefined,
+    {
+      selectMoveStrategy: (sourcePath) =>
+        sourcePath.endsWith("copied-source.txt") ? "copy-unlink" : "rename",
+    },
+  );
+
+  assert.equal((await stat(join(cwd, "repeated-add.txt"))).mode & 0o7777, 0o600);
+  assert.equal((await stat(join(cwd, "updated-destination.txt"))).mode & 0o7777, 0o700);
+  assert.equal((await stat(join(cwd, "copied-destination.txt"))).mode & 0o7777, 0o741);
+});
+
 test("keeps hard-link topology for no-op adds and pure native moves", async (t) => {
   const cwd = await workspace(t);
   await writeFile(join(cwd, "same-a.txt"), "same\n");

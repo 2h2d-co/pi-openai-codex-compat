@@ -28,6 +28,7 @@ export type ContentCell = {
 
 export type PhysicalFileState = {
   linkCount: number;
+  mode: number;
 };
 
 export type VirtualEntry =

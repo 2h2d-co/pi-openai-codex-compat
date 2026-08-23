@@ -4,6 +4,9 @@
 
 ### Fixed
 
+- Preserve regular-file permission modes across sequential `apply_patch`
+  replacements and state-changing moves, including files created by earlier
+  instructions in the same patch.
 - Verify the complete final byte buffer after `apply_patch` adds and text
   updates, so requested bytes appearing in a duplicate or unrelated region
   cannot satisfy the result postcondition.

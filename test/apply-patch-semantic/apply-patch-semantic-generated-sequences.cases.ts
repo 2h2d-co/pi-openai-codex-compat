@@ -1,8 +1,10 @@
 import { requiredValue } from "../../extensions/openai-codex-compat/required-value.ts";
 import {
   assert,
+  chmod,
   readFile,
   readdir,
+  stat,
   writeFile,
   join,
   test,
@@ -16,6 +18,10 @@ const GENERATED_SEEDS = 32;
 const OPERATIONS_PER_SEED = 24;
 
 type GeneratedPath = (typeof GENERATED_PATHS)[number];
+type ExpectedFile = {
+  content: string;
+  mode: number;
+};
 
 function randomGenerator(seed: number): () => number {
   let state = seed >>> 0;
@@ -41,11 +47,13 @@ test("matches a reference model across generated sequential operation patches", 
   for (let seed = 1; seed <= GENERATED_SEEDS; seed += 1) {
     const cwd = await workspace(t);
     const random = randomGenerator(seed);
-    const expected = new Map<GeneratedPath, string>();
+    const expected = new Map<GeneratedPath, ExpectedFile>();
     const initialPath = generatedItem(GENERATED_PATHS, random);
     const initialValue = `initial-${String(seed)}`;
-    expected.set(initialPath, initialValue);
+    const initialMode = 0o700 | (seed % 8);
+    expected.set(initialPath, { content: initialValue, mode: initialMode });
     await writeFile(join(cwd, initialPath), `${initialValue}\n`);
+    await chmod(join(cwd, initialPath), initialMode);
 
     const instructions: string[] = [];
     for (let operationIndex = 0; operationIndex < OPERATIONS_PER_SEED; operationIndex += 1) {
@@ -54,10 +62,15 @@ test("matches a reference model across generated sequential operation patches", 
       switch (random() % 7) {
         case 0: {
           const current = expected.get(selectedPath);
-          const content = current !== undefined && random() % 3 === 0 ? current : value;
-          coveredOperationKinds.add(content === current ? "identical-add" : "state-changing-add");
+          const content = current !== undefined && random() % 3 === 0 ? current.content : value;
+          coveredOperationKinds.add(
+            content === current?.content ? "identical-add" : "state-changing-add",
+          );
           instructions.push(`*** Add File: ${renderedPath(selectedPath, random)}\n+${content}\n`);
-          expected.set(selectedPath, content);
+          expected.set(selectedPath, {
+            content,
+            mode: current?.mode ?? 0o666 & ~process.umask(),
+          });
           break;
         }
         case 1: {
@@ -72,13 +85,17 @@ test("matches a reference model across generated sequential operation patches", 
           if (current === undefined) {
             coveredOperationKinds.add("update-fallback-add");
             instructions.push(`*** Add File: ${renderedPath(selectedPath, random)}\n+${value}\n`);
+            expected.set(selectedPath, {
+              content: value,
+              mode: 0o666 & ~process.umask(),
+            });
           } else {
             coveredOperationKinds.add("text-update");
             instructions.push(
-              `*** Update File: ${renderedPath(selectedPath, random)}\n@@\n-${current}\n+${value}\n`,
+              `*** Update File: ${renderedPath(selectedPath, random)}\n@@\n-${current.content}\n+${value}\n`,
             );
+            expected.set(selectedPath, { ...current, content: value });
           }
-          expected.set(selectedPath, value);
           break;
         }
         case 3:
@@ -96,7 +113,10 @@ test("matches a reference model across generated sequential operation patches", 
           if (existingPaths.length === 0) {
             coveredOperationKinds.add("move-fallback-add");
             instructions.push(`*** Add File: ${renderedPath(selectedPath, random)}\n+${value}\n`);
-            expected.set(selectedPath, value);
+            expected.set(selectedPath, {
+              content: value,
+              mode: 0o666 & ~process.umask(),
+            });
             break;
           }
           const source = generatedItem(existingPaths, random);
@@ -106,11 +126,11 @@ test("matches a reference model across generated sequential operation patches", 
           instructions.push(
             `*** Update File: ${renderedPath(source, random)}\n*** Move to: ${renderedPath(destination, random)}\n`,
           );
-          const sourceContent = requiredValue(
+          const sourceFile = requiredValue(
             expected.get(source),
             "generated move source must exist",
           );
-          expected.set(destination, sourceContent);
+          expected.set(destination, sourceFile);
           expected.delete(source);
           break;
         }
@@ -139,11 +159,16 @@ test("matches a reference model across generated sequential operation patches", 
       [...expected.keys()].sort(),
       `seed ${String(seed)} final paths`,
     );
-    for (const [path, content] of expected) {
+    for (const [path, file] of expected) {
       assert.equal(
         await readFile(join(cwd, path), "utf8"),
-        `${content}\n`,
+        `${file.content}\n`,
         `seed ${String(seed)} final content for ${path}`,
+      );
+      assert.equal(
+        (await stat(join(cwd, path))).mode & 0o7777,
+        file.mode,
+        `seed ${String(seed)} final mode for ${path}`,
       );
     }
   }

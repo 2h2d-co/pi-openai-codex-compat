@@ -153,8 +153,13 @@ export class SemanticPlanner {
     return `planned-entry-${this.nextEntryId}`;
   }
 
-  private newPhysicalFile(linkCount = 1): PhysicalFileState {
-    return { linkCount };
+  private newPhysicalFile(mode: number, linkCount = 1): PhysicalFileState {
+    return { linkCount, mode: mode & 0o7777 };
+  }
+
+  private regularFileMode(entry: VirtualEntry): number | undefined {
+    if (entry.kind !== "regular") return undefined;
+    return entry.physical?.mode ?? entry.fingerprint?.mode;
   }
 
   private releasePhysicalLink(entry: VirtualEntry): void {
@@ -243,7 +248,7 @@ export class SemanticPlanner {
         if (!file) {
           file = {
             content: {},
-            physical: this.newPhysicalFile(metadata.nlink),
+            physical: this.newPhysicalFile(metadata.mode, metadata.nlink),
           };
           this.physicalFiles.set(physicalKey, file);
         }
@@ -675,18 +680,13 @@ export class SemanticPlanner {
     let destinationParentsReproduced = false;
     const dominatingInstructions = new Set<number>();
     const defaultFileMode = 0o666 & ~process.umask();
-    const materializedMode =
-      source.kind === "regular" && source.fingerprint
-        ? source.fingerprint.mode & 0o7777
-        : defaultFileMode;
+    const materializedMode = this.regularFileMode(source) ?? defaultFileMode;
 
     const destinationParent = await this.stateAt(dirname(destinationPath));
     const destination = await this.stateAt(destinationPath);
     const addResultMode = (entry: VirtualEntry): number | undefined => {
       if (entry.kind === "absent" || entry.kind === "symlink") return defaultFileMode;
-      if (entry.kind === "regular" && entry.fingerprint) {
-        return entry.fingerprint.mode & 0o7777;
-      }
+      if (entry.kind === "regular") return this.regularFileMode(entry);
       return undefined;
     };
     const addDominates = async (
@@ -833,12 +833,13 @@ export class SemanticPlanner {
     };
     this.actions.push(mutation);
     this.releasePhysicalLink(target);
+    const resultingMode = this.regularFileMode(target) ?? 0o666 & ~process.umask();
     await this.setState(operation.absolutePath, {
       kind: "regular",
       id: this.newEntryId(),
       entryPath: operation.absolutePath,
       entryName: basename(operation.absolutePath),
-      physical: this.newPhysicalFile(),
+      physical: this.newPhysicalFile(resultingMode),
       content: {
         value: { bytes: content, text: operation.content },
       },
@@ -1048,12 +1049,13 @@ export class SemanticPlanner {
       };
       this.actions.push(mutation);
       this.releasePhysicalLink(source);
+      const resultingMode = this.regularFileMode(source) ?? 0o666 & ~process.umask();
       const resultingEntry: Extract<VirtualEntry, { kind: "regular" }> = {
         kind: "regular",
         id: this.newEntryId(),
         entryPath: destinationPath,
         entryName: basename(destinationPath),
-        physical: this.newPhysicalFile(),
+        physical: this.newPhysicalFile(resultingMode),
         content: {
           value: { bytes: content, text: newContent },
         },
@@ -1116,12 +1118,13 @@ export class SemanticPlanner {
     this.releasePhysicalLink(source);
     this.releasePhysicalLink(destination);
     await this.setState(operation.absolutePath, ABSENT_ENTRY);
+    const resultingMode = this.regularFileMode(source) ?? 0o666 & ~process.umask();
     const resultingEntry: Extract<VirtualEntry, { kind: "regular" }> = {
       kind: "regular",
       id: this.newEntryId(),
       entryPath: destinationPath,
       entryName: basename(destinationPath),
-      physical: this.newPhysicalFile(),
+      physical: this.newPhysicalFile(resultingMode),
       content: {
         value: { bytes: content, text: newContent },
       },
@@ -1281,7 +1284,7 @@ export class SemanticPlanner {
         entryName: basename(destinationPath),
         sourcePath: source.sourcePath ?? source.entryPath,
         content,
-        physical: this.newPhysicalFile(),
+        physical: this.newPhysicalFile(this.regularFileMode(source) ?? 0o666 & ~process.umask()),
       };
     } else if (moveStrategy === "copy-unlink" && source.kind === "symlink") {
       resultingEntry = {

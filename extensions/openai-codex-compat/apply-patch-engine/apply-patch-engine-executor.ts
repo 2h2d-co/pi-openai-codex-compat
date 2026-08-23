@@ -143,10 +143,8 @@ async function assertPureMoveResult(
     }
   } else {
     if (!metadata.isFile()) postconditionFailed(destinationPath, "establish the moved file");
-    if (
-      mutation.expectedSource.fingerprint &&
-      (metadata.mode & 0o7777) !== (mutation.expectedSource.fingerprint.mode & 0o7777)
-    ) {
+    const expectedMode = regularEntryMode(mutation.expectedSource);
+    if (expectedMode !== undefined && (metadata.mode & 0o7777) !== (expectedMode & 0o7777)) {
       postconditionFailed(destinationPath, "preserve the moved file mode");
     }
     const expectedContent = mutation.expectedSource.content.value?.bytes;
@@ -154,7 +152,7 @@ async function assertPureMoveResult(
       await assertRegularFileResult(destinationPath, expectedContent, filesystem, {
         exactSpelling: true,
         followSymlink: false,
-        expectedMode: mutation.expectedSource.fingerprint?.mode,
+        expectedMode,
         allowUnreadable: true,
       });
     }
@@ -169,7 +167,7 @@ async function assertPureMoveResult(
 }
 
 function regularEntryMode(entry: VirtualEntry): number | undefined {
-  return entry.kind === "regular" ? entry.fingerprint?.mode : undefined;
+  return entry.kind === "regular" ? (entry.physical?.mode ?? entry.fingerprint?.mode) : undefined;
 }
 
 async function assertAppliedMutationPostconditions(
