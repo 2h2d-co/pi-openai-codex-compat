@@ -847,6 +847,37 @@ that changes move chains, overwrite order, or intermediate observations.
 
 No-op and dead operations produce no filesystem calls.
 
+### In-place write identity
+
+An ordinary text update that does not move or replace its entry MUST remain
+bound to the filesystem topology observed during preflight:
+
+1. preflight records the named source entry, every traversed ancestor directory
+   and symlink, the resolved regular-file target, its bytes, and its link count;
+2. execution rejects a changed source entry, route entry, resolved target
+   inode, content, or unexplained link count;
+3. byte equality MUST NOT authorize a different inode or route;
+4. execution opens the target without truncating, verifies the opened
+   descriptor, and revalidates the source and route before writing;
+5. the content write and truncation use that descriptor rather than resolving
+   the pathname again; and
+6. the resulting descriptor identity, link count, route, and pathname binding
+   are revalidated after writing.
+
+Physical link-count changes from earlier committed instructions are accepted
+only when their exact net delta explains the observed count. A generic
+“earlier operation released this inode” condition is insufficient. When an
+earlier instruction creates an entry or parent directory whose inode could not
+exist during preflight, execution captures its committed identity for later
+instructions.
+
+Unrelated processes can still mutate filesystem state because the extension
+does not own an operating-system transaction or cross-process lock.
+Descriptor-bound writing prevents a pathname replacement after opening from
+redirecting the write to the replacement inode. If the final pathname or route
+no longer binds to the validated inode, execution fails and normal
+partial-failure inspection reports the completed effect.
+
 ### Native rename
 
 A same-filesystem pure move should use native rename semantics rather than

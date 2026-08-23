@@ -6,10 +6,10 @@ Formatter-tolerant matching has been removed permanently. Text updates now use
 only the official Codex-compatible exact, trailing-trim, full-trim, and Unicode
 matcher.
 
-The matching incident that initiated this review is closed. S-001 is
-implemented and verified. Three independent semantic and execution findings
-remain open. This document tracks those findings and their approval-gated
-implementation work.
+The matching incident that initiated this review is closed. S-001 and S-002
+are implemented and verified. Two independent semantic findings remain open.
+This document tracks those findings and their approval-gated implementation
+work.
 
 No open work described here has been approved for implementation. Before
 starting a workstream:
@@ -106,11 +106,11 @@ Validation:
 
 **Severity:** High
 
-**Status:** Confirmed; implementation not approved
+**Status:** Implemented and verified
 
-Execution currently accepts a changed entry identity when its bytes still
-equal the planned bytes. Byte equality does not prove equivalent hard-link
-topology.
+Before the correction, execution accepted a changed entry identity when its
+bytes still equaled the planned bytes. Byte equality does not prove equivalent
+hard-link topology.
 
 Example:
 
@@ -120,7 +120,7 @@ Example:
 3. execution accepts the byte-identical replacement; and
 4. updating `source.txt` also changes `collateral.txt`.
 
-An equivalent ancestor-symlink variant can redirect the write:
+An equivalent ancestor-symlink variant could redirect the write:
 
 1. preflight resolves a regular parent directory and target containing `old`;
 2. an external action replaces that parent with a symlink to another tree
@@ -128,22 +128,34 @@ An equivalent ancestor-symlink variant can redirect the write:
 3. execution accepts the byte-identical target; and
 4. the update writes outside the preflighted tree.
 
-Required correction:
+Implemented correction:
 
-- in-place text updates must reject entry-identity drift;
-- the resolved ancestor chain must not change to a different directory or
-  symlink route;
-- byte equality must not replace topology validation; and
-- any tolerated identity change must prove equivalent metadata and alias
-  effects, not only content.
+- in-place text updates reject entry-identity drift even when bytes are
+  unchanged;
+- preflight records the resolved regular-file target and every directory and
+  symlink route entry;
+- execution opens the source without truncating, verifies the opened inode and
+  bytes, revalidates the route, and writes through that descriptor;
+- a pathname swap after opening cannot redirect the write to the replacement
+  inode;
+- expected link counts use exact physical deltas from earlier committed
+  operations instead of accepting any link-count difference after a release;
+  and
+- entries and parent directories created by earlier instructions receive
+  committed identities for later route and target validation.
 
-Required tests:
+Validation:
 
 - byte-identical inode replacement rejects before writing;
 - a replacement hard-linked to collateral content cannot modify that content;
-- a byte-identical target reached through a replaced symlink ancestor rejects;
+- an alternate symlink route to the same hard-linked target inode rejects;
+- replaced source symlinks and resolved target inodes reject;
+- externally increased link counts reject;
+- a final pathname swap writes only the validated inode and reports the lost
+  binding;
 - changed bytes and changed entry types continue to reject; and
-- safe link-count changes produced by the same plan remain accepted.
+- exact link-count changes and parent creation produced by the same plan remain
+  accepted.
 
 ### S-003 — No-change postconditions are not revalidated
 
@@ -230,15 +242,23 @@ Completion criteria:
 
 ### Workstream 2 — Execution identity and no-change revalidation
 
-**Status:** Planned; not approved
+**Status:** Partially implemented; S-003 remains not approved
 
-Scope:
+Completed scope:
 
-- implement S-002 and S-003;
-- reject unsafe entry-identity drift for in-place writes;
-- revalidate externally observable no-change postconditions;
-- preserve safe identity changes caused by the current plan; and
-- add hard-link collateral and concurrent-drift regressions.
+- implemented S-002;
+- reject unsafe entry and route drift for in-place writes;
+- bind writes to a validated open descriptor;
+- preserve exact identity and link-count changes caused by the current plan;
+  and
+- add inode replacement, hard-link collateral, route drift, and descriptor
+  binding regressions.
+
+Remaining scope:
+
+- implement S-003 only after separate approval;
+- revalidate externally observable no-change postconditions; and
+- add its no-change drift regressions.
 
 Completion criteria:
 
@@ -276,6 +296,13 @@ The S-001 correction passed:
 - 289 full-suite tests, with 287 passed and 2 live tests skipped; and
 - `npm run check`.
 
+The S-002 correction passed:
+
+- all 49 semantic-planner and execution tests, including byte-identical inode,
+  hard-link, route, descriptor-binding, and exact planned-link-count cases;
+- 293 full-suite tests, with 291 passed and 2 live tests skipped; and
+- `npm run check`.
+
 ## Decision log
 
 | Date       | Decision                                                   | Rationale                                                                                            |
@@ -284,3 +311,4 @@ The S-001 correction passed:
 | 2026-08-20 | Remove formatter-tolerant matching permanently.            | Strict Codex compatibility provides one source-traceable eligibility path.                           |
 | 2026-08-22 | Retain only unresolved semantic and execution safety work. | Completed trackers and superseded matcher redesign plans duplicated current normative documentation. |
 | 2026-08-23 | Validate supplied chunks before pure moves.                | Text preconditions now constrain moves while chunkless syntax preserves opaque entry semantics.      |
+| 2026-08-23 | Bind in-place writes to validated filesystem identity.     | Matching bytes cannot authorize a different inode, route, or hard-link write set.                    |

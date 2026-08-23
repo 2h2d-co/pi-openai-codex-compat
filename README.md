@@ -320,6 +320,11 @@ Filesystem behavior:
 - Same-filesystem pure moves use native rename topology. Cross-filesystem moves copy through a temporary entry, create or replace the destination, and then unlink the source, producing an inode independent from remaining source hard links.
 - Supplied identity or context chunks validate a pure move through the text matcher without rewriting the moved entry. A blank `@@` therefore requires valid UTF-8; omit chunks for arbitrary binary content.
 - Strict edits preserve the matched region's local CRLF or mixed line endings.
+- In-place text updates reject changed source or resolved-target inodes,
+  changed directory/symlink routes, and unexplained hard-link counts even when
+  the replacement bytes are identical. The write is bound to the validated
+  open file descriptor so a later pathname swap cannot redirect it to a
+  replacement inode.
 - The extension does not add path filtering, sandboxing, or approval prompts.
 - Every hunk is parsed and validated before filesystem writes begin.
 - Mutations participate in Pi's per-file mutation queue and an extension-local logical queue for case, Unicode, symlink-parent, and hard-link aliases. Both queues coordinate only concurrent `apply_patch` calls in the same Pi process and module instance; they do not coordinate separate Pi sessions, other processes, or unrelated edit/write tools.

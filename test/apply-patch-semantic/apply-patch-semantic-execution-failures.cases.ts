@@ -21,6 +21,7 @@ import {
   assertMissing,
   patch,
   filesystemError,
+  isFileHandle,
   pathLikeBasename,
 } from "./apply-patch-semantic-harness.ts";
 
@@ -452,8 +453,8 @@ test("reports deterministic file states after write failures", async (t) => {
         {
           filesystem: {
             async writeFile(target, data, options) {
-              if (target === path) {
-                if (fixture.mutate) await writeFile(target, fixture.mutation, options);
+              if (isFileHandle(target)) {
+                if (fixture.mutate) await writeFile(path, fixture.mutation, options);
                 throw filesystemError("EIO", `injected ${fixture.name} write failure`);
               }
               await writeFile(target, data, options);
@@ -489,8 +490,8 @@ test("reports deterministic file states after write failures", async (t) => {
       {
         filesystem: {
           async writeFile(target, data, options) {
-            if (target === unverifiedPath) {
-              await writeFile(target, data, options);
+            if (isFileHandle(target)) {
+              await writeFile(unverifiedPath, data, options);
               throw filesystemError("EIO", "injected unverified write failure");
             }
             await writeFile(target, data, options);
@@ -530,9 +531,9 @@ test("reports deterministic file states after write failures", async (t) => {
       {
         filesystem: {
           async writeFile(path, data, options) {
-            if (path === changedEntryPath) {
+            if (isFileHandle(path)) {
               await writeFile(replacementEntryPath, "before\n");
-              await rename(replacementEntryPath, path);
+              await rename(replacementEntryPath, changedEntryPath);
               throw filesystemError("EIO", "injected same-content entry replacement");
             }
             await writeFile(path, data, options);
@@ -562,9 +563,9 @@ test("reports deterministic file states after write failures", async (t) => {
       {
         filesystem: {
           async writeFile(path, data, options) {
-            if (path === changedTypePath) {
-              await unlink(path);
-              await mkdir(path);
+            if (isFileHandle(path)) {
+              await unlink(changedTypePath);
+              await mkdir(changedTypePath);
               throw filesystemError("EIO", "injected entry-type write failure");
             }
             await writeFile(path, data, options);

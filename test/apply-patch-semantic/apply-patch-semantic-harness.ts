@@ -15,6 +15,7 @@ import {
   rm,
   stat,
   symlink,
+  type FileHandle,
   unlink,
   writeFile,
 } from "node:fs/promises";
@@ -86,6 +87,10 @@ export function pathLikeBasename(path: unknown): string {
   if (Buffer.isBuffer(path)) return basename(path.toString());
   if (path instanceof URL) return basename(path.pathname);
   return "";
+}
+
+export function isFileHandle(value: unknown): value is FileHandle {
+  return typeof value === "object" && value !== null && "fd" in value;
 }
 
 export {

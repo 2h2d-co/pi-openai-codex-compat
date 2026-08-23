@@ -1,3 +1,4 @@
+import { constants } from "node:fs";
 import { lstat, readFile, readlink, stat } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import type {
@@ -29,11 +30,14 @@ import {
   entryType,
   fingerprint,
   sameFingerprint,
-  sameFingerprintExceptLinkCount,
+  samePhysicalEntry,
   type CommittedEntryMutation,
+  type CommittedPhysicalLinkDelta,
+  type ExistingFileEntry,
   type ParentPlan,
   type PlannedEntryMutation,
   type PlannedMutation,
+  type RouteEntryExpectation,
   type SemanticPlan,
   type VirtualEntry,
 } from "./apply-patch-engine-filesystem-model.ts";
@@ -102,14 +106,7 @@ export async function assertEntryMatches(path: string, expected: VirtualEntry): 
     actual.fingerprint &&
     !sameFingerprint(expected.fingerprint, actual.fingerprint)
   ) {
-    const contentMatch =
-      (expected.kind === "regular" || expected.kind === "symlink") &&
-      expected.content.planned &&
-      expected.content.value &&
-      buffersEqual(await readFile(path), expected.content.value.bytes);
-    if (!contentMatch) {
-      throw new Error(`Filesystem changed after apply_patch preflight at ${path}`);
-    }
+    throw new Error(`Filesystem changed after apply_patch preflight at ${path}`);
   }
   if (expected.kind === "symlink" && actual.kind === "symlink") {
     if (expected.target !== actual.target) {
@@ -134,42 +131,103 @@ export async function assertEntryMatches(path: string, expected: VirtualEntry): 
   }
 }
 
+function mergeExpectedWithCommittedEntry(
+  path: string,
+  expected: VirtualEntry,
+  prior: CommittedEntryMutation | undefined,
+): VirtualEntry {
+  if (!prior) return expected;
+  if (prior.expected.kind !== expected.kind) {
+    throw new Error(`Filesystem state created by apply_patch changed unexpectedly at ${path}`);
+  }
+  if (
+    (expected.kind === "regular" || expected.kind === "symlink") &&
+    (prior.expected.kind === "regular" || prior.expected.kind === "symlink")
+  ) {
+    const content = expected.content.planned ? expected.content : prior.expected.content;
+    if (expected.kind === "symlink" && prior.expected.kind === "symlink") {
+      return {
+        ...prior.expected,
+        target: expected.target,
+        targetPath: expected.targetPath,
+        content,
+      };
+    }
+    if (expected.kind === "regular" && prior.expected.kind === "regular") {
+      return { ...prior.expected, content };
+    }
+  }
+  return prior.expected;
+}
+
+function expectedAfterPhysicalLinkDeltas(
+  expected: VirtualEntry,
+  afterMutationIndex: number,
+  physicalLinkDeltas: readonly CommittedPhysicalLinkDelta[],
+): VirtualEntry {
+  if ((expected.kind !== "regular" && expected.kind !== "symlink") || !expected.fingerprint) {
+    return expected;
+  }
+  const expectedFingerprint = expected.fingerprint;
+  const linkCountDelta = physicalLinkDeltas.reduce((total, change) => {
+    return change.mutationIndex > afterMutationIndex &&
+      samePhysicalEntry(expectedFingerprint, change.fingerprint)
+      ? total + change.delta
+      : total;
+  }, 0);
+  if (linkCountDelta === 0) return expected;
+  return {
+    ...expected,
+    fingerprint: {
+      ...expected.fingerprint,
+      linkCount: expected.fingerprint.linkCount + linkCountDelta,
+    },
+  };
+}
+
+function effectiveExpectedEntry(
+  path: string,
+  key: string,
+  expected: VirtualEntry,
+  priorMutations: readonly CommittedEntryMutation[],
+  physicalLinkDeltas: readonly CommittedPhysicalLinkDelta[],
+): VirtualEntry {
+  const priorByKey = priorMutations.findLast((mutation) => mutation.key === key);
+  let priorByPhysicalEntry: CommittedEntryMutation | undefined;
+  if ((expected.kind === "regular" || expected.kind === "symlink") && expected.fingerprint) {
+    const expectedFingerprint = expected.fingerprint;
+    priorByPhysicalEntry = priorMutations.findLast((mutation) => {
+      return (
+        (mutation.expected.kind === "regular" || mutation.expected.kind === "symlink") &&
+        mutation.expected.fingerprint !== undefined &&
+        samePhysicalEntry(expectedFingerprint, mutation.expected.fingerprint)
+      );
+    });
+  }
+  const prior = priorByKey ?? priorByPhysicalEntry;
+  return expectedAfterPhysicalLinkDeltas(
+    mergeExpectedWithCommittedEntry(path, expected, prior),
+    prior?.mutationIndex ?? -1,
+    physicalLinkDeltas,
+  );
+}
+
 export async function assertMutationEntryMatches(
   path: string,
   key: string,
   expected: VirtualEntry,
   priorMutations: readonly CommittedEntryMutation[],
+  physicalLinkDeltas: readonly CommittedPhysicalLinkDelta[],
 ): Promise<void> {
-  const prior = priorMutations.findLast((mutation) => mutation.key === key);
-  const effectiveExpected = prior?.expected ?? expected;
-
-  try {
-    await assertEntryMatches(path, effectiveExpected);
-  } catch (error) {
-    if (
-      (effectiveExpected.kind === "regular" || effectiveExpected.kind === "symlink") &&
-      effectiveExpected.fingerprint
-    ) {
-      const expectedFingerprint = effectiveExpected.fingerprint;
-      const actual = await currentEntry(path);
-      const linkCountWasChangedByPlan =
-        (actual.kind === "regular" || actual.kind === "symlink") &&
-        actual.fingerprint !== undefined &&
-        sameFingerprintExceptLinkCount(expectedFingerprint, actual.fingerprint) &&
-        priorMutations.some(({ releasedFingerprint }) => {
-          return (
-            releasedFingerprint?.device === expectedFingerprint.device &&
-            releasedFingerprint.inode === expectedFingerprint.inode
-          );
-        });
-      if (linkCountWasChangedByPlan) return;
-    }
-    throw error;
-  }
+  await assertEntryMatches(
+    path,
+    effectiveExpectedEntry(path, key, expected, priorMutations, physicalLinkDeltas),
+  );
 }
 
 export async function captureCommittedEntryMutations(
   mutations: readonly PlannedEntryMutation[],
+  mutationIndex: number,
 ): Promise<CommittedEntryMutation[]> {
   const committed: CommittedEntryMutation[] = [];
   for (const mutation of mutations) {
@@ -181,13 +239,198 @@ export async function captureCommittedEntryMutations(
       path: mutation.path,
       key: mutation.key,
       expected,
+      mutationIndex,
     };
-    if (mutation.releasedFingerprint) {
-      committedMutation.releasedFingerprint = mutation.releasedFingerprint;
-    }
     committed.push(committedMutation);
   }
   return committed;
+}
+
+async function assertRouteMatches(
+  route: readonly RouteEntryExpectation[],
+  priorMutations: readonly CommittedEntryMutation[],
+  physicalLinkDeltas: readonly CommittedPhysicalLinkDelta[],
+): Promise<void> {
+  for (const expectation of route) {
+    const expected = effectiveExpectedEntry(
+      expectation.path,
+      expectation.key,
+      expectation.expected,
+      priorMutations,
+      physicalLinkDeltas,
+    );
+    const actual = await currentEntry(expectation.path);
+    if (actual.kind !== expected.kind) {
+      throw new Error(
+        `Filesystem route changed after apply_patch preflight at ${expectation.path}`,
+      );
+    }
+    if (
+      (actual.kind !== "directory" && actual.kind !== "symlink") ||
+      (expected.kind !== "directory" && expected.kind !== "symlink") ||
+      !actual.fingerprint ||
+      !expected.fingerprint ||
+      !samePhysicalEntry(actual.fingerprint, expected.fingerprint) ||
+      (actual.kind === "symlink" &&
+        expected.kind === "symlink" &&
+        actual.target !== expected.target)
+    ) {
+      throw new Error(
+        `Filesystem route changed after apply_patch preflight at ${expectation.path}`,
+      );
+    }
+  }
+}
+
+async function writeCompleteBuffer(
+  handle: Awaited<ReturnType<ApplyPatchExecutionFilesystem["open"]>>,
+  content: Buffer,
+  filesystem: ApplyPatchExecutionFilesystem,
+): Promise<void> {
+  await filesystem.writeFile(handle, content);
+  await handle.truncate(content.length);
+}
+
+async function readCompleteBuffer(
+  handle: Awaited<ReturnType<ApplyPatchExecutionFilesystem["open"]>>,
+  size: number,
+): Promise<Buffer> {
+  const content = Buffer.alloc(size);
+  let offset = 0;
+  while (offset < content.length) {
+    const { bytesRead } = await handle.read(content, offset, content.length - offset, offset);
+    if (bytesRead === 0) break;
+    offset += bytesRead;
+  }
+  return offset === content.length ? content : content.subarray(0, offset);
+}
+
+async function assertPathStillBindsToOpenedTarget(
+  path: string,
+  expectedSource: ExistingFileEntry,
+  openedTargetFingerprint: ReturnType<typeof fingerprint>,
+  filesystem: ApplyPatchExecutionFilesystem,
+): Promise<void> {
+  const sourceMetadata = await filesystem.lstat(path);
+  if (expectedSource.kind === "regular") {
+    if (
+      !sourceMetadata.isFile() ||
+      !samePhysicalEntry(fingerprint(sourceMetadata), openedTargetFingerprint)
+    ) {
+      throw new Error(`Filesystem changed while apply_patch updated ${path}`);
+    }
+  } else {
+    if (
+      !sourceMetadata.isSymbolicLink() ||
+      !expectedSource.fingerprint ||
+      !samePhysicalEntry(fingerprint(sourceMetadata), expectedSource.fingerprint) ||
+      (await filesystem.readlink(path)) !== expectedSource.target
+    ) {
+      throw new Error(`Filesystem changed while apply_patch updated ${path}`);
+    }
+  }
+  const resolvedMetadata = await filesystem.stat(path);
+  if (!samePhysicalEntry(fingerprint(resolvedMetadata), openedTargetFingerprint)) {
+    throw new Error(`Filesystem changed while apply_patch updated ${path}`);
+  }
+}
+
+async function executeInPlaceTextUpdate(
+  mutation: Extract<PlannedMutation, { kind: "text-update"; moveMode: "none" }>,
+  filesystem: ApplyPatchExecutionFilesystem,
+  priorMutations: readonly CommittedEntryMutation[],
+  physicalLinkDeltas: readonly CommittedPhysicalLinkDelta[],
+  onMutationStart: () => void,
+): Promise<void> {
+  await assertMutationEntryMatches(
+    mutation.operation.absolutePath,
+    mutation.sourceKey,
+    mutation.expectedSource,
+    priorMutations,
+    physicalLinkDeltas,
+  );
+  await assertRouteMatches(mutation.writePlan.route, priorMutations, physicalLinkDeltas);
+
+  const expectedTarget = effectiveExpectedEntry(
+    mutation.writePlan.targetPath,
+    mutation.writePlan.targetKey,
+    mutation.writePlan.expectedTarget,
+    priorMutations,
+    physicalLinkDeltas,
+  );
+  if (
+    expectedTarget.kind !== "regular" ||
+    !expectedTarget.fingerprint ||
+    !expectedTarget.content.value
+  ) {
+    throw new Error(
+      `Could not verify the planned regular-file write target for ${mutation.operation.absolutePath}`,
+    );
+  }
+
+  const handle = await filesystem.open(mutation.operation.absolutePath, constants.O_RDWR);
+  try {
+    const openedTargetFingerprint = fingerprint(await handle.stat());
+    if (!sameFingerprint(openedTargetFingerprint, expectedTarget.fingerprint)) {
+      throw new Error(
+        `Filesystem changed after apply_patch preflight at ${mutation.operation.absolutePath}`,
+      );
+    }
+    if (
+      !buffersEqual(
+        await readCompleteBuffer(handle, openedTargetFingerprint.size),
+        expectedTarget.content.value.bytes,
+      )
+    ) {
+      throw new Error(
+        `Filesystem changed after apply_patch preflight at ${mutation.operation.absolutePath}`,
+      );
+    }
+
+    // Recheck after opening so a pathname swap during open cannot authorize a
+    // write. A later swap cannot redirect the descriptor-bound mutation.
+    await assertMutationEntryMatches(
+      mutation.operation.absolutePath,
+      mutation.sourceKey,
+      mutation.expectedSource,
+      priorMutations,
+      physicalLinkDeltas,
+    );
+    await assertRouteMatches(mutation.writePlan.route, priorMutations, physicalLinkDeltas);
+
+    onMutationStart();
+    await writeCompleteBuffer(handle, mutation.content, filesystem);
+    const resultingTargetFingerprint = fingerprint(await handle.stat());
+    if (
+      !samePhysicalEntry(resultingTargetFingerprint, expectedTarget.fingerprint) ||
+      resultingTargetFingerprint.linkCount !== expectedTarget.fingerprint.linkCount
+    ) {
+      throw new Error(
+        `Filesystem changed while apply_patch updated ${mutation.operation.absolutePath}`,
+      );
+    }
+    await assertRouteMatches(mutation.writePlan.route, priorMutations, physicalLinkDeltas);
+    const expectedSource = effectiveExpectedEntry(
+      mutation.operation.absolutePath,
+      mutation.sourceKey,
+      mutation.expectedSource,
+      priorMutations,
+      physicalLinkDeltas,
+    );
+    if (expectedSource.kind !== "regular" && expectedSource.kind !== "symlink") {
+      throw new Error(
+        `Could not verify the planned source entry for ${mutation.operation.absolutePath}`,
+      );
+    }
+    await assertPathStillBindsToOpenedTarget(
+      mutation.operation.absolutePath,
+      expectedSource,
+      resultingTargetFingerprint,
+      filesystem,
+    );
+  } finally {
+    await handle.close();
+  }
 }
 
 export async function assertParentPlanMatches(parents: ParentPlan): Promise<void> {
@@ -319,8 +562,9 @@ export async function executePlan(
   let activeTemporaryPath: string | undefined;
   let activeFilesystemMutationStarted = false;
   const committedEntryMutations: CommittedEntryMutation[] = [];
+  const committedPhysicalLinkDeltas: CommittedPhysicalLinkDelta[] = [];
   try {
-    for (const mutation of plan.mutations) {
+    for (const [mutationIndex, mutation] of plan.mutations.entries()) {
       activeInstruction = details.instructions[mutation.instructionIndex];
       activeMutation = mutation;
       activeTemporaryPath = undefined;
@@ -332,6 +576,7 @@ export async function executePlan(
           mutation.targetKey,
           mutation.expectedTarget,
           committedEntryMutations,
+          committedPhysicalLinkDeltas,
         );
         await assertParentPlanMatches(mutation.parents);
         try {
@@ -373,6 +618,7 @@ export async function executePlan(
           mutation.targetKey,
           mutation.expectedTarget,
           committedEntryMutations,
+          committedPhysicalLinkDeltas,
         );
         try {
           activeFilesystemMutationStarted = true;
@@ -385,12 +631,15 @@ export async function executePlan(
         }
         appendChange(details, mutation.change, mutation.instructionIndex);
       } else if (mutation.kind === "text-update") {
-        await assertMutationEntryMatches(
-          mutation.operation.absolutePath,
-          mutation.sourceKey,
-          mutation.expectedSource,
-          committedEntryMutations,
-        );
+        if (mutation.moveMode !== "none") {
+          await assertMutationEntryMatches(
+            mutation.operation.absolutePath,
+            mutation.sourceKey,
+            mutation.expectedSource,
+            committedEntryMutations,
+            committedPhysicalLinkDeltas,
+          );
+        }
         if (mutation.moveMode === "same-entry") {
           const provisionalChange = mutation.provisionalChange;
           const moveAbsolutePath = mutation.operation.moveAbsolutePath;
@@ -457,6 +706,7 @@ export async function executePlan(
             destinationKey,
             mutation.expectedDestination,
             committedEntryMutations,
+            committedPhysicalLinkDeltas,
           );
           await assertParentPlanMatches(mutation.parents);
           try {
@@ -512,10 +762,18 @@ export async function executePlan(
           details.modified.push(moveTo);
         } else {
           try {
-            activeFilesystemMutationStarted = true;
-            await filesystem.writeFile(mutation.operation.absolutePath, mutation.content);
+            await executeInPlaceTextUpdate(
+              mutation,
+              filesystem,
+              committedEntryMutations,
+              committedPhysicalLinkDeltas,
+              () => {
+                activeFilesystemMutationStarted = true;
+              },
+            );
           } catch (error) {
             details.exact = false;
+            if (!activeFilesystemMutationStarted) throw error;
             throw new Error(
               `Failed to write file ${mutation.operation.absolutePath}: ${errorMessage(error)}`,
               { cause: error },
@@ -531,12 +789,14 @@ export async function executePlan(
           mutation.sourceKey,
           mutation.expectedSource,
           committedEntryMutations,
+          committedPhysicalLinkDeltas,
         );
         await assertMutationEntryMatches(
           moveAbsolutePath,
           mutation.destinationKey,
           mutation.expectedDestination,
           committedEntryMutations,
+          committedPhysicalLinkDeltas,
         );
         await assertParentPlanMatches(mutation.parents);
         try {
@@ -587,7 +847,10 @@ export async function executePlan(
       if (activeInstruction) recordAppliedInstructionEffects(mutation, activeInstruction);
       try {
         committedEntryMutations.push(
-          ...(await captureCommittedEntryMutations(mutation.entryMutations)),
+          ...(await captureCommittedEntryMutations(mutation.entryMutations, mutationIndex)),
+        );
+        committedPhysicalLinkDeltas.push(
+          ...mutation.physicalLinkDeltas.map((change) => ({ ...change, mutationIndex })),
         );
       } catch (error) {
         details.exact = false;

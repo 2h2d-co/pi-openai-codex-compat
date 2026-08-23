@@ -4,6 +4,10 @@
 
 ### Fixed
 
+- Bind in-place `apply_patch` text writes to the preflighted inode and route,
+  rejecting byte-identical entry replacement, symlink-ancestor redirection,
+  and unexplained hard-link changes without rejecting exact topology changes
+  produced by earlier patch instructions.
 - Validate supplied identity and context chunks before `apply_patch` moves while preserving chunkless opaque moves and successful symlink and hard-link topology.
 - Remove formatter-tolerant `apply_patch` matching permanently and rely exclusively on the official Codex-compatible exact, trailing-trim, full-trim, and Unicode matcher.
 - Treat streamed Codex misalignment-policy violations as terminal without retrying and preserve the provider's error message.

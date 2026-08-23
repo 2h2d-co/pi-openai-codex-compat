@@ -25,12 +25,21 @@ export type KnownContent = {
 export type PlannedEntryMutation = {
   path: string;
   key: string;
-  kind: "absent" | "regular" | "symlink";
-  releasedFingerprint?: EntryFingerprint;
+  kind: "absent" | "directory" | "regular" | "symlink";
 };
 
 export type CommittedEntryMutation = Omit<PlannedEntryMutation, "kind"> & {
   expected: VirtualEntry;
+  mutationIndex: number;
+};
+
+export type PlannedPhysicalLinkDelta = {
+  fingerprint: EntryFingerprint;
+  delta: number;
+};
+
+export type CommittedPhysicalLinkDelta = PlannedPhysicalLinkDelta & {
+  mutationIndex: number;
 };
 
 export type ContentCell = {
@@ -79,6 +88,19 @@ export type ParentPlan = {
   expectations: Array<{ path: string; kind: "absent" | "directory" | "directory-symlink" }>;
 };
 
+export type RouteEntryExpectation = {
+  path: string;
+  key: string;
+  expected: Extract<VirtualEntry, { kind: "directory" | "symlink" }>;
+};
+
+export type InPlaceWritePlan = {
+  route: RouteEntryExpectation[];
+  targetPath: string;
+  targetKey: string;
+  expectedTarget: Extract<VirtualEntry, { kind: "regular" }>;
+};
+
 type PlannedTextUpdateBase = {
   kind: "text-update";
   expectedSource: ExistingFileEntry;
@@ -94,6 +116,7 @@ type PlannedTextUpdate =
   | (PlannedTextUpdateBase & {
       moveMode: "none";
       operation: Extract<ResolvedOperation, { kind: "update" }>;
+      writePlan: InPlaceWritePlan;
       expectedDestination?: never;
       destinationKey?: never;
       sameEntryMove?: never;
@@ -102,6 +125,7 @@ type PlannedTextUpdate =
   | (PlannedTextUpdateBase & {
       moveMode: "same-entry";
       operation: ResolvedMoveUpdateOperation;
+      writePlan?: never;
       expectedDestination: ExistingFileEntry;
       destinationKey: string;
       sameEntryMove: "rename" | "satisfied";
@@ -110,6 +134,7 @@ type PlannedTextUpdate =
   | (PlannedTextUpdateBase & {
       moveMode: "destination";
       operation: ResolvedMoveUpdateOperation;
+      writePlan?: never;
       expectedDestination: ReplaceableFileEntry;
       destinationKey: string;
       sameEntryMove?: never;
@@ -149,7 +174,10 @@ export type PlannedMutation = (
       entryMutations: PlannedEntryMutation[];
       change: Extract<AppliedPatchChange, { kind: "move" }>;
     }
-) & { instructionIndex: number };
+) & {
+  instructionIndex: number;
+  physicalLinkDeltas: PlannedPhysicalLinkDelta[];
+};
 
 export type SemanticPlan = {
   mutations: PlannedMutation[];

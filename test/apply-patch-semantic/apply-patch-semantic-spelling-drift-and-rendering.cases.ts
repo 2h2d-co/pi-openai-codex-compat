@@ -7,6 +7,8 @@ import {
   mkdir,
   readFile,
   readdir,
+  rename,
+  symlink,
   writeFile,
   join,
   test,
@@ -17,6 +19,7 @@ import {
   formatApplyPatchRenderText,
   workspace,
   assertMissing,
+  isFileHandle,
   patch,
 } from "./apply-patch-semantic-harness.ts";
 
@@ -198,6 +201,183 @@ test("detects external changes to text content and planned parent paths", async 
   );
   assert.equal(await readFile(join(cwd, "parent-source.txt"), "utf8"), "source\n");
   assert.equal(await readFile(join(cwd, "missing-parent"), "utf8"), "external file\n");
+});
+
+test("rejects byte-identical inode and hard-link topology drift before writing", async (t) => {
+  const cwd = await workspace(t);
+  const replacementPath = join(cwd, "replacement.txt");
+  const replacementBackupPath = join(cwd, "replacement-backup.txt");
+  await writeFile(replacementPath, "before\n");
+
+  await assert.rejects(
+    applyPatch(cwd, patch("*** Update File: replacement.txt\n@@\n-before\n+after\n"), undefined, {
+      async onExecutionStart() {
+        await rename(replacementPath, replacementBackupPath);
+        await writeFile(replacementPath, "before\n");
+      },
+    }),
+    (error: unknown) => {
+      assert.ok(error instanceof ApplyPatchExecutionError);
+      assert.deepEqual(error.details.changes, []);
+      return true;
+    },
+  );
+  assert.equal(await readFile(replacementPath, "utf8"), "before\n");
+  assert.equal(await readFile(replacementBackupPath, "utf8"), "before\n");
+
+  const hardLinkPath = join(cwd, "hard-link-source.txt");
+  const originalHardLinkPath = join(cwd, "hard-link-original.txt");
+  const collateralPath = join(cwd, "hard-link-collateral.txt");
+  await writeFile(hardLinkPath, "before\n");
+  await writeFile(collateralPath, "before\n");
+
+  await assert.rejects(
+    applyPatch(
+      cwd,
+      patch("*** Update File: hard-link-source.txt\n@@\n-before\n+after\n"),
+      undefined,
+      {
+        async onExecutionStart() {
+          await rename(hardLinkPath, originalHardLinkPath);
+          await link(collateralPath, hardLinkPath);
+        },
+      },
+    ),
+    ApplyPatchExecutionError,
+  );
+  assert.equal(await readFile(hardLinkPath, "utf8"), "before\n");
+  assert.equal(await readFile(originalHardLinkPath, "utf8"), "before\n");
+  assert.equal(await readFile(collateralPath, "utf8"), "before\n");
+
+  const addedLinkSourcePath = join(cwd, "added-link-source.txt");
+  const addedLinkCollateralPath = join(cwd, "added-link-collateral.txt");
+  await writeFile(addedLinkSourcePath, "before\n");
+  await assert.rejects(
+    applyPatch(
+      cwd,
+      patch("*** Update File: added-link-source.txt\n@@\n-before\n+after\n"),
+      undefined,
+      {
+        async onExecutionStart() {
+          await link(addedLinkSourcePath, addedLinkCollateralPath);
+        },
+      },
+    ),
+    ApplyPatchExecutionError,
+  );
+  assert.equal(await readFile(addedLinkSourcePath, "utf8"), "before\n");
+  assert.equal(await readFile(addedLinkCollateralPath, "utf8"), "before\n");
+});
+
+test("rejects replaced ancestor, source-symlink, and symlink-target routes", async (t) => {
+  const cwd = await workspace(t);
+  const parentPath = join(cwd, "route-parent");
+  const originalParentPath = join(cwd, "route-parent-original");
+  const alternateParentPath = join(cwd, "route-parent-alternate");
+  await mkdir(parentPath);
+  await mkdir(alternateParentPath);
+  await writeFile(join(parentPath, "source.txt"), "before\n");
+  await link(join(parentPath, "source.txt"), join(alternateParentPath, "source.txt"));
+
+  await assert.rejects(
+    applyPatch(
+      cwd,
+      patch("*** Update File: route-parent/source.txt\n@@\n-before\n+after\n"),
+      undefined,
+      {
+        async onExecutionStart() {
+          await rename(parentPath, originalParentPath);
+          await symlink("route-parent-alternate", parentPath);
+        },
+      },
+    ),
+    ApplyPatchExecutionError,
+  );
+  assert.equal(await readFile(join(originalParentPath, "source.txt"), "utf8"), "before\n");
+  assert.equal(await readFile(join(alternateParentPath, "source.txt"), "utf8"), "before\n");
+
+  const targetPath = join(cwd, "route-target.txt");
+  const sourceLinkPath = join(cwd, "route-source-link.txt");
+  const originalSourceLinkPath = join(cwd, "route-source-link-original.txt");
+  await writeFile(targetPath, "before\n");
+  await symlink("route-target.txt", sourceLinkPath);
+  await assert.rejects(
+    applyPatch(
+      cwd,
+      patch("*** Update File: route-source-link.txt\n@@\n-before\n+after\n"),
+      undefined,
+      {
+        async onExecutionStart() {
+          await rename(sourceLinkPath, originalSourceLinkPath);
+          await symlink("route-target.txt", sourceLinkPath);
+        },
+      },
+    ),
+    ApplyPatchExecutionError,
+  );
+  assert.equal(await readFile(targetPath, "utf8"), "before\n");
+
+  const replacedTargetPath = join(cwd, "replaced-route-target.txt");
+  const originalTargetPath = join(cwd, "replaced-route-target-original.txt");
+  const targetLinkPath = join(cwd, "replaced-route-link.txt");
+  await writeFile(replacedTargetPath, "before\n");
+  await symlink("replaced-route-target.txt", targetLinkPath);
+  await assert.rejects(
+    applyPatch(
+      cwd,
+      patch("*** Update File: replaced-route-link.txt\n@@\n-before\n+after\n"),
+      undefined,
+      {
+        async onExecutionStart() {
+          await rename(replacedTargetPath, originalTargetPath);
+          await writeFile(replacedTargetPath, "before\n");
+        },
+      },
+    ),
+    ApplyPatchExecutionError,
+  );
+  assert.equal(await readFile(replacedTargetPath, "utf8"), "before\n");
+  assert.equal(await readFile(originalTargetPath, "utf8"), "before\n");
+});
+
+test("binds an in-place write to the validated inode across a final pathname swap", async (t) => {
+  const cwd = await workspace(t);
+  const sourcePath = join(cwd, "bound-source.txt");
+  const originalPath = join(cwd, "bound-original.txt");
+  const collateralPath = join(cwd, "bound-collateral.txt");
+  await writeFile(sourcePath, "before\n");
+  await writeFile(collateralPath, "before\n");
+
+  await assert.rejects(
+    applyPatch(cwd, patch("*** Update File: bound-source.txt\n@@\n-before\n+after\n"), undefined, {
+      filesystem: {
+        async writeFile(target, data, options) {
+          if (isFileHandle(target)) {
+            await rename(sourcePath, originalPath);
+            await link(collateralPath, sourcePath);
+          }
+          await writeFile(target, data, options);
+        },
+      },
+    }),
+    ApplyPatchExecutionError,
+  );
+
+  assert.equal(await readFile(originalPath, "utf8"), "after\n");
+  assert.equal(await readFile(sourcePath, "utf8"), "before\n");
+  assert.equal(await readFile(collateralPath, "utf8"), "before\n");
+});
+
+test("updates a file created with planned parents using its committed identity", async (t) => {
+  const cwd = await workspace(t);
+  await applyPatch(
+    cwd,
+    patch(
+      "*** Add File: planned-parent/source.txt\n+before\n",
+      "*** Update File: planned-parent/source.txt\n@@\n-before\n+after\n",
+    ),
+  );
+  assert.equal(await readFile(join(cwd, "planned-parent", "source.txt"), "utf8"), "after\n");
 });
 
 test("renders opaque moves as path-only structured history", async (t) => {

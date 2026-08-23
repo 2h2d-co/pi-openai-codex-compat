@@ -2,9 +2,11 @@ import type {
   chmod,
   copyFile,
   mkdir,
+  open,
   readdir,
   readlink,
   rename,
+  stat,
   symlink,
   unlink,
   utimes,
@@ -78,10 +80,12 @@ export type ApplyPatchExecutionFilesystem = {
   copyFile: typeof copyFile;
   lstat: (path: string) => Promise<Stats>;
   mkdir: typeof mkdir;
+  open: typeof open;
   readFile: (path: string) => Promise<Buffer>;
   readlink: typeof readlink;
   readdir: typeof readdir;
   rename: typeof rename;
+  stat: typeof stat;
   symlink: typeof symlink;
   unlink: typeof unlink;
   utimes: typeof utimes;

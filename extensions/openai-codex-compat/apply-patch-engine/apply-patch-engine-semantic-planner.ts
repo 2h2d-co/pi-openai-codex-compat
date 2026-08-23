@@ -21,8 +21,10 @@ import {
   fingerprint,
   samePhysicalEntry,
   type ContentCell,
+  type InPlaceWritePlan,
   type ParentPlan,
   type PlannedEntryMutation,
+  type PlannedPhysicalLinkDelta,
   type PhysicalFileState,
   type PlannedMutation,
   type SemanticPlan,
@@ -333,6 +335,101 @@ export class SemanticPlanner {
     return {
       ...entry,
       content,
+    };
+  }
+
+  private physicalLinkDeltas(
+    changes: ReadonlyArray<{ entry: VirtualEntry; delta: number }>,
+  ): PlannedPhysicalLinkDelta[] {
+    const deltas = new Map<string, PlannedPhysicalLinkDelta>();
+    for (const { entry, delta } of changes) {
+      if (
+        delta === 0 ||
+        (entry.kind !== "regular" && entry.kind !== "symlink") ||
+        !entry.fingerprint
+      ) {
+        continue;
+      }
+      const key = `${entry.fingerprint.device}:${entry.fingerprint.inode}`;
+      const existing = deltas.get(key);
+      if (existing) {
+        existing.delta += delta;
+      } else {
+        deltas.set(key, { fingerprint: entry.fingerprint, delta });
+      }
+    }
+    return [...deltas.values()].filter(({ delta }) => delta !== 0);
+  }
+
+  private async parentEntryMutations(parents: ParentPlan): Promise<PlannedEntryMutation[]> {
+    return Promise.all(
+      parents.createdPaths.map(async (path) => ({
+        path,
+        key: await this.pathKey(path),
+        kind: "directory" as const,
+      })),
+    );
+  }
+
+  private ancestorPaths(path: string): string[] {
+    const root = parse(path).root;
+    const ancestors = [root];
+    let current = dirname(path);
+    const tail: string[] = [];
+    while (current !== root) {
+      tail.push(current);
+      current = dirname(current);
+    }
+    ancestors.push(...tail.toReversed());
+    return ancestors;
+  }
+
+  private async inPlaceWritePlan(path: string): Promise<InPlaceWritePlan> {
+    const route: InPlaceWritePlan["route"] = [];
+    const seenRoutePaths = new Set<string>();
+    const appendRouteEntry = async (routePath: string, entry: VirtualEntry): Promise<void> => {
+      if (seenRoutePaths.has(routePath)) return;
+      if (entry.kind !== "directory" && entry.kind !== "symlink") {
+        throw new Error(`Failed to resolve the write route for ${path} at ${routePath}`);
+      }
+      seenRoutePaths.add(routePath);
+      route.push({
+        path: routePath,
+        key: await this.pathKey(routePath),
+        expected: this.snapshot(entry),
+      });
+    };
+    const appendAncestors = async (targetPath: string): Promise<void> => {
+      for (const ancestor of this.ancestorPaths(targetPath)) {
+        await appendRouteEntry(ancestor, await this.stateAt(ancestor));
+      }
+    };
+
+    await appendAncestors(path);
+    let targetPath = path;
+    let target = await this.stateAt(targetPath);
+    const visitedSymlinks = new Set<string>();
+    while (target.kind === "symlink") {
+      const key = await this.pathKey(targetPath);
+      if (visitedSymlinks.has(key)) {
+        throw new Error(`Failed to resolve the write route for ${path}: symlink cycle`);
+      }
+      visitedSymlinks.add(key);
+      await appendRouteEntry(targetPath, target);
+      targetPath = target.targetPath;
+      await appendAncestors(targetPath);
+      target = await this.stateAt(targetPath);
+    }
+    if (target.kind !== "regular") {
+      throw new Error(`Failed to resolve the regular-file write target for ${path}`);
+    }
+    const expectedTarget = this.snapshot(target);
+    expectedTarget.content.planned = true;
+    return {
+      route,
+      targetPath,
+      targetKey: await this.pathKey(targetPath),
+      expectedTarget,
     };
   }
 
@@ -834,9 +931,6 @@ export class SemanticPlanner {
       key: targetKey,
       kind: "regular",
     };
-    if ((target.kind === "regular" || target.kind === "symlink") && target.fingerprint) {
-      entryMutation.releasedFingerprint = target.fingerprint;
-    }
     const mutation: Extract<PlannedMutation, { kind: "add" }> = {
       instructionIndex,
       kind: "add",
@@ -845,7 +939,8 @@ export class SemanticPlanner {
       parents,
       content,
       targetKey,
-      entryMutations: [entryMutation],
+      entryMutations: [...(await this.parentEntryMutations(parents)), entryMutation],
+      physicalLinkDeltas: this.physicalLinkDeltas([{ entry: target, delta: -1 }]),
       change,
     };
     if (target.kind === "regular" && target.fingerprint) {
@@ -909,7 +1004,6 @@ export class SemanticPlanner {
       key: targetKey,
       kind: "absent",
     };
-    if (target.fingerprint) entryMutation.releasedFingerprint = target.fingerprint;
     this.mutations.push({
       instructionIndex: index,
       kind: "delete",
@@ -917,6 +1011,7 @@ export class SemanticPlanner {
       expectedTarget,
       targetKey,
       entryMutations: [entryMutation],
+      physicalLinkDeltas: this.physicalLinkDeltas([{ entry: target, delta: -1 }]),
       change,
     });
     this.releasePhysicalLink(target);
@@ -999,6 +1094,7 @@ export class SemanticPlanner {
     if (semanticMove === undefined) {
       const expectedSource = this.snapshot(source);
       expectedSource.content.planned = true;
+      const writePlan = await this.inPlaceWritePlan(operation.absolutePath);
       const change: Extract<AppliedPatchChange, { kind: "update" }> = {
         kind: "update",
         path: operation.path,
@@ -1011,11 +1107,19 @@ export class SemanticPlanner {
         kind: "text-update",
         moveMode: "none",
         operation,
+        writePlan,
         expectedSource,
         parents: { createdPaths: [], expectations: [] },
         content,
         sourceKey,
-        entryMutations: [],
+        entryMutations: [
+          {
+            path: writePlan.targetPath,
+            key: writePlan.targetKey,
+            kind: "regular",
+          },
+        ],
+        physicalLinkDeltas: [],
         change,
       });
       source.content.value = { bytes: content, text: newContent };
@@ -1060,7 +1164,6 @@ export class SemanticPlanner {
         key: destinationKey,
         kind: "regular",
       };
-      if (source.fingerprint) entryMutation.releasedFingerprint = source.fingerprint;
       const mutation: Extract<PlannedMutation, { kind: "text-update" }> = {
         instructionIndex,
         kind: "text-update",
@@ -1074,6 +1177,7 @@ export class SemanticPlanner {
         destinationKey,
         sameEntryMove,
         entryMutations: [entryMutation],
+        physicalLinkDeltas: this.physicalLinkDeltas([{ entry: source, delta: -1 }]),
         change,
         provisionalChange: {
           kind: "update",
@@ -1149,18 +1253,11 @@ export class SemanticPlanner {
       key: sourceKey,
       kind: "absent",
     };
-    if (source.fingerprint) sourceEntryMutation.releasedFingerprint = source.fingerprint;
     const destinationEntryMutation: PlannedEntryMutation = {
       path: destinationPath,
       key: destinationKey,
       kind: "regular",
     };
-    if (
-      (destination.kind === "regular" || destination.kind === "symlink") &&
-      destination.fingerprint
-    ) {
-      destinationEntryMutation.releasedFingerprint = destination.fingerprint;
-    }
     const mutation: Extract<PlannedMutation, { kind: "text-update" }> = {
       instructionIndex,
       kind: "text-update",
@@ -1172,7 +1269,15 @@ export class SemanticPlanner {
       content,
       sourceKey,
       destinationKey,
-      entryMutations: [sourceEntryMutation, destinationEntryMutation],
+      entryMutations: [
+        ...(await this.parentEntryMutations(parents)),
+        sourceEntryMutation,
+        destinationEntryMutation,
+      ],
+      physicalLinkDeltas: this.physicalLinkDeltas([
+        { entry: source, delta: -1 },
+        { entry: destination, delta: -1 },
+      ]),
       change,
       provisionalChange,
     };
@@ -1258,6 +1363,7 @@ export class SemanticPlanner {
               kind: expectedSource.kind,
             },
           ],
+          physicalLinkDeltas: [],
           change,
         });
         await this.setState(destinationPath, { ...source, entryPath: destinationPath });
@@ -1330,17 +1436,24 @@ export class SemanticPlanner {
       key: sourceKey,
       kind: "absent",
     };
-    if (source.fingerprint) sourceEntryMutation.releasedFingerprint = source.fingerprint;
     const destinationEntryMutation: PlannedEntryMutation = {
       path: destinationPath,
       key: destinationKey,
       kind: expectedSource.kind === "regular" ? "regular" : "symlink",
     };
-    if (
+    const sourceAndDestinationShareInode =
       (expectedDestination.kind === "regular" || expectedDestination.kind === "symlink") &&
-      expectedDestination.fingerprint
-    ) {
-      destinationEntryMutation.releasedFingerprint = expectedDestination.fingerprint;
+      source.fingerprint !== undefined &&
+      expectedDestination.fingerprint !== undefined &&
+      samePhysicalEntry(source.fingerprint, expectedDestination.fingerprint);
+    const physicalLinkChanges: Array<{ entry: VirtualEntry; delta: number }> = [];
+    if (moveStrategy === "copy-unlink") {
+      physicalLinkChanges.push({ entry: source, delta: -1 });
+      physicalLinkChanges.push({ entry: expectedDestination, delta: -1 });
+    } else if (sourceAndDestinationShareInode) {
+      physicalLinkChanges.push({ entry: source, delta: -1 });
+    } else {
+      physicalLinkChanges.push({ entry: expectedDestination, delta: -1 });
     }
     this.mutations.push({
       instructionIndex,
@@ -1352,7 +1465,12 @@ export class SemanticPlanner {
       sourceKey,
       destinationKey,
       moveStrategy,
-      entryMutations: [sourceEntryMutation, destinationEntryMutation],
+      entryMutations: [
+        ...(await this.parentEntryMutations(parents)),
+        sourceEntryMutation,
+        destinationEntryMutation,
+      ],
+      physicalLinkDeltas: this.physicalLinkDeltas(physicalLinkChanges),
       change,
     });
     this.releasePhysicalLink(expectedDestination);
