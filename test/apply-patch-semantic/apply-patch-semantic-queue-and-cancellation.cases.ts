@@ -1,4 +1,8 @@
 import {
+  canonicalMutationQueuePaths,
+  type CanonicalMutationQueuePathOperations,
+} from "../../extensions/openai-codex-compat/apply-patch-engine/apply-patch-engine-mutation-queue.ts";
+import {
   assert,
   chmod,
   link,
@@ -23,7 +27,57 @@ import {
   assertMissing,
   patch,
   deferred,
+  filesystemError,
 } from "./apply-patch-semantic-harness.ts";
+
+test("keeps canonical queue-path helper failures inside their intended scopes", async () => {
+  const fallbackOperations: CanonicalMutationQueuePathOperations = {
+    async lstat() {
+      return { isSymbolicLink: () => true };
+    },
+    async realpath() {
+      return "/canonical/target.txt";
+    },
+    async realpathWithMissingTail() {
+      throw new Error("missing-tail fallback should not run");
+    },
+    async symlinkEntryQueuePath() {
+      throw filesystemError("ENOENT", "symlink entry disappeared");
+    },
+  };
+  assert.deepEqual(
+    await canonicalMutationQueuePaths(
+      [{ path: "/requested/target.txt", followSymlink: false }],
+      fallbackOperations,
+    ),
+    ["/canonical/target.txt"],
+  );
+
+  const primaryError = filesystemError("EACCES", "primary realpath failure");
+  let lstatCalls = 0;
+  const authoritativeErrorOperations: CanonicalMutationQueuePathOperations = {
+    async lstat() {
+      lstatCalls += 1;
+      return { isSymbolicLink: () => lstatCalls === 2 };
+    },
+    async realpath() {
+      throw primaryError;
+    },
+    async realpathWithMissingTail() {
+      throw new Error("missing-tail fallback should not run");
+    },
+    async symlinkEntryQueuePath() {
+      throw filesystemError("EIO", "secondary symlink-path failure");
+    },
+  };
+  await assert.rejects(
+    canonicalMutationQueuePaths(
+      [{ path: "/requested/target.txt", followSymlink: false }],
+      authoritativeErrorOperations,
+    ),
+    (error: unknown) => error === primaryError,
+  );
+});
 
 test("does not expose missing previous-content history to the model", async (t) => {
   const cwd = await workspace(t);

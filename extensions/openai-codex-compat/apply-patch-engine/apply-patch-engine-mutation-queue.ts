@@ -102,6 +102,13 @@ export type MutationQueueTarget = {
   followSymlink: boolean;
 };
 
+export type CanonicalMutationQueuePathOperations = {
+  lstat: (path: string) => Promise<{ isSymbolicLink: () => boolean }>;
+  realpath: (path: string) => Promise<string>;
+  realpathWithMissingTail: (path: string) => Promise<string>;
+  symlinkEntryQueuePath: (path: string) => Promise<string>;
+};
+
 export function mutationQueueTargets(
   operations: readonly ResolvedOperation[],
 ): MutationQueueTarget[] {
@@ -154,28 +161,36 @@ export async function symlinkEntryQueuePath(path: string): Promise<string> {
   return join(parent, ".apply-patch-entry-locks", normalizedAliasName(basename(path)));
 }
 
+const canonicalMutationQueuePathOperations: CanonicalMutationQueuePathOperations = {
+  lstat,
+  realpath,
+  realpathWithMissingTail,
+  symlinkEntryQueuePath,
+};
+
 export async function canonicalMutationQueuePaths(
   targets: readonly MutationQueueTarget[],
+  operations = canonicalMutationQueuePathOperations,
 ): Promise<string[]> {
   const canonicalPaths = await Promise.all(
     targets.map(async ({ path, followSymlink }) => {
       try {
-        const metadata = await lstat(path);
+        const metadata = await operations.lstat(path);
         if (metadata.isSymbolicLink() && !followSymlink) {
-          return await symlinkEntryQueuePath(path);
+          return await operations.symlinkEntryQueuePath(path);
         }
       } catch (error) {
         if (!isNotFound(error) && !hasErrorCode(error, "ENOTDIR")) throw error;
       }
       try {
-        return await realpath(path);
+        return await operations.realpath(path);
       } catch (error) {
         if (isNotFound(error) || hasErrorCode(error, "ENOTDIR")) {
-          return realpathWithMissingTail(path);
+          return operations.realpathWithMissingTail(path);
         }
         try {
-          if ((await lstat(path)).isSymbolicLink()) {
-            return await symlinkEntryQueuePath(path);
+          if ((await operations.lstat(path)).isSymbolicLink()) {
+            return await operations.symlinkEntryQueuePath(path);
           }
         } catch {} // oxlint-disable-line preserve-caught-error -- This secondary probe only selects a more precise queue path; the original realpath failure remains authoritative.
         throw error;

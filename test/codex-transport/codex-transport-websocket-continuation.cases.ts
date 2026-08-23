@@ -126,6 +126,35 @@ test("prewarms the first WebSocket request and generates from its continuation",
   transport.close("prewarm-session");
 });
 
+test("reports structured diagnostics when prewarming fails", async () => {
+  const diagnostics: CodexTransportDiagnostic[] = [];
+  const transport = new CodexTransport();
+  const failure = transport.prewarm(
+    codexModel(),
+    { model: "gpt-test", input: [] },
+    {
+      apiKey: "",
+      sessionId: "failed-prewarm-session",
+      transport: "websocket-cached",
+      onTransportDiagnostic(diagnostic) {
+        diagnostics.push(diagnostic);
+      },
+    },
+  );
+
+  await assert.rejects(failure, /No API key for provider: openai-codex/u);
+  const diagnostic = diagnostics.at(-1);
+  assert.equal(diagnostic?.type, "codex_transport_prewarm");
+  if (diagnostic?.type !== "codex_transport_prewarm") {
+    assert.fail("Expected a prewarm diagnostic.");
+  }
+  assert.equal(diagnostic.details.outcome, "failed");
+  assert.equal(diagnostic.details.continuationReady, false);
+  assert.equal(diagnostic.details.error?.name, "Error");
+  assert.equal(diagnostic.details.error?.message, "No API key for provider: openai-codex");
+  assert.equal(typeof diagnostic.details.error?.stack, "string");
+});
+
 test("does not treat incomplete WebSocket responses as completed continuation state", async (t) => {
   const previousWebSocket = globalThis.WebSocket;
   const sentBodies: JsonRecord[] = [];
