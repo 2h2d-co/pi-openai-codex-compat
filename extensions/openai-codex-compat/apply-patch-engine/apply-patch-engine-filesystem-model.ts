@@ -60,6 +60,7 @@ export type VirtualEntry =
       kind: "regular";
       id: string;
       entryPath: string;
+      entryName: string;
       sourcePath?: string;
       fingerprint?: EntryFingerprint;
       content: ContentCell;
@@ -69,6 +70,7 @@ export type VirtualEntry =
       kind: "symlink";
       id: string;
       entryPath: string;
+      entryName: string;
       sourcePath?: string;
       fingerprint?: EntryFingerprint;
       target: string;

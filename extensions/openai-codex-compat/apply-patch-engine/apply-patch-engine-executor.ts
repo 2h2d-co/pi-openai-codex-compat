@@ -1,6 +1,6 @@
 import { constants } from "node:fs";
 import { lstat, readFile, readlink, stat } from "node:fs/promises";
-import { dirname, resolve } from "node:path";
+import { basename, dirname, resolve } from "node:path";
 import { deriveNewContent, type UpdateChunk } from "../apply-patch-matcher.ts";
 import type {
   ApplyPatchDetails,
@@ -64,6 +64,7 @@ export async function currentEntry(path: string): Promise<VirtualEntry> {
         kind: "regular",
         id: "",
         entryPath: path,
+        entryName: basename(path),
         fingerprint: entryFingerprint,
         content: { planned: false },
       };
@@ -74,6 +75,7 @@ export async function currentEntry(path: string): Promise<VirtualEntry> {
         kind: "symlink",
         id: "",
         entryPath: path,
+        entryName: basename(path),
         fingerprint: entryFingerprint,
         target,
         targetPath: resolve(dirname(path), target),

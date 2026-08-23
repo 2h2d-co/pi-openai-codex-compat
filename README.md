@@ -302,6 +302,9 @@ Compatibility behavior:
 - Move identity and context chunks must match before the entry is moved; chunkless moves remain byte-opaque.
 - The parser accepts Codex's lenient marker whitespace, blank update-context lines, and direct heredoc wrappers.
 - Empty and identity updates, identical adds, absent deletes, self-moves, and same-patch fulfilled moves succeed with concise `NO CHANGE` results. Inapplicable operations are `SKIPPED` only when later operations deterministically make every effect unobservable.
+- Repeated identical adds use source-ordered virtual content and exact
+  spelling, so an earlier add or move can satisfy a later add without a
+  redundant replacement.
 - State-dependent `NO CHANGE` results are revalidated in source order before
   success. Stale assertions fail rather than becoming unplanned mutations;
   empty updates, identity updates without moves, and chunkless lexical

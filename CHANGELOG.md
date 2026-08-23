@@ -4,6 +4,9 @@
 
 ### Fixed
 
+- Classify repeated identical `apply_patch` adds from source-ordered virtual
+  content and exact spelling, avoiding redundant replacements after earlier
+  adds or moves while preserving case, Unicode, and symlink-parent identity.
 - Revalidate state-dependent `apply_patch` no-change results in source order,
   failing stale identical adds, absent deletes, unchanged updates, same-entry
   moves, and fulfilled moves without promoting them into unplanned mutations.

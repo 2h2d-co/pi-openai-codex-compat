@@ -12,7 +12,6 @@ import type {
 } from "./apply-patch-engine-contracts.ts";
 import { diffDetails } from "./apply-patch-engine-details.ts";
 import { errorMessage, isNotFound, throwIfAborted } from "./apply-patch-engine-errors.ts";
-import { requestedSpellingExists } from "./apply-patch-engine-filesystem-mutations.ts";
 import {
   ABSENT_ENTRY,
   UTF8_DECODER,
@@ -267,6 +266,7 @@ export class SemanticPlanner {
           kind: "regular",
           id: this.newEntryId(),
           entryPath: path,
+          entryName: basename(key),
           sourcePath: path,
           fingerprint: entryFingerprint,
           content: file.content,
@@ -278,6 +278,7 @@ export class SemanticPlanner {
           kind: "symlink",
           id: this.newEntryId(),
           entryPath: path,
+          entryName: basename(key),
           sourcePath: path,
           fingerprint: entryFingerprint,
           target,
@@ -909,7 +910,7 @@ export class SemanticPlanner {
       try {
         if (
           buffersEqual(await this.readBytes(target, operation.absolutePath), content) &&
-          (await requestedSpellingExists(operation.absolutePath))
+          target.entryName === basename(operation.absolutePath)
         ) {
           this.markNoOp(instructionIndex, "content-already-present");
           this.addNoChangeAssertion({
@@ -969,6 +970,7 @@ export class SemanticPlanner {
       kind: "regular",
       id: this.newEntryId(),
       entryPath: operation.absolutePath,
+      entryName: basename(operation.absolutePath),
       physical: this.newPhysicalFile(),
       content: {
         value: { bytes: content, text: operation.content },
@@ -1167,6 +1169,7 @@ export class SemanticPlanner {
           kind: "regular",
           id: this.newEntryId(),
           entryPath: operation.absolutePath,
+          entryName: source.entryName,
           content: source.content,
         };
         if (source.fingerprint?.linkCount !== 1 && source.sourcePath !== undefined) {
@@ -1230,6 +1233,7 @@ export class SemanticPlanner {
         kind: "regular",
         id: this.newEntryId(),
         entryPath: destinationPath,
+        entryName: basename(destinationPath),
         physical: this.newPhysicalFile(),
         content: {
           value: { bytes: content, text: newContent },
@@ -1326,6 +1330,7 @@ export class SemanticPlanner {
       kind: "regular",
       id: this.newEntryId(),
       entryPath: destinationPath,
+      entryName: basename(destinationPath),
       physical: this.newPhysicalFile(),
       content: {
         value: { bytes: content, text: newContent },
@@ -1412,7 +1417,11 @@ export class SemanticPlanner {
           physicalLinkDeltas: [],
           change,
         });
-        await this.setState(destinationPath, { ...source, entryPath: destinationPath });
+        await this.setState(destinationPath, {
+          ...source,
+          entryPath: destinationPath,
+          entryName: basename(destinationPath),
+        });
         return;
       }
       this.markNoOp(instructionIndex, "same-entry-move");
@@ -1543,6 +1552,7 @@ export class SemanticPlanner {
         kind: "regular",
         id: this.newEntryId(),
         entryPath: destinationPath,
+        entryName: basename(destinationPath),
         sourcePath: source.sourcePath ?? source.entryPath,
         content,
         physical: this.newPhysicalFile(),
@@ -1552,6 +1562,7 @@ export class SemanticPlanner {
         kind: "symlink",
         id: this.newEntryId(),
         entryPath: destinationPath,
+        entryName: basename(destinationPath),
         target: source.target,
         targetPath: resolve(dirname(destinationPath), source.target),
         content: { planned: false },
@@ -1561,13 +1572,18 @@ export class SemanticPlanner {
         kind: "symlink",
         id: source.id,
         entryPath: destinationPath,
+        entryName: basename(destinationPath),
         target: source.target,
         targetPath: resolve(dirname(destinationPath), source.target),
         content: { planned: false },
       };
       if (source.fingerprint) resultingEntry.fingerprint = source.fingerprint;
     } else {
-      resultingEntry = { ...source, entryPath: destinationPath };
+      resultingEntry = {
+        ...source,
+        entryPath: destinationPath,
+        entryName: basename(destinationPath),
+      };
     }
     await this.setState(destinationPath, resultingEntry);
     this.fulfilledMoves.set(sourceKey, {

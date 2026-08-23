@@ -1,5 +1,6 @@
 import "./apply-patch-semantic/apply-patch-semantic-diagnostics.cases.ts";
 import "./apply-patch-semantic/apply-patch-semantic-no-change-revalidation.cases.ts";
+import "./apply-patch-semantic/apply-patch-semantic-virtual-add-state.cases.ts";
 import "./apply-patch-semantic/apply-patch-semantic-virtual-state.cases.ts";
 import "./apply-patch-semantic/apply-patch-semantic-link-identity.cases.ts";
 import "./apply-patch-semantic/apply-patch-semantic-execution-failures.cases.ts";

@@ -214,6 +214,10 @@ spelling.
 - If `P` already contains exactly the requested bytes, the operation is a
   no-op only when `P` is already a regular file at the requested exact
   spelling. This no-op does not break an existing hard-link relationship.
+- Content and exact spelling are evaluated against source-ordered virtual
+  state. An identical add after an earlier instruction established the same
+  regular file is a no-op; live pre-execution spelling MUST NOT override that
+  virtual result.
 - If `P` is absent, it is created along with missing parent directories.
 - If `P` is an existing regular file with different bytes, only the named
   directory entry is replaced by an independent regular file. Other hard links
@@ -222,7 +226,8 @@ spelling.
 - If `P` is a symlink, including a dangling link, the link entry is
   replaced by a regular file without writing through the symlink.
 - If a case- or Unicode-normalized alias of `P` exists, that entry is replaced
-  and the exact spelling requested by the add is established.
+  and the exact spelling requested by the add is established. A later
+  identical add is a no-op only when it requests that established spelling.
 - If `P` is a directory or another unsupported special entry, reject.
 - The operation does not semantically depend on previous file content, even
   though rendering or history code may inspect it.

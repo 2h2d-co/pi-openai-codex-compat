@@ -158,15 +158,6 @@ export async function exactSpellingExists(
   }
 }
 
-export async function requestedSpellingExists(path: string): Promise<boolean> {
-  try {
-    return (await readdir(dirname(path))).includes(basename(path));
-  } catch (cause) {
-    if (isNotFound(cause)) return false;
-    throw new Error(`Failed to inspect the spelling of ${path}`, { cause });
-  }
-}
-
 export async function finishSameInodeRename(
   sourcePath: string,
   destinationPath: string,

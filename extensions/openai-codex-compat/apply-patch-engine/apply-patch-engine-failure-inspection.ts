@@ -1,4 +1,4 @@
-import { dirname, resolve } from "node:path";
+import { basename, dirname, resolve } from "node:path";
 import type {
   ApplyPatchExecutionFilesystem,
   ApplyPatchFileEntryDetails,
@@ -116,6 +116,7 @@ export async function currentExecutionEntry(
         kind: "regular",
         id: "",
         entryPath: path,
+        entryName: basename(path),
         fingerprint: entryFingerprint,
         content: { planned: false },
       };
@@ -126,6 +127,7 @@ export async function currentExecutionEntry(
         kind: "symlink",
         id: "",
         entryPath: path,
+        entryName: basename(path),
         fingerprint: entryFingerprint,
         target,
         targetPath: resolve(dirname(path), target),
