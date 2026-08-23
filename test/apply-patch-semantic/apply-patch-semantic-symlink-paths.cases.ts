@@ -148,6 +148,29 @@ test("shares virtual state through a symlinked parent without moving the entry t
   assert.deepEqual(await readdir(join(cwd, "real")), ["file.txt"]);
 });
 
+test("routes later operations through a symlink parent moved earlier in the patch", async (t) => {
+  const cwd = await workspace(t);
+  await mkdir(join(cwd, "real"));
+  await writeFile(join(cwd, "real", "existing.txt"), "before\n");
+  await symlink("real", join(cwd, "alias"));
+
+  await applyPatch(
+    cwd,
+    patch(
+      "*** Update File: alias\n*** Move to: moved-alias\n",
+      "*** Update File: moved-alias/existing.txt\n@@\n-before\n+middle\n",
+      "*** Update File: real/existing.txt\n@@\n-middle\n+after\n",
+      "*** Add File: moved-alias/created.txt\n+created\n",
+      "*** Update File: real/created.txt\n@@\n-created\n+final\n",
+    ),
+  );
+
+  await assertMissing(join(cwd, "alias"));
+  assert.equal(await readlink(join(cwd, "moved-alias")), "real");
+  assert.equal(await readFile(join(cwd, "real", "existing.txt"), "utf8"), "after\n");
+  assert.equal(await readFile(join(cwd, "moved-alias", "created.txt"), "utf8"), "final\n");
+});
+
 test("updates same-entry moves safely through a symlinked parent", async (t) => {
   const cwd = await workspace(t);
   await mkdir(join(cwd, "real"));

@@ -7,6 +7,9 @@
 - Preserve regular-file permission modes across sequential `apply_patch`
   replacements and state-changing moves, including files created by earlier
   instructions in the same patch.
+- Resolve descendants through symlink parents established by earlier
+  instructions, keeping subsequent aliased operations in one virtual
+  filesystem state.
 - Verify the complete final byte buffer after `apply_patch` adds and text
   updates, so requested bytes appearing in a duplicate or unrelated region
   cannot satisfy the result postcondition.

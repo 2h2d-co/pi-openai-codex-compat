@@ -1,5 +1,5 @@
-import { lstat, readFile, readdir, readlink, realpath, stat } from "node:fs/promises";
-import { basename, dirname, join, parse, resolve } from "node:path";
+import { lstat, readFile, readdir, readlink, realpath } from "node:fs/promises";
+import { basename, dirname, isAbsolute, join, parse, relative, resolve, sep } from "node:path";
 import { deriveNewContent } from "../apply-patch-matcher.ts";
 import type {
   AppliedPatchChange,
@@ -80,6 +80,7 @@ export class SemanticPlanner {
   private readonly signal: AbortSignal | undefined;
   private readonly selectMoveStrategy: ApplyPatchExecutionHooks["selectMoveStrategy"] | undefined;
   private readonly pathKeys = new Map<string, string>();
+  private readonly inspectionPaths = new Map<string, string>();
   private readonly caseInsensitiveDirectories = new Map<string, Promise<boolean>>();
 
   constructor(
@@ -190,9 +191,69 @@ export class SemanticPlanner {
     return namesAlias(directory, left, right, this.caseInsensitiveDirectories);
   }
 
-  private async pathKey(path: string): Promise<string> {
+  private pathIsDescendant(parent: string, candidate: string): boolean {
+    const relation = relative(parent, candidate);
+    return (
+      relation !== "" &&
+      relation !== ".." &&
+      !relation.startsWith(`..${sep}`) &&
+      !isAbsolute(relation)
+    );
+  }
+
+  private invalidateDescendantPathIdentities(path: string, key: string): void {
+    for (const [candidatePath, candidateKey] of this.pathKeys) {
+      if (this.pathIsDescendant(path, candidatePath) || this.pathIsDescendant(key, candidateKey)) {
+        this.pathKeys.delete(candidatePath);
+        this.inspectionPaths.delete(candidatePath);
+      }
+    }
+  }
+
+  private async virtualParentTargetPath(
+    path: string,
+    resolving: Set<string>,
+  ): Promise<string | undefined> {
+    const root = parse(path).root;
+    let parent = dirname(path);
+    while (parent !== root) {
+      const parentKey = await this.pathKey(parent, resolving);
+      const entry = this.states.get(parentKey);
+      if (entry?.kind === "symlink") {
+        return resolve(entry.targetPath, relative(parent, path));
+      }
+      parent = dirname(parent);
+    }
+    return undefined;
+  }
+
+  private async pathKey(path: string, resolving = new Set<string>()): Promise<string> {
     const known = this.pathKeys.get(path);
     if (known) return known;
+    if (resolving.has(path)) {
+      throw new Error(`Failed to resolve ${path}: symlink cycle`);
+    }
+    resolving.add(path);
+    try {
+      const virtualTargetPath = await this.virtualParentTargetPath(path, resolving);
+      if (virtualTargetPath) {
+        const key = await this.pathKey(virtualTargetPath, resolving);
+        this.pathKeys.set(path, key);
+        this.inspectionPaths.set(
+          path,
+          this.inspectionPaths.get(virtualTargetPath) ?? virtualTargetPath,
+        );
+        return key;
+      }
+      const key = await this.filesystemPathKey(path);
+      this.inspectionPaths.set(path, path);
+      return key;
+    } finally {
+      resolving.delete(path);
+    }
+  }
+
+  private async filesystemPathKey(path: string): Promise<string> {
     const parent = await realpathWithMissingTail(dirname(path));
     const requestedName = basename(path);
     let actualName = requestedName;
@@ -224,6 +285,7 @@ export class SemanticPlanner {
           (await this.namesAlias(parent, basename(knownPath), requestedName))
         ) {
           this.pathKeys.set(path, knownKey);
+          this.inspectionPaths.set(path, this.inspectionPaths.get(knownPath) ?? path);
           return knownKey;
         }
       }
@@ -237,10 +299,11 @@ export class SemanticPlanner {
     const key = await this.pathKey(path);
     const known = this.states.get(key);
     if (known) return known;
+    const inspectionPath = this.inspectionPaths.get(path) ?? path;
 
     let result: VirtualEntry;
     try {
-      const metadata = await lstat(path);
+      const metadata = await lstat(inspectionPath);
       const entryFingerprint = fingerprint(metadata);
       if (metadata.isFile()) {
         const physicalKey = `${metadata.dev}:${metadata.ino}`;
@@ -257,22 +320,22 @@ export class SemanticPlanner {
           id: this.newEntryId(),
           entryPath: path,
           entryName: basename(key),
-          sourcePath: path,
+          sourcePath: inspectionPath,
           fingerprint: entryFingerprint,
           content: file.content,
           physical: file.physical,
         };
       } else if (metadata.isSymbolicLink()) {
-        const target = await readlink(path);
+        const target = await readlink(inspectionPath);
         result = {
           kind: "symlink",
           id: this.newEntryId(),
           entryPath: path,
           entryName: basename(key),
-          sourcePath: path,
+          sourcePath: inspectionPath,
           fingerprint: entryFingerprint,
           target,
-          targetPath: resolve(dirname(path), target),
+          targetPath: resolve(dirname(inspectionPath), target),
           content: {},
         };
       } else if (metadata.isDirectory()) {
@@ -295,7 +358,9 @@ export class SemanticPlanner {
   }
 
   private async setState(path: string, entry: VirtualEntry): Promise<void> {
-    this.states.set(await this.pathKey(path), entry);
+    const key = await this.pathKey(path);
+    this.states.set(key, entry);
+    this.invalidateDescendantPathIdentities(path, key);
   }
 
   private async sameEntryMoveEffect(
@@ -421,16 +486,8 @@ export class SemanticPlanner {
         break;
       }
       if (entry.kind === "symlink") {
-        try {
-          const metadata = await stat(entry.sourcePath ?? parent);
-          if (metadata.isDirectory()) {
-            break;
-          }
-        } catch (cause) {
-          if (!isNotFound(cause)) {
-            throw new Error(`Failed to inspect parent path ${parent}`, { cause });
-          }
-        }
+        const resolved = await this.resolvedEntryTarget(entry.targetPath);
+        if (resolved?.entry.kind === "directory") break;
       }
       throw new Error(`Cannot create ${targetPath}: parent path ${parent} is not a directory`);
     }
@@ -449,13 +506,10 @@ export class SemanticPlanner {
         return entry.fingerprint.device;
       }
       if (entry.kind === "symlink") {
-        try {
-          const metadata = await stat(entry.sourcePath ?? parent);
-          if (metadata.isDirectory()) return metadata.dev;
-        } catch (cause) {
-          if (!isNotFound(cause)) {
-            throw new Error(`Failed to inspect parent path ${parent}`, { cause });
-          }
+        const resolved = await this.resolvedEntryTarget(entry.targetPath);
+        if (resolved?.entry.kind === "directory") {
+          if (resolved.entry.fingerprint) return resolved.entry.fingerprint.device;
+          parent = resolved.path;
         }
       }
       if (parent === root) {
@@ -472,7 +526,7 @@ export class SemanticPlanner {
     return [operation.absolutePath, operation.moveAbsolutePath];
   }
 
-  private async resolvedTextTarget(
+  private async resolvedEntryTarget(
     path: string,
   ): Promise<{ path: string; entry: VirtualEntry } | undefined> {
     let targetPath = path;
@@ -486,6 +540,12 @@ export class SemanticPlanner {
       target = await this.stateAt(targetPath);
     }
     return { path: targetPath, entry: target };
+  }
+
+  private async resolvedTextTarget(
+    path: string,
+  ): Promise<{ path: string; entry: VirtualEntry } | undefined> {
+    return this.resolvedEntryTarget(path);
   }
 
   private async operationObservesPhysicalEntry(
@@ -710,12 +770,8 @@ export class SemanticPlanner {
     if (destinationParent.kind === "directory") {
       destinationParentsReproduced = true;
     } else if (destinationParent.kind === "symlink") {
-      try {
-        destinationParentsReproduced = (await stat(destinationParent.entryPath)).isDirectory();
-        // oxlint-disable-next-line preserve-caught-error -- A failed parent probe only makes dead-operation proof unavailable; the original planning failure remains authoritative.
-      } catch {
-        return undefined;
-      }
+      destinationParentsReproduced =
+        (await this.resolvedEntryTarget(destinationParent.targetPath))?.entry.kind === "directory";
     }
 
     for (let futureIndex = index + 1; futureIndex < this.operations.length; futureIndex += 1) {
