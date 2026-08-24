@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Added
+
+- Show the current Pi session ID on the compatibility footer's first line.
+
 ### Fixed
 
 - Preserve regular-file permission modes across sequential `apply_patch`

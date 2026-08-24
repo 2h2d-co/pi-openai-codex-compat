@@ -33,7 +33,7 @@ export type FooterContext = ConfigContext &
     };
     sessionManager: Pick<
       ExtensionContext["sessionManager"],
-      "getCwd" | "getEntries" | "getSessionName"
+      "getCwd" | "getEntries" | "getSessionId" | "getSessionName"
     >;
     ui: Pick<ExtensionContext["ui"], "setFooter">;
   };
@@ -85,6 +85,7 @@ interface FooterSessionAdapter {
 }
 
 function footerSession(ctx: FooterContext, resolveConfig: ConfigResolver): FooterSessionAdapter {
+  const sessionManager = ctx.sessionManager;
   return {
     get state() {
       const model = selectedRegistryModel(ctx);
@@ -93,7 +94,15 @@ function footerSession(ctx: FooterContext, resolveConfig: ConfigResolver): Foote
         thinkingLevel: ctx.thinkingLevel ?? "off",
       };
     },
-    sessionManager: ctx.sessionManager,
+    sessionManager: {
+      getEntries: () => sessionManager.getEntries(),
+      getCwd: () => sessionManager.getCwd(),
+      getSessionName: () => {
+        const sessionIdLabel = `session ${sessionManager.getSessionId()}`;
+        const sessionName = sessionManager.getSessionName();
+        return sessionName ? `${sessionName} • ${sessionIdLabel}` : sessionIdLabel;
+      },
+    },
     getContextUsage: () => ctx.getContextUsage(),
     modelRuntime: {
       isUsingOAuth(provider: string) {

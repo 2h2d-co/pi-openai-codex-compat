@@ -13,7 +13,7 @@ OpenAI Codex compatibility for [Pi](https://github.com/earendil-works/pi-mono), 
 - **Hosted web-search fallback**: injects native `web_search` only when `web.run` is inactive, with cached, indexed, or live modes.
 - **Native request controls**: configures Responses API text verbosity, reasoning summaries, and GPT-5.6 standard/pro reasoning mode.
 - **Session-local settings pane**: `/codex-settings` changes every compatibility setting for the current session; `Enter` persists and closes, `Escape` discards unsaved changes and closes, and `Ctrl+S` persists without closing.
-- **Compact footer indicators**: non-default Codex request modes are appended to the model side of Pi's normal second footer line.
+- **Session-aware footer**: shows the current Pi session ID on the first line and appends non-default Codex request modes to the model side of Pi's normal second line.
 
 Pi provides the Codex OAuth flow and model catalog. At session start, this package overrides the built-in `openai-codex` runtime under the same provider id so ordinary responses and remote compaction share one transport, parser, native-history store, and sticky WebSocket session.
 
@@ -165,7 +165,7 @@ A trusted project can override it at:
 
 Each session inherits the effective file-backed settings. Open `/codex-settings` to make immediate session-local changes. Press `Enter` to persist and close, `Escape` to discard unsaved changes and close, or `Ctrl+S` to persist without closing. The global file is the normal save target, while an existing trusted project override remains the target for that project. After `Ctrl+S`, later unsaved changes can still be discarded back to the values from that save.
 
-The effective settings are printed once when a TUI session starts. The footer shows `fast` and `pro` only when enabled, and shows text verbosity or reasoning summary only when they differ from their defaults.
+The effective settings are printed once when a TUI session starts. The footer shows the current Pi session ID alongside the working directory and optional session name. It shows `fast` and `pro` only when enabled, and shows text verbosity or reasoning summary only when they differ from their defaults.
 
 Example:
 

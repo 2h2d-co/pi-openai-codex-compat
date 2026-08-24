@@ -5,7 +5,7 @@ import type { Api, Model } from "@earendil-works/pi-ai";
 import { DEFAULT_CONFIG } from "../extensions/openai-codex-compat/config.ts";
 import { createCodexFooter, type FooterContext } from "../extensions/openai-codex-compat/footer.ts";
 
-test("appends non-default Codex settings to the default second footer line", () => {
+test("shows the Pi session id and appends settings to the default footer", () => {
   initTheme("dark", false);
   const model = {
     id: "gpt-5.6-sol",
@@ -28,7 +28,8 @@ test("appends non-default Codex settings to the default second footer line", () 
     sessionManager: {
       getEntries: () => [],
       getCwd: () => "/workspace",
-      getSessionName: () => undefined,
+      getSessionId: () => "11111111-1111-4111-8111-111111111111",
+      getSessionName: () => "Refactor auth",
     },
     getContextUsage: () => ({ tokens: 0, contextWindow: 100_000, percent: 0 }),
     modelRegistry: {
@@ -68,6 +69,10 @@ test("appends non-default Codex settings to the default second footer line", () 
 
   assert.equal(branchSubscriptions, 0);
   assert.equal(lines.length, 2);
+  assert.match(
+    lines[0] ?? "",
+    /\/workspace • Refactor auth • session 11111111-1111-4111-8111-111111111111/,
+  );
   const settingsLine = lines[1];
   assert.ok(settingsLine);
   assert.match(
