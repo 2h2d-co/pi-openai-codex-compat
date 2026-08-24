@@ -1,7 +1,13 @@
 import { createHash, randomUUID } from "node:crypto";
+import type { Stats } from "node:fs";
 import { chmod, lstat, mkdir, readFile, readlink, rename, rm, writeFile } from "node:fs/promises";
+import { arch, platform, release } from "node:os";
 import { dirname, isAbsolute, join, resolve } from "node:path";
-import { getAgentDir, type ExtensionContext } from "@earendil-works/pi-coding-agent";
+import {
+  getAgentDir,
+  VERSION as PI_VERSION,
+  type ExtensionContext,
+} from "@earendil-works/pi-coding-agent";
 import type {
   ApplyPatchDetails,
   ApplyPatchDiagnosticsReference,
@@ -15,7 +21,7 @@ import { isObject } from "./codex-protocol.ts";
 import { nodeErrorCode } from "./value-contracts.ts";
 
 export const APPLY_PATCH_DIAGNOSTICS_DIRECTORY = "openai-codex-compat-apply-patch-diagnostics";
-export const APPLY_PATCH_DIAGNOSTICS_SCHEMA_VERSION = 1;
+export const APPLY_PATCH_DIAGNOSTICS_SCHEMA_VERSION = 2;
 
 type ApplyPatchDiagnosticsSessionManager = Pick<
   ExtensionContext["sessionManager"],
@@ -32,6 +38,22 @@ type DiagnosticError = {
   message: string;
   stack?: string;
   code?: string;
+  errno?: number | string;
+  syscall?: string;
+  path?: string;
+  destination?: string;
+  cause?: DiagnosticError;
+};
+
+type FilesystemMetadata = {
+  mode: number;
+  modifiedMs: number;
+  size: number;
+  device: number;
+  inode: number;
+  linkCount: number;
+  userId: number;
+  groupId: number;
 };
 
 type SnapshotContent =
@@ -58,23 +80,30 @@ type FileSnapshot = {
   references: SnapshotReference[];
   entry:
     | { kind: "absent" }
-    | { kind: "directory"; mode: number; modifiedMs: number }
-    | {
+    | ({ kind: "directory" } & FilesystemMetadata)
+    | ({
         kind: "regular-file";
-        mode: number;
-        modifiedMs: number;
         content: SnapshotContent;
-      }
-    | {
+      } & FilesystemMetadata)
+    | ({
         kind: "symlink";
-        mode: number;
-        modifiedMs: number;
         target: string;
         resolvedTarget: string;
         content?: SnapshotContent;
         contentError?: DiagnosticError;
-      }
-    | { kind: "unsupported"; mode: number; modifiedMs: number }
+      } & FilesystemMetadata)
+    | ({ kind: "unsupported" } & FilesystemMetadata)
+    | { kind: "inspection-error"; error: DiagnosticError };
+};
+
+type ParentSnapshot = {
+  absolutePath: string;
+  entry:
+    | { kind: "absent" }
+    | ({ kind: "directory" } & FilesystemMetadata)
+    | ({ kind: "regular-file" } & FilesystemMetadata)
+    | ({ kind: "unsupported" } & FilesystemMetadata)
+    | ({ kind: "symlink"; target: string; resolvedTarget: string } & FilesystemMetadata)
     | { kind: "inspection-error"; error: DiagnosticError };
 };
 
@@ -92,13 +121,28 @@ export type PreparedApplyPatchDiagnostics = {
   request: Record<string, unknown> & { snapshots: FileSnapshot[] };
 };
 
-function diagnosticError(error: unknown): DiagnosticError {
+const MAX_ERROR_CAUSE_DEPTH = 8;
+
+function diagnosticError(error: unknown, seen = new Set<unknown>(), depth = 0): DiagnosticError {
+  if (seen.has(error)) {
+    return {
+      name: "CircularErrorCause",
+      message: "Error cause cycle omitted.",
+    };
+  }
+  if (depth >= MAX_ERROR_CAUSE_DEPTH) {
+    return {
+      name: "TruncatedErrorCause",
+      message: `Error cause depth exceeded ${MAX_ERROR_CAUSE_DEPTH}.`,
+    };
+  }
   if (!(error instanceof Error)) {
     return {
       name: "NonErrorThrown",
       message: String(error),
     };
   }
+  seen.add(error);
   const diagnostic: DiagnosticError = {
     name: error.name,
     message: error.message,
@@ -106,7 +150,87 @@ function diagnosticError(error: unknown): DiagnosticError {
   if (error.stack) diagnostic.stack = error.stack;
   const code = nodeErrorCode(error);
   if (code) diagnostic.code = code;
+  const errno: unknown = Reflect.get(error, "errno");
+  if (typeof errno === "number" || typeof errno === "string") diagnostic.errno = errno;
+  for (const [source, target] of [
+    ["syscall", "syscall"],
+    ["path", "path"],
+    ["dest", "destination"],
+  ] as const) {
+    const value: unknown = Reflect.get(error, source);
+    if (typeof value === "string") diagnostic[target] = value;
+  }
+  if (error.cause !== undefined) {
+    diagnostic.cause = diagnosticError(error.cause, seen, depth + 1);
+  }
   return diagnostic;
+}
+
+function filesystemMetadata(metadata: Stats): FilesystemMetadata {
+  return {
+    mode: metadata.mode & 0o7777,
+    modifiedMs: metadata.mtimeMs,
+    size: metadata.size,
+    device: metadata.dev,
+    inode: metadata.ino,
+    linkCount: metadata.nlink,
+    userId: metadata.uid,
+    groupId: metadata.gid,
+  };
+}
+
+type CompatibilityVersionResult = {
+  version: string;
+  error?: DiagnosticError;
+};
+
+let compatibilityVersionPromise: Promise<CompatibilityVersionResult> | undefined;
+
+function compatibilityVersion(): Promise<CompatibilityVersionResult> {
+  compatibilityVersionPromise ??= readFile(new URL("../../package.json", import.meta.url), "utf8")
+    .then((source) => {
+      const manifest: unknown = JSON.parse(source);
+      const version = isObject(manifest) ? manifest["version"] : undefined;
+      return { version: typeof version === "string" ? version : "unknown" };
+    })
+    .catch((error: unknown) => ({
+      version: "unknown",
+      error: diagnosticError(error),
+    }));
+  return compatibilityVersionPromise;
+}
+
+function processMetadata(): Record<string, unknown> {
+  const metadata: Record<string, unknown> = {
+    id: process.pid,
+    workingDirectory: process.cwd(),
+    umask: process.umask(),
+  };
+  for (const [key, value] of [
+    ["userId", typeof process.getuid === "function" ? process.getuid() : undefined],
+    ["effectiveUserId", typeof process.geteuid === "function" ? process.geteuid() : undefined],
+    ["groupId", typeof process.getgid === "function" ? process.getgid() : undefined],
+    ["effectiveGroupId", typeof process.getegid === "function" ? process.getegid() : undefined],
+  ] as const) {
+    if (value !== undefined) metadata[key] = value;
+  }
+  return metadata;
+}
+
+async function runtimeMetadata(): Promise<Record<string, unknown>> {
+  const compatibility = await compatibilityVersion();
+  return {
+    compatibilityVersion: compatibility.version,
+    ...(compatibility.error ? { compatibilityVersionError: compatibility.error } : {}),
+    piVersion: PI_VERSION,
+    nodeVersion: process.version,
+    operatingSystem: {
+      platform: platform(),
+      release: release(),
+      architecture: arch(),
+    },
+    process: processMetadata(),
+  };
 }
 
 function safePathSegment(value: string): string {
@@ -140,15 +264,14 @@ async function fileSnapshot(
 ): Promise<FileSnapshot> {
   try {
     const metadata = await lstat(absolutePath);
-    const mode = metadata.mode & 0o7777;
+    const filesystem = filesystemMetadata(metadata);
     if (metadata.isFile()) {
       return {
         absolutePath,
         references,
         entry: {
           kind: "regular-file",
-          mode,
-          modifiedMs: metadata.mtimeMs,
+          ...filesystem,
           content: snapshotContent(await readFile(absolutePath)),
         },
       };
@@ -160,8 +283,7 @@ async function fileSnapshot(
         : resolve(dirname(absolutePath), target);
       const entry: Extract<FileSnapshot["entry"], { kind: "symlink" }> = {
         kind: "symlink",
-        mode,
-        modifiedMs: metadata.mtimeMs,
+        ...filesystem,
         target,
         resolvedTarget,
       };
@@ -176,8 +298,8 @@ async function fileSnapshot(
       absolutePath,
       references,
       entry: metadata.isDirectory()
-        ? { kind: "directory", mode, modifiedMs: metadata.mtimeMs }
-        : { kind: "unsupported", mode, modifiedMs: metadata.mtimeMs },
+        ? { kind: "directory", ...filesystem }
+        : { kind: "unsupported", ...filesystem },
     };
   } catch (error) {
     if (nodeErrorCode(error) === "ENOENT") {
@@ -189,6 +311,57 @@ async function fileSnapshot(
       entry: { kind: "inspection-error", error: diagnosticError(error) },
     };
   }
+}
+
+async function parentSnapshot(absolutePath: string): Promise<ParentSnapshot> {
+  try {
+    const metadata = await lstat(absolutePath);
+    const filesystem = filesystemMetadata(metadata);
+    if (metadata.isSymbolicLink()) {
+      const target = await readlink(absolutePath);
+      return {
+        absolutePath,
+        entry: {
+          kind: "symlink",
+          ...filesystem,
+          target,
+          resolvedTarget: isAbsolute(target)
+            ? resolve(target)
+            : resolve(dirname(absolutePath), target),
+        },
+      };
+    }
+    return {
+      absolutePath,
+      entry: metadata.isDirectory()
+        ? { kind: "directory", ...filesystem }
+        : metadata.isFile()
+          ? { kind: "regular-file", ...filesystem }
+          : { kind: "unsupported", ...filesystem },
+    };
+  } catch (error) {
+    if (nodeErrorCode(error) === "ENOENT") {
+      return { absolutePath, entry: { kind: "absent" } };
+    }
+    return {
+      absolutePath,
+      entry: { kind: "inspection-error", error: diagnosticError(error) },
+    };
+  }
+}
+
+function parentPaths(paths: Iterable<string>): string[] {
+  const parents = new Set<string>();
+  for (const path of paths) {
+    let parent = dirname(path);
+    while (!parents.has(parent)) {
+      parents.add(parent);
+      const next = dirname(parent);
+      if (next === parent) break;
+      parent = next;
+    }
+  }
+  return [...parents];
 }
 
 function diagnosticOperations(patch: string):
@@ -342,17 +515,21 @@ export async function prepareApplyPatchDiagnostics(
   const requestPath = join(directory, `${prefix}.request.json`);
   const resultPath = join(directory, `${prefix}.result.json`);
   const parsed = diagnosticOperations(patch);
-  const snapshots = await Promise.all(
-    [...snapshotReferences(context.cwd, parsed)].map(([path, references]) =>
-      fileSnapshot(path, references),
+  const references = snapshotReferences(context.cwd, parsed);
+  const [runtime, snapshots, parents] = await Promise.all([
+    runtimeMetadata(),
+    Promise.all(
+      [...references].map(([path, pathReferences]) => fileSnapshot(path, pathReferences)),
     ),
-  );
+    Promise.all(parentPaths(references.keys()).map(parentSnapshot)),
+  ]);
   const sessionFile = context.sessionManager.getSessionFile();
   const request = {
     schemaVersion: APPLY_PATCH_DIAGNOSTICS_SCHEMA_VERSION,
     recordId,
     capturedAt,
     cwd: context.cwd,
+    runtime,
     session: {
       id: sessionId,
       ...(sessionFile ? { file: sessionFile } : {}),
@@ -361,6 +538,7 @@ export async function prepareApplyPatchDiagnostics(
     patch,
     parsed,
     snapshots,
+    parents,
   };
   return {
     diagnosticsDirectory,

@@ -3,17 +3,20 @@ import {
   requireJsonRecords,
 } from "../extensions/openai-codex-compat/codex-protocol.ts";
 import assert from "node:assert/strict";
-import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { link, mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { arch, platform, release, tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import test from "node:test";
 import type { AssistantMessage } from "@earendil-works/pi-ai";
-import type { SessionEntry } from "@earendil-works/pi-coding-agent";
+import { VERSION as PI_VERSION, type SessionEntry } from "@earendil-works/pi-coding-agent";
 import registerApplyPatch, {
   type ApplyPatchApi,
   type ApplyPatchTool,
 } from "../extensions/openai-codex-compat/apply-patch.ts";
-import { APPLY_PATCH_DIAGNOSTICS_DIRECTORY } from "../extensions/openai-codex-compat/apply-patch-diagnostics.ts";
+import {
+  APPLY_PATCH_DIAGNOSTICS_DIRECTORY,
+  applyPatchDiagnosticError,
+} from "../extensions/openai-codex-compat/apply-patch-diagnostics.ts";
 
 const SESSION_ID = "11111111-1111-4111-8111-111111111111";
 
@@ -83,6 +86,7 @@ test("persists complete failed-call diagnostics without copying binary bytes", a
   await writeFile(join(cwd, "move-source.txt"), "move before\n");
   await writeFile(join(cwd, "destination.txt"), "destination before\n");
   await writeFile(join(cwd, "binary.dat"), Buffer.from([0xff, 0x00]));
+  await link(join(cwd, "source.txt"), join(cwd, "hardlink.txt"));
   t.after(async () => rm(root, { recursive: true, force: true }));
 
   const previousAgentDir = process.env["PI_CODING_AGENT_DIR"];
@@ -152,6 +156,7 @@ test("persists complete failed-call diagnostics without copying binary bytes", a
 -missing
 +move after
 *** Delete File: binary.dat
+*** Delete File: hardlink.txt
 *** End Patch`;
   await assert.rejects(
     tool.execute(failedCallId, { patch: failedPatch }, undefined, undefined, {
@@ -170,6 +175,7 @@ test("persists complete failed-call diagnostics without copying binary bytes", a
   assert.equal(await readFile(join(cwd, "move-source.txt"), "utf8"), "move before\n");
   assert.equal(await readFile(join(cwd, "destination.txt"), "utf8"), "destination before\n");
   assert.deepEqual(await readFile(join(cwd, "binary.dat")), Buffer.from([0xff, 0x00]));
+  assert.equal(await readFile(join(cwd, "hardlink.txt"), "utf8"), "after\n");
 
   const diagnosticsMode =
     (await stat(join(agentDir, APPLY_PATCH_DIAGNOSTICS_DIRECTORY))).mode & 0o777;
@@ -188,9 +194,29 @@ test("persists complete failed-call diagnostics without copying binary bytes", a
   const requestJson = await readFile(reference.requestPath, "utf8");
   assert.equal(requestJson.includes("/wA="), false);
   const request = requireJsonRecord(JSON.parse(requestJson));
+  assert.equal(request["schemaVersion"], 2);
   assert.equal(request["recordId"], reference.recordId);
   assert.equal(request["cwd"], cwd);
   assert.equal(request["patch"], failedPatch);
+  const runtime = requireJsonRecord(request["runtime"]);
+  const packageManifest = requireJsonRecord(
+    JSON.parse(await readFile(new URL("../package.json", import.meta.url), "utf8")),
+  );
+  assert.equal(runtime["compatibilityVersion"], packageManifest["version"]);
+  assert.equal(runtime["piVersion"], PI_VERSION);
+  assert.equal(runtime["nodeVersion"], process.version);
+  assert.deepEqual(runtime["operatingSystem"], {
+    platform: platform(),
+    release: release(),
+    architecture: arch(),
+  });
+  const runtimeProcess = requireJsonRecord(runtime["process"]);
+  assert.equal(runtimeProcess["id"], process.pid);
+  assert.equal(runtimeProcess["workingDirectory"], process.cwd());
+  assert.equal(typeof runtimeProcess["umask"], "number");
+  if (typeof process.getuid === "function") {
+    assert.equal(runtimeProcess["userId"], process.getuid());
+  }
   assert.deepEqual(request["session"], { id: SESSION_ID, file: sessionFile });
   const identifiers = requireJsonRecord(request["request"]);
   assert.equal(identifiers["toolCallId"], failedCallId);
@@ -203,7 +229,7 @@ test("persists complete failed-call diagnostics without copying binary bytes", a
 
   const parsed = requireJsonRecord(request["parsed"]);
   assert.equal(parsed["status"], "parsed");
-  assert.equal(requireJsonRecords(parsed["operations"]).length, 3);
+  assert.equal(requireJsonRecords(parsed["operations"]).length, 4);
   const snapshots = requireJsonRecords(request["snapshots"]);
   const precedingSourceSnapshot = snapshots.find(
     (snapshot) => snapshot["absolutePath"] === join(cwd, "source.txt"),
@@ -217,18 +243,27 @@ test("persists complete failed-call diagnostics without copying binary bytes", a
   const binarySnapshot = snapshots.find(
     (snapshot) => snapshot["absolutePath"] === join(cwd, "binary.dat"),
   );
-  assert.equal(snapshots.length, 4);
-  assert.deepEqual(
-    requireJsonRecord(
-      requireJsonRecord(requireJsonRecord(precedingSourceSnapshot)["entry"])["content"],
-    ),
-    {
-      encoding: "utf8",
-      data: "after\n",
-      byteLength: 6,
-      sha256: "7b9a72466d3960eb2aacccfc848939453490db0678bd4725def3f789b891c919",
-    },
+  const hardlinkSnapshot = snapshots.find(
+    (snapshot) => snapshot["absolutePath"] === join(cwd, "hardlink.txt"),
   );
+  assert.equal(snapshots.length, 5);
+  const precedingSourceEntry = requireJsonRecord(
+    requireJsonRecord(precedingSourceSnapshot)["entry"],
+  );
+  const hardlinkEntry = requireJsonRecord(requireJsonRecord(hardlinkSnapshot)["entry"]);
+  assert.equal(precedingSourceEntry["device"], hardlinkEntry["device"]);
+  assert.equal(precedingSourceEntry["inode"], hardlinkEntry["inode"]);
+  assert.equal(precedingSourceEntry["linkCount"], 2);
+  assert.equal(hardlinkEntry["linkCount"], 2);
+  assert.equal(precedingSourceEntry["size"], 6);
+  assert.equal(typeof precedingSourceEntry["userId"], "number");
+  assert.equal(typeof precedingSourceEntry["groupId"], "number");
+  assert.deepEqual(requireJsonRecord(precedingSourceEntry["content"]), {
+    encoding: "utf8",
+    data: "after\n",
+    byteLength: 6,
+    sha256: "7b9a72466d3960eb2aacccfc848939453490db0678bd4725def3f789b891c919",
+  });
   assert.equal(
     requireJsonRecord(requireJsonRecord(sourceSnapshot)["entry"])["kind"],
     "regular-file",
@@ -242,6 +277,13 @@ test("persists complete failed-call diagnostics without copying binary bytes", a
       sha256: "4e47f0522a6f79adb3f99af8dbc3f80e1066ca4f950921adedc983cf9b813685",
     },
   );
+  const parents = requireJsonRecords(request["parents"]);
+  const projectParent = parents.find((parent) => parent["absolutePath"] === cwd);
+  const projectParentEntry = requireJsonRecord(requireJsonRecord(projectParent)["entry"]);
+  assert.equal(projectParentEntry["kind"], "directory");
+  for (const key of ["device", "inode", "linkCount", "mode", "size", "userId", "groupId"]) {
+    assert.equal(typeof projectParentEntry[key], "number");
+  }
   assert.deepEqual(requireJsonRecord(sourceSnapshot)["references"], [
     {
       instruction: 2,
@@ -277,6 +319,7 @@ test("persists complete failed-call diagnostics without copying binary bytes", a
   );
 
   const failedOutcome = requireJsonRecord(JSON.parse(await readFile(reference.resultPath, "utf8")));
+  assert.equal(failedOutcome["schemaVersion"], 2);
   assert.equal(failedOutcome["status"], "failed");
   assert.equal(
     requireJsonRecord(requireJsonRecord(failedOutcome["details"])["diagnostics"])["recordId"],
@@ -358,5 +401,41 @@ test("persists complete failed-call diagnostics without copying binary bytes", a
   assert.equal(
     requireJsonRecord(requireJsonRecord(malformedSnapshots[0])["entry"])["kind"],
     "regular-file",
+  );
+});
+
+test("preserves nested filesystem error diagnostics", () => {
+  const filesystemError = Object.assign(new Error("permission denied"), {
+    code: "EACCES",
+    errno: -13,
+    syscall: "rename",
+    path: "/repo/source.txt",
+    dest: "/repo/destination.txt",
+  });
+  const diagnostic = applyPatchDiagnosticError(
+    new Error("apply_patch execution failed", { cause: filesystemError }),
+  );
+
+  assert.equal(diagnostic.name, "Error");
+  assert.equal(diagnostic.message, "apply_patch execution failed");
+  assert.deepEqual(
+    {
+      name: diagnostic.cause?.name,
+      message: diagnostic.cause?.message,
+      code: diagnostic.cause?.code,
+      errno: diagnostic.cause?.errno,
+      syscall: diagnostic.cause?.syscall,
+      path: diagnostic.cause?.path,
+      destination: diagnostic.cause?.destination,
+    },
+    {
+      name: "Error",
+      message: "permission denied",
+      code: "EACCES",
+      errno: -13,
+      syscall: "rename",
+      path: "/repo/source.txt",
+      destination: "/repo/destination.txt",
+    },
   );
 });

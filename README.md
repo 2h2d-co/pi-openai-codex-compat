@@ -336,18 +336,28 @@ The active Pi agent directory replaces `~/.pi/agent` when configured
 differently. The request artifact contains the raw patch, parsed instructions
 (or parse failure), pre-execution snapshots for paths referenced by every
 instruction in the failed patch, and available session, assistant, response,
-turn, transport-request, and tool-call identifiers. Malformed patches retain
-snapshots for every instruction recognized by the fallback scanner. Valid UTF-8
-regular-file content is stored as text with its byte length and SHA-256. Binary
-content is not copied; its snapshot contains only the byte length and SHA-256.
-Symlink snapshots retain the raw target and either readable UTF-8 target
-content or binary target metadata. The result artifact records the failed
-outcome and structured tool details. Those details also retain the diagnostic
-record ID and both artifact paths so the invocation can be located from Pi
-session history.
+turn, transport-request, and tool-call identifiers. It also records the
+compatibility-package, Pi, Node.js, operating-system, and architecture versions.
+Process identity, working directory, and umask are included when available.
+Each file and parent-directory snapshot includes mode, size, modification time,
+device, inode, link count, user ID, and group ID so hard-link, alias,
+cross-filesystem, and permission failures remain traceable. Parent metadata is
+collected from each referenced path through the filesystem root. Malformed
+patches retain snapshots for every instruction recognized by the fallback
+scanner.
 
-These artifacts can contain sensitive source code, file metadata, absolute
-paths, patches, and request identifiers. Capture is disabled by default.
+Valid UTF-8 regular-file content is stored as text with its byte length and
+SHA-256. Binary content is not copied; its snapshot contains only the byte
+length and SHA-256. Symlink snapshots retain the raw target and either readable
+UTF-8 target content or binary target metadata. The result artifact records the
+failed outcome, structured tool details, and the error chain up to eight causes,
+including available filesystem codes, operation names, source paths, and
+destination paths. Those details also retain the diagnostic record ID and both
+artifact paths so the invocation can be located from Pi session history.
+
+These artifacts can contain sensitive source code, ownership and filesystem
+identity metadata, absolute paths, patches, and request identifiers. Capture is
+disabled by default.
 Directories are restricted to mode `0700`, files to `0600`, and records are not
 automatically pruned; delete them manually when they are no longer needed. If
 either artifact cannot be written after a patch failure, the diagnostic error
