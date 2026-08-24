@@ -9,6 +9,9 @@ import type { Api, Model } from "@earendil-works/pi-ai";
 import {
   type Component,
   Container,
+  type Focusable,
+  fuzzyFilter,
+  Input,
   Key,
   matchesKey,
   type SettingItem,
@@ -402,42 +405,89 @@ async function showSettings(
     };
 
     const listTheme = getSettingsListTheme();
-    const list = new SettingsList(
-      settingItems(config, environmentConfig),
-      12,
-      listTheme,
-      (id, value) => {
-        const patch = settingPatch(id, value);
-        if (!patch) return;
+    const items = settingItems(config, environmentConfig);
+    const searchInput = new Input();
+    let rootFocused = false;
+    let searchFocused = false;
+    let filteredItems = items;
+    const changeSetting = (id: string, value: string): void => {
+      const patch = settingPatch(id, value);
+      if (!patch) return;
 
-        config = applySettingPatch(config, patch);
-        revision++;
-        callbacks.onChange?.(config, changeContext());
-        saveStatus.setText(theme.fg("warning", "Unsaved session changes."));
-        tui.requestRender();
-      },
-      discardAndClose,
-      { enableSearch: true },
-    );
-    container.addChild({
+      config = applySettingPatch(config, patch);
+      revision++;
+      callbacks.onChange?.(config, changeContext());
+      saveStatus.setText(theme.fg("warning", "Unsaved session changes."));
+      tui.requestRender();
+    };
+    const createList = (): SettingsList =>
+      new SettingsList(filteredItems, 12, listTheme, changeSetting, discardAndClose);
+    let list = createList();
+
+    const setSearchFocused = (focused: boolean): void => {
+      searchFocused = focused;
+      searchInput.focused = rootFocused && searchFocused;
+    };
+
+    const settingsSelector: Component = {
       render: (width: number) => {
-        const lines = list.render(width);
-        if (lines.length > 0) {
-          lines[lines.length - 1] = truncateToWidth(
-            listTheme.hint(
-              "  Type to search · Space changes · Enter save & close · Esc discard & close",
-            ),
-            width,
-            "",
-          );
+        const query = searchInput.getValue();
+        const searchLabel = searchFocused
+          ? theme.fg("accent", theme.bold("Search (focused)"))
+          : theme.fg("dim", "Search (Tab to focus)");
+        const searchLines = searchFocused
+          ? searchInput.render(width)
+          : [
+              truncateToWidth(
+                listTheme.hint(`  ${query.length > 0 ? query : "No filter"}`),
+                width,
+                "",
+              ),
+            ];
+        const listLines =
+          filteredItems.length > 0
+            ? list.render(width)
+            : [truncateToWidth(listTheme.hint("  No matching settings"), width, ""), ""];
+        const hint = searchFocused
+          ? "  Type to search · Tab settings · Enter save & close · Esc discard & close"
+          : "  ↑↓ navigate · Tab search · Space changes · Enter save & close · Esc discard & close";
+        if (listLines.length > 0) {
+          listLines[listLines.length - 1] = truncateToWidth(listTheme.hint(hint), width, "");
         }
-        return lines;
+        return [truncateToWidth(searchLabel, width, ""), ...searchLines, "", ...listLines];
       },
-      invalidate: () => list.invalidate(),
-      handleInput: (data: string) => list.handleInput(data),
-    });
+      invalidate: () => {
+        searchInput.invalidate();
+        list.invalidate();
+      },
+      handleInput: (data: string) => {
+        if (matchesKey(data, Key.tab) || matchesKey(data, Key.shift("tab"))) {
+          setSearchFocused(!searchFocused);
+          return;
+        }
+        if (!searchFocused) {
+          list.handleInput(data);
+          return;
+        }
 
-    return {
+        const previousQuery = searchInput.getValue();
+        searchInput.handleInput(data);
+        const query = searchInput.getValue();
+        if (query === previousQuery) return;
+        filteredItems = fuzzyFilter(items, query, (item) => item.label);
+        list = createList();
+      },
+    };
+    container.addChild(settingsSelector);
+
+    const component: Component & Focusable = {
+      get focused() {
+        return rootFocused;
+      },
+      set focused(focused: boolean) {
+        rootFocused = focused;
+        searchInput.focused = rootFocused && searchFocused;
+      },
       render: (width: number) => container.render(width),
       invalidate: () => container.invalidate(),
       handleInput: (data: string) => {
@@ -454,10 +504,11 @@ async function showSettings(
           discardAndClose();
           return;
         }
-        list.handleInput(data);
+        settingsSelector.handleInput?.(data);
         tui.requestRender();
       },
     };
+    return component;
   });
 
   await saveQueue;

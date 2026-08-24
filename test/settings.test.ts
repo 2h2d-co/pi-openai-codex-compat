@@ -220,7 +220,7 @@ test("marks environment-controlled settings as locked", () => {
   );
 });
 
-test("saves on Enter or Ctrl+S and discards unsaved changes on Escape", async (t) => {
+test("focuses search explicitly, saves on Enter or Ctrl+S, and discards on Escape", async (t) => {
   initTheme("dark", false);
   const root = await mkdtemp(join(tmpdir(), "pi-codex-session-settings-"));
   const cwd = join(root, "project");
@@ -302,13 +302,21 @@ test("saves on Enter or Ctrl+S and discards unsaved changes on Escape", async (t
   assert.equal(sessionConfig.fastMode, false);
   assert.equal(loadConfig(cwd, false).fastMode, false);
 
-  assert.equal(await runSettings([" ", "\r"]), 1);
+  assert.equal(await runSettings(["ignored", " ", "\r"]), 1);
   assert.equal(sessionConfig.fastMode, true);
   assert.equal(loadConfig(cwd, false).fastMode, true);
 
-  assert.equal(await runSettings([" ", "\u0013", " ", "\u001b"]), 1);
+  assert.equal(await runSettings(["\t", "responses", "\t", " ", "\r"]), 1);
+  assert.equal(sessionConfig.responsesLite, true);
+  assert.equal(loadConfig(cwd, false).responsesLite, true);
+
+  assert.equal(await runSettings([" ", "\r"]), 1);
   assert.equal(sessionConfig.fastMode, false);
   assert.equal(loadConfig(cwd, false).fastMode, false);
+
+  assert.equal(await runSettings([" ", "\u0013", " ", "\u001b"]), 1);
+  assert.equal(sessionConfig.fastMode, true);
+  assert.equal(loadConfig(cwd, false).fastMode, true);
 });
 
 test("uses apply_patch instead of Pi's active edit and write tools", () => {
