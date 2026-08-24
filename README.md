@@ -323,6 +323,9 @@ Filesystem behavior:
 - Relative paths resolve from Pi's current working directory; absolute paths and `..` traversal are honored.
 - `.git` paths are unrestricted.
 - Text updates follow live symlinks; adds replace live or dangling symlinks without writing through them; deletes remove only the symlink; pure moves move the source symlink; and state-changing moves create a regular file at the destination without writing updated text through a source or destination symlink.
+- Relative symlink targets, including targets containing `..`, resolve from
+  the canonical directory containing the link even when the source or moved
+  destination is reached through a symlink-parent alias.
 - Entry-only operations and no-op updates do not dereference cyclic or inaccessible symlink targets during mutation-queue acquisition.
 - Same-filesystem pure moves use native rename topology. Cross-filesystem moves copy through a temporary entry, create or replace the destination, and then unlink the source, producing an inode independent from remaining source hard links.
 - Supplied identity or context chunks validate a pure move through the text matcher without rewriting the moved entry. A blank `@@` therefore requires valid UTF-8; omit chunks for arbitrary binary content.
