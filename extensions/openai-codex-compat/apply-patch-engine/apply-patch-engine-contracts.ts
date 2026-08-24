@@ -26,6 +26,7 @@ export type {
   ApplyPatchInstructionReason,
   ApplyPatchInstructionReasonCode,
   ApplyPatchInstructionStatus,
+  ApplyPatchDiagnosticsReference,
 } from "./apply-patch-engine-details-schema.ts";
 
 export type PatchOperation =

@@ -5,6 +5,9 @@
 ### Added
 
 - Show the current Pi session ID on the compatibility footer's first line.
+- Add default-off `apply_patch` diagnostics capture with full pre-execution
+  source and destination snapshots, patch instructions, outcomes, and
+  Pi/provider trace identifiers linked from tool-result details.
 
 ### Fixed
 

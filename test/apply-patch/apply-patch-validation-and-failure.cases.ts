@@ -116,6 +116,11 @@ test("validates complete nested apply-patch details from one schema", () => {
       message: "Execution stopped.",
       failedInstruction: 1,
     },
+    diagnostics: {
+      recordId: "diagnostic-record",
+      requestPath: "/diagnostics/request.json",
+      resultPath: "/diagnostics/result.json",
+    },
     error: "Execution stopped.",
     futureDetailsMetadata: true,
   };
@@ -207,6 +212,14 @@ test("validates complete nested apply-patch details from one schema", () => {
     {
       ...details,
       failure: { ...details.failure, failedInstruction: 1.5 },
+    },
+    {
+      ...details,
+      diagnostics: { ...details.diagnostics, recordId: 42 },
+    },
+    {
+      ...details,
+      diagnostics: { recordId: "diagnostic-record", requestPath: "/diagnostics/request.json" },
     },
   ]) {
     assert.equal(Value.Check(APPLY_PATCH_DETAILS_SCHEMA, malformed), false);

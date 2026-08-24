@@ -47,6 +47,7 @@ export type {
   ApplyPatchInstructionReason,
   ApplyPatchInstructionReasonCode,
   ApplyPatchInstructionStatus,
+  ApplyPatchDiagnosticsReference,
   ApplyPatchFileEntryDetails,
   ParsedPatch,
   PatchOperation,

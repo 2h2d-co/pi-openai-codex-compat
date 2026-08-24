@@ -19,6 +19,7 @@ import {
 test("validates and layers Codex compatibility configuration", () => {
   assert.equal(DEFAULT_CONFIG.responsesLite, false);
   assert.equal(DEFAULT_CONFIG.applyPatchDebug, false);
+  assert.equal(DEFAULT_CONFIG.applyPatchDiagnostics, false);
   assert.equal(DEFAULT_CONFIG.imageGeneration, true);
   assert.equal(DEFAULT_CONFIG.imageDetail, "auto");
   assert.equal(DEFAULT_CONFIG.webRun, false);
@@ -29,6 +30,7 @@ test("validates and layers Codex compatibility configuration", () => {
       responsesLite: false,
       applyPatch: false,
       applyPatchDebug: true,
+      applyPatchDiagnostics: true,
       imageGeneration: false,
       imageDetail: "original",
       webRun: true,
@@ -43,6 +45,7 @@ test("validates and layers Codex compatibility configuration", () => {
       responsesLite: false,
       applyPatch: false,
       applyPatchDebug: true,
+      applyPatchDiagnostics: true,
       imageGeneration: false,
       imageDetail: "original",
       webRun: true,
@@ -59,6 +62,7 @@ test("validates and layers Codex compatibility configuration", () => {
       responsesLite: "yes",
       applyPatch: null,
       applyPatchDebug: "yes",
+      applyPatchDiagnostics: "yes",
       imageGeneration: "yes",
       imageDetail: "medium",
       webRun: null,
@@ -77,6 +81,7 @@ test("validates and layers Codex compatibility configuration", () => {
         fastMode: true,
         applyPatch: false,
         applyPatchDebug: true,
+        applyPatchDiagnostics: true,
         autoCompactAtPercent: 80,
         webSearch: "live",
         textVerbosity: "high",
@@ -88,6 +93,7 @@ test("validates and layers Codex compatibility configuration", () => {
       ...DEFAULT_CONFIG,
       applyPatch: false,
       applyPatchDebug: true,
+      applyPatchDiagnostics: true,
       webSearch: "disabled",
       textVerbosity: "high",
       reasoningMode: "pro",
@@ -103,6 +109,7 @@ test("parses environment overrides with highest precedence", () => {
     [CONFIG_ENVIRONMENT_VARIABLES.responsesLite]: "off",
     [CONFIG_ENVIRONMENT_VARIABLES.applyPatch]: "0",
     [CONFIG_ENVIRONMENT_VARIABLES.applyPatchDebug]: "on",
+    [CONFIG_ENVIRONMENT_VARIABLES.applyPatchDiagnostics]: "on",
     [CONFIG_ENVIRONMENT_VARIABLES.toolBackground]: "status",
     [CONFIG_ENVIRONMENT_VARIABLES.imageGeneration]: "false",
     [CONFIG_ENVIRONMENT_VARIABLES.imageDetail]: "original",
@@ -119,6 +126,7 @@ test("parses environment overrides with highest precedence", () => {
     responsesLite: false,
     applyPatch: false,
     applyPatchDebug: true,
+    applyPatchDiagnostics: true,
     toolBackground: "status",
     imageGeneration: false,
     imageDetail: "original",
@@ -146,6 +154,7 @@ test("parses environment overrides with highest precedence", () => {
       [CONFIG_ENVIRONMENT_VARIABLES.responsesLite]: "disabled",
       [CONFIG_ENVIRONMENT_VARIABLES.applyPatch]: "disabled",
       [CONFIG_ENVIRONMENT_VARIABLES.applyPatchDebug]: "enabled",
+      [CONFIG_ENVIRONMENT_VARIABLES.applyPatchDiagnostics]: "enabled",
       [CONFIG_ENVIRONMENT_VARIABLES.autoCompactAtPercent]: "default",
     }),
     {
@@ -153,6 +162,7 @@ test("parses environment overrides with highest precedence", () => {
       responsesLite: false,
       applyPatch: false,
       applyPatchDebug: true,
+      applyPatchDiagnostics: true,
       autoCompactAtPercent: null,
     },
   );

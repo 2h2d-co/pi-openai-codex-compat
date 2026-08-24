@@ -163,6 +163,14 @@ export function settingItems(
       values: ["off", "on"],
     },
     {
+      id: "applyPatchDiagnostics",
+      label: "apply_patch diagnostics capture",
+      description:
+        "Store full patches, request identifiers, and original file contents in Pi's agent directory.",
+      currentValue: toggleValue(config.applyPatchDiagnostics),
+      values: ["off", "on"],
+    },
+    {
       id: "imageGeneration",
       label: "image_gen.imagegen tool",
       description: "Generate or edit images through the standalone Codex image endpoint.",
@@ -245,6 +253,10 @@ export function settingPatch(id: string, value: string): ConfigLayer | undefined
       return value === "on" || value === "off" ? { applyPatch: value === "on" } : undefined;
     case "applyPatchDebug":
       return value === "on" || value === "off" ? { applyPatchDebug: value === "on" } : undefined;
+    case "applyPatchDiagnostics":
+      return value === "on" || value === "off"
+        ? { applyPatchDiagnostics: value === "on" }
+        : undefined;
     case "imageGeneration":
       return value === "on" || value === "off" ? { imageGeneration: value === "on" } : undefined;
     case "imageDetail":
@@ -275,6 +287,9 @@ function applySettingPatch(config: CodexCompatConfig, patch: ConfigLayer): Codex
   if (isBoolean(patch.responsesLite)) next.responsesLite = patch.responsesLite;
   if (isBoolean(patch.applyPatch)) next.applyPatch = patch.applyPatch;
   if (isBoolean(patch.applyPatchDebug)) next.applyPatchDebug = patch.applyPatchDebug;
+  if (isBoolean(patch.applyPatchDiagnostics)) {
+    next.applyPatchDiagnostics = patch.applyPatchDiagnostics;
+  }
   if (patch.toolBackground) next.toolBackground = patch.toolBackground;
   if (isBoolean(patch.imageGeneration)) {
     next.imageGeneration = patch.imageGeneration;

@@ -276,6 +276,20 @@ export const APPLY_PATCH_FAILURE_SCHEMA = {
 
 export type ApplyPatchFailureDetails = Static<typeof APPLY_PATCH_FAILURE_SCHEMA>;
 
+export const APPLY_PATCH_DIAGNOSTICS_REFERENCE_SCHEMA = {
+  type: "object",
+  properties: {
+    recordId: { type: "string" },
+    requestPath: { type: "string" },
+    resultPath: { type: "string" },
+  },
+  required: ["recordId", "requestPath", "resultPath"],
+} as const;
+
+export type ApplyPatchDiagnosticsReference = Static<
+  typeof APPLY_PATCH_DIAGNOSTICS_REFERENCE_SCHEMA
+>;
+
 export const APPLY_PATCH_DETAILS_SCHEMA = {
   type: "object",
   properties: {
@@ -302,6 +316,7 @@ export const APPLY_PATCH_DETAILS_SCHEMA = {
       items: APPLY_PATCH_INSTRUCTION_SCHEMA,
     },
     failure: APPLY_PATCH_FAILURE_SCHEMA,
+    diagnostics: APPLY_PATCH_DIAGNOSTICS_REFERENCE_SCHEMA,
     error: { type: "string" },
   },
   required: ["status", "exact", "changes", "added", "modified", "deleted"],

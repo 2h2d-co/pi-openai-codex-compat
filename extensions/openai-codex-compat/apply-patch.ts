@@ -4,8 +4,15 @@ import { Type } from "typebox";
 import type { CodexToolBackgroundResolver } from "./codex-tool-surface.ts";
 import { DEFAULT_CONFIG } from "./config.ts";
 import {
+  applyPatchDiagnosticError,
+  captureApplyPatchDiagnostics,
+  writeApplyPatchDiagnosticsOutcome,
+  type ApplyPatchDiagnosticsContext,
+} from "./apply-patch-diagnostics.ts";
+import {
   applyPatch,
   type ApplyPatchDetails,
+  type ApplyPatchDiagnosticsReference,
   ApplyPatchExecutionError,
   ApplyPatchInputError,
   ApplyPatchVerificationError,
@@ -23,6 +30,7 @@ import type { ToolDefinitionWithContext } from "./tool-definition-contract.ts";
 export {
   applyPatch,
   type ApplyPatchDetails,
+  type ApplyPatchDiagnosticsReference,
   type ApplyPatchExecutionFilesystem,
   type ApplyPatchExecutionHooks,
   type ApplyPatchFailureDetails,
@@ -54,7 +62,9 @@ export type ApplyPatchTool = ToolDefinitionWithContext<
   typeof APPLY_PATCH_PARAMETERS,
   ApplyPatchDetails,
   Record<string, never>,
-  Pick<ExtensionContext, "cwd">
+  Pick<ExtensionContext, "cwd"> & {
+    sessionManager?: ApplyPatchDiagnosticsContext["sessionManager"];
+  }
 >;
 
 export type ApplyPatchApi = {
@@ -94,6 +104,7 @@ export default function registerApplyPatch(
   pi: ApplyPatchApi,
   resolveToolBackground: CodexToolBackgroundResolver = () => DEFAULT_CONFIG.toolBackground,
   resolveDebug: ApplyPatchDebugResolver = () => DEFAULT_CONFIG.applyPatchDebug,
+  resolveDiagnostics: () => boolean = () => DEFAULT_CONFIG.applyPatchDiagnostics,
 ): void {
   const failedDetails = new Map<string, ApplyPatchDetails>();
 
@@ -124,6 +135,31 @@ export default function registerApplyPatch(
     executionMode: "sequential",
     renderShell: "self",
     async execute(toolCallId, params, signal, onUpdate, ctx) {
+      const diagnosticsStartedAt = performance.now();
+      let diagnostics: ApplyPatchDiagnosticsReference | undefined;
+      if (resolveDiagnostics()) {
+        if (!ctx.sessionManager) {
+          throw new Error("apply_patch diagnostics require Pi session context.");
+        }
+        diagnostics = await captureApplyPatchDiagnostics(
+          { cwd: ctx.cwd, sessionManager: ctx.sessionManager },
+          toolCallId,
+          params.patch,
+        );
+      }
+      const persistDiagnostics = async (
+        outcome: Parameters<typeof writeApplyPatchDiagnosticsOutcome>[1],
+      ): Promise<void> => {
+        if (!diagnostics) return;
+        try {
+          await writeApplyPatchDiagnosticsOutcome(diagnostics, outcome);
+        } catch (error) {
+          console.error(
+            `Could not write apply_patch diagnostics outcome ${diagnostics.recordId}:`,
+            error,
+          );
+        }
+      };
       let executionStartedAt: number | undefined;
       const executionDurationMs = (): number => {
         if (executionStartedAt === undefined) {
@@ -143,6 +179,12 @@ export default function registerApplyPatch(
             });
           },
         });
+        if (diagnostics) details.diagnostics = diagnostics;
+        await persistDiagnostics({
+          status: "completed",
+          durationMs: performance.now() - diagnosticsStartedAt,
+          details,
+        });
         return {
           content: [
             {
@@ -157,6 +199,20 @@ export default function registerApplyPatch(
           details,
         };
       } catch (error) {
+        const errorDetails =
+          error instanceof ApplyPatchExecutionError ||
+          error instanceof ApplyPatchVerificationError ||
+          (error instanceof ApplyPatchInputError && error.details)
+            ? error.details
+            : undefined;
+        if (diagnostics && errorDetails) errorDetails.diagnostics = diagnostics;
+        const failedOutcome: Parameters<typeof writeApplyPatchDiagnosticsOutcome>[1] = {
+          status: "failed",
+          durationMs: performance.now() - diagnosticsStartedAt,
+          error: applyPatchDiagnosticError(error),
+        };
+        if (errorDetails) failedOutcome.details = errorDetails;
+        await persistDiagnostics(failedOutcome);
         if (error instanceof ApplyPatchExecutionError) {
           failedDetails.set(toolCallId, error.details);
           throw new Error(

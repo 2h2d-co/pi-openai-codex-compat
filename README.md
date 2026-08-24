@@ -7,6 +7,7 @@ OpenAI Codex compatibility for [Pi](https://github.com/earendil-works/pi-mono), 
 - **Request-level fast mode**: keeps the canonical `openai-codex` provider id and models selected while adding `service_tier: "priority"` at the request boundary.
 - **Native compaction**: uses Codex `remote_compaction_v2` for `/compact`, Pi threshold compaction, context-overflow recovery, and an optional percentage threshold.
 - **Codex `apply_patch`**: provides an optional patch tool with the Codex grammar, parser, fuzzy matcher, overwrite semantics, filesystem behavior, model-facing result format, structured history, and diff-oriented TUI rendering. Pi sends it as an OpenAI custom grammar tool when the model supports that protocol and as a normal function tool otherwise.
+- **Opt-in patch diagnostics**: records each `apply_patch` request, its pre-execution file snapshots, outcome, and Pi/Codex identifiers for failure analysis.
 - **Standalone image generation**: exposes Pi's dotted `image_gen.imagegen` tool as a native Responses namespace and executes generation or edits through the Codex Images endpoints.
 - **Standalone web search**: exposes Pi's dotted `web.run` tool as a native Responses namespace and executes search and browsing through Codex `alpha/search`.
 - **Dedicated Codex tool UI**: renders `apply_patch`, `image_gen.imagegen`, and `web.run` on a shared configurable surface with compact summaries and `Ctrl+O` expansion.
@@ -43,6 +44,7 @@ The compatibility baseline is official Codex CLI `0.149.0`, released August 20, 
 | Hosted web search                             | Disabled by default; when enabled, injected only for ordinary Responses while `web.run` is inactive. Responses Lite omits hosted tools.           | Omitted for `gpt-5.6-sol` while standalone `web.run` is available; otherwise defaults to cached mode when hosted search is supported.         | `webRun` and `webSearch`: `disabled`, `cached`, `indexed`, or `live`.                                                                                                       |
 | Coding mutation tools                         | Enables `apply_patch` and suppresses Pi's active `edit` and `write` tools.                                                                        | Chooses its tool surface from model metadata and runtime capabilities; there are no Pi `edit` or `write` tools to suppress.                   | `applyPatch`: boolean.                                                                                                                                                      |
 | `apply_patch` debug output                    | Disabled; collapsed results show the normal visual summary and instruction rows.                                                                  | Not applicable to Pi's tool-result renderer.                                                                                                  | `applyPatchDebug`: boolean.                                                                                                                                                 |
+| `apply_patch` diagnostics capture             | Disabled; no separate request or filesystem snapshot artifacts are retained.                                                                      | Codex owns its rollout diagnostics rather than writing this package's artifact format.                                                        | `applyPatchDiagnostics`: boolean.                                                                                                                                           |
 | Codex tool background                         | Uses a subtle theme-derived surface for extension-owned Codex tools.                                                                              | Uses Codex's own TUI activity cells rather than Pi tool rows.                                                                                 | `toolBackground`: `subtle`, `status`, or `none`.                                                                                                                            |
 | Auto-compaction trigger                       | Relies on Pi's reserve-token threshold unless a percentage is configured.                                                                         | Tracks Codex's model/token-budget state before and between sampling steps.                                                                    | `autoCompactAtPercent`: percentage or unset. Mid-response percentage boundaries use Pi's bounded compact-and-continue lifecycle, so Pi auto-compaction must remain enabled. |
 | Fast mode                                     | Uses the normal tier.                                                                                                                             | Uses the configured Codex service tier.                                                                                                       | `fastMode`: boolean; `true` requests the priority tier.                                                                                                                     |
@@ -176,6 +178,7 @@ Example:
   "toolBackground": "subtle",
   "applyPatch": true,
   "applyPatchDebug": false,
+  "applyPatchDiagnostics": false,
   "imageGeneration": true,
   "imageDetail": "auto",
   "webRun": false,
@@ -189,41 +192,43 @@ Example:
 
 Defaults:
 
-| Setting                | Values                                               | Default    | Behavior                                                                                                                                                                                                                                  |
-| ---------------------- | ---------------------------------------------------- | ---------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `fastMode`             | boolean                                              | `false`    | Adds `service_tier: "priority"` to requests while retaining the current `openai-codex` provider and model.                                                                                                                                |
-| `responsesLite`        | boolean                                              | `false`    | Uses Codex's Responses Lite input envelope on supported GPT-5.6 models when enabled. By default, those models use ordinary Responses instructions and tools.                                                                              |
-| `toolBackground`       | `subtle`, `status`, `none`                           | `subtle`   | Controls the shared self-rendered background for `apply_patch`, `image_gen.imagegen`, and `web.run`. `status` uses Pi's pending/success/error backgrounds; `none` keeps the custom layout transparent.                                    |
-| `applyPatch`           | boolean                                              | `true`     | On selected `openai-codex` models, uses the extension's `apply_patch` tool instead of Pi's active `edit` and `write` tools. Other providers always use their normal Pi tool set.                                                          |
-| `applyPatchDebug`      | boolean                                              | `false`    | Shows the exact model-facing tool result while a completed `apply_patch` result is collapsed. Expanded results continue to show the normal visual summary and complete diffs.                                                             |
-| `imageGeneration`      | boolean                                              | `true`     | Enables the extension-owned `image_gen.imagegen` tool on selected `openai-codex` models.                                                                                                                                                  |
-| `imageDetail`          | `auto`, `low`, `high`, `original`                    | `auto`     | Sets `input_image.detail` when an image tool result is sent back to the model. It does not change `gpt-image-2` generation quality.                                                                                                       |
-| `webRun`               | boolean                                              | `false`    | Enables the extension-owned `web.run` tool on selected `openai-codex` models. When active, it replaces hosted `web_search` in the Responses tool list.                                                                                    |
-| `autoCompactAtPercent` | number greater than `0` and at most `100`, or `null` | unset      | Adds provider-boundary compaction independently of Pi's normal reserve-token threshold. Mid-response boundaries require Pi auto-compaction. A project value of `null` disables a global percentage threshold.                             |
-| `webSearch`            | `disabled`, `cached`, `indexed`, `live`              | `disabled` | Controls hosted search and standalone-search external access. `disabled` removes hosted search but leaves an independently enabled `web.run` in cached-only mode; `indexed` prefers indexed content; `live` permits live external access. |
-| `textVerbosity`        | `low`, `medium`, `high`                              | `low`      | Sets Responses API `text.verbosity`.                                                                                                                                                                                                      |
-| `reasoningSummary`     | `auto`, `concise`, `detailed`, `off`                 | `auto`     | Sets `reasoning.summary` when reasoning is enabled; `off` omits the summary parameter.                                                                                                                                                    |
-| `reasoningMode`        | `standard`, `pro`                                    | `standard` | Controls GPT-5.6 execution mode independently of Pi's reasoning-effort control. The default omits `reasoning.mode`; `pro` sends `reasoning.mode: "pro"`.                                                                                  |
+| Setting                 | Values                                               | Default    | Behavior                                                                                                                                                                                                                                  |
+| ----------------------- | ---------------------------------------------------- | ---------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `fastMode`              | boolean                                              | `false`    | Adds `service_tier: "priority"` to requests while retaining the current `openai-codex` provider and model.                                                                                                                                |
+| `responsesLite`         | boolean                                              | `false`    | Uses Codex's Responses Lite input envelope on supported GPT-5.6 models when enabled. By default, those models use ordinary Responses instructions and tools.                                                                              |
+| `toolBackground`        | `subtle`, `status`, `none`                           | `subtle`   | Controls the shared self-rendered background for `apply_patch`, `image_gen.imagegen`, and `web.run`. `status` uses Pi's pending/success/error backgrounds; `none` keeps the custom layout transparent.                                    |
+| `applyPatch`            | boolean                                              | `true`     | On selected `openai-codex` models, uses the extension's `apply_patch` tool instead of Pi's active `edit` and `write` tools. Other providers always use their normal Pi tool set.                                                          |
+| `applyPatchDebug`       | boolean                                              | `false`    | Shows the exact model-facing tool result while a completed `apply_patch` result is collapsed. Expanded results continue to show the normal visual summary and complete diffs.                                                             |
+| `applyPatchDiagnostics` | boolean                                              | `false`    | Persists full patch requests, pre-execution file snapshots, outcomes, and trace identifiers for later analysis. See [`apply_patch`](#apply_patch) for storage and sensitivity details.                                                    |
+| `imageGeneration`       | boolean                                              | `true`     | Enables the extension-owned `image_gen.imagegen` tool on selected `openai-codex` models.                                                                                                                                                  |
+| `imageDetail`           | `auto`, `low`, `high`, `original`                    | `auto`     | Sets `input_image.detail` when an image tool result is sent back to the model. It does not change `gpt-image-2` generation quality.                                                                                                       |
+| `webRun`                | boolean                                              | `false`    | Enables the extension-owned `web.run` tool on selected `openai-codex` models. When active, it replaces hosted `web_search` in the Responses tool list.                                                                                    |
+| `autoCompactAtPercent`  | number greater than `0` and at most `100`, or `null` | unset      | Adds provider-boundary compaction independently of Pi's normal reserve-token threshold. Mid-response boundaries require Pi auto-compaction. A project value of `null` disables a global percentage threshold.                             |
+| `webSearch`             | `disabled`, `cached`, `indexed`, `live`              | `disabled` | Controls hosted search and standalone-search external access. `disabled` removes hosted search but leaves an independently enabled `web.run` in cached-only mode; `indexed` prefers indexed content; `live` permits live external access. |
+| `textVerbosity`         | `low`, `medium`, `high`                              | `low`      | Sets Responses API `text.verbosity`.                                                                                                                                                                                                      |
+| `reasoningSummary`      | `auto`, `concise`, `detailed`, `off`                 | `auto`     | Sets `reasoning.summary` when reasoning is enabled; `off` omits the summary parameter.                                                                                                                                                    |
+| `reasoningMode`         | `standard`, `pro`                                    | `standard` | Controls GPT-5.6 execution mode independently of Pi's reasoning-effort control. The default omits `reasoning.mode`; `pro` sends `reasoning.mode: "pro"`.                                                                                  |
 
 Invalid JSON setting values are ignored and invalid JSON does not prevent Pi from starting. The settings pane never writes on ordinary changes, refuses to overwrite invalid JSON when `Enter` or `Ctrl+S` attempts to save, and retains unknown keys when saving. Project configuration is read only when the project is trusted.
 
 Every setting can also be overridden for one Pi process with an environment variable:
 
-| Setting                | Environment variable                             |
-| ---------------------- | ------------------------------------------------ |
-| `fastMode`             | `PI_OPENAI_CODEX_COMPAT_FAST_MODE`               |
-| `responsesLite`        | `PI_OPENAI_CODEX_COMPAT_RESPONSES_LITE`          |
-| `toolBackground`       | `PI_OPENAI_CODEX_COMPAT_TOOL_BACKGROUND`         |
-| `applyPatch`           | `PI_OPENAI_CODEX_COMPAT_APPLY_PATCH`             |
-| `applyPatchDebug`      | `PI_OPENAI_CODEX_COMPAT_APPLY_PATCH_DEBUG`       |
-| `imageGeneration`      | `PI_OPENAI_CODEX_COMPAT_IMAGE_GENERATION`        |
-| `imageDetail`          | `PI_OPENAI_CODEX_COMPAT_IMAGE_DETAIL`            |
-| `webRun`               | `PI_OPENAI_CODEX_COMPAT_WEB_RUN`                 |
-| `autoCompactAtPercent` | `PI_OPENAI_CODEX_COMPAT_AUTO_COMPACT_AT_PERCENT` |
-| `webSearch`            | `PI_OPENAI_CODEX_COMPAT_WEB_SEARCH_MODE`         |
-| `textVerbosity`        | `PI_OPENAI_CODEX_COMPAT_TEXT_VERBOSITY`          |
-| `reasoningSummary`     | `PI_OPENAI_CODEX_COMPAT_REASONING_SUMMARY`       |
-| `reasoningMode`        | `PI_OPENAI_CODEX_COMPAT_REASONING_MODE`          |
+| Setting                 | Environment variable                             |
+| ----------------------- | ------------------------------------------------ |
+| `fastMode`              | `PI_OPENAI_CODEX_COMPAT_FAST_MODE`               |
+| `responsesLite`         | `PI_OPENAI_CODEX_COMPAT_RESPONSES_LITE`          |
+| `toolBackground`        | `PI_OPENAI_CODEX_COMPAT_TOOL_BACKGROUND`         |
+| `applyPatch`            | `PI_OPENAI_CODEX_COMPAT_APPLY_PATCH`             |
+| `applyPatchDebug`       | `PI_OPENAI_CODEX_COMPAT_APPLY_PATCH_DEBUG`       |
+| `applyPatchDiagnostics` | `PI_OPENAI_CODEX_COMPAT_APPLY_PATCH_DIAGNOSTICS` |
+| `imageGeneration`       | `PI_OPENAI_CODEX_COMPAT_IMAGE_GENERATION`        |
+| `imageDetail`           | `PI_OPENAI_CODEX_COMPAT_IMAGE_DETAIL`            |
+| `webRun`                | `PI_OPENAI_CODEX_COMPAT_WEB_RUN`                 |
+| `autoCompactAtPercent`  | `PI_OPENAI_CODEX_COMPAT_AUTO_COMPACT_AT_PERCENT` |
+| `webSearch`             | `PI_OPENAI_CODEX_COMPAT_WEB_SEARCH_MODE`         |
+| `textVerbosity`         | `PI_OPENAI_CODEX_COMPAT_TEXT_VERBOSITY`          |
+| `reasoningSummary`      | `PI_OPENAI_CODEX_COMPAT_REASONING_SUMMARY`       |
+| `reasoningMode`         | `PI_OPENAI_CODEX_COMPAT_REASONING_MODE`          |
 
 Environment variables have the highest precedence: defaults < global JSON < trusted-project JSON < environment. Boolean values accept `true`/`false`, `1`/`0`, `on`/`off`, or `enabled`/`disabled`. Other settings use the values in the defaults table; `PI_OPENAI_CODEX_COMPAT_AUTO_COMPACT_AT_PERCENT=off` and `PI_OPENAI_CODEX_COMPAT_AUTO_COMPACT_AT_PERCENT=default` explicitly select Pi's default compaction lifecycle.
 
@@ -317,6 +322,33 @@ Compatibility behavior:
 - The TUI retains Codex-style changed-file summaries and uses the same conditional instruction ledger; when present, `Ctrl+O` nests complete diffs beneath the instruction that produced them.
 - With `applyPatchDebug` enabled, the tool title becomes `apply_patch (debug)` and a completed collapsed result shows the exact text returned to the model without an extra renderer-only heading; expanding it with `Ctrl+O` still shows the normal visual summary and complete diffs.
 - Failed instruction feedback colocates its error, completed effects, and final path states without repeating patch text or using speculative language. Matching failures report the original context or expected-lines mismatch.
+
+With `applyPatchDiagnostics` enabled, each invocation writes paired JSON
+artifacts under:
+
+```text
+~/.pi/agent/openai-codex-compat-apply-patch-diagnostics/<session-id>/
+```
+
+The active Pi agent directory replaces `~/.pi/agent` when configured
+differently. The request artifact is written before mutation and contains the
+raw patch, parsed instructions (or parse failure), full snapshots of every
+requested source and move destination, and available session, assistant,
+response, turn, transport-request, and tool-call identifiers. Regular-file
+content is stored as UTF-8 or base64 with its byte length and SHA-256; symlink
+snapshots retain the raw target and readable target content. The result
+artifact records the completed or failed outcome and structured tool details.
+Those details also retain the diagnostic record ID and both artifact paths so
+the invocation can be located from Pi session history.
+
+These artifacts can contain sensitive source code, binary data, absolute
+paths, patches, and request identifiers. Capture is disabled by default.
+Directories are restricted to mode `0700`, files to `0600`, and records are
+not automatically pruned; delete them manually when they are no longer
+needed. If the request artifact cannot be written, `apply_patch` stops before
+mutation rather than running without the requested evidence. Failure to write
+the result artifact after execution is reported to stderr without changing
+the patch outcome.
 
 Filesystem behavior:
 

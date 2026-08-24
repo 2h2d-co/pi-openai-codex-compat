@@ -67,8 +67,14 @@ export default function registerCodexTools(
   resolveConfig: ConfigResolver,
   resolveToolBackground: CodexToolBackgroundResolver = () => DEFAULT_CONFIG.toolBackground,
   resolveApplyPatchDebug: () => boolean = () => DEFAULT_CONFIG.applyPatchDebug,
+  resolveApplyPatchDiagnostics: () => boolean = () => DEFAULT_CONFIG.applyPatchDiagnostics,
 ): void {
-  registerApplyPatch(pi, resolveToolBackground, resolveApplyPatchDebug);
+  registerApplyPatch(
+    pi,
+    resolveToolBackground,
+    resolveApplyPatchDebug,
+    resolveApplyPatchDiagnostics,
+  );
   registerImageGeneration(pi, resolveConfig, resolveToolBackground);
   registerWebRun(pi, resolveConfig, resolveToolBackground);
 }

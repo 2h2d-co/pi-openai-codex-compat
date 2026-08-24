@@ -55,6 +55,7 @@ test("persists dedicated settings without discarding unknown configuration", asy
     fastMode: true,
     responsesLite: false,
     applyPatchDebug: true,
+    applyPatchDiagnostics: true,
     toolBackground: "none",
     imageGeneration: false,
     imageDetail: "high",
@@ -67,6 +68,7 @@ test("persists dedicated settings without discarding unknown configuration", asy
   assert.equal(stored["fastMode"], true);
   assert.equal(stored["responsesLite"], false);
   assert.equal(stored["applyPatchDebug"], true);
+  assert.equal(stored["applyPatchDiagnostics"], true);
   assert.equal(stored["toolBackground"], "none");
   assert.equal(stored["imageGeneration"], false);
   assert.equal(stored["imageDetail"], "high");
@@ -94,6 +96,7 @@ test("exposes every request and tool control in the settings pane", () => {
     toolBackground: "status",
     applyPatch: false,
     applyPatchDebug: true,
+    applyPatchDiagnostics: true,
     imageGeneration: true,
     imageDetail: "original",
     webRun: false,
@@ -116,6 +119,7 @@ test("exposes every request and tool control in the settings pane", () => {
       ["toolBackground", "status"],
       ["applyPatch", "off"],
       ["applyPatchDebug", "on"],
+      ["applyPatchDiagnostics", "on"],
       ["imageGeneration", "on"],
       ["imageDetail", "original"],
       ["webRun", "off"],
@@ -134,6 +138,9 @@ test("exposes every request and tool control in the settings pane", () => {
   });
   assert.deepEqual(settingPatch("applyPatchDebug", "on"), {
     applyPatchDebug: true,
+  });
+  assert.deepEqual(settingPatch("applyPatchDiagnostics", "on"), {
+    applyPatchDiagnostics: true,
   });
   assert.deepEqual(settingPatch("imageGeneration", "off"), {
     imageGeneration: false,
@@ -177,13 +184,25 @@ test("exposes every request and tool control in the settings pane", () => {
 
 test("marks environment-controlled settings as locked", () => {
   const items = settingItems(
-    { ...DEFAULT_CONFIG, fastMode: true, applyPatchDebug: true, autoCompactAtPercent: 90 },
-    { fastMode: true, applyPatchDebug: true, autoCompactAtPercent: 90 },
+    {
+      ...DEFAULT_CONFIG,
+      fastMode: true,
+      applyPatchDebug: true,
+      applyPatchDiagnostics: true,
+      autoCompactAtPercent: 90,
+    },
+    {
+      fastMode: true,
+      applyPatchDebug: true,
+      applyPatchDiagnostics: true,
+      autoCompactAtPercent: 90,
+    },
   );
   const fastMode = items.find((item) => item.id === "fastMode");
   const threshold = items.find((item) => item.id === "autoCompactAtPercent");
   const applyPatch = items.find((item) => item.id === "applyPatch");
   const applyPatchDebug = items.find((item) => item.id === "applyPatchDebug");
+  const applyPatchDiagnostics = items.find((item) => item.id === "applyPatchDiagnostics");
 
   assert.equal(fastMode?.currentValue, "on (env)");
   assert.equal(fastMode?.values, undefined);
@@ -192,6 +211,8 @@ test("marks environment-controlled settings as locked", () => {
   assert.equal(threshold?.values, undefined);
   assert.deepEqual(applyPatch?.values, ["off", "on"]);
   assert.equal(applyPatchDebug?.currentValue, "on (env)");
+  assert.equal(applyPatchDiagnostics?.currentValue, "on (env)");
+  assert.equal(applyPatchDiagnostics?.values, undefined);
   assert.equal(applyPatchDebug?.values, undefined);
   assert.match(
     applyPatchDebug?.description ?? "",

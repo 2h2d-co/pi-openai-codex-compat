@@ -55,6 +55,8 @@ export interface CodexCompatConfig {
   applyPatch: boolean;
   /** Show exact model-facing apply_patch feedback while its TUI result is collapsed. */
   applyPatchDebug: boolean;
+  /** Persist apply_patch requests, identifiers, and original file snapshots for review. */
+  applyPatchDiagnostics: boolean;
   /** Select the shared background surface for extension-owned Codex tools. */
   toolBackground: CodexToolBackground;
   /** Expose the standalone Codex image-generation namespace tool. */
@@ -80,6 +82,7 @@ export const CONFIG_ENVIRONMENT_VARIABLES = {
   responsesLite: `${ENV_PREFIX}RESPONSES_LITE`,
   applyPatch: `${ENV_PREFIX}APPLY_PATCH`,
   applyPatchDebug: `${ENV_PREFIX}APPLY_PATCH_DEBUG`,
+  applyPatchDiagnostics: `${ENV_PREFIX}APPLY_PATCH_DIAGNOSTICS`,
   toolBackground: `${ENV_PREFIX}TOOL_BACKGROUND`,
   imageGeneration: `${ENV_PREFIX}IMAGE_GENERATION`,
   imageDetail: `${ENV_PREFIX}IMAGE_DETAIL`,
@@ -96,6 +99,7 @@ export type ConfigLayer = {
   responsesLite?: boolean;
   applyPatch?: boolean;
   applyPatchDebug?: boolean;
+  applyPatchDiagnostics?: boolean;
   toolBackground?: CodexToolBackground;
   imageGeneration?: boolean;
   imageDetail?: ImageDetail;
@@ -113,6 +117,7 @@ export const DEFAULT_CONFIG: CodexCompatConfig = {
   responsesLite: false,
   applyPatch: true,
   applyPatchDebug: false,
+  applyPatchDiagnostics: false,
   toolBackground: "subtle",
   imageGeneration: true,
   imageDetail: "auto",
@@ -184,6 +189,14 @@ export function parseEnvironmentConfig(environment: Environment = process.env): 
     CONFIG_ENVIRONMENT_VARIABLES.applyPatchDebug,
   );
   if (applyPatchDebug !== undefined) layer.applyPatchDebug = applyPatchDebug;
+
+  const applyPatchDiagnostics = environmentBoolean(
+    environment,
+    CONFIG_ENVIRONMENT_VARIABLES.applyPatchDiagnostics,
+  );
+  if (applyPatchDiagnostics !== undefined) {
+    layer.applyPatchDiagnostics = applyPatchDiagnostics;
+  }
 
   const toolBackground = environmentEnum(
     environment,
@@ -275,6 +288,11 @@ export function parseConfig(value: unknown): ConfigLayer {
   const applyPatchDebug = value["applyPatchDebug"];
   if (isBoolean(applyPatchDebug)) layer.applyPatchDebug = applyPatchDebug;
 
+  const applyPatchDiagnostics = value["applyPatchDiagnostics"];
+  if (isBoolean(applyPatchDiagnostics)) {
+    layer.applyPatchDiagnostics = applyPatchDiagnostics;
+  }
+
   const toolBackground = value["toolBackground"];
   if (Value.Check(CODEX_TOOL_BACKGROUND_SCHEMA, toolBackground)) {
     layer.toolBackground = toolBackground;
@@ -351,6 +369,9 @@ export function resolveConfig(
   if (isBoolean(merged.responsesLite)) config.responsesLite = merged.responsesLite;
   if (isBoolean(merged.applyPatch)) config.applyPatch = merged.applyPatch;
   if (isBoolean(merged.applyPatchDebug)) config.applyPatchDebug = merged.applyPatchDebug;
+  if (isBoolean(merged.applyPatchDiagnostics)) {
+    config.applyPatchDiagnostics = merged.applyPatchDiagnostics;
+  }
   if (merged.toolBackground) config.toolBackground = merged.toolBackground;
   if (isBoolean(merged.imageGeneration)) config.imageGeneration = merged.imageGeneration;
   if (merged.imageDetail) config.imageDetail = merged.imageDetail;
@@ -395,6 +416,7 @@ export function configLayer(config: CodexCompatConfig): ConfigLayer {
     responsesLite: config.responsesLite,
     applyPatch: config.applyPatch,
     applyPatchDebug: config.applyPatchDebug,
+    applyPatchDiagnostics: config.applyPatchDiagnostics,
     toolBackground: config.toolBackground,
     imageGeneration: config.imageGeneration,
     imageDetail: config.imageDetail,
