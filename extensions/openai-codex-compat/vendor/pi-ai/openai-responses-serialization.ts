@@ -22,7 +22,7 @@ import type {
 
 /**
  * Focused copies of the methods used to serialize Pi messages for OpenAI's
- * Responses API. Adapted from @earendil-works/pi-ai@0.84.1:
+ * Responses API. Adapted from @earendil-works/pi-ai@0.84.3:
  *
  * - src/api/openai-responses-shared.ts
  * - src/api/transform-messages.ts
@@ -36,6 +36,7 @@ import type {
  */
 
 export type ResponsesItem = JsonRecord;
+export type DeferredToolsMode = "additional-tools" | "tool-search";
 export type ToolResultImageDetail = "auto" | "low" | "high" | "original";
 type ToolResultOutput =
   | string
@@ -48,6 +49,7 @@ type ConvertResponsesMessagesOptions = {
   includeSystemPrompt?: boolean;
   grammarToolInputProperties?: ReadonlyMap<string, string>;
   deferredTools?: ReadonlyMap<string, Tool>;
+  deferredToolsMode?: DeferredToolsMode;
   toolOptions?: ConvertResponsesToolsOptions;
   nativeAssistantItems?: ReadonlyMap<string, readonly ResponsesItem[]>;
   namespacedToolNames?: ReadonlySet<string>;
@@ -656,7 +658,19 @@ export function convertResponsesMessages(
         loadedToolNames.add(name);
         deferredTools.push(tool);
       }
-      if (deferredTools.length > 0) {
+      if (deferredTools.length > 0 && options?.deferredToolsMode === "additional-tools") {
+        const additionalToolOptions: ConvertResponsesToolsOptions = {
+          ...options.toolOptions,
+        };
+        if (options.namespacedToolNames) {
+          additionalToolOptions.namespacedToolNames = options.namespacedToolNames;
+        }
+        messages.push({
+          type: "additional_tools",
+          role: "developer",
+          tools: convertResponsesTools(deferredTools, additionalToolOptions),
+        });
+      } else if (deferredTools.length > 0 && options?.deferredToolsMode === "tool-search") {
         const names = deferredTools.map((tool) => tool.name);
         const searchCallId = `pi_tool_load_${shortHash(
           `${message.toolCallId}:${names.join(",")}`,

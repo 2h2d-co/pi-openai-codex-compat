@@ -32,7 +32,10 @@ import {
   type ResponsesOutputItem,
 } from "./responses-item-schema.ts";
 import type { ResponsesToolDefinition } from "./responses-tool-schema.ts";
-import { convertResponsesMessages } from "./vendor/pi-ai/openai-responses-serialization.ts";
+import {
+  convertResponsesMessages,
+  type DeferredToolsMode,
+} from "./vendor/pi-ai/openai-responses-serialization.ts";
 
 export const CHECKPOINT_ENTRY_TYPE = "openai-codex-compat-remote-compaction";
 export const CHECKPOINT_FORMAT_VERSION = 1;
@@ -58,6 +61,7 @@ export type CheckpointSearch =
 export type GrammarToolInputProperties = ReadonlyMap<string, string>;
 
 export interface ResponsesCompatibility {
+  supportsAdditionalTools?: boolean;
   supportsOpenAIGrammarTools?: boolean;
   supportsStrictMode?: boolean;
   supportsToolSearch?: boolean;
@@ -66,6 +70,9 @@ export interface ResponsesCompatibility {
 export function responsesCompatibility(value: unknown): ResponsesCompatibility {
   const compatibility: ResponsesCompatibility = {};
   if (!isObject(value)) return compatibility;
+  if (isBoolean(value["supportsAdditionalTools"])) {
+    compatibility.supportsAdditionalTools = value["supportsAdditionalTools"];
+  }
   if (isBoolean(value["supportsOpenAIGrammarTools"])) {
     compatibility.supportsOpenAIGrammarTools = value["supportsOpenAIGrammarTools"];
   }
@@ -76,6 +83,14 @@ export function responsesCompatibility(value: unknown): ResponsesCompatibility {
     compatibility.supportsToolSearch = value["supportsToolSearch"];
   }
   return compatibility;
+}
+
+export function responsesDeferredToolsMode(
+  compatibility: ResponsesCompatibility,
+): DeferredToolsMode | undefined {
+  if (compatibility.supportsAdditionalTools) return "additional-tools";
+  if (compatibility.supportsToolSearch) return "tool-search";
+  return undefined;
 }
 
 function responsesToolParameters(tool: ToolInfo): JsonRecord {
@@ -188,6 +203,7 @@ function encodeMessages(options: EncodeMessagesOptions): ResponsesInputItem[] {
   } = options;
   const tools = allTools.map((tool) => asPiTool(tool, grammarToolInputProperties));
   const compat = responsesCompatibility(model.compat);
+  const deferredToolsMode = responsesDeferredToolsMode(compat);
   const serializationOptions: NonNullable<Parameters<typeof convertResponsesMessages>[3]> = {
     includeSystemPrompt: false,
     grammarToolInputProperties,
@@ -201,6 +217,7 @@ function encodeMessages(options: EncodeMessagesOptions): ResponsesInputItem[] {
     textContentItemToolResultNames: CODEX_TEXT_CONTENT_ITEM_TOOL_RESULT_NAMES,
     toolResultImageDetail: imageDetail,
   };
+  if (deferredToolsMode) serializationOptions.deferredToolsMode = deferredToolsMode;
   if (nativeAssistantItems) {
     serializationOptions.nativeAssistantItems = nativeAssistantItems;
   }

@@ -26,6 +26,7 @@ import {
   providerHistory,
   remoteCompactionMarkerSummary,
   responsesCompatibility,
+  responsesDeferredToolsMode,
   searchCheckpoint,
   type CheckpointData,
   type CompactionDecision,
@@ -494,22 +495,25 @@ export class CodexProviderRuntime {
     const scope = sessionId ? this.scopes.get(sessionId) : undefined;
     if (!scope) {
       const compat = responsesCompatibility(model.compat);
+      const deferredToolsMode = responsesDeferredToolsMode(compat);
       const nativeItems = new Map<string, ResponsesOutputItem[]>();
+      const serializationOptions: NonNullable<Parameters<typeof convertResponsesMessages>[3]> = {
+        includeSystemPrompt: false,
+        grammarToolInputProperties,
+        deferredTools: splitDeferredTools(context, deferredToolsMode !== undefined).deferred,
+        toolOptions: {
+          strict: false,
+          supportsStrictMode: compat.supportsStrictMode ?? true,
+          supportsOpenAIGrammarTools: compat.supportsOpenAIGrammarTools ?? false,
+        },
+        namespacedToolNames: CODEX_NAMESPACED_TOOL_NAMES,
+        textContentItemToolResultNames: CODEX_TEXT_CONTENT_ITEM_TOOL_RESULT_NAMES,
+        toolResultImageDetail: "auto",
+        nativeAssistantItems: nativeItems,
+      };
+      if (deferredToolsMode) serializationOptions.deferredToolsMode = deferredToolsMode;
       return requireResponsesInputItems(
-        convertResponsesMessages(model, context, CODEX_TOOL_CALL_PROVIDERS, {
-          includeSystemPrompt: false,
-          grammarToolInputProperties,
-          deferredTools: splitDeferredTools(context, Boolean(compat?.supportsToolSearch)).deferred,
-          toolOptions: {
-            strict: false,
-            supportsStrictMode: compat?.supportsStrictMode ?? true,
-            supportsOpenAIGrammarTools: compat?.supportsOpenAIGrammarTools ?? false,
-          },
-          namespacedToolNames: CODEX_NAMESPACED_TOOL_NAMES,
-          textContentItemToolResultNames: CODEX_TEXT_CONTENT_ITEM_TOOL_RESULT_NAMES,
-          toolResultImageDetail: "auto",
-          nativeAssistantItems: nativeItems,
-        }),
+        convertResponsesMessages(model, context, CODEX_TOOL_CALL_PROVIDERS, serializationOptions),
       );
     }
     return providerHistory({
@@ -532,7 +536,8 @@ export class CodexProviderRuntime {
       turnId,
     } = options;
     const compat = responsesCompatibility(model.compat);
-    const toolPlacement = splitDeferredTools(context, Boolean(compat?.supportsToolSearch));
+    const deferredToolsMode = responsesDeferredToolsMode(compat);
+    const toolPlacement = splitDeferredTools(context, deferredToolsMode !== undefined);
     let body: JsonRecord = {
       model: model.id,
       store: false,
@@ -560,8 +565,8 @@ export class CodexProviderRuntime {
     if (toolPlacement.immediate.length > 0) {
       body.tools = convertResponsesTools(toolPlacement.immediate, {
         strict: false,
-        supportsStrictMode: compat?.supportsStrictMode ?? true,
-        supportsOpenAIGrammarTools: compat?.supportsOpenAIGrammarTools ?? false,
+        supportsStrictMode: compat.supportsStrictMode ?? true,
+        supportsOpenAIGrammarTools: compat.supportsOpenAIGrammarTools ?? false,
         namespacedToolNames: CODEX_NAMESPACED_TOOL_NAMES,
       });
     }
@@ -1149,26 +1154,28 @@ export class CodexProviderRuntime {
         messages: [output],
       };
       if (context.tools) canonicalContext.tools = context.tools;
+      const deferredToolsMode = responsesDeferredToolsMode(compat);
+      const serializationOptions: NonNullable<Parameters<typeof convertResponsesMessages>[3]> = {
+        includeSystemPrompt: false,
+        grammarToolInputProperties,
+        deferredTools: splitDeferredTools(context, deferredToolsMode !== undefined).deferred,
+        toolOptions: {
+          strict: false,
+          supportsStrictMode: compat.supportsStrictMode ?? true,
+          supportsOpenAIGrammarTools: compat.supportsOpenAIGrammarTools ?? false,
+        },
+        namespacedToolNames: CODEX_NAMESPACED_TOOL_NAMES,
+        textContentItemToolResultNames: CODEX_TEXT_CONTENT_ITEM_TOOL_RESULT_NAMES,
+        toolResultImageDetail:
+          (runtimeSessionId ? this.scopes.get(runtimeSessionId)?.config.imageDetail : undefined) ??
+          "auto",
+      };
+      if (deferredToolsMode) serializationOptions.deferredToolsMode = deferredToolsMode;
       const canonicalItems = convertResponsesMessages(
         model,
         canonicalContext,
         CODEX_TOOL_CALL_PROVIDERS,
-        {
-          includeSystemPrompt: false,
-          grammarToolInputProperties,
-          deferredTools: splitDeferredTools(context, Boolean(compat?.supportsToolSearch)).deferred,
-          toolOptions: {
-            strict: false,
-            supportsStrictMode: compat?.supportsStrictMode ?? true,
-            supportsOpenAIGrammarTools: compat?.supportsOpenAIGrammarTools ?? false,
-          },
-          namespacedToolNames: CODEX_NAMESPACED_TOOL_NAMES,
-          textContentItemToolResultNames: CODEX_TEXT_CONTENT_ITEM_TOOL_RESULT_NAMES,
-          toolResultImageDetail:
-            (runtimeSessionId
-              ? this.scopes.get(runtimeSessionId)?.config.imageDetail
-              : undefined) ?? "auto",
-        },
+        serializationOptions,
       ).filter(
         (item) =>
           item["type"] !== "function_call_output" && item["type"] !== "custom_tool_call_output",

@@ -39,7 +39,7 @@ const model: Model<Api> = {
   cost: { input: 1, output: 2, cacheRead: 0.1, cacheWrite: 1.25 },
   contextWindow: 100_000,
   maxTokens: 10_000,
-  compat: { supportsOpenAIGrammarTools: true },
+  compat: { supportsOpenAIGrammarTools: true, supportsToolSearch: true },
 };
 
 const TEST_TOOL_SOURCE = createSyntheticSourceInfo("test-tool", {
@@ -145,6 +145,7 @@ const options = {
   includeSystemPrompt: false,
   grammarToolInputProperties: new Map([["apply_patch", "patch"]]),
   deferredTools: new Map([["deferred", deferredTool]]),
+  deferredToolsMode: "tool-search" as const,
   toolOptions: {
     strict: null,
     supportsStrictMode: true,
@@ -156,6 +157,66 @@ test("copied Pi AI Responses serialization matches the dependency", () => {
   const reference = referenceConvertResponsesMessages(model, context, allowedProviders, options);
   const copied = copiedConvertResponsesMessages(model, context, allowedProviders, options);
   assert.deepEqual(copied, reference);
+});
+
+test("requires an explicit deferred tool mode and supports additional_tools", () => {
+  const withoutModeOptions = {
+    includeSystemPrompt: options.includeSystemPrompt,
+    grammarToolInputProperties: options.grammarToolInputProperties,
+    deferredTools: options.deferredTools,
+    toolOptions: options.toolOptions,
+  };
+  const withoutMode = copiedConvertResponsesMessages(
+    model,
+    context,
+    allowedProviders,
+    withoutModeOptions,
+  );
+  assert.deepEqual(
+    withoutMode,
+    referenceConvertResponsesMessages(model, context, allowedProviders, withoutModeOptions),
+  );
+  assert.equal(
+    withoutMode.some(
+      (item) => item["type"] === "additional_tools" || item["type"] === "tool_search_call",
+    ),
+    false,
+  );
+
+  const additionalToolsOptions = {
+    ...options,
+    deferredToolsMode: "additional-tools" as const,
+    toolOptions: {
+      ...options.toolOptions,
+      strict: false,
+    },
+  };
+  const additionalToolsHistory = copiedConvertResponsesMessages(
+    model,
+    context,
+    allowedProviders,
+    additionalToolsOptions,
+  );
+  assert.deepEqual(
+    additionalToolsHistory,
+    referenceConvertResponsesMessages(model, context, allowedProviders, additionalToolsOptions),
+  );
+  const additionalTools = additionalToolsHistory.find(
+    (item) => item["type"] === "additional_tools",
+  );
+  assert.deepEqual(additionalTools, {
+    type: "additional_tools",
+    role: "developer",
+    tools: [
+      {
+        type: "function",
+        name: deferredTool.name,
+        description: deferredTool.description,
+        parameters: deferredTool.parameters,
+        strict: false,
+      },
+    ],
+  });
 });
 
 test("configures image detail for image tool-result history", () => {
@@ -327,6 +388,7 @@ test("round-trips namespaced calls and deferred namespaced definitions", () => {
   const converted = copiedConvertResponsesMessages(model, namespacedContext, allowedProviders, {
     includeSystemPrompt: false,
     deferredTools: new Map([[IMAGE_GENERATION_TOOL_NAME, imageGenerationTool]]),
+    deferredToolsMode: "tool-search",
     namespacedToolNames: CODEX_NAMESPACED_TOOL_NAMES,
     textContentItemToolResultNames: CODEX_TEXT_CONTENT_ITEM_TOOL_RESULT_NAMES,
     toolOptions: {
@@ -386,17 +448,18 @@ test("round-trips namespaced calls and deferred namespaced definitions", () => {
       message: namespacedResult,
     },
   ] satisfies SessionEntry[];
+  const checkpointTools = [
+    {
+      name: IMAGE_GENERATION_TOOL_NAME,
+      description: imageGenerationTool.description,
+      parameters: imageGenerationTool.parameters,
+      sourceInfo: TEST_TOOL_SOURCE,
+    } satisfies ToolInfo,
+  ];
   const checkpointHistory = encodeSessionEntries({
     model,
     entries,
-    allTools: [
-      {
-        name: IMAGE_GENERATION_TOOL_NAME,
-        description: imageGenerationTool.description,
-        parameters: imageGenerationTool.parameters,
-        sourceInfo: TEST_TOOL_SOURCE,
-      } satisfies ToolInfo,
-    ],
+    allTools: checkpointTools,
     grammarToolInputProperties: new Map(),
   });
   assert.deepEqual(checkpointHistory[1], {
@@ -422,6 +485,36 @@ test("round-trips namespaced calls and deferred namespaced definitions", () => {
       ],
     },
   ]);
+
+  const additionalToolsCheckpoint = encodeSessionEntries({
+    model: {
+      ...model,
+      compat: { ...model.compat, supportsAdditionalTools: true },
+    },
+    entries,
+    allTools: checkpointTools,
+    grammarToolInputProperties: new Map(),
+  });
+  assert.deepEqual(additionalToolsCheckpoint[2], {
+    type: "additional_tools",
+    role: "developer",
+    tools: [
+      {
+        type: "namespace",
+        name: "image_gen",
+        description: "Tools in the image_gen namespace.",
+        tools: [
+          {
+            type: "function",
+            name: "imagegen",
+            description: imageGenerationTool.description,
+            parameters: IMAGE_GENERATION_PARAMETERS,
+            strict: false,
+          },
+        ],
+      },
+    ],
+  });
 });
 
 test("serializes active compaction tools with the same namespace contract", () => {

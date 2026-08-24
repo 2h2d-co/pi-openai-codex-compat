@@ -32,6 +32,9 @@
 
 ### Changed
 
+- Align deferred tool loading with Pi 0.84.3, preferring message-anchored
+  additional tools on capable Codex models while retaining tool-search and
+  top-level fallbacks.
 - Simplify `apply_patch` for its queued single-writer operating model: retain
   Pi's mutation queue, remove the extension-local alias queue and
   preflight-to-execution drift machinery, use direct writes for in-place text
