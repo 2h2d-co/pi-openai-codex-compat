@@ -463,7 +463,7 @@ async function showSettings(
       render: (width: number) => {
         const query = searchInput.getValue();
         const searchLabel = searchFocused
-          ? theme.fg("accent", theme.bold("Search (focused)"))
+          ? theme.fg("accent", theme.bold("Search"))
           : theme.fg("dim", "Search (type or Tab to focus)");
         const searchLines = searchFocused
           ? searchInput.render(width)
