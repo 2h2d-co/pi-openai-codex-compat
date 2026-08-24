@@ -14,9 +14,9 @@ import {
   buffersEqual,
   sameFingerprint,
   samePhysicalEntry,
-  type ExistingFileEntry,
+  type ExpectedExistingFileEntry,
+  type ExpectedReplaceableFileEntry,
   type PlannedMutation,
-  type ReplaceableFileEntry,
 } from "./apply-patch-engine-filesystem-model.ts";
 
 export function addInstructionEffect(
@@ -48,7 +48,7 @@ export function fileEntryDetails(entry: DescribedFileEntry): ApplyPatchFileEntry
 
 export function replacedInstructionEffect(
   path: string,
-  previousEntry: ReplaceableFileEntry,
+  previousEntry: ExpectedReplaceableFileEntry,
   replacementEntry: ApplyPatchFileEntryDetails,
 ): ApplyPatchInstructionEffect {
   if (previousEntry.kind === "absent") {
@@ -91,7 +91,7 @@ export function currentEntryFinalState(
 
 export function entriesHaveSameIdentity(
   actual: CurrentFilesystemEntry,
-  expected: ReplaceableFileEntry,
+  expected: ExpectedReplaceableFileEntry,
 ): boolean {
   if (actual.kind !== expected.kind) return false;
   if (
@@ -129,7 +129,7 @@ export function finalPathInspection(
 export async function inspectFinalPath(
   absolutePath: string,
   displayPath: string,
-  expected: ReplaceableFileEntry,
+  expected: ExpectedReplaceableFileEntry,
   filesystem: ApplyPatchExecutionFilesystem,
   requestedContent?: Buffer,
 ): Promise<ApplyPatchFinalPathInspection> {
@@ -151,7 +151,7 @@ export async function inspectFinalPath(
           return finalPathInspection(displayPath, "different-entry", actual);
         }
         if (expected.kind === "regular" || expected.kind === "symlink") {
-          const expectedBytes = expected.content.value?.bytes;
+          const expectedBytes = expected.content;
           if (expectedBytes && buffersEqual(bytes, expectedBytes)) {
             return finalPathInspection(displayPath, "unchanged", actual);
           }
@@ -179,15 +179,13 @@ export async function inspectFinalPath(
     if (
       (actual.kind === "regular" || actual.kind === "symlink") &&
       (expected.kind === "regular" || expected.kind === "symlink") &&
-      expected.content.value
+      expected.content
     ) {
       try {
         const bytes = await filesystem.readFile(absolutePath);
         return finalPathInspection(
           displayPath,
-          buffersEqual(bytes, expected.content.value.bytes)
-            ? "unchanged"
-            : "different-from-previous-content",
+          buffersEqual(bytes, expected.content) ? "unchanged" : "different-from-previous-content",
           actual,
         );
       } catch (error) {
@@ -226,7 +224,7 @@ export function inspectedFileEntry(
 export function addInspectedReplacementEffect(
   instruction: ApplyPatchInstructionDetails,
   path: string,
-  previousEntry: ExistingFileEntry,
+  previousEntry: ExpectedExistingFileEntry,
   inspection: ApplyPatchFinalPathInspection | undefined,
 ): void {
   const replacementEntry = inspectedFileEntry(inspection);
@@ -239,7 +237,7 @@ export function addInspectedReplacementEffect(
 
 export function finalStateHasChangedPresentEntry(
   state: ApplyPatchFinalPathState | undefined,
-  expected: ReplaceableFileEntry,
+  expected: ExpectedReplaceableFileEntry,
 ): boolean {
   if (!state) return false;
   switch (state.state) {

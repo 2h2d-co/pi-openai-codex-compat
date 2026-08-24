@@ -20,9 +20,12 @@ import {
   fingerprint,
   type ContentCell,
   type ExistingFileEntry,
+  type ExpectedExistingFileEntry,
+  type ExpectedReplaceableFileEntry,
   type PlannedAction,
   type PhysicalFileState,
   type PlannedMutation,
+  type ReplaceableFileEntry,
   type SemanticPlan,
   type VirtualEntry,
 } from "./apply-patch-engine-filesystem-model.ts";
@@ -381,13 +384,23 @@ export class SemanticPlanner {
     return entryName === basename(requestedPath);
   }
 
-  private snapshot<T extends VirtualEntry>(entry: T): T {
-    if (entry.kind !== "regular" && entry.kind !== "symlink") return { ...entry };
-    const content: ContentCell = {};
-    if (entry.content.value) content.value = entry.content.value;
+  private executionExpectation(entry: ExistingFileEntry): ExpectedExistingFileEntry;
+  private executionExpectation(entry: ReplaceableFileEntry): ExpectedReplaceableFileEntry;
+  private executionExpectation(entry: ReplaceableFileEntry): ExpectedReplaceableFileEntry {
+    if (entry.kind === "absent") return { kind: "absent" };
+    if (entry.kind === "symlink") {
+      return {
+        kind: "symlink",
+        ...(entry.fingerprint ? { fingerprint: entry.fingerprint } : {}),
+        target: entry.target,
+        ...(entry.content.value ? { content: entry.content.value.bytes } : {}),
+      };
+    }
     return {
-      ...entry,
-      content,
+      kind: "regular",
+      ...(entry.fingerprint ? { fingerprint: entry.fingerprint } : {}),
+      mode: entry.physical.mode,
+      ...(entry.content.value ? { content: entry.content.value.bytes } : {}),
     };
   }
 
@@ -838,7 +851,7 @@ export class SemanticPlanner {
       target.kind === "regular" || target.kind === "symlink"
         ? await this.optionalText(target, operation.absolutePath)
         : undefined;
-    const expectedTarget = this.snapshot(target);
+    const expectedTarget = this.executionExpectation(target);
     const change: Extract<AppliedPatchChange, { kind: "add" }> = {
       kind: "add",
       path: operation.path,
@@ -891,7 +904,7 @@ export class SemanticPlanner {
             ? await this.optionalText(target, operation.absolutePath)
             : undefined))
         : undefined;
-    const expectedTarget = this.snapshot(target);
+    const expectedTarget = this.executionExpectation(target);
     const change: Extract<AppliedPatchChange, { kind: "delete" }> = {
       kind: "delete",
       path: operation.path,
@@ -996,7 +1009,7 @@ export class SemanticPlanner {
     }
 
     if (semanticMove === undefined) {
-      const expectedSource = this.snapshot(source);
+      const expectedSource = this.executionExpectation(source);
       const change: Extract<AppliedPatchChange, { kind: "update" }> = {
         kind: "update",
         path: operation.path,
@@ -1035,7 +1048,7 @@ export class SemanticPlanner {
     const moveTo = semanticMove.moveTo;
     const destinationKey = await this.pathKey(destinationPath);
     if (sourceKey === destinationKey) {
-      const expectedSource = this.snapshot(source);
+      const expectedSource = this.executionExpectation(source);
       const sameEntryMove = await this.sameEntryMoveEffect(operation.absolutePath, destinationPath);
       const change: Extract<AppliedPatchChange, { kind: "update" }> = {
         kind: "update",
@@ -1095,8 +1108,8 @@ export class SemanticPlanner {
       destination.kind === "regular" || destination.kind === "symlink"
         ? await this.optionalText(destination, destinationPath)
         : undefined;
-    const expectedSource = this.snapshot(source);
-    const expectedDestination = this.snapshot(destination);
+    const expectedSource = this.executionExpectation(source);
+    const expectedDestination = this.executionExpectation(destination);
     const change: Extract<AppliedPatchChange, { kind: "update" }> = {
       kind: "update",
       path: operation.path,
@@ -1182,7 +1195,7 @@ export class SemanticPlanner {
             `Failed to move ${operation.absolutePath}: source is ${source.kind === "directory" ? "a directory" : source.kind === "absent" ? "absent" : `a ${source.entryType}`}`,
           );
         }
-        const expectedSource = this.snapshot(source);
+        const expectedSource = this.executionExpectation(source);
         const change: Extract<AppliedPatchChange, { kind: "move" }> = {
           kind: "move",
           sourcePath: operation.path,
@@ -1199,7 +1212,7 @@ export class SemanticPlanner {
           kind: "move",
           operation,
           expectedSource,
-          expectedDestination: this.snapshot(source),
+          expectedDestination: this.executionExpectation(source),
           createdParentPaths: [],
           moveStrategy: "rename",
           change,
@@ -1260,8 +1273,8 @@ export class SemanticPlanner {
       ? await this.selectMoveStrategy(operation.absolutePath, destinationPath, detectedMoveStrategy)
       : detectedMoveStrategy;
     const replacedDestination = expectedDestination.kind !== "absent";
-    const expectedSource = this.snapshot(source);
-    const destinationSnapshot = this.snapshot(expectedDestination);
+    const expectedSource = this.executionExpectation(source);
+    const destinationSnapshot = this.executionExpectation(expectedDestination);
     const change: Extract<AppliedPatchChange, { kind: "move" }> = {
       kind: "move",
       sourcePath: operation.path,

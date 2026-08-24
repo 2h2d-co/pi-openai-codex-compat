@@ -26,9 +26,9 @@ import {
   buffersEqual,
   fingerprint,
   samePhysicalEntry,
+  type ExpectedReplaceableFileEntry,
   type PlannedMutation,
   type SemanticPlan,
-  type VirtualEntry,
 } from "./apply-patch-engine-filesystem-model.ts";
 import {
   PureMoveExecutionError,
@@ -152,7 +152,7 @@ async function assertPureMoveResult(
     if (expectedMode !== undefined && (metadata.mode & 0o7777) !== (expectedMode & 0o7777)) {
       postconditionFailed(destinationPath, "preserve the moved file mode");
     }
-    const expectedContent = mutation.expectedSource.content.value?.bytes;
+    const expectedContent = mutation.expectedSource.content;
     if (expectedContent) {
       await assertCompleteContent(destinationPath, expectedContent, filesystem, true);
     }
@@ -166,8 +166,8 @@ async function assertPureMoveResult(
   }
 }
 
-function regularEntryMode(entry: VirtualEntry): number | undefined {
-  return entry.kind === "regular" ? entry.physical.mode : undefined;
+function regularEntryMode(entry: ExpectedReplaceableFileEntry): number | undefined {
+  return entry.kind === "regular" ? entry.mode : undefined;
 }
 
 async function assertAppliedMutationPostconditions(

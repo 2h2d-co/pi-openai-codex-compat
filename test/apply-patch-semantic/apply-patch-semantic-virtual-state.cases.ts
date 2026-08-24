@@ -1,5 +1,6 @@
 import { Value } from "typebox/value";
 import { APPLY_PATCH_DETAILS_SCHEMA } from "../../extensions/openai-codex-compat/apply-patch-engine/apply-patch-engine-details-schema.ts";
+import type { ExpectedReplaceableFileEntry } from "../../extensions/openai-codex-compat/apply-patch-engine/apply-patch-engine-filesystem-model.ts";
 import {
   assert,
   chmod,
@@ -19,8 +20,60 @@ import {
   ApplyPatchDiffComponent,
   workspace,
   assertMissing,
+  buildSemanticPlan,
   patch,
 } from "./apply-patch-semantic-harness.ts";
+
+test("retains only execution-required state in planned entry expectations", async (t) => {
+  const cwd = await workspace(t);
+  const plannerOnlyFields = [
+    "entryName",
+    "sourcePath",
+    "entryPath",
+    "targetPath",
+    "physical",
+  ] as const;
+  const assertNarrowExpectation = (entry: ExpectedReplaceableFileEntry): void => {
+    for (const field of plannerOnlyFields) {
+      assert.equal(Object.hasOwn(entry, field), false, `execution expectation retained ${field}`);
+    }
+  };
+
+  await writeFile(join(cwd, "opaque-source.bin"), Buffer.from([0xff, 0x00]));
+  await chmod(join(cwd, "opaque-source.bin"), 0o754);
+  await symlink("dangling-target.txt", join(cwd, "destination-link.txt"));
+  const movePlan = await buildSemanticPlan(
+    cwd,
+    patch("*** Update File: opaque-source.bin\n", "*** Move to: destination-link.txt\n"),
+  );
+  const move = movePlan.actions[0];
+  assert.ok(move?.kind === "move");
+  assertNarrowExpectation(move.expectedSource);
+  assertNarrowExpectation(move.expectedDestination);
+  assert.equal(move.expectedSource.kind, "regular");
+  assert.equal(move.expectedSource.mode, 0o754);
+  assert.equal(move.expectedSource.content, undefined);
+  assert.deepEqual(Object.keys(move.expectedSource.fingerprint ?? {}).toSorted(), [
+    "device",
+    "inode",
+    "mode",
+    "modifiedMs",
+    "size",
+  ]);
+  assert.equal(move.expectedDestination.kind, "symlink");
+  assert.equal(move.expectedDestination.target, "dangling-target.txt");
+
+  await writeFile(join(cwd, "text-source.txt"), "before\n");
+  const updatePlan = await buildSemanticPlan(
+    cwd,
+    patch("*** Update File: text-source.txt\n@@\n-before\n+after\n"),
+  );
+  const update = updatePlan.actions[0];
+  assert.ok(update?.kind === "text-update");
+  assertNarrowExpectation(update.expectedSource);
+  assert.equal(update.expectedSource.kind, "regular");
+  assert.deepEqual(update.expectedSource.content, Buffer.from("before\n"));
+});
 
 test("moves opaque regular files without decoding or changing bytes", async (t) => {
   const cwd = await workspace(t);

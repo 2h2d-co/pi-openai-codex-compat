@@ -59,9 +59,25 @@ export type ReplaceableFileEntry = Extract<
   { kind: "absent" | "regular" | "symlink" }
 >;
 
+export type ExpectedExistingFileEntry =
+  | {
+      kind: "regular";
+      fingerprint?: EntryFingerprint;
+      mode: number;
+      content?: Buffer;
+    }
+  | {
+      kind: "symlink";
+      fingerprint?: EntryFingerprint;
+      target: string;
+      content?: Buffer;
+    };
+
+export type ExpectedReplaceableFileEntry = { kind: "absent" } | ExpectedExistingFileEntry;
+
 type PlannedTextUpdateBase = {
   kind: "text-update";
-  expectedSource: ExistingFileEntry;
+  expectedSource: ExpectedExistingFileEntry;
   createdParentPaths: string[];
   content: Buffer;
   change: Extract<AppliedPatchChange, { kind: "update" }>;
@@ -78,14 +94,14 @@ type PlannedTextUpdate =
   | (PlannedTextUpdateBase & {
       moveMode: "same-entry";
       operation: ResolvedMoveUpdateOperation;
-      expectedDestination: ExistingFileEntry;
+      expectedDestination: ExpectedExistingFileEntry;
       sameEntryMove: "rename" | "satisfied";
       provisionalChange: Extract<AppliedPatchChange, { kind: "update" }>;
     })
   | (PlannedTextUpdateBase & {
       moveMode: "destination";
       operation: ResolvedMoveUpdateOperation;
-      expectedDestination: ReplaceableFileEntry;
+      expectedDestination: ExpectedReplaceableFileEntry;
       sameEntryMove?: never;
       provisionalChange: Extract<AppliedPatchChange, { kind: "add" }>;
     });
@@ -94,7 +110,7 @@ export type PlannedMutation = (
   | {
       kind: "add";
       operation: Extract<ResolvedOperation, { kind: "add" }>;
-      expectedTarget: ReplaceableFileEntry;
+      expectedTarget: ExpectedReplaceableFileEntry;
       createdParentPaths: string[];
       content: Buffer;
       change: Extract<AppliedPatchChange, { kind: "add" }>;
@@ -102,15 +118,15 @@ export type PlannedMutation = (
   | {
       kind: "delete";
       operation: Extract<ResolvedOperation, { kind: "delete" }>;
-      expectedTarget: ExistingFileEntry;
+      expectedTarget: ExpectedExistingFileEntry;
       change: Extract<AppliedPatchChange, { kind: "delete" }>;
     }
   | PlannedTextUpdate
   | {
       kind: "move";
       operation: ResolvedMoveUpdateOperation;
-      expectedSource: ExistingFileEntry;
-      expectedDestination: ReplaceableFileEntry;
+      expectedSource: ExpectedExistingFileEntry;
+      expectedDestination: ExpectedReplaceableFileEntry;
       createdParentPaths: string[];
       moveStrategy: "rename" | "copy-unlink";
       change: Extract<AppliedPatchChange, { kind: "move" }>;
