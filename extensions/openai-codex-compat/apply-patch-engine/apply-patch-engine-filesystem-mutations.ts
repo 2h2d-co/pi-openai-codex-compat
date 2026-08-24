@@ -294,16 +294,7 @@ export async function executePureMove(
   if (mutation.moveStrategy === "copy-unlink") {
     return executeCrossDeviceMove(mutation, filesystem);
   }
-  try {
-    await filesystem.rename(sourcePath, destinationPath);
-  } catch (error) {
-    if (hasErrorCode(error, "EXDEV")) {
-      throw new Error("rename unexpectedly crossed filesystem boundaries after validation", {
-        cause: error,
-      });
-    }
-    throw error;
-  }
+  await filesystem.rename(sourcePath, destinationPath);
   try {
     await finishSameInodeRename(sourcePath, destinationPath, filesystem);
   } catch (error) {
