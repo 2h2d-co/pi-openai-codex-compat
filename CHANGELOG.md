@@ -16,7 +16,8 @@
 - Give the `/codex-settings` search field explicit focus that follows typed
   input into search and Up/Down back to the result list, allowing Space to
   change a filtered setting and applying accent color to the result cursor and
-  selected item only while that list has focus.
+  selected item only while that list has focus, with concise focus and action
+  labels.
 - Preserve regular-file permission modes across sequential `apply_patch`
   replacements and state-changing moves, including files created by earlier
   instructions in the same patch.

@@ -312,6 +312,12 @@ test("moves focus between search and results, saves on Enter or Ctrl+S, and disc
   const searchCursor = focusRenders[1]?.find((line) => line.includes("→ "));
   const resultCursor = focusRenders[2]?.find((line) => line.includes("→ "));
   assert.ok(initialCursor?.startsWith("\u001b"));
+  assert.ok(focusRenders[0]?.some((line) => line.includes("Codex Settings")));
+  assert.ok(focusRenders[0]?.includes("Search"));
+  assert.equal(
+    focusRenders[0]?.some((line) => line.includes("No filter")),
+    false,
+  );
   assert.ok(focusRenders[1]?.includes("Search"));
   assert.ok(searchCursor?.startsWith("→ "));
   assert.equal(searchCursor?.includes("\u001b"), false);

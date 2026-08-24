@@ -35,7 +35,6 @@ import {
   parseEnvironmentConfig,
   saveConfig,
   withoutEnvironmentOverrides,
-  writableConfigPath,
   type CodexCompatConfig,
   type ConfigLayer,
 } from "./config.ts";
@@ -336,7 +335,6 @@ async function showSettings(
   let revision = 0;
   let savedRevision = 0;
   let saveQueue = Promise.resolve();
-  const filePath = writableConfigPath(ctx.cwd, ctx.isProjectTrusted());
   const environmentConfig = parseEnvironmentConfig();
   const changeContext = (): SettingsChangeContext => {
     return {
@@ -348,14 +346,9 @@ async function showSettings(
   await ctx.ui.custom((tui, theme, keybindings, done) => {
     let closing = false;
     const container = new Container();
-    container.addChild(
-      new Text(theme.fg("accent", theme.bold("OpenAI Codex Compatibility Settings")), 1, 1),
-    );
-    container.addChild(
-      new Text(theme.fg("dim", `Ctrl+S saves without closing to ${filePath}`), 1, 0),
-    );
+    container.addChild(new Text(theme.fg("accent", theme.bold("Codex Settings")), 1, 1));
     const saveStatus = new Text(
-      theme.fg("dim", "Changes apply to this session immediately."),
+      theme.fg("dim", "Changes apply immediately · Ctrl+S saves without closing"),
       1,
       0,
     );
@@ -464,23 +457,17 @@ async function showSettings(
         const query = searchInput.getValue();
         const searchLabel = searchFocused
           ? theme.fg("accent", theme.bold("Search"))
-          : theme.fg("dim", "Search (type or Tab to focus)");
+          : theme.fg("dim", "Search");
         const searchLines = searchFocused
           ? searchInput.render(width)
-          : [
-              truncateToWidth(
-                listTheme.hint(`  ${query.length > 0 ? query : "No filter"}`),
-                width,
-                "",
-              ),
-            ];
+          : [truncateToWidth(listTheme.hint(query.length > 0 ? `  ${query}` : ""), width, "")];
         const listLines =
           filteredItems.length > 0
             ? list.render(width)
             : [truncateToWidth(listTheme.hint("  No matching settings"), width, ""), ""];
         const hint = searchFocused
-          ? "  Type to search · ↑↓ results · Tab settings · Enter save & close · Esc discard & close"
-          : "  ↑↓ navigate · Type or Tab to search · Space changes · Enter save & close · Esc discard & close";
+          ? "  Type to filter · ↑↓ results · Tab switch · Enter save · Esc discard"
+          : "  ↑↓ navigate · Type to filter · Space change · Tab search · Enter save · Esc discard";
         if (listLines.length > 0) {
           listLines[listLines.length - 1] = truncateToWidth(listTheme.hint(hint), width, "");
         }
