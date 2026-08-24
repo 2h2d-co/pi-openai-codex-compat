@@ -46,6 +46,8 @@
 
 ### Changed
 
+- Replace the multi-line startup configuration dump with a concise package and
+  settings-command notice, and simplify the fallback settings-save error.
 - Align deferred tool loading with Pi 0.84.3, preferring message-anchored
   additional tools on capable Codex models while retaining tool-search and
   top-level fallbacks.

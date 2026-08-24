@@ -390,10 +390,7 @@ async function showSettings(
               : theme.fg("warning", "Unsaved session changes."),
           );
         } catch (cause) {
-          const error = errorFromThrown(
-            cause,
-            "Saving Codex settings failed with a non-Error value.",
-          );
+          const error = errorFromThrown(cause, "Could not save Codex settings.");
           if (closeAfterSave) closing = false;
           const message = error.message;
           saveStatus.setText(theme.fg("error", message));

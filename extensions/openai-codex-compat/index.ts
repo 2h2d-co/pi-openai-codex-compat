@@ -1,10 +1,5 @@
-import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
-import {
-  DEFAULT_CONFIG,
-  loadConfig,
-  writableConfigPath,
-  type CodexCompatConfig,
-} from "./config.ts";
+import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { DEFAULT_CONFIG, loadConfig, type CodexCompatConfig } from "./config.ts";
 import type { ConfigContext } from "./config-context.ts";
 import { registerCodexProvider } from "./codex-provider.ts";
 import { installCodexFooter } from "./footer.ts";
@@ -25,30 +20,6 @@ export {
   type OpenAICodexWebSocketDebugStats,
 } from "./codex-transport.ts";
 
-const DISPLAY_NAME = "OpenAI Codex Compat";
-
-function settingsSummary(ctx: ExtensionContext, config: CodexCompatConfig): string {
-  return [
-    DISPLAY_NAME,
-    `fast mode: ${config.fastMode ? "on" : "off"}`,
-    `Responses Lite: ${config.responsesLite ? "on" : "off"}`,
-    `reasoning mode: ${config.reasoningMode}`,
-    `Codex tool background: ${config.toolBackground}`,
-    `apply_patch: ${config.applyPatch ? "on" : "off"}`,
-    `apply_patch debug output: ${config.applyPatchDebug ? "on" : "off"}`,
-    `apply_patch diagnostics capture: ${config.applyPatchDiagnostics ? "on" : "off"}`,
-    `image_gen.imagegen: ${config.imageGeneration ? "on" : "off"}`,
-    `image result detail: ${config.imageDetail}`,
-    `web.run: ${config.webRun ? "on" : "off"}`,
-    `web search: ${config.webSearch}`,
-    `text verbosity: ${config.textVerbosity}`,
-    `reasoning summary: ${config.reasoningSummary}`,
-    `auto-compact threshold: ${config.autoCompactAtPercent ?? "Pi default"}`,
-    `save target: ${writableConfigPath(ctx.cwd, ctx.isProjectTrusted())}`,
-    "settings: /codex-settings (Enter saves & closes; Esc discards; Ctrl+S saves)",
-  ].join("\n");
-}
-
 export default function registerOpenAICodexCompat(pi: ExtensionAPI): void {
   let activeConfig: CodexCompatConfig | undefined;
   const resolveConfig = (ctx: ConfigContext): CodexCompatConfig => {
@@ -65,7 +36,7 @@ export default function registerOpenAICodexCompat(pi: ExtensionAPI): void {
     activeConfig = loadConfig(ctx.cwd, ctx.isProjectTrusted());
     installCodexFooter(ctx, resolveConfig);
     if (event.reason !== "reload" && ctx.mode === "tui") {
-      ctx.ui.notify(settingsSummary(ctx, activeConfig), "info");
+      ctx.ui.notify("pi-openai-codex-compat loaded · /codex-settings", "info");
     }
   });
 
