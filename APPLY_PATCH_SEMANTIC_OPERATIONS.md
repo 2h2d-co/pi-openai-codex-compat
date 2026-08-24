@@ -763,7 +763,9 @@ Pure moves operate on links themselves:
 The link's stored target text remains byte-for-byte unchanged. A relative
 target is resolved from the destination directory after the move, so later
 same-patch text operations through the moved link observe the destination-side
-target. Cross-filesystem symlink moves receive fresh entry identity.
+target. Source and destination directories are resolved through symlink-parent
+aliases before interpreting relative targets, including targets containing
+`..`. Cross-filesystem symlink moves receive fresh entry identity.
 
 Text updates retain the existing text-operation behavior and are not silently
 converted into link-entry moves. Specifically:
@@ -1166,6 +1168,8 @@ Every case must preserve source bytes exactly.
 - ordinary updates remain visible through all hard links;
 - add and state-changing moves detach only the named hard-link entry;
 - pure move through a symlink-parent self-alias preserves the entry;
+- relative symlink targets containing `..` resolve from canonical source and
+  moved-destination directories reached through symlink parents;
 - ordinary text update follows a live source symlink;
 - ordinary text update through an initially or virtually dangling symlink
   rejects before writes;

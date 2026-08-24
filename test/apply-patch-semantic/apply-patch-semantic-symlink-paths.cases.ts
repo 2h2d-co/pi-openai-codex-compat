@@ -171,6 +171,41 @@ test("routes later operations through a symlink parent moved earlier in the patc
   assert.equal(await readFile(join(cwd, "moved-alias", "created.txt"), "utf8"), "final\n");
 });
 
+test("resolves relative symlink targets from canonical aliased parents", async (t) => {
+  const cwd = await workspace(t);
+  await mkdir(join(cwd, "source-real", "sub"), { recursive: true });
+  await writeFile(join(cwd, "source-real", "target.txt"), "source before\n");
+  await symlink("../target.txt", join(cwd, "source-real", "sub", "link.txt"));
+  await symlink("source-real/sub", join(cwd, "source-alias"));
+
+  await mkdir(join(cwd, "destination-real", "sub"), { recursive: true });
+  await writeFile(join(cwd, "destination-real", "target.txt"), "destination before\n");
+  await symlink("destination-real/sub", join(cwd, "destination-alias"));
+
+  await applyPatch(
+    cwd,
+    patch(
+      "*** Update File: source-alias/link.txt\n",
+      "@@\n",
+      "-source before\n",
+      "+source after\n",
+      "*** Update File: source-real/sub/link.txt\n",
+      "*** Move to: destination-alias/link.txt\n",
+      "*** Update File: destination-alias/link.txt\n",
+      "@@\n",
+      "-destination before\n",
+      "+destination after\n",
+    ),
+  );
+
+  assert.equal(await readFile(join(cwd, "source-real", "target.txt"), "utf8"), "source after\n");
+  assert.equal(
+    await readFile(join(cwd, "destination-real", "target.txt"), "utf8"),
+    "destination after\n",
+  );
+  assert.equal(await readlink(join(cwd, "destination-real", "sub", "link.txt")), "../target.txt");
+});
+
 test("updates same-entry moves safely through a symlinked parent", async (t) => {
   const cwd = await workspace(t);
   await mkdir(join(cwd, "real"));

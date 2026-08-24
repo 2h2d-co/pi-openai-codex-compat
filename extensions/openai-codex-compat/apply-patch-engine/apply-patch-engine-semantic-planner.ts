@@ -326,7 +326,7 @@ export class SemanticPlanner {
           entryName: basename(key),
           fingerprint: entryFingerprint,
           target,
-          targetPath: resolve(dirname(inspectionPath), target),
+          targetPath: resolve(dirname(key), target),
           content: {},
         };
       } else if (metadata.isDirectory()) {
@@ -1302,25 +1302,18 @@ export class SemanticPlanner {
         content,
         physical: this.newPhysicalFile(this.regularFileMode(source) ?? 0o666 & ~process.umask()),
       };
-    } else if (moveStrategy === "copy-unlink" && source.kind === "symlink") {
-      resultingEntry = {
-        kind: "symlink",
-        entryPath: destinationPath,
-        entryName: basename(destinationPath),
-        target: source.target,
-        targetPath: resolve(dirname(destinationPath), source.target),
-        content: {},
-      };
     } else if (source.kind === "symlink") {
       resultingEntry = {
         kind: "symlink",
         entryPath: destinationPath,
         entryName: basename(destinationPath),
         target: source.target,
-        targetPath: resolve(dirname(destinationPath), source.target),
+        targetPath: resolve(dirname(destinationKey), source.target),
         content: {},
       };
-      if (source.fingerprint) resultingEntry.fingerprint = source.fingerprint;
+      if (moveStrategy === "rename" && source.fingerprint) {
+        resultingEntry.fingerprint = source.fingerprint;
+      }
     } else {
       resultingEntry = {
         ...source,
