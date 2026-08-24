@@ -436,7 +436,6 @@ export class CodexProviderRuntime {
     );
     this.requestTails.set(sessionId, current);
     let released = false;
-    // oxlint-disable-next-line 2h2d/require-promise-rejection-parameter -- Request-tail promises only resolve, but both handlers defensively release the serialization gate identically if that invariant changes.
     const release = () => {
       if (released) return;
       released = true;
@@ -445,6 +444,7 @@ export class CodexProviderRuntime {
     };
 
     if (signal?.aborted) {
+      // oxlint-disable-next-line 2h2d/require-promise-rejection-parameter -- Request tails are internally constructed resolve-only gates; either settlement releases this aborted request without changing its outcome.
       previous.then(release, release);
       throw new Error("Request was aborted");
     }
@@ -463,6 +463,7 @@ export class CodexProviderRuntime {
           : []),
       ]);
     } catch (error) {
+      // oxlint-disable-next-line 2h2d/require-promise-rejection-parameter -- Request tails are internally constructed resolve-only gates; either settlement releases this aborted request without replacing the primary error.
       previous.then(release, release);
       throw error;
     } finally {
