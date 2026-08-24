@@ -8,8 +8,8 @@ import {
 
 export type CurrentFilesystemEntry =
   | { kind: "absent" }
-  | { kind: "directory"; fingerprint: EntryFingerprint }
-  | { kind: "unsupported"; entryType: string; fingerprint: EntryFingerprint }
+  | { kind: "directory" }
+  | { kind: "unsupported"; entryType: string }
   | { kind: "regular"; fingerprint: EntryFingerprint }
   | {
       kind: "symlink";
@@ -23,26 +23,24 @@ export async function currentExecutionEntry(
 ): Promise<CurrentFilesystemEntry> {
   try {
     const metadata = await filesystem.lstat(path);
-    const entryFingerprint = fingerprint(metadata);
     if (metadata.isFile()) {
       return {
         kind: "regular",
-        fingerprint: entryFingerprint,
+        fingerprint: fingerprint(metadata),
       };
     }
     if (metadata.isSymbolicLink()) {
       const target = await filesystem.readlink(path);
       return {
         kind: "symlink",
-        fingerprint: entryFingerprint,
+        fingerprint: fingerprint(metadata),
         target,
       };
     }
-    if (metadata.isDirectory()) return { kind: "directory", fingerprint: entryFingerprint };
+    if (metadata.isDirectory()) return { kind: "directory" };
     return {
       kind: "unsupported",
       entryType: entryType(metadata),
-      fingerprint: entryFingerprint,
     };
   } catch (error) {
     if (isNotFound(error)) return { kind: "absent" };

@@ -1118,7 +1118,9 @@ Every case must preserve source bytes exactly.
 - move `A -> B`, then `B -> A` follows sequential, non-swap semantics;
 - opaque binary move followed by delete;
 - opaque binary move followed by state-changing text update rejects before
-  writes unless dead.
+  writes unless dead; and
+- repeated replacements and state-changing moves preserve the regular-file
+  mode carried by earlier virtual results.
 
 ### Identity and absence
 
@@ -1163,6 +1165,8 @@ Every case must preserve source bytes exactly.
 - Unicode-normalization-only rename where the filesystem aliases spellings;
 - equivalent case, Unicode, and symlink-parent spellings share virtual
   sequential state;
+- a symlink parent moved earlier in the patch routes later descendant
+  operations to the same virtual state;
 - distinct hard links;
 - source and destination hard links to the same inode;
 - ordinary updates remain visible through all hard links;

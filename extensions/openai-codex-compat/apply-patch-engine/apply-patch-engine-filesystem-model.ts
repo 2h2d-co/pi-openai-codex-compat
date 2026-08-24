@@ -33,10 +33,9 @@ export type PhysicalFileState = {
 export type VirtualEntry =
   | { kind: "absent" }
   | { kind: "directory"; fingerprint?: EntryFingerprint }
-  | { kind: "unsupported"; entryType: string; fingerprint: EntryFingerprint }
+  | { kind: "unsupported"; entryType: string }
   | {
       kind: "regular";
-      entryPath: string;
       entryName: string;
       sourcePath?: string;
       fingerprint?: EntryFingerprint;

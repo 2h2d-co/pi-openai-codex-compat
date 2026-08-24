@@ -17,7 +17,6 @@ import {
   type ExistingFileEntry,
   type PlannedMutation,
   type ReplaceableFileEntry,
-  type VirtualEntry,
 } from "./apply-patch-engine-filesystem-model.ts";
 
 export function addInstructionEffect(
@@ -92,26 +91,19 @@ export function currentEntryFinalState(
 
 export function entriesHaveSameIdentity(
   actual: CurrentFilesystemEntry,
-  expected: VirtualEntry,
+  expected: ReplaceableFileEntry,
 ): boolean {
   if (actual.kind !== expected.kind) return false;
   if (
     (actual.kind === "regular" || actual.kind === "symlink") &&
     (expected.kind === "regular" || expected.kind === "symlink")
   ) {
-    if (actual.fingerprint && expected.fingerprint) {
+    if (expected.fingerprint) {
       return sameFingerprint(actual.fingerprint, expected.fingerprint);
     }
     return actual.kind === "symlink" && expected.kind === "symlink"
       ? actual.target === expected.target
       : false;
-  }
-  if (actual.kind === "directory" && expected.kind === "directory") {
-    return (
-      actual.fingerprint !== undefined &&
-      expected.fingerprint !== undefined &&
-      sameFingerprint(actual.fingerprint, expected.fingerprint)
-    );
   }
   return actual.kind === "absent" && expected.kind === "absent";
 }
@@ -137,7 +129,7 @@ export function finalPathInspection(
 export async function inspectFinalPath(
   absolutePath: string,
   displayPath: string,
-  expected: VirtualEntry,
+  expected: ReplaceableFileEntry,
   filesystem: ApplyPatchExecutionFilesystem,
   requestedContent?: Buffer,
 ): Promise<ApplyPatchFinalPathInspection> {
@@ -147,7 +139,6 @@ export async function inspectFinalPath(
       actual.kind === expected.kind &&
       (actual.kind === "regular" || actual.kind === "symlink") &&
       (expected.kind === "regular" || expected.kind === "symlink") &&
-      actual.fingerprint !== undefined &&
       expected.fingerprint !== undefined &&
       !samePhysicalEntry(actual.fingerprint, expected.fingerprint);
     if (requestedContent && (actual.kind === "regular" || actual.kind === "symlink")) {
@@ -211,9 +202,8 @@ export async function inspectFinalPath(
     }
     if (
       actual.kind === expected.kind &&
-      "fingerprint" in actual &&
-      actual.fingerprint &&
-      "fingerprint" in expected &&
+      (actual.kind === "regular" || actual.kind === "symlink") &&
+      (expected.kind === "regular" || expected.kind === "symlink") &&
       expected.fingerprint
     ) {
       return finalPathInspection(displayPath, "different-entry", actual);
@@ -249,7 +239,7 @@ export function addInspectedReplacementEffect(
 
 export function finalStateHasChangedPresentEntry(
   state: ApplyPatchFinalPathState | undefined,
-  expected: VirtualEntry,
+  expected: ReplaceableFileEntry,
 ): boolean {
   if (!state) return false;
   switch (state.state) {

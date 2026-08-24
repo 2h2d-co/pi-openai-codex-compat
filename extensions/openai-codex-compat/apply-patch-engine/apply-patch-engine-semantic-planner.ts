@@ -311,7 +311,6 @@ export class SemanticPlanner {
         }
         result = {
           kind: "regular",
-          entryPath: path,
           entryName: basename(key),
           sourcePath: inspectionPath,
           fingerprint: entryFingerprint,
@@ -335,7 +334,6 @@ export class SemanticPlanner {
         result = {
           kind: "unsupported",
           entryType: entryType(metadata),
-          fingerprint: entryFingerprint,
         };
       }
     } catch (error) {
@@ -418,7 +416,9 @@ export class SemanticPlanner {
         entry.content = target.content;
         return bytes;
       }
-      const bytes = await readFile(entry.sourcePath ?? path);
+      const bytes = await readFile(
+        requiredValue(entry.sourcePath, "An opaque regular file has no source path."),
+      );
       entry.content.value = { bytes };
       return bytes;
     } catch (error) {
@@ -860,7 +860,6 @@ export class SemanticPlanner {
     const resultingMode = this.regularFileMode(target) ?? 0o666 & ~process.umask();
     await this.setState(operation.absolutePath, {
       kind: "regular",
-      entryPath: operation.absolutePath,
       entryName: basename(operation.absolutePath),
       physical: this.newPhysicalFile(resultingMode),
       content: {
@@ -1023,7 +1022,6 @@ export class SemanticPlanner {
       } else {
         const resultingEntry: Extract<VirtualEntry, { kind: "regular" }> = {
           kind: "regular",
-          entryPath: operation.absolutePath,
           entryName: source.entryName,
           content: source.content,
           physical: source.physical,
@@ -1071,7 +1069,6 @@ export class SemanticPlanner {
       const resultingMode = this.regularFileMode(source) ?? 0o666 & ~process.umask();
       const resultingEntry: Extract<VirtualEntry, { kind: "regular" }> = {
         kind: "regular",
-        entryPath: destinationPath,
         entryName: basename(destinationPath),
         physical: this.newPhysicalFile(resultingMode),
         content: {
@@ -1139,7 +1136,6 @@ export class SemanticPlanner {
     const resultingMode = this.regularFileMode(source) ?? 0o666 & ~process.umask();
     const resultingEntry: Extract<VirtualEntry, { kind: "regular" }> = {
       kind: "regular",
-      entryPath: destinationPath,
       entryName: basename(destinationPath),
       physical: this.newPhysicalFile(resultingMode),
       content: {
@@ -1210,7 +1206,7 @@ export class SemanticPlanner {
         });
         await this.setState(destinationPath, {
           ...source,
-          entryPath: destinationPath,
+          ...(source.kind === "symlink" ? { entryPath: destinationPath } : {}),
           entryName: basename(destinationPath),
         });
         return;
@@ -1296,12 +1292,16 @@ export class SemanticPlanner {
       if (source.content.value) content.value = source.content.value;
       resultingEntry = {
         kind: "regular",
-        entryPath: destinationPath,
         entryName: basename(destinationPath),
-        sourcePath: source.sourcePath ?? source.entryPath,
         content,
         physical: this.newPhysicalFile(this.regularFileMode(source) ?? 0o666 & ~process.umask()),
       };
+      if (!content.value) {
+        resultingEntry.sourcePath = requiredValue(
+          source.sourcePath,
+          "An opaque copied regular file has no source path.",
+        );
+      }
     } else if (source.kind === "symlink") {
       resultingEntry = {
         kind: "symlink",
@@ -1317,7 +1317,6 @@ export class SemanticPlanner {
     } else {
       resultingEntry = {
         ...source,
-        entryPath: destinationPath,
         entryName: basename(destinationPath),
       };
     }
