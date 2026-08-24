@@ -312,7 +312,14 @@ test("moves focus between search and results, saves on Enter or Ctrl+S, and disc
   const searchCursor = focusRenders[1]?.find((line) => line.includes("→ "));
   const resultCursor = focusRenders[2]?.find((line) => line.includes("→ "));
   assert.ok(initialCursor?.startsWith("\u001b"));
-  assert.ok(focusRenders[0]?.some((line) => line.includes("Codex Settings")));
+  assert.ok(
+    focusRenders[0]?.some((line) => line.includes("Codex Settings (pi-openai-codex-compat)")),
+  );
+  assert.ok(
+    focusRenders[0]?.some((line) =>
+      line.includes("Changes apply to the session immediately · Ctrl+S updates global settings"),
+    ),
+  );
   assert.ok(focusRenders[0]?.includes("Search"));
   assert.equal(
     focusRenders[0]?.some((line) => line.includes("No filter")),

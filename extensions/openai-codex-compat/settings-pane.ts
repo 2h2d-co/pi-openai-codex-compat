@@ -31,10 +31,12 @@ import {
   TEXT_VERBOSITY_SCHEMA,
   WEB_SEARCH_MODE_SCHEMA,
   configLayer,
+  globalConfigPath,
   loadConfig,
   parseEnvironmentConfig,
   saveConfig,
   withoutEnvironmentOverrides,
+  writableConfigPath,
   type CodexCompatConfig,
   type ConfigLayer,
 } from "./config.ts";
@@ -336,6 +338,10 @@ async function showSettings(
   let savedRevision = 0;
   let saveQueue = Promise.resolve();
   const environmentConfig = parseEnvironmentConfig();
+  const settingsScope =
+    writableConfigPath(ctx.cwd, ctx.isProjectTrusted()) === globalConfigPath()
+      ? "global"
+      : "project";
   const changeContext = (): SettingsChangeContext => {
     return {
       model: selectedRegistryModel(ctx),
@@ -346,9 +352,14 @@ async function showSettings(
   await ctx.ui.custom((tui, theme, keybindings, done) => {
     let closing = false;
     const container = new Container();
-    container.addChild(new Text(theme.fg("accent", theme.bold("Codex Settings")), 1, 1));
+    container.addChild(
+      new Text(theme.fg("accent", theme.bold("Codex Settings (pi-openai-codex-compat)")), 1, 1),
+    );
     const saveStatus = new Text(
-      theme.fg("dim", "Changes apply immediately · Ctrl+S saves without closing"),
+      theme.fg(
+        "dim",
+        `Changes apply to the session immediately · Ctrl+S updates ${settingsScope} settings`,
+      ),
       1,
       0,
     );
