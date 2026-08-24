@@ -55,7 +55,7 @@ export interface CodexCompatConfig {
   applyPatch: boolean;
   /** Show exact model-facing apply_patch feedback while its TUI result is collapsed. */
   applyPatchDebug: boolean;
-  /** Persist apply_patch requests, identifiers, text snapshots, and binary metadata for review. */
+  /** Persist failed apply_patch requests and failed-instruction snapshots for review. */
   applyPatchDiagnostics: boolean;
   /** Select the shared background surface for extension-owned Codex tools. */
   toolBackground: CodexToolBackground;

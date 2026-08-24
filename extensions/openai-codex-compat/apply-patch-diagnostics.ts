@@ -78,18 +78,19 @@ type FileSnapshot = {
     | { kind: "inspection-error"; error: DiagnosticError };
 };
 
-export type ApplyPatchDiagnosticsOutcome =
-  | {
-      status: "completed";
-      durationMs: number;
-      details: ApplyPatchDetails;
-    }
-  | {
-      status: "failed";
-      durationMs: number;
-      error: DiagnosticError;
-      details?: ApplyPatchDetails;
-    };
+export type ApplyPatchDiagnosticsOutcome = {
+  status: "failed";
+  durationMs: number;
+  error: DiagnosticError;
+  details?: ApplyPatchDetails;
+};
+
+export type PreparedApplyPatchDiagnostics = {
+  diagnosticsDirectory: string;
+  directory: string;
+  reference: ApplyPatchDiagnosticsReference;
+  request: Record<string, unknown> & { snapshots: FileSnapshot[] };
+};
 
 function diagnosticError(error: unknown): DiagnosticError {
   if (!(error instanceof Error)) {
@@ -325,19 +326,17 @@ async function writePrivateJson(path: string, value: unknown): Promise<void> {
   }
 }
 
-export async function captureApplyPatchDiagnostics(
+export async function prepareApplyPatchDiagnostics(
   context: ApplyPatchDiagnosticsContext,
   toolCallId: string,
   patch: string,
   agentDir = getAgentDir(),
-): Promise<ApplyPatchDiagnosticsReference> {
+): Promise<PreparedApplyPatchDiagnostics> {
   const capturedAt = new Date().toISOString();
   const recordId = randomUUID();
   const sessionId = context.sessionManager.getSessionId();
   const diagnosticsDirectory = join(agentDir, APPLY_PATCH_DIAGNOSTICS_DIRECTORY);
-  await privateDirectory(diagnosticsDirectory);
   const directory = join(diagnosticsDirectory, safePathSegment(sessionId));
-  await privateDirectory(directory);
 
   const prefix = `${capturedAt.replace(/[:.]/gu, "-")}_${recordId}`;
   const requestPath = join(directory, `${prefix}.request.json`);
@@ -363,8 +362,44 @@ export async function captureApplyPatchDiagnostics(
     parsed,
     snapshots,
   };
-  await writePrivateJson(requestPath, request);
-  return { recordId, requestPath, resultPath };
+  return {
+    diagnosticsDirectory,
+    directory,
+    reference: { recordId, requestPath, resultPath },
+    request,
+  };
+}
+
+function failedSnapshots(
+  snapshots: readonly FileSnapshot[],
+  details: ApplyPatchDetails | undefined,
+): FileSnapshot[] {
+  const failedInstructions = new Set<number>();
+  if (details?.failure?.failedInstruction !== undefined) {
+    failedInstructions.add(details.failure.failedInstruction);
+  }
+  for (const instruction of details?.instructions ?? []) {
+    if (instruction.status === "failed") failedInstructions.add(instruction.index);
+  }
+
+  return snapshots.flatMap((snapshot) => {
+    const references = snapshot.references.filter((reference) =>
+      failedInstructions.has(reference.instruction),
+    );
+    return references.length === 0 ? [] : [{ ...snapshot, references }];
+  });
+}
+
+export async function writeApplyPatchDiagnosticsRequest(
+  prepared: PreparedApplyPatchDiagnostics,
+  details: ApplyPatchDetails | undefined,
+): Promise<void> {
+  await privateDirectory(prepared.diagnosticsDirectory);
+  await privateDirectory(prepared.directory);
+  await writePrivateJson(prepared.reference.requestPath, {
+    ...prepared.request,
+    snapshots: failedSnapshots(prepared.request.snapshots, details),
+  });
 }
 
 export async function writeApplyPatchDiagnosticsOutcome(

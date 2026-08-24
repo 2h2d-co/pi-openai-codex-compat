@@ -73,7 +73,7 @@ function assistantEntry(toolCallId: string, responseId: string): SessionEntry {
   };
 }
 
-test("captures apply_patch diagnostics without copying binary bytes", async (t) => {
+test("persists only failed-instruction diagnostics without copying binary bytes", async (t) => {
   const root = await mkdtemp(join(tmpdir(), "pi-apply-patch-diagnostics-"));
   const cwd = join(root, "project");
   const agentDir = join(root, "agent");
@@ -128,23 +128,48 @@ test("captures apply_patch diagnostics without copying binary bytes", async (t) 
 @@
 -before
 +after
-*** Update File: move-source.txt
-*** Move to: destination.txt
-@@
--move before
-+move after
-*** Delete File: binary.dat
-*** Add File: added.txt
-+added
 *** End Patch`;
   const result = await tool.execute(successCallId, { patch: successPatch }, undefined, undefined, {
     cwd,
     sessionManager,
   });
-  const reference = result.details?.diagnostics;
+  assert.equal(result.details?.diagnostics, undefined);
+  assert.equal(await readFile(join(cwd, "source.txt"), "utf8"), "after\n");
+  await assert.rejects(stat(join(agentDir, APPLY_PATCH_DIAGNOSTICS_DIRECTORY)), {
+    code: "ENOENT",
+  });
+
+  const failedCallId = "call-failed|item-failed";
+  branch = [assistantEntry(failedCallId, "response-failed")];
+  const failedPatch = `*** Begin Patch
+*** Update File: source.txt
+@@
+-after
++not applied
+*** Update File: move-source.txt
+*** Move to: destination.txt
+@@
+-missing
++move after
+*** Delete File: binary.dat
+*** End Patch`;
+  await assert.rejects(
+    tool.execute(failedCallId, { patch: failedPatch }, undefined, undefined, {
+      cwd,
+      sessionManager,
+    }),
+    /Old content was not found/u,
+  );
+  const failedDetails = resultHandler?.({
+    toolName: "apply_patch",
+    toolCallId: failedCallId,
+  })?.details;
+  const reference = failedDetails?.diagnostics;
   assert.ok(reference);
   assert.equal(await readFile(join(cwd, "source.txt"), "utf8"), "after\n");
-  assert.equal(await readFile(join(cwd, "destination.txt"), "utf8"), "move after\n");
+  assert.equal(await readFile(join(cwd, "move-source.txt"), "utf8"), "move before\n");
+  assert.equal(await readFile(join(cwd, "destination.txt"), "utf8"), "destination before\n");
+  assert.deepEqual(await readFile(join(cwd, "binary.dat")), Buffer.from([0xff, 0x00]));
 
   const diagnosticsMode =
     (await stat(join(agentDir, APPLY_PATCH_DIAGNOSTICS_DIRECTORY))).mode & 0o777;
@@ -161,37 +186,31 @@ test("captures apply_patch diagnostics without copying binary bytes", async (t) 
   );
 
   const requestJson = await readFile(reference.requestPath, "utf8");
-  assert.equal(requestJson.includes("/wA="), false);
   const request = requireJsonRecord(JSON.parse(requestJson));
   assert.equal(request["recordId"], reference.recordId);
   assert.equal(request["cwd"], cwd);
-  assert.equal(request["patch"], successPatch);
+  assert.equal(request["patch"], failedPatch);
   assert.deepEqual(request["session"], { id: SESSION_ID, file: sessionFile });
   const identifiers = requireJsonRecord(request["request"]);
-  assert.equal(identifiers["toolCallId"], successCallId);
-  assert.equal(identifiers["providerCallId"], "call-success");
-  assert.equal(identifiers["providerItemId"], "item-success");
-  assert.equal(identifiers["assistantEntryId"], "entry-response-success");
-  assert.equal(identifiers["responseId"], "response-success");
+  assert.equal(identifiers["toolCallId"], failedCallId);
+  assert.equal(identifiers["providerCallId"], "call-failed");
+  assert.equal(identifiers["providerItemId"], "item-failed");
+  assert.equal(identifiers["assistantEntryId"], "entry-response-failed");
+  assert.equal(identifiers["responseId"], "response-failed");
   assert.equal(identifiers["turnId"], "turn-1");
   assert.equal(identifiers["clientRequestId"], "request-1");
 
   const parsed = requireJsonRecord(request["parsed"]);
   assert.equal(parsed["status"], "parsed");
-  assert.equal(requireJsonRecords(parsed["operations"]).length, 4);
+  assert.equal(requireJsonRecords(parsed["operations"]).length, 3);
   const snapshots = requireJsonRecords(request["snapshots"]);
   const sourceSnapshot = snapshots.find(
-    (snapshot) => snapshot["absolutePath"] === join(cwd, "source.txt"),
-  );
-  const binarySnapshot = snapshots.find(
-    (snapshot) => snapshot["absolutePath"] === join(cwd, "binary.dat"),
-  );
-  const addedSnapshot = snapshots.find(
-    (snapshot) => snapshot["absolutePath"] === join(cwd, "added.txt"),
+    (snapshot) => snapshot["absolutePath"] === join(cwd, "move-source.txt"),
   );
   const destinationSnapshot = snapshots.find(
     (snapshot) => snapshot["absolutePath"] === join(cwd, "destination.txt"),
   );
+  assert.equal(snapshots.length, 2);
   assert.equal(
     requireJsonRecord(requireJsonRecord(sourceSnapshot)["entry"])["kind"],
     "regular-file",
@@ -200,24 +219,18 @@ test("captures apply_patch diagnostics without copying binary bytes", async (t) 
     requireJsonRecord(requireJsonRecord(requireJsonRecord(sourceSnapshot)["entry"])["content"]),
     {
       encoding: "utf8",
-      data: "before\n",
-      byteLength: 7,
-      sha256: "9160d4be34c8695bd172a76c7c7966587ea5a4d991ad22c87b2b91af54aa9ebb",
+      data: "move before\n",
+      byteLength: 12,
+      sha256: "4e47f0522a6f79adb3f99af8dbc3f80e1066ca4f950921adedc983cf9b813685",
     },
   );
-  assert.deepEqual(
-    requireJsonRecord(requireJsonRecord(requireJsonRecord(binarySnapshot)["entry"])["content"]),
+  assert.deepEqual(requireJsonRecord(sourceSnapshot)["references"], [
     {
-      encoding: "binary",
-      byteLength: 2,
-      sha256: "ea5dbf9596d187e9500f23e9a680109475341cf4e81f7e043f7d97152c10772f",
+      instruction: 2,
+      role: "source",
+      patchPath: "move-source.txt",
     },
-  );
-  assert.deepEqual(requireJsonRecord(addedSnapshot), {
-    absolutePath: join(cwd, "added.txt"),
-    references: [{ instruction: 4, role: "destination", patchPath: "added.txt" }],
-    entry: { kind: "absent" },
-  });
+  ]);
   assert.deepEqual(requireJsonRecord(destinationSnapshot)["references"], [
     {
       instruction: 2,
@@ -237,23 +250,24 @@ test("captures apply_patch diagnostics without copying binary bytes", async (t) 
     },
   );
 
-  const successOutcome = requireJsonRecord(
-    JSON.parse(await readFile(reference.resultPath, "utf8")),
-  );
-  assert.equal(successOutcome["status"], "completed");
+  const failedOutcome = requireJsonRecord(JSON.parse(await readFile(reference.resultPath, "utf8")));
+  assert.equal(failedOutcome["status"], "failed");
   assert.equal(
-    requireJsonRecord(requireJsonRecord(successOutcome["details"])["diagnostics"])["recordId"],
+    requireJsonRecord(requireJsonRecord(failedOutcome["details"])["diagnostics"])["recordId"],
     reference.recordId,
   );
+  const errorMessage = requireJsonRecord(failedOutcome["error"])["message"];
+  assert.ok(typeof errorMessage === "string");
+  assert.match(errorMessage, /expected lines/u);
 
-  const failedCallId = "call-failed|item-failed";
-  branch = [assistantEntry(failedCallId, "response-failed")];
+  const binaryCallId = "call-binary|item-binary";
+  branch = [assistantEntry(binaryCallId, "response-binary")];
   await assert.rejects(
     tool.execute(
-      failedCallId,
+      binaryCallId,
       {
         patch: `*** Begin Patch
-*** Update File: source.txt
+*** Update File: binary.dat
 @@
 -missing
 +replacement
@@ -263,21 +277,26 @@ test("captures apply_patch diagnostics without copying binary bytes", async (t) 
       undefined,
       { cwd, sessionManager },
     ),
-    /Old content was not found/u,
+    /utf-8/iu,
   );
-  const failedDetails = resultHandler?.({
+  const binaryDetails = resultHandler?.({
     toolName: "apply_patch",
-    toolCallId: failedCallId,
+    toolCallId: binaryCallId,
   })?.details;
-  assert.ok(failedDetails?.diagnostics);
-  const failedOutcome = requireJsonRecord(
-    JSON.parse(await readFile(failedDetails.diagnostics.resultPath, "utf8")),
+  assert.ok(binaryDetails?.diagnostics);
+  const binaryRequestJson = await readFile(binaryDetails.diagnostics.requestPath, "utf8");
+  assert.equal(binaryRequestJson.includes("/wA="), false);
+  const binaryRequest = requireJsonRecord(JSON.parse(binaryRequestJson));
+  const binarySnapshots = requireJsonRecords(binaryRequest["snapshots"]);
+  assert.equal(binarySnapshots.length, 1);
+  assert.deepEqual(
+    requireJsonRecord(requireJsonRecord(requireJsonRecord(binarySnapshots[0])["entry"])["content"]),
+    {
+      encoding: "binary",
+      byteLength: 2,
+      sha256: "ea5dbf9596d187e9500f23e9a680109475341cf4e81f7e043f7d97152c10772f",
+    },
   );
-  assert.equal(failedOutcome["status"], "failed");
-  assert.equal(requireJsonRecord(failedOutcome["details"])["status"], "failed");
-  const errorMessage = requireJsonRecord(failedOutcome["error"])["message"];
-  assert.ok(typeof errorMessage === "string");
-  assert.match(errorMessage, /expected lines/u);
 
   const malformedCallId = "call-malformed|item-malformed";
   branch = [assistantEntry(malformedCallId, "response-malformed")];
@@ -309,9 +328,5 @@ test("captures apply_patch diagnostics without copying binary bytes", async (t) 
   assert.equal(malformedParsed["status"], "parse-error");
   assert.equal(requireJsonRecords(malformedParsed["instructions"]).length, 1);
   const malformedSnapshots = requireJsonRecords(malformedRequest["snapshots"]);
-  assert.equal(malformedSnapshots.length, 1);
-  assert.equal(
-    requireJsonRecord(requireJsonRecord(malformedSnapshots[0])["entry"])["kind"],
-    "regular-file",
-  );
+  assert.equal(malformedSnapshots.length, 0);
 });

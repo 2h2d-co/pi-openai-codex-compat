@@ -5,14 +5,15 @@ import type { CodexToolBackgroundResolver } from "./codex-tool-surface.ts";
 import { DEFAULT_CONFIG } from "./config.ts";
 import {
   applyPatchDiagnosticError,
-  captureApplyPatchDiagnostics,
+  prepareApplyPatchDiagnostics,
   writeApplyPatchDiagnosticsOutcome,
+  writeApplyPatchDiagnosticsRequest,
   type ApplyPatchDiagnosticsContext,
+  type PreparedApplyPatchDiagnostics,
 } from "./apply-patch-diagnostics.ts";
 import {
   applyPatch,
   type ApplyPatchDetails,
-  type ApplyPatchDiagnosticsReference,
   ApplyPatchExecutionError,
   ApplyPatchInputError,
   ApplyPatchVerificationError,
@@ -136,30 +137,17 @@ export default function registerApplyPatch(
     renderShell: "self",
     async execute(toolCallId, params, signal, onUpdate, ctx) {
       const diagnosticsStartedAt = performance.now();
-      let diagnostics: ApplyPatchDiagnosticsReference | undefined;
+      let preparedDiagnostics: PreparedApplyPatchDiagnostics | undefined;
       if (resolveDiagnostics()) {
         if (!ctx.sessionManager) {
           throw new Error("apply_patch diagnostics require Pi session context.");
         }
-        diagnostics = await captureApplyPatchDiagnostics(
+        preparedDiagnostics = await prepareApplyPatchDiagnostics(
           { cwd: ctx.cwd, sessionManager: ctx.sessionManager },
           toolCallId,
           params.patch,
         );
       }
-      const persistDiagnostics = async (
-        outcome: Parameters<typeof writeApplyPatchDiagnosticsOutcome>[1],
-      ): Promise<void> => {
-        if (!diagnostics) return;
-        try {
-          await writeApplyPatchDiagnosticsOutcome(diagnostics, outcome);
-        } catch (error) {
-          console.error(
-            `Could not write apply_patch diagnostics outcome ${diagnostics.recordId}:`,
-            error,
-          );
-        }
-      };
       let executionStartedAt: number | undefined;
       const executionDurationMs = (): number => {
         if (executionStartedAt === undefined) {
@@ -178,12 +166,6 @@ export default function registerApplyPatch(
               details: partialDetails,
             });
           },
-        });
-        if (diagnostics) details.diagnostics = diagnostics;
-        await persistDiagnostics({
-          status: "completed",
-          durationMs: performance.now() - diagnosticsStartedAt,
-          details,
         });
         return {
           content: [
@@ -205,14 +187,32 @@ export default function registerApplyPatch(
           (error instanceof ApplyPatchInputError && error.details)
             ? error.details
             : undefined;
-        if (diagnostics && errorDetails) errorDetails.diagnostics = diagnostics;
-        const failedOutcome: Parameters<typeof writeApplyPatchDiagnosticsOutcome>[1] = {
-          status: "failed",
-          durationMs: performance.now() - diagnosticsStartedAt,
-          error: applyPatchDiagnosticError(error),
-        };
-        if (errorDetails) failedOutcome.details = errorDetails;
-        await persistDiagnostics(failedOutcome);
+        if (preparedDiagnostics) {
+          const diagnostics = preparedDiagnostics.reference;
+          try {
+            await writeApplyPatchDiagnosticsRequest(preparedDiagnostics, errorDetails);
+            if (errorDetails) errorDetails.diagnostics = diagnostics;
+            const failedOutcome: Parameters<typeof writeApplyPatchDiagnosticsOutcome>[1] = {
+              status: "failed",
+              durationMs: performance.now() - diagnosticsStartedAt,
+              error: applyPatchDiagnosticError(error),
+            };
+            if (errorDetails) failedOutcome.details = errorDetails;
+            try {
+              await writeApplyPatchDiagnosticsOutcome(diagnostics, failedOutcome);
+            } catch (outcomeError) {
+              console.error(
+                `Could not write apply_patch diagnostics outcome ${diagnostics.recordId}:`,
+                outcomeError,
+              );
+            }
+          } catch (requestError) {
+            console.error(
+              `Could not write apply_patch diagnostics request ${diagnostics.recordId}:`,
+              requestError,
+            );
+          }
+        }
         if (error instanceof ApplyPatchExecutionError) {
           failedDetails.set(toolCallId, error.details);
           throw new Error(
