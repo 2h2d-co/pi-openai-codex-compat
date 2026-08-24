@@ -423,6 +423,10 @@ async function showSettings(
     let filteredItems = items;
     const resultListTheme = {
       ...listTheme,
+      label: (text: string, selected: boolean) =>
+        searchFocused && selected ? theme.fg("text", text) : listTheme.label(text, selected),
+      value: (text: string, selected: boolean) =>
+        searchFocused && selected ? theme.fg("text", text) : listTheme.value(text, selected),
       get cursor(): string {
         return searchFocused ? "→ " : listTheme.cursor;
       },
