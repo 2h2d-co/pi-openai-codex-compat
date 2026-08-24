@@ -370,36 +370,12 @@ export async function prepareApplyPatchDiagnostics(
   };
 }
 
-function failedSnapshots(
-  snapshots: readonly FileSnapshot[],
-  details: ApplyPatchDetails | undefined,
-): FileSnapshot[] {
-  const failedInstructions = new Set<number>();
-  if (details?.failure?.failedInstruction !== undefined) {
-    failedInstructions.add(details.failure.failedInstruction);
-  }
-  for (const instruction of details?.instructions ?? []) {
-    if (instruction.status === "failed") failedInstructions.add(instruction.index);
-  }
-
-  return snapshots.flatMap((snapshot) => {
-    const references = snapshot.references.filter((reference) =>
-      failedInstructions.has(reference.instruction),
-    );
-    return references.length === 0 ? [] : [{ ...snapshot, references }];
-  });
-}
-
 export async function writeApplyPatchDiagnosticsRequest(
   prepared: PreparedApplyPatchDiagnostics,
-  details: ApplyPatchDetails | undefined,
 ): Promise<void> {
   await privateDirectory(prepared.diagnosticsDirectory);
   await privateDirectory(prepared.directory);
-  await writePrivateJson(prepared.reference.requestPath, {
-    ...prepared.request,
-    snapshots: failedSnapshots(prepared.request.snapshots, details),
-  });
+  await writePrivateJson(prepared.reference.requestPath, prepared.request);
 }
 
 export async function writeApplyPatchDiagnosticsOutcome(

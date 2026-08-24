@@ -190,7 +190,7 @@ export default function registerApplyPatch(
         if (preparedDiagnostics) {
           const diagnostics = preparedDiagnostics.reference;
           try {
-            await writeApplyPatchDiagnosticsRequest(preparedDiagnostics, errorDetails);
+            await writeApplyPatchDiagnosticsRequest(preparedDiagnostics);
             if (errorDetails) errorDetails.diagnostics = diagnostics;
             const failedOutcome: Parameters<typeof writeApplyPatchDiagnosticsOutcome>[1] = {
               status: "failed",

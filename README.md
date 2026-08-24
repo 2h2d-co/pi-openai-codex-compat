@@ -7,7 +7,7 @@ OpenAI Codex compatibility for [Pi](https://github.com/earendil-works/pi-mono), 
 - **Request-level fast mode**: keeps the canonical `openai-codex` provider id and models selected while adding `service_tier: "priority"` at the request boundary.
 - **Native compaction**: uses Codex `remote_compaction_v2` for `/compact`, Pi threshold compaction, context-overflow recovery, and an optional percentage threshold.
 - **Codex `apply_patch`**: provides an optional patch tool with the Codex grammar, parser, fuzzy matcher, overwrite semantics, filesystem behavior, model-facing result format, structured history, and diff-oriented TUI rendering. Pi sends it as an OpenAI custom grammar tool when the model supports that protocol and as a normal function tool otherwise.
-- **Opt-in patch diagnostics**: records failed `apply_patch` requests with pre-execution text snapshots or binary metadata for the failed instructions, outcomes, and Pi/Codex identifiers.
+- **Opt-in patch diagnostics**: records failed `apply_patch` requests with pre-execution text snapshots or binary metadata for every instruction, outcomes, and Pi/Codex identifiers.
 - **Standalone image generation**: exposes Pi's dotted `image_gen.imagegen` tool as a native Responses namespace and executes generation or edits through the Codex Images endpoints.
 - **Standalone web search**: exposes Pi's dotted `web.run` tool as a native Responses namespace and executes search and browsing through Codex `alpha/search`.
 - **Dedicated Codex tool UI**: renders `apply_patch`, `image_gen.imagegen`, and `web.run` on a shared configurable surface with compact summaries and `Ctrl+O` expansion.
@@ -199,7 +199,7 @@ Defaults:
 | `toolBackground`        | `subtle`, `status`, `none`                           | `subtle`   | Controls the shared self-rendered background for `apply_patch`, `image_gen.imagegen`, and `web.run`. `status` uses Pi's pending/success/error backgrounds; `none` keeps the custom layout transparent.                                    |
 | `applyPatch`            | boolean                                              | `true`     | On selected `openai-codex` models, uses the extension's `apply_patch` tool instead of Pi's active `edit` and `write` tools. Other providers always use their normal Pi tool set.                                                          |
 | `applyPatchDebug`       | boolean                                              | `false`    | Shows the exact model-facing tool result while a completed `apply_patch` result is collapsed. Expanded results continue to show the normal visual summary and complete diffs.                                                             |
-| `applyPatchDiagnostics` | boolean                                              | `false`    | Persists failed patch requests with pre-execution text snapshots or binary metadata for failed instructions, outcomes, and trace identifiers. See [`apply_patch`](#apply_patch) for storage and sensitivity details.                      |
+| `applyPatchDiagnostics` | boolean                                              | `false`    | Persists failed patch requests with pre-execution text snapshots or binary metadata for every instruction, outcomes, and trace identifiers. See [`apply_patch`](#apply_patch) for storage and sensitivity details.                        |
 | `imageGeneration`       | boolean                                              | `true`     | Enables the extension-owned `image_gen.imagegen` tool on selected `openai-codex` models.                                                                                                                                                  |
 | `imageDetail`           | `auto`, `low`, `high`, `original`                    | `auto`     | Sets `input_image.detail` when an image tool result is sent back to the model. It does not change `gpt-image-2` generation quality.                                                                                                       |
 | `webRun`                | boolean                                              | `false`    | Enables the extension-owned `web.run` tool on selected `openai-codex` models. When active, it replaces hosted `web_search` in the Responses tool list.                                                                                    |
@@ -334,16 +334,17 @@ failed invocation writes paired JSON artifacts under:
 
 The active Pi agent directory replaces `~/.pi/agent` when configured
 differently. The request artifact contains the raw patch, parsed instructions
-(or parse failure), pre-execution snapshots only for paths referenced by the
-reported failed instruction, and available session, assistant, response, turn,
-transport-request, and tool-call identifiers. A failure without an identified
-instruction retains no file snapshots. Valid UTF-8 regular-file content is
-stored as text with its byte length and SHA-256. Binary content is not copied;
-its snapshot contains only the byte length and SHA-256. Symlink snapshots
-retain the raw target and either readable UTF-8 target content or binary target
-metadata. The result artifact records the failed outcome and structured tool
-details. Those details also retain the diagnostic record ID and both artifact
-paths so the invocation can be located from Pi session history.
+(or parse failure), pre-execution snapshots for paths referenced by every
+instruction in the failed patch, and available session, assistant, response,
+turn, transport-request, and tool-call identifiers. Malformed patches retain
+snapshots for every instruction recognized by the fallback scanner. Valid UTF-8
+regular-file content is stored as text with its byte length and SHA-256. Binary
+content is not copied; its snapshot contains only the byte length and SHA-256.
+Symlink snapshots retain the raw target and either readable UTF-8 target
+content or binary target metadata. The result artifact records the failed
+outcome and structured tool details. Those details also retain the diagnostic
+record ID and both artifact paths so the invocation can be located from Pi
+session history.
 
 These artifacts can contain sensitive source code, file metadata, absolute
 paths, patches, and request identifiers. Capture is disabled by default.

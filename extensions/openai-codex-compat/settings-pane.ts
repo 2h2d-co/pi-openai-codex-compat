@@ -166,7 +166,7 @@ export function settingItems(
       id: "applyPatchDiagnostics",
       label: "apply_patch diagnostics capture",
       description:
-        "Store failed patches, identifiers, and failed-instruction snapshots in Pi's agent directory.",
+        "Store failed patches, identifiers, and complete instruction snapshots in Pi's agent directory.",
       currentValue: toggleValue(config.applyPatchDiagnostics),
       values: ["off", "on"],
     },

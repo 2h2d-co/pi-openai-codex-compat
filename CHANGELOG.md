@@ -6,9 +6,9 @@
 
 - Show the current Pi session ID on the compatibility footer's first line.
 - Add default-off, failure-only `apply_patch` diagnostics capture with
-  pre-execution text snapshots and binary metadata for failed instructions,
-  patch outcomes, and Pi/provider trace identifiers linked from tool-result
-  details.
+  pre-execution text snapshots and binary metadata for every instruction in a
+  failed patch, patch outcomes, and Pi/provider trace identifiers linked from
+  tool-result details.
 
 ### Fixed
 

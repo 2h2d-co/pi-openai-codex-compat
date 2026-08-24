@@ -73,7 +73,7 @@ function assistantEntry(toolCallId: string, responseId: string): SessionEntry {
   };
 }
 
-test("persists only failed-instruction diagnostics without copying binary bytes", async (t) => {
+test("persists complete failed-call diagnostics without copying binary bytes", async (t) => {
   const root = await mkdtemp(join(tmpdir(), "pi-apply-patch-diagnostics-"));
   const cwd = join(root, "project");
   const agentDir = join(root, "agent");
@@ -186,6 +186,7 @@ test("persists only failed-instruction diagnostics without copying binary bytes"
   );
 
   const requestJson = await readFile(reference.requestPath, "utf8");
+  assert.equal(requestJson.includes("/wA="), false);
   const request = requireJsonRecord(JSON.parse(requestJson));
   assert.equal(request["recordId"], reference.recordId);
   assert.equal(request["cwd"], cwd);
@@ -204,13 +205,30 @@ test("persists only failed-instruction diagnostics without copying binary bytes"
   assert.equal(parsed["status"], "parsed");
   assert.equal(requireJsonRecords(parsed["operations"]).length, 3);
   const snapshots = requireJsonRecords(request["snapshots"]);
+  const precedingSourceSnapshot = snapshots.find(
+    (snapshot) => snapshot["absolutePath"] === join(cwd, "source.txt"),
+  );
   const sourceSnapshot = snapshots.find(
     (snapshot) => snapshot["absolutePath"] === join(cwd, "move-source.txt"),
   );
   const destinationSnapshot = snapshots.find(
     (snapshot) => snapshot["absolutePath"] === join(cwd, "destination.txt"),
   );
-  assert.equal(snapshots.length, 2);
+  const binarySnapshot = snapshots.find(
+    (snapshot) => snapshot["absolutePath"] === join(cwd, "binary.dat"),
+  );
+  assert.equal(snapshots.length, 4);
+  assert.deepEqual(
+    requireJsonRecord(
+      requireJsonRecord(requireJsonRecord(precedingSourceSnapshot)["entry"])["content"],
+    ),
+    {
+      encoding: "utf8",
+      data: "after\n",
+      byteLength: 6,
+      sha256: "7b9a72466d3960eb2aacccfc848939453490db0678bd4725def3f789b891c919",
+    },
+  );
   assert.equal(
     requireJsonRecord(requireJsonRecord(sourceSnapshot)["entry"])["kind"],
     "regular-file",
@@ -247,6 +265,14 @@ test("persists only failed-instruction diagnostics without copying binary bytes"
       data: "destination before\n",
       byteLength: 19,
       sha256: "bc57eb48e8ade639f6eb4a9451ab9929c6cc6d51e6bcae8fbf948ff50733db6d",
+    },
+  );
+  assert.deepEqual(
+    requireJsonRecord(requireJsonRecord(requireJsonRecord(binarySnapshot)["entry"])["content"]),
+    {
+      encoding: "binary",
+      byteLength: 2,
+      sha256: "ea5dbf9596d187e9500f23e9a680109475341cf4e81f7e043f7d97152c10772f",
     },
   );
 
@@ -328,5 +354,9 @@ test("persists only failed-instruction diagnostics without copying binary bytes"
   assert.equal(malformedParsed["status"], "parse-error");
   assert.equal(requireJsonRecords(malformedParsed["instructions"]).length, 1);
   const malformedSnapshots = requireJsonRecords(malformedRequest["snapshots"]);
-  assert.equal(malformedSnapshots.length, 0);
+  assert.equal(malformedSnapshots.length, 1);
+  assert.equal(
+    requireJsonRecord(requireJsonRecord(malformedSnapshots[0])["entry"])["kind"],
+    "regular-file",
+  );
 });
