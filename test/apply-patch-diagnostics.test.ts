@@ -73,7 +73,7 @@ function assistantEntry(toolCallId: string, responseId: string): SessionEntry {
   };
 }
 
-test("captures apply_patch requests, original files, outcomes, and session identifiers", async (t) => {
+test("captures apply_patch diagnostics without copying binary bytes", async (t) => {
   const root = await mkdtemp(join(tmpdir(), "pi-apply-patch-diagnostics-"));
   const cwd = join(root, "project");
   const agentDir = join(root, "agent");
@@ -160,7 +160,9 @@ test("captures apply_patch requests, original files, outcomes, and session ident
     new RegExp(`${APPLY_PATCH_DIAGNOSTICS_DIRECTORY}/${SESSION_ID}/`),
   );
 
-  const request = requireJsonRecord(JSON.parse(await readFile(reference.requestPath, "utf8")));
+  const requestJson = await readFile(reference.requestPath, "utf8");
+  assert.equal(requestJson.includes("/wA="), false);
+  const request = requireJsonRecord(JSON.parse(requestJson));
   assert.equal(request["recordId"], reference.recordId);
   assert.equal(request["cwd"], cwd);
   assert.equal(request["patch"], successPatch);
@@ -206,8 +208,7 @@ test("captures apply_patch requests, original files, outcomes, and session ident
   assert.deepEqual(
     requireJsonRecord(requireJsonRecord(requireJsonRecord(binarySnapshot)["entry"])["content"]),
     {
-      encoding: "base64",
-      data: "/wA=",
+      encoding: "binary",
       byteLength: 2,
       sha256: "ea5dbf9596d187e9500f23e9a680109475341cf4e81f7e043f7d97152c10772f",
     },

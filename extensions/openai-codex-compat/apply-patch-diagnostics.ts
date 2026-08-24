@@ -34,12 +34,18 @@ type DiagnosticError = {
   code?: string;
 };
 
-type SnapshotContent = {
-  encoding: "base64" | "utf8";
-  data: string;
-  byteLength: number;
-  sha256: string;
-};
+type SnapshotContent =
+  | {
+      encoding: "binary";
+      byteLength: number;
+      sha256: string;
+    }
+  | {
+      encoding: "utf8";
+      data: string;
+      byteLength: number;
+      sha256: string;
+    };
 
 type SnapshotReference = {
   instruction: number;
@@ -121,8 +127,7 @@ function snapshotContent(content: Buffer): SnapshotContent {
   } catch (error) {
     if (!(error instanceof TypeError)) throw error;
     return {
-      encoding: "base64",
-      data: content.toString("base64"),
+      encoding: "binary",
       ...metadata,
     };
   }

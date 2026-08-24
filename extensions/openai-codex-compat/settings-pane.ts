@@ -166,7 +166,7 @@ export function settingItems(
       id: "applyPatchDiagnostics",
       label: "apply_patch diagnostics capture",
       description:
-        "Store full patches, request identifiers, and original file contents in Pi's agent directory.",
+        "Store full patches, request identifiers, text snapshots, and binary metadata in Pi's agent directory.",
       currentValue: toggleValue(config.applyPatchDiagnostics),
       values: ["off", "on"],
     },
