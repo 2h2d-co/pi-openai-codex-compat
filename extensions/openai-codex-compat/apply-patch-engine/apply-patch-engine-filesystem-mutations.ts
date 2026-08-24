@@ -77,12 +77,14 @@ export async function replaceRegularFile(
   } catch (error) {
     pendingError = error;
   } finally {
-    try {
-      await filesystem.unlink(temporaryPath);
-    } catch (error) {
-      if (!isNotFound(error)) {
-        temporaryEntryRemains = true;
-        if (pendingError === undefined) pendingError = error;
+    if (!destinationChanged) {
+      try {
+        await filesystem.unlink(temporaryPath);
+      } catch (error) {
+        if (!isNotFound(error)) {
+          temporaryEntryRemains = true;
+          if (pendingError === undefined) pendingError = error;
+        }
       }
     }
   }
@@ -252,12 +254,14 @@ export async function executeCrossDeviceMove(
   } catch (error) {
     pendingError = error;
   } finally {
-    try {
-      await filesystem.unlink(temporaryPath);
-    } catch (error) {
-      if (!isNotFound(error)) {
-        temporaryEntryRemains = true;
-        if (pendingError === undefined) pendingError = error;
+    if (!destinationChanged) {
+      try {
+        await filesystem.unlink(temporaryPath);
+      } catch (error) {
+        if (!isNotFound(error)) {
+          temporaryEntryRemains = true;
+          if (pendingError === undefined) pendingError = error;
+        }
       }
     }
   }

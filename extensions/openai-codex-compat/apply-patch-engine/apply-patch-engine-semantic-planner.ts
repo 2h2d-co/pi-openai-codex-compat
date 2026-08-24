@@ -533,12 +533,6 @@ export class SemanticPlanner {
     return { path: targetPath, entry: target };
   }
 
-  private async resolvedTextTarget(
-    path: string,
-  ): Promise<{ path: string; entry: VirtualEntry } | undefined> {
-    return this.resolvedEntryTarget(path);
-  }
-
   private async operationObservesPhysicalEntry(
     operation: ResolvedOperation,
     affected: Extract<VirtualEntry, { kind: "regular" }>,
@@ -548,7 +542,7 @@ export class SemanticPlanner {
       return affected.physical === entry.physical;
     };
     if (operation.kind === "update" && !chunksAreIdentity(operation.chunks)) {
-      const target = await this.resolvedTextTarget(operation.absolutePath);
+      const target = await this.resolvedEntryTarget(operation.absolutePath);
       return sameEntry(target?.entry);
     }
     if (operation.kind === "update" && chunksAreIdentity(operation.chunks)) {
@@ -565,7 +559,7 @@ export class SemanticPlanner {
     index: number,
     targetPath: string,
   ): Promise<DeadOperationProof | undefined> {
-    const target = await this.resolvedTextTarget(targetPath);
+    const target = await this.resolvedEntryTarget(targetPath);
     if (!target) return undefined;
 
     const targetKey = await this.pathKey(targetPath);

@@ -1,6 +1,7 @@
 import {
   assert,
   readFile,
+  unlink,
   writeFile,
   join,
   test,
@@ -8,6 +9,7 @@ import {
   ApplyPatchExecutionError,
   workspace,
   patch,
+  pathLikeBasename,
 } from "./apply-patch-semantic-harness.ts";
 
 test("requires the complete final bytes instead of finding requested bytes elsewhere", async (t) => {
@@ -70,4 +72,36 @@ test("verifies replacement bytes before committing a temporary file", async (t) 
     },
   );
   await assert.rejects(readFile(target), /ENOENT/u);
+});
+
+test("does not clean obsolete temporary paths after committed renames", async (t) => {
+  const cwd = await workspace(t);
+  const rejectObsoleteTemporaryCleanup: typeof unlink = async (path) => {
+    if (pathLikeBasename(path).includes(".apply-patch-")) {
+      throw new Error("unexpected cleanup after committed rename");
+    }
+    await unlink(path);
+  };
+
+  await applyPatch(cwd, patch("*** Add File: added.txt\n+added\n"), undefined, {
+    filesystem: {
+      unlink: rejectObsoleteTemporaryCleanup,
+    },
+  });
+
+  await writeFile(join(cwd, "source.txt"), "source\n");
+  await applyPatch(
+    cwd,
+    patch("*** Update File: source.txt\n*** Move to: destination.txt\n"),
+    undefined,
+    {
+      selectMoveStrategy: () => "copy-unlink",
+      filesystem: {
+        unlink: rejectObsoleteTemporaryCleanup,
+      },
+    },
+  );
+
+  assert.equal(await readFile(join(cwd, "added.txt"), "utf8"), "added\n");
+  assert.equal(await readFile(join(cwd, "destination.txt"), "utf8"), "source\n");
 });

@@ -75,6 +75,26 @@ type RegularFilePostcondition = {
   allowUnreadable?: boolean;
 };
 
+async function assertCompleteContent(
+  path: string,
+  expectedContent: Buffer,
+  filesystem: ApplyPatchExecutionFilesystem,
+  allowUnreadable = false,
+): Promise<void> {
+  let actualContent: Buffer;
+  try {
+    actualContent = await filesystem.readFile(path);
+  } catch (error) {
+    if (allowUnreadable && (hasErrorCode(error, "EACCES") || hasErrorCode(error, "EPERM"))) {
+      return;
+    }
+    postconditionFailed(path, "verify the complete requested bytes", error);
+  }
+  if (!buffersEqual(actualContent, expectedContent)) {
+    postconditionFailed(path, "produce the complete requested bytes");
+  }
+}
+
 async function assertRegularFileResult(
   path: string,
   expectedContent: Buffer,
@@ -98,22 +118,7 @@ async function assertRegularFileResult(
   ) {
     postconditionFailed(path, "preserve the requested file mode");
   }
-
-  let actualContent: Buffer;
-  try {
-    actualContent = await filesystem.readFile(path);
-  } catch (error) {
-    if (
-      options.allowUnreadable &&
-      (hasErrorCode(error, "EACCES") || hasErrorCode(error, "EPERM"))
-    ) {
-      return;
-    }
-    postconditionFailed(path, "verify the complete requested bytes", error);
-  }
-  if (!buffersEqual(actualContent, expectedContent)) {
-    postconditionFailed(path, "produce the complete requested bytes");
-  }
+  await assertCompleteContent(path, expectedContent, filesystem, options.allowUnreadable);
 }
 
 async function assertPureMoveResult(
@@ -149,12 +154,7 @@ async function assertPureMoveResult(
     }
     const expectedContent = mutation.expectedSource.content.value?.bytes;
     if (expectedContent) {
-      await assertRegularFileResult(destinationPath, expectedContent, filesystem, {
-        exactSpelling: true,
-        followSymlink: false,
-        expectedMode,
-        allowUnreadable: true,
-      });
+      await assertCompleteContent(destinationPath, expectedContent, filesystem, true);
     }
   }
   if (
@@ -167,7 +167,7 @@ async function assertPureMoveResult(
 }
 
 function regularEntryMode(entry: VirtualEntry): number | undefined {
-  return entry.kind === "regular" ? (entry.physical?.mode ?? entry.fingerprint?.mode) : undefined;
+  return entry.kind === "regular" ? entry.physical.mode : undefined;
 }
 
 async function assertAppliedMutationPostconditions(
