@@ -13,9 +13,9 @@
 
 ### Fixed
 
-- Give the `/codex-settings` search field explicit Tab focus so ordinary list
-  input is not captured as a query and Space can change a filtered setting
-  after returning focus to the list.
+- Give the `/codex-settings` search field explicit focus that follows typed
+  input into search and Up/Down back to the result list, allowing Space to
+  change a filtered setting.
 - Preserve regular-file permission modes across sequential `apply_patch`
   replacements and state-changing moves, including files created by earlier
   instructions in the same patch.

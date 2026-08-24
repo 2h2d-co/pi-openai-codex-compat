@@ -9,6 +9,7 @@ import type { Api, Model } from "@earendil-works/pi-ai";
 import {
   type Component,
   Container,
+  decodeKittyPrintable,
   type Focusable,
   fuzzyFilter,
   Input,
@@ -101,6 +102,16 @@ function toggleValue(value: boolean): string {
 
 function thresholdValue(value: number | undefined): string {
   return value === undefined ? "Pi default" : `${value}%`;
+}
+
+function isSearchTextInput(data: string): boolean {
+  if (decodeKittyPrintable(data) !== undefined || data.includes("\u001b[200~")) return true;
+  if (data.length === 0) return false;
+  for (let index = 0; index < data.length; index++) {
+    const code = data.charCodeAt(index);
+    if (code < 32 || code === 0x7f || (code >= 0x80 && code <= 0x9f)) return false;
+  }
+  return true;
 }
 
 export function settingItems(
@@ -429,12 +440,21 @@ async function showSettings(
       searchInput.focused = rootFocused && searchFocused;
     };
 
+    const updateSearch = (data: string): void => {
+      const previousQuery = searchInput.getValue();
+      searchInput.handleInput(data);
+      const query = searchInput.getValue();
+      if (query === previousQuery) return;
+      filteredItems = fuzzyFilter(items, query, (item) => item.label);
+      list = createList();
+    };
+
     const settingsSelector: Component = {
       render: (width: number) => {
         const query = searchInput.getValue();
         const searchLabel = searchFocused
           ? theme.fg("accent", theme.bold("Search (focused)"))
-          : theme.fg("dim", "Search (Tab to focus)");
+          : theme.fg("dim", "Search (type or Tab to focus)");
         const searchLines = searchFocused
           ? searchInput.render(width)
           : [
@@ -449,8 +469,8 @@ async function showSettings(
             ? list.render(width)
             : [truncateToWidth(listTheme.hint("  No matching settings"), width, ""), ""];
         const hint = searchFocused
-          ? "  Type to search · Tab settings · Enter save & close · Esc discard & close"
-          : "  ↑↓ navigate · Tab search · Space changes · Enter save & close · Esc discard & close";
+          ? "  Type to search · ↑↓ results · Tab settings · Enter save & close · Esc discard & close"
+          : "  ↑↓ navigate · Type or Tab to search · Space changes · Enter save & close · Esc discard & close";
         if (listLines.length > 0) {
           listLines[listLines.length - 1] = truncateToWidth(listTheme.hint(hint), width, "");
         }
@@ -465,17 +485,27 @@ async function showSettings(
           setSearchFocused(!searchFocused);
           return;
         }
-        if (!searchFocused) {
+        if (
+          searchFocused &&
+          (matchesKey(data, Key.up) ||
+            matchesKey(data, Key.down) ||
+            keybindings.matches(data, "tui.select.up") ||
+            keybindings.matches(data, "tui.select.down"))
+        ) {
+          setSearchFocused(false);
           list.handleInput(data);
           return;
         }
-
-        const previousQuery = searchInput.getValue();
-        searchInput.handleInput(data);
-        const query = searchInput.getValue();
-        if (query === previousQuery) return;
-        filteredItems = fuzzyFilter(items, query, (item) => item.label);
-        list = createList();
+        if (!searchFocused) {
+          if (!matchesKey(data, Key.space) && isSearchTextInput(data)) {
+            setSearchFocused(true);
+            updateSearch(data);
+            return;
+          }
+          list.handleInput(data);
+          return;
+        }
+        updateSearch(data);
       },
     };
     container.addChild(settingsSelector);
