@@ -255,7 +255,7 @@ test("moves focus between search and results, saves on Enter or Ctrl+S, and disc
   assert.ok(command);
   const runCommand = command;
 
-  const runSettings = async (inputs: string[]) => {
+  const runSettings = async (inputs: string[], renders?: string[][]) => {
     let closeCount = 0;
     const context = {
       cwd,
@@ -289,7 +289,11 @@ test("moves focus between search and results, saves on Enter or Ctrl+S, and disc
               resolveDone(result);
             },
           );
-          for (const input of inputs) component.handleInput?.(input);
+          renders?.push(component.render(120));
+          for (const input of inputs) {
+            component.handleInput?.(input);
+            renders?.push(component.render(120));
+          }
           return closed;
         },
       },
@@ -302,7 +306,14 @@ test("moves focus between search and results, saves on Enter or Ctrl+S, and disc
   assert.equal(sessionConfig.fastMode, false);
   assert.equal(loadConfig(cwd, false).fastMode, false);
 
-  assert.equal(await runSettings(["fast", "\u001b[A", " ", "\r"]), 1);
+  const focusRenders: string[][] = [];
+  assert.equal(await runSettings(["fast", "\u001b[A", " ", "\r"], focusRenders), 1);
+  const initialCursor = focusRenders[0]?.find((line) => line.includes("→ "));
+  const searchCursor = focusRenders[1]?.find((line) => line.includes("→ "));
+  const resultCursor = focusRenders[2]?.find((line) => line.includes("→ "));
+  assert.ok(initialCursor?.startsWith("\u001b"));
+  assert.ok(searchCursor?.startsWith("→ "));
+  assert.ok(resultCursor?.startsWith("\u001b"));
   assert.equal(sessionConfig.fastMode, true);
   assert.equal(loadConfig(cwd, false).fastMode, true);
 

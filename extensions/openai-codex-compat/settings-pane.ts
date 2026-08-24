@@ -421,6 +421,12 @@ async function showSettings(
     let rootFocused = false;
     let searchFocused = false;
     let filteredItems = items;
+    const resultListTheme = {
+      ...listTheme,
+      get cursor(): string {
+        return searchFocused ? "→ " : listTheme.cursor;
+      },
+    };
     const changeSetting = (id: string, value: string): void => {
       const patch = settingPatch(id, value);
       if (!patch) return;
@@ -432,7 +438,7 @@ async function showSettings(
       tui.requestRender();
     };
     const createList = (): SettingsList =>
-      new SettingsList(filteredItems, 12, listTheme, changeSetting, discardAndClose);
+      new SettingsList(filteredItems, 12, resultListTheme, changeSetting, discardAndClose);
     let list = createList();
 
     const setSearchFocused = (focused: boolean): void => {
