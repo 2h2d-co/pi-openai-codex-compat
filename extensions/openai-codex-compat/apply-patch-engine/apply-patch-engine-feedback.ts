@@ -67,14 +67,6 @@ export function conciseInstructionError(error: string): string {
     .replace(/^Failed to move .*? to .*?:\s*/u, "Move failed: ")
     .replace(/^Failed to find context [^\n]*/u, "Context was not found.")
     .replace(/^Failed to find expected lines in [^\n]*/u, "Old content was not found.")
-    .replace(
-      /^Filesystem changed after apply_patch preflight at .*$/u,
-      "Filesystem changed after validation.",
-    )
-    .replace(
-      /^Filesystem changed while committing apply_patch at .*$/u,
-      "Filesystem changed after the operation.",
-    )
     .replace(/; destination was removed before replacement failed$/u, "")
     .replace(/^apply_patch was cancelled\.$/u, "apply_patch was cancelled.");
   return message.split("\n")[0] ?? "";
