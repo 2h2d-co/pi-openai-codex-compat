@@ -21,6 +21,7 @@ async function hostAliasesNames(cwd: string, left: string, right: string): Promi
   const leftPath = join(cwd, left);
   await writeFile(leftPath, "");
   const leftMetadata = await lstat(leftPath);
+  // oxlint-disable-next-line 2h2d/require-promise-rejection-parameter -- Host alias detection treats an inaccessible comparison path as absent because this is an optional capability probe.
   const rightMetadata = await lstat(join(cwd, right)).catch(() => undefined);
   await unlink(leftPath);
   return (

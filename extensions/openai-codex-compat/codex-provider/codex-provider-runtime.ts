@@ -436,6 +436,7 @@ export class CodexProviderRuntime {
     );
     this.requestTails.set(sessionId, current);
     let released = false;
+    // oxlint-disable-next-line 2h2d/require-promise-rejection-parameter -- Request-tail promises only resolve, but both handlers defensively release the serialization gate identically if that invariant changes.
     const release = () => {
       if (released) return;
       released = true;
