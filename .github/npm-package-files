@@ -6,6 +6,7 @@ LICENSES/pi-ai-MIT.txt
 README.md
 THIRD_PARTY_NOTICES.md
 extensions/index.ts
+extensions/openai-codex-compat/apply-patch-diagnostics.ts
 extensions/openai-codex-compat/apply-patch-diff-render.ts
 extensions/openai-codex-compat/apply-patch-engine.ts
 extensions/openai-codex-compat/apply-patch-engine/apply-patch-engine-contracts.ts
