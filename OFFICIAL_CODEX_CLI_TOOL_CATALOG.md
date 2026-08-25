@@ -5,17 +5,20 @@ adapting into `pi-openai-codex-compat`.
 
 ## Research baseline
 
-- **Released baseline:** Codex CLI `0.146.0` (`rust-v0.146.0`), published
-  July 29, 2026, from commit
-  `e363b08c9175ac1cbe5893615dd2cb9ddf95043b`.
-- **Main-branch check:** commit
-  `bb5054fe47abe73ecbbd454751066a28c89f4bb9`, inspected August 3, 2026.
-  Main had substantial internal refactoring after `0.146.0`, but no additional
-  fixed model-callable tool families were found.
-- **Pi baseline:** `@earendil-works/pi-coding-agent` `0.83.0`.
+- **Released baseline:** Codex CLI `0.149.1` (`rust-v0.149.1`), published
+  August 24, 2026, from commit
+  `ff29a44391deccde0aba0f8390337d7f3c319ea4`.
+- **Compared with:** the prior catalog baseline `0.146.0` at
+  `e363b08c9175ac1cbe5893615dd2cb9ddf95043b`, and the previously reviewed
+  stable `0.149.0` at `758ef40f50c1a458425c7cfbf1eb12cbc07af0b0`.
+- **Package baseline:** `pi-openai-codex-compat` `0.0.10-alpha.3`.
+- **Pi baseline:** `@earendil-works/pi-coding-agent` `0.84.3`.
+- **Reviewed:** August 25, 2026.
 
-The released tag is the normative baseline below. Main-branch behavior is
-mentioned only where it changes the decision.
+The released `0.149.1` tag is normative. There was no tool-planning or tool
+schema diff from `0.149.0` to `0.149.1`. Compared with the old `0.146.0`
+catalog, one fixed model-callable name was added:
+`send_user_message_async`.
 
 ## Dictionary
 
@@ -35,20 +38,25 @@ mentioned only where it changes the decision.
   Codex's internal extension registry.
 - **Direct-model-only:** A tool intentionally kept outside Codex Code Mode's
   nested JavaScript tool surface.
+- **Pi analogue:** A Pi tool can perform a similar user task, but this package
+  does not reproduce the official Codex wire schema or runtime.
+- **Protocol-only support:** The package can serialize or replay the provider
+  item, but does not expose an executable model-callable implementation.
 
 ## Recommendation summary
 
-| Priority                  | Tool or family                                                            | Recommendation for this package                                                                                                                                                                      |
-| ------------------------- | ------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Keep                      | `apply_patch`                                                             | Already implemented and highly aligned with Codex model behavior.                                                                                                                                    |
-| Keep                      | Hosted `web_search`                                                       | Already implemented; keep it as the simple, low-state web option.                                                                                                                                    |
-| Keep                      | `web.run`                                                                 | Implemented with its native namespace, complete reserved schema and description, `alpha/search` execution, and structured result details. Durable citation/reference persistence remains incomplete. |
-| Consider next             | `request_user_input`                                                      | Pi has the UI primitives needed. Useful, bounded, and much smaller than sub-agents or persistent shells.                                                                                             |
-| Consider later            | `tool_search`                                                             | Pi already supports additive dynamic tool loading and native OpenAI tool-search history. It becomes valuable only after this package owns several optional tools.                                    |
-| Consider only as an alias | `view_image`                                                              | Pi's `read` tool already supports images. Add an alias only if Codex models measurably perform better when the canonical name is present.                                                            |
-| Separate package          | Multi-agent tools                                                         | Useful but operationally large and not specific to provider compatibility. Pi already includes a sub-agent extension example.                                                                        |
-| Separate package          | `exec_command` + `write_stdin`                                            | Requires persistent PTY lifecycle, process cleanup, approvals, and rendering. It conflicts with Pi's intentionally simple `bash` model.                                                              |
-| Do not port here          | MCP, plugin-install, goals, memories, skills, image generation, Code Mode | These require separate state, trust, UI, provider, or execution architectures and would make the compatibility entrypoint non-compositional.                                                         |
+| Priority                  | Tool or family                                                          | Recommendation for this package                                                                                                                                                                      |
+| ------------------------- | ----------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Keep                      | `apply_patch`                                                           | Already implemented and highly aligned with Codex model behavior.                                                                                                                                    |
+| Keep                      | Hosted `web_search`                                                     | Already implemented; keep it as the simple, low-state web option.                                                                                                                                    |
+| Keep                      | `web.run`                                                               | Implemented with its native namespace, complete reserved schema and description, `alpha/search` execution, and structured result details. Durable citation/reference persistence remains incomplete. |
+| Keep                      | `image_gen.imagegen`                                                    | Implemented with its native namespace, Codex Images execution, image-edit inputs, generated artifacts, image output, and dedicated rendering.                                                        |
+| Consider next             | `request_user_input`                                                    | Pi has the UI primitives needed. Useful, bounded, and much smaller than sub-agents or persistent shells.                                                                                             |
+| Consider later            | `tool_search`                                                           | Pi already supports additive dynamic tool loading and native OpenAI tool-search history. It becomes valuable only after this package owns several optional tools.                                    |
+| Consider only as an alias | `view_image`                                                            | Pi's `read` tool already supports images. Add an alias only if Codex models measurably perform better when the canonical name is present.                                                            |
+| Separate package          | Multi-agent tools                                                       | Useful but operationally large and not specific to provider compatibility. Pi already includes a sub-agent extension example.                                                                        |
+| Separate package          | `exec_command` + `write_stdin`                                          | Requires persistent PTY lifecycle, process cleanup, approvals, and rendering. It conflicts with Pi's intentionally simple `bash` model.                                                              |
+| Do not port here          | MCP, plugin-install, goals, memories, skills, async messages, Code Mode | These require separate state, trust, UI, provider, or execution architectures and would make the compatibility entrypoint non-compositional.                                                         |
 
 **Recommended order:** finish the durable citation/reference layer for
 `web.run`; then decide whether structured user questions are desirable; add
@@ -56,7 +64,7 @@ mentioned only where it changes the decision.
 
 ## Complete wire-name inventory
 
-Codex `0.146.0` contains the following 45 fixed model-callable names. Namespace
+Codex `0.149.1` contains the following 46 fixed model-callable names. Namespace
 names are shown with dots for readability. The multi-agent V2 namespace is
 configurable; `collaboration` is its default.
 
@@ -68,6 +76,7 @@ apply_patch
 view_image
 update_plan
 request_user_input
+send_user_message_async
 request_permissions
 wait_for_environment
 get_context_remaining
@@ -108,14 +117,44 @@ image_gen.imagegen
 test_sync_tool
 ```
 
+## Package coverage
+
+The package implements four operational official surfaces: three
+client-executed tools and one provider-hosted tool. Pi's similarly capable
+built-ins are listed separately so they are not mistaken for wire-compatible
+implementations.
+
+| Official tool or family                                                                                                                                                                 | Coverage in this package | Notes                                                                                                                                                                |
+| --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `apply_patch`                                                                                                                                                                           | **Implemented**          | Extension-owned parser, matcher, filesystem engine, mutation-queue participation, structured history, and renderer. Recorded A-series deviations remain intentional. |
+| `web.run`                                                                                                                                                                               | **Implemented**          | Native namespace declaration, official reserved schema and description, `alpha/search` execution, structured result details, and renderer.                           |
+| `image_gen.imagegen`                                                                                                                                                                    | **Implemented**          | Native namespace declaration, `gpt-image-2` generation/edit execution, local/recent image inputs, artifact persistence, image result, and renderer.                  |
+| Hosted `web_search`                                                                                                                                                                     | **Hosted support**       | The package injects the Responses hosted declaration in cached, indexed, or live mode; OpenAI executes the tool.                                                     |
+| `tool_search`                                                                                                                                                                           | **Protocol only**        | The provider preserves additive `tool_search_call`/`tool_search_output` history, but this package has no searchable deferred-tool catalog or BM25 executor.          |
+| `exec_command`, `shell_command`                                                                                                                                                         | **Pi analogue**          | Pi `bash` runs one-shot commands. It is not Codex's schema, persistent PTY, environment, approval, or session runtime.                                               |
+| `view_image`                                                                                                                                                                            | **Pi analogue**          | Pi `read` accepts images, but the package does not register the canonical Codex alias or reproduce its detail/environment contract.                                  |
+| `write_stdin`                                                                                                                                                                           | **Not implemented**      | No persistent `exec_command` session exists to write to or poll.                                                                                                     |
+| `update_plan`, `request_user_input`, `send_user_message_async`, `request_permissions`, `wait_for_environment`, `get_context_remaining`, `new_context`, `clock.curr_time`, `clock.sleep` | **Not implemented**      | These depend on Codex planning, question, asynchronous-message, permission, environment, context-window, or reminder lifecycles.                                     |
+| `list_mcp_resources`, `list_mcp_resource_templates`, `read_mcp_resource`                                                                                                                | **Not implemented**      | No Codex MCP connection/resource runtime is provided.                                                                                                                |
+| `list_available_plugins_to_install`, `request_plugin_install`                                                                                                                           | **Not implemented**      | Model-initiated installation is outside package trust and package-manager policy.                                                                                    |
+| `multi_agent_v1.*`, `collaboration.*`                                                                                                                                                   | **Not implemented**      | No Codex agent tree, mailbox, task-path, depth, or resume runtime is provided.                                                                                       |
+| Code Mode `exec`, `wait`                                                                                                                                                                | **Not implemented**      | No V8 isolate, nested tool dispatcher, yielded-cell store, or cell lifecycle is provided.                                                                            |
+| `get_goal`, `create_goal`, `update_goal`, `memories.*`, `skills.*`                                                                                                                      | **Not implemented**      | Pi sessions, reusable notes, and native skills remain separate from Codex's goal, memory, and remote skill-resource stores.                                          |
+| `test_sync_tool`                                                                                                                                                                        | **Not implemented**      | Official integration-test infrastructure only.                                                                                                                       |
+
+Exact implementation evidence lives in
+[`extensions/openai-codex-compat/tools.ts`](extensions/openai-codex-compat/tools.ts),
+[`extensions/openai-codex-compat/request-options.ts`](extensions/openai-codex-compat/request-options.ts),
+and the focused `apply-patch`, `web-run`, and `image-generation` modules.
+
 ## 1. Shell, process, file, and image tools
 
 Source:
-[core tool planning](https://github.com/openai/codex/blob/rust-v0.146.0/codex-rs/core/src/tools/spec_plan.rs),
-[shell schemas](https://github.com/openai/codex/blob/rust-v0.146.0/codex-rs/core/src/tools/handlers/shell_spec.rs),
-[apply-patch schema](https://github.com/openai/codex/blob/rust-v0.146.0/codex-rs/core/src/tools/handlers/apply_patch_spec.rs),
+[core tool planning](https://github.com/openai/codex/blob/rust-v0.149.1/codex-rs/core/src/tools/spec_plan.rs),
+[shell schemas](https://github.com/openai/codex/blob/rust-v0.149.1/codex-rs/core/src/tools/handlers/shell_spec.rs),
+[apply-patch schema](https://github.com/openai/codex/blob/rust-v0.149.1/codex-rs/core/src/tools/handlers/apply_patch_spec.rs),
 and
-[view-image schema](https://github.com/openai/codex/blob/rust-v0.146.0/codex-rs/core/src/tools/handlers/view_image_spec.rs).
+[view-image schema](https://github.com/openai/codex/blob/rust-v0.149.1/codex-rs/core/src/tools/handlers/view_image_spec.rs).
 
 | Tool            | Contract                                                                                                                                                                                                              | Availability in Codex                                                                                                                                                                              | Pi fit                                                                                                                                                                                                             | Verdict                                                                        |
 | --------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------ |
@@ -132,30 +171,31 @@ as two unrelated tools. Porting only the schemas would be misleading because
 the important behavior is process ownership across tool calls, PTY semantics,
 yielding, bounded output, interruption, and environment-aware permissions.
 
-## 2. Planning, questions, permissions, and environments
+## 2. Planning, questions, messages, permissions, and environments
 
 Source:
-[plan schema](https://github.com/openai/codex/blob/rust-v0.146.0/codex-rs/core/src/tools/handlers/plan_spec.rs),
-[user-input schema](https://github.com/openai/codex/blob/rust-v0.146.0/codex-rs/core/src/tools/handlers/request_user_input_spec.rs),
-[permission schema](https://github.com/openai/codex/blob/rust-v0.146.0/codex-rs/core/src/tools/handlers/shell_spec.rs),
+[plan schema](https://github.com/openai/codex/blob/rust-v0.149.1/codex-rs/core/src/tools/handlers/plan_spec.rs),
+[user-input schema](https://github.com/openai/codex/blob/rust-v0.149.1/codex-rs/core/src/tools/handlers/request_user_input_spec.rs),
+[permission schema](https://github.com/openai/codex/blob/rust-v0.149.1/codex-rs/core/src/tools/handlers/shell_spec.rs),
 and
-[environment wait implementation](https://github.com/openai/codex/blob/rust-v0.146.0/codex-rs/core/src/tools/handlers/wait_for_environment.rs).
+[environment wait implementation](https://github.com/openai/codex/blob/rust-v0.149.1/codex-rs/core/src/tools/handlers/wait_for_environment.rs).
 
-| Tool                   | Contract                                                                                                                                           | Availability in Codex                                                                                                                | Pi fit                                                                                                                                                                                                      | Verdict                                                                    |
-| ---------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------- |
-| `update_plan`          | Replaces the current plan with steps whose states are `pending`, `in_progress`, or `completed`; at most one may be active.                         | Enabled by default and independently configurable.                                                                                   | Easy to build, but Pi intentionally avoids a built-in plan/todo workflow. Pi's example plan-mode extension is more complete than this data-only tool.                                                       | **Skip in this package.** Build as a separate workflow package if wanted.  |
-| `request_user_input`   | Presents one to three short multiple-choice questions, always with a client-added free-form option. Optional auto-resolution waits 60–240 seconds. | Enabled by default, direct-model-only, and normally callable only in Plan mode. An under-development flag also permits Default mode. | Pi supports custom dialogs, RPC UI, sequential tools, timeouts, and custom rendering. The main design work is non-TUI behavior and durable result details.                                                  | **Strong optional candidate after `web.run`.**                             |
-| `request_permissions`  | Requests a filesystem/network permission profile from the client and waits for a granted subset.                                                   | Under-development feature, off by default, and requires an execution environment.                                                    | Pi extensions run with host permissions and Pi intentionally has no built-in permission-popup model. Correct behavior would require a sandbox and durable permission scope, not just a confirmation dialog. | **Skip.**                                                                  |
-| `wait_for_environment` | Waits for a named remote or deferred execution environment to finish starting.                                                                     | Under-development `deferred_executor` feature, off by default.                                                                       | Pi has no equivalent multi-environment lifecycle abstraction.                                                                                                                                               | **Skip unless a future remote-execution package introduces environments.** |
+| Tool                      | Contract                                                                                                                                                    | Availability in Codex                                                                                                                | Pi fit                                                                                                                                                                                                      | Verdict                                                                    |
+| ------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------- |
+| `update_plan`             | Replaces the current plan with steps whose states are `pending`, `in_progress`, or `completed`; at most one may be active.                                  | Enabled by default and independently configurable.                                                                                   | Easy to build, but Pi intentionally avoids a built-in plan/todo workflow. Pi's example plan-mode extension is more complete than this data-only tool.                                                       | **Skip in this package.** Build as a separate workflow package if wanted.  |
+| `request_user_input`      | Presents one to three short multiple-choice questions, always with a client-added free-form option, and waits for the response.                             | Enabled by default, direct-model-only, and normally callable only in Plan mode. An under-development flag also permits Default mode. | Pi supports custom dialogs, RPC UI, sequential tools, timeouts, and custom rendering. The main design work is non-TUI behavior and durable result details.                                                  | **Strong optional candidate.**                                             |
+| `send_user_message_async` | Emits a concise user-visible acknowledgment, update, or blocking question and returns immediately; a reply enters later as a new asynchronous user message. | Direct-model-only, root-agent-only, and exposed only when model metadata lists the experimental tool.                                | Correct behavior needs out-of-band assistant delivery, asynchronous user-item injection, turn coordination, and canonical history semantics that this provider extension does not own.                      | **Skip under the recorded asynchronous-message runtime exclusion.**        |
+| `request_permissions`     | Requests a filesystem/network permission profile from the client and waits for a granted subset.                                                            | Under-development feature, off by default, and requires an execution environment.                                                    | Pi extensions run with host permissions and Pi intentionally has no built-in permission-popup model. Correct behavior would require a sandbox and durable permission scope, not just a confirmation dialog. | **Skip.**                                                                  |
+| `wait_for_environment`    | Waits for a named remote or deferred execution environment to finish starting.                                                                              | Under-development `deferred_executor` feature, off by default.                                                                       | Pi has no equivalent multi-environment lifecycle abstraction.                                                                                                                                               | **Skip unless a future remote-execution package introduces environments.** |
 
 ## 3. Context-window and clock tools
 
 Source:
-[context-remaining schema](https://github.com/openai/codex/blob/rust-v0.146.0/codex-rs/core/src/tools/handlers/get_context_remaining_spec.rs),
-[new-context schema](https://github.com/openai/codex/blob/rust-v0.146.0/codex-rs/core/src/tools/handlers/new_context_window_spec.rs),
-[current-time implementation](https://github.com/openai/codex/blob/rust-v0.146.0/codex-rs/core/src/tools/handlers/current_time.rs),
+[context-remaining schema](https://github.com/openai/codex/blob/rust-v0.149.1/codex-rs/core/src/tools/handlers/get_context_remaining_spec.rs),
+[new-context schema](https://github.com/openai/codex/blob/rust-v0.149.1/codex-rs/core/src/tools/handlers/new_context_window_spec.rs),
+[current-time implementation](https://github.com/openai/codex/blob/rust-v0.149.1/codex-rs/core/src/tools/handlers/current_time.rs),
 and
-[sleep implementation](https://github.com/openai/codex/blob/rust-v0.146.0/codex-rs/core/src/tools/handlers/sleep.rs).
+[sleep implementation](https://github.com/openai/codex/blob/rust-v0.149.1/codex-rs/core/src/tools/handlers/sleep.rs).
 
 | Tool                    | Contract                                                                 | Availability in Codex                                                        | Pi fit                                                                                                                                                                            | Verdict                           |
 | ----------------------- | ------------------------------------------------------------------------ | ---------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------- |
@@ -167,10 +207,10 @@ and
 ## 4. Web search and deferred tool discovery
 
 Source:
-[hosted web-search planning](https://github.com/openai/codex/blob/rust-v0.146.0/codex-rs/core/src/tools/hosted_spec.rs),
-[standalone web-search extension](https://github.com/openai/codex/tree/rust-v0.146.0/codex-rs/ext/web-search),
+[hosted web-search planning](https://github.com/openai/codex/blob/rust-v0.149.1/codex-rs/core/src/tools/hosted_spec.rs),
+[standalone web-search extension](https://github.com/openai/codex/tree/rust-v0.149.1/codex-rs/ext/web-search),
 and
-[tool-search schema](https://github.com/openai/codex/blob/rust-v0.146.0/codex-rs/core/src/tools/handlers/tool_search_spec.rs).
+[tool-search schema](https://github.com/openai/codex/blob/rust-v0.149.1/codex-rs/core/src/tools/handlers/tool_search_spec.rs).
 
 | Tool                | Contract                                                                                                                                                                             | Availability in Codex                                                                                                                                                                                                  | Pi fit                                                                                                                                                                                                                                                                                  | Verdict                                            |
 | ------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------- |
@@ -197,12 +237,12 @@ and
 | `response_length` | `short`, `medium`, or `long`                              | Controls returned search detail.             |
 
 Unlike the later tool description used by some OpenAI environments, the
-`0.146.0` `SearchCommands` schema does **not** include a calculator command.
+`0.149.1` `SearchCommands` schema does **not** include a calculator command.
 
 ## 5. MCP resource bridge
 
 Source:
-[MCP resource schemas](https://github.com/openai/codex/blob/rust-v0.146.0/codex-rs/core/src/tools/handlers/mcp_resource_spec.rs).
+[MCP resource schemas](https://github.com/openai/codex/blob/rust-v0.149.1/codex-rs/core/src/tools/handlers/mcp_resource_spec.rs).
 
 | Tool                          | Contract                                                                                | Availability in Codex                             | Pi fit                                                     | Verdict   |
 | ----------------------------- | --------------------------------------------------------------------------------------- | ------------------------------------------------- | ---------------------------------------------------------- | --------- |
@@ -216,9 +256,9 @@ external tools and are outside this catalog.
 ## 6. Plugin and connector installation tools
 
 Source:
-[candidate-list schema](https://github.com/openai/codex/blob/rust-v0.146.0/codex-rs/core/src/tools/handlers/list_available_plugins_to_install_spec.rs)
+[candidate-list schema](https://github.com/openai/codex/blob/rust-v0.149.1/codex-rs/core/src/tools/handlers/list_available_plugins_to_install_spec.rs)
 and
-[installation-request schema](https://github.com/openai/codex/blob/rust-v0.146.0/codex-rs/core/src/tools/handlers/request_plugin_install_spec.rs).
+[installation-request schema](https://github.com/openai/codex/blob/rust-v0.149.1/codex-rs/core/src/tools/handlers/request_plugin_install_spec.rs).
 
 | Tool                                | Contract                                                                                                   | Availability in Codex                                                                                                              | Pi fit                                                                                     | Verdict                         |
 | ----------------------------------- | ---------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------ | ------------------------------- |
@@ -228,9 +268,9 @@ and
 ## 7. Multi-agent tools
 
 Source:
-[multi-agent schemas](https://github.com/openai/codex/blob/rust-v0.146.0/codex-rs/core/src/tools/handlers/multi_agents_spec.rs)
+[multi-agent schemas](https://github.com/openai/codex/blob/rust-v0.149.1/codex-rs/core/src/tools/handlers/multi_agents_spec.rs)
 and
-[tool planning](https://github.com/openai/codex/blob/rust-v0.146.0/codex-rs/core/src/tools/spec_plan.rs).
+[tool planning](https://github.com/openai/codex/blob/rust-v0.149.1/codex-rs/core/src/tools/spec_plan.rs).
 
 ### V1: thread-ID-oriented tools
 
@@ -282,10 +322,10 @@ the Codex provider-compatibility entrypoint.
 ## 8. JavaScript Code Mode
 
 Source:
-[Code Mode schema](https://github.com/openai/codex/blob/rust-v0.146.0/codex-rs/core/src/tools/code_mode/execute_spec.rs),
-[wait schema](https://github.com/openai/codex/blob/rust-v0.146.0/codex-rs/core/src/tools/code_mode/wait_spec.rs),
+[Code Mode schema](https://github.com/openai/codex/blob/rust-v0.149.1/codex-rs/core/src/tools/code_mode/execute_spec.rs),
+[wait schema](https://github.com/openai/codex/blob/rust-v0.149.1/codex-rs/core/src/tools/code_mode/wait_spec.rs),
 and
-[runtime contract](https://github.com/openai/codex/blob/rust-v0.146.0/codex-rs/code-mode-protocol/src/description.rs).
+[runtime contract](https://github.com/openai/codex/blob/rust-v0.149.1/codex-rs/code-mode-protocol/src/description.rs).
 
 | Tool   | Contract                                                                                                                                                                                                                                                                                    | Availability                                                                                                                          | Pi fit                                                                                                                                                                                                                                             | Verdict                             |
 | ------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------- |
@@ -295,9 +335,9 @@ and
 ## 9. Persisted goal tools
 
 Source:
-[goal schemas](https://github.com/openai/codex/blob/rust-v0.146.0/codex-rs/ext/goal/src/spec.rs)
+[goal schemas](https://github.com/openai/codex/blob/rust-v0.149.1/codex-rs/ext/goal/src/spec.rs)
 and
-[goal extension](https://github.com/openai/codex/blob/rust-v0.146.0/codex-rs/ext/goal/src/extension.rs).
+[goal extension](https://github.com/openai/codex/blob/rust-v0.149.1/codex-rs/ext/goal/src/extension.rs).
 
 | Tool          | Purpose                                                             |
 | ------------- | ------------------------------------------------------------------- |
@@ -317,9 +357,9 @@ extension using session entries and lifecycle events.
 ## 10. Memory tools
 
 Source:
-[memory extension](https://github.com/openai/codex/blob/rust-v0.146.0/codex-rs/ext/memories/src/extension.rs)
+[memory extension](https://github.com/openai/codex/blob/rust-v0.149.1/codex-rs/ext/memories/src/extension.rs)
 and
-[memory tools](https://github.com/openai/codex/tree/rust-v0.146.0/codex-rs/ext/memories/src/tools).
+[memory tools](https://github.com/openai/codex/tree/rust-v0.149.1/codex-rs/ext/memories/src/tools).
 
 | Tool                       | Purpose                                                                                                |
 | -------------------------- | ------------------------------------------------------------------------------------------------------ |
@@ -340,9 +380,9 @@ provider-specific memory backend.
 ## 11. Skill-resource tools
 
 Source:
-[skills extension](https://github.com/openai/codex/blob/rust-v0.146.0/codex-rs/ext/skills/src/extension.rs)
+[skills extension](https://github.com/openai/codex/blob/rust-v0.149.1/codex-rs/ext/skills/src/extension.rs)
 and
-[skill tools](https://github.com/openai/codex/tree/rust-v0.146.0/codex-rs/ext/skills/src/tools).
+[skill tools](https://github.com/openai/codex/tree/rust-v0.149.1/codex-rs/ext/skills/src/tools).
 
 | Tool          | Purpose                                                                                                |
 | ------------- | ------------------------------------------------------------------------------------------------------ |
@@ -362,16 +402,16 @@ invocation, automatic loading, and extension-contributed skill paths.
 ## 12. Image generation
 
 Source:
-[image-generation extension](https://github.com/openai/codex/tree/rust-v0.146.0/codex-rs/ext/image-generation).
+[image-generation extension](https://github.com/openai/codex/tree/rust-v0.149.1/codex-rs/ext/image-generation).
 
-| Tool                 | Contract                                                                                                                                                                                                             | Availability                                                                                                                                                                                                       | Pi fit                                                                                                                                                                                      | Verdict                       |
-| -------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------- |
-| `image_gen.imagegen` | Generates a new image from `prompt`, or edits up to five local/recent images through mutually exclusive reference mechanisms. Codex uses `gpt-image-2` and returns image bytes plus an optional saved-artifact hint. | Image-generation feature is stable and enabled by default, but the tool requires a non-Free plan, image-capable model, provider image-generation and namespace capabilities, and compatible OpenAI authentication. | Requires a separate Images API backend, binary result handling, artifact persistence, account gating, and namespaced-tool serialization. It is not a coding-provider compatibility feature. | **Separate package at most.** |
+| Tool                 | Contract                                                                                                                                                                                                             | Availability                                                                                                                                                                                                       | Pi fit                                                                                                                                                                                                                                               | Verdict                               |
+| -------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------- |
+| `image_gen.imagegen` | Generates a new image from `prompt`, or edits up to five local/recent images through mutually exclusive reference mechanisms. Codex uses `gpt-image-2` and returns image bytes plus an optional saved-artifact hint. | Image-generation feature is stable and enabled by default, but the tool requires a non-Free plan, image-capable model, provider image-generation and namespace capabilities, and compatible OpenAI authentication. | This package implements the native namespace, Images API generation and edits, local/recent image selection, artifact persistence, image result, validation, and renderer. It deliberately uses Pi's artifact/session lifecycle rather than Codex's. | **Keep the existing implementation.** |
 
 ## 13. Internal synchronization tool
 
 Source:
-[test tool schema](https://github.com/openai/codex/blob/rust-v0.146.0/codex-rs/core/src/tools/handlers/test_sync_spec.rs).
+[test tool schema](https://github.com/openai/codex/blob/rust-v0.149.1/codex-rs/core/src/tools/handlers/test_sync_spec.rs).
 
 | Tool             | Purpose                                                                                                       | Availability                                                                            | Verdict                                   |
 | ---------------- | ------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------- | ----------------------------------------- |
@@ -394,11 +434,12 @@ configuration.
 
 ## Pi-specific compatibility constraints
 
-1. **Pi tools are flat.** Pi AI `0.83.0` models a tool with `name`,
+1. **Pi tools are flat.** Pi AI `0.84.3` models a tool with `name`,
    `description`, and `parameters`; it does not expose a public namespace-tool
    primitive. Exact ports of `web.run`, `clock.sleep`, multi-agent namespaces,
    memory tools, skill tools, or image generation therefore need provider-level
-   serialization or intentionally flattened names.
+   serialization or intentionally flattened names. This package owns that
+   serialization only for `web.run` and `image_gen.imagegen`.
 2. **Pi already has the essential coding surface.** Its built-ins are `read`,
    `bash`, `edit`, `write`, `grep`, `find`, and `ls`; `read` supports images.
 3. **Pi already supports deferred activation.** An extension can register many
@@ -416,23 +457,24 @@ configuration.
 
 For this package, the sensible boundary is:
 
-1. **Continue maintaining** `apply_patch` and hosted `web_search`.
+1. **Continue maintaining** `apply_patch`, hosted `web_search`, `web.run`, and
+   `image_gen.imagegen`.
 2. **Finish `web.run` reference persistence**, using the existing structured
    result details and canonical-history design rather than a text-only shortcut.
 3. **Optionally add `request_user_input`** as a focused, independently
    configurable Pi tool.
 4. **Add `tool_search` only after** the package owns enough optional tools to
    justify deferred discovery.
-5. **Do not absorb** persistent shell, multi-agent, MCP, plugin installation,
-   goals, memories, skills, image generation, Code Mode, or remote-environment
-   runtimes into the compatibility entrypoint.
+5. **Do not absorb** persistent shell, asynchronous-message, multi-agent, MCP,
+   plugin installation, goals, memories, skills, Code Mode, or
+   remote-environment runtimes into the compatibility entrypoint.
 
 ## Primary sources
 
-- [Codex `0.146.0` release](https://github.com/openai/codex/releases/tag/rust-v0.146.0)
-- [Codex repository at the inspected main commit](https://github.com/openai/codex/tree/bb5054fe47abe73ecbbd454751066a28c89f4bb9)
-- [Core tool planner](https://github.com/openai/codex/blob/rust-v0.146.0/codex-rs/core/src/tools/spec_plan.rs)
-- [Codex feature registry and defaults](https://github.com/openai/codex/blob/rust-v0.146.0/codex-rs/features/src/lib.rs)
-- [Codex app-server built-in extension registry](https://github.com/openai/codex/blob/rust-v0.146.0/codex-rs/app-server/src/extensions.rs)
+- [Codex `0.149.1` release](https://github.com/openai/codex/releases/tag/rust-v0.149.1)
+- [Codex `0.149.0...0.149.1` source comparison](https://github.com/openai/codex/compare/rust-v0.149.0...rust-v0.149.1)
+- [Core tool planner](https://github.com/openai/codex/blob/rust-v0.149.1/codex-rs/core/src/tools/spec_plan.rs)
+- [Codex feature registry and defaults](https://github.com/openai/codex/blob/rust-v0.149.1/codex-rs/features/src/lib.rs)
+- [Codex app-server built-in extension registry](https://github.com/openai/codex/blob/rust-v0.149.1/codex-rs/app-server/src/extensions.rs)
 - [Pi extension documentation](https://github.com/earendil-works/pi-mono/blob/main/packages/coding-agent/docs/extensions.md)
 - [Pi built-in tool overview](https://github.com/earendil-works/pi-mono/blob/main/packages/coding-agent/README.md)

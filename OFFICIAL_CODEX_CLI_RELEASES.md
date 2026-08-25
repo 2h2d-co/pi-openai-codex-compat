@@ -33,15 +33,15 @@ The detailed `apply_patch` contracts remain normative:
 
 ## Current baseline
 
-| Item                    | Baseline                                                                              |
-| ----------------------- | ------------------------------------------------------------------------------------- |
-| Official stable         | Codex CLI `0.149.0` / tag `rust-v0.149.0`                                             |
-| Published               | August 20, 2026                                                                       |
-| Official commit         | `758ef40f50c1a458425c7cfbf1eb12cbc07af0b0`                                            |
-| npm `latest`            | `@openai/codex@0.149.0`                                                               |
-| Package review baseline | `pi-openai-codex-compat` `0.0.9` at commit `fdac6a04f01cfd451be7a33608f924ccb02b7701` |
-| Reviewed                | August 22, 2026                                                                       |
-| Latest prerelease seen  | `0.150.0-alpha.6`; noted only, not used as the baseline                               |
+| Item                    | Baseline                                                                                       |
+| ----------------------- | ---------------------------------------------------------------------------------------------- |
+| Official stable         | Codex CLI `0.149.1` / tag `rust-v0.149.1`                                                      |
+| Published               | August 24, 2026                                                                                |
+| Official commit         | `ff29a44391deccde0aba0f8390337d7f3c319ea4`                                                     |
+| npm `latest`            | `@openai/codex@0.149.1`                                                                        |
+| Package review baseline | `pi-openai-codex-compat` `0.0.10-alpha.3` at commit `32380caa762180de4a748bcacbfe8f4d32155093` |
+| Reviewed                | August 25, 2026                                                                                |
+| Latest prerelease seen  | `0.150.0-alpha.9`; noted only, not used as the baseline                                        |
 
 ## Decisions at a glance
 
@@ -163,20 +163,25 @@ The detailed `apply_patch` contracts remain normative:
 ### P-007 — Compaction keeps Pi's retained-history shape
 
 - **Our choice:** Before the opaque compaction item, retain recent user,
-  developer, and system messages under a 64k budget.
+  developer, and system messages under a text-only 64k budget. Non-text
+  content does not consume that local retained-history budget.
 - **Official Codex:** Applies an additional installed-history filter, can keep
   bounded structured agent messages, groups image-resize notices with source
-  items, and preserves delegated-task state.
+  items, and preserves delegated-task state. A default-disabled,
+  under-development mode additionally charges retained images to the budget
+  and treats an image plus adjacent harness labels as an atomic boundary unit.
 - **Why:** Pi checkpoints do not represent all of those Codex-specific item
   types and currently depend on the existing retained-history shape.
 - **Revisit only if:** Pi can represent those items canonically and changing
-  checkpoint shape has an explicit migration plan.
+  checkpoint shape has an explicit migration plan, or official image budgeting
+  becomes the stable default and the package adopts a corresponding checkpoint
+  migration.
 
 ### P-008 — Do not copy schemas for runtimes we do not implement
 
 - **Our choice:** Exclude Codex-only plugin, app, MCP, Code Mode, multi-agent,
-  permission-profile, remote-environment, plan, and model-owned token-budget
-  behavior.
+  asynchronous-message, permission-profile, remote-environment, plan, goal,
+  memory, remote-skill-resource, and model-owned token-budget behavior.
 - **Official Codex:** Owns the state, trust, UI, execution, and lifecycle
   systems behind those fields and tools.
 - **Why:** Sending a schema without the corresponding runtime would claim
@@ -353,6 +358,71 @@ The detailed `apply_patch` contracts remain normative:
   protocol that can carry the same facts.
 
 ## Release log
+
+### Codex CLI 0.149.1
+
+#### Baseline
+
+- Release:
+  [`rust-v0.149.1`](https://github.com/openai/codex/releases/tag/rust-v0.149.1)
+- Published: August 24, 2026
+- Commit: `ff29a44391deccde0aba0f8390337d7f3c319ea4`
+- Compared with the previously reviewed stable:
+  [`rust-v0.149.0`](https://github.com/openai/codex/releases/tag/rust-v0.149.0)
+  at `758ef40f50c1a458425c7cfbf1eb12cbc07af0b0`
+- Source comparison:
+  [`rust-v0.149.0...rust-v0.149.1`](https://github.com/openai/codex/compare/rust-v0.149.0...rust-v0.149.1)
+- GitHub's latest stable release and npm's `latest` dist-tag both resolved to
+  `0.149.1`. The newest prerelease observed was `0.150.0-alpha.9`.
+
+#### What changed in the protocol
+
+Intentional deviations retained:
+
+1. **Optional retained-image budgeting:** Official Codex added the
+   default-disabled, under-development `compaction_image_budget` mode. When
+   enabled, remote-compaction-v2 retained history charges images against its
+   64k budget, keeps image labels and their image atomic, and truncates the
+   oldest retained boundary without backfilling older messages past an
+   oversized image. P-007 retains the package's existing text-only retained
+   history and exposes no equivalent experimental mode. Because the official
+   stable default remains disabled, no request or checkpoint change is needed
+   for default behavior.
+
+Excluded because the runtime is absent:
+
+1. **Memory-consolidation metadata:** Detached memory requests now identify
+   their `thread_source` as `memory_consolidation`. P-008 and P-009 continue to
+   exclude the memory runtime and its synthetic metadata.
+2. **CLI/SDK thread-source controls:** `codex exec` and the TypeScript SDK can
+   classify newly created or forked Codex threads. The package already sends
+   truthful Pi-derived thread source under P-009 and does not recreate the
+   Codex CLI thread lifecycle.
+
+Already aligned or unchanged:
+
+1. No Responses request, SSE, WebSocket, completed-item, Responses Lite, or
+   tool-declaration wire contract changed.
+2. The 46-name fixed built-in tool inventory is unchanged from `0.149.0`. The
+   focused tool catalog was advanced from its older `0.146.0` research
+   baseline and now records package coverage explicitly.
+
+#### What changed in `apply_patch`
+
+Nothing changed under `codex-rs/apply-patch/`, its core handler/runtime, tool
+specification, grammar, matcher, filesystem path, approvals, sandbox
+orchestration, protocol events, or tests. All A-series decisions remain in
+force.
+
+#### Outcome
+
+- No runtime implementation or test change was required.
+- P-007 now records the optional retained-image budget and its revisit
+  condition without changing the package's checkpoint shape.
+- The README, Responses Lite report, and official tool catalog were advanced
+  to the `0.149.1` baseline.
+- No changelog entry was added because the package's user-visible behavior did
+  not change.
 
 ### Codex CLI 0.149.0
 
