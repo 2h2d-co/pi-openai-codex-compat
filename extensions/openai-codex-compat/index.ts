@@ -40,7 +40,7 @@ export default function registerOpenAICodexCompat(pi: ExtensionAPI): void {
     }
   });
 
-  registerCodexTools(
+  const commandTools = registerCodexTools(
     pi,
     resolveConfig,
     resolveToolBackground,
@@ -49,16 +49,17 @@ export default function registerOpenAICodexCompat(pi: ExtensionAPI): void {
   );
   registerCodexThreadLineage(codexThreadLineageApi(pi));
   const codexProvider = registerCodexProvider(pi, resolveConfig);
+  const modelPolicy = codexModelPolicyApi(pi);
   registerCodexRequestOptions(pi, resolveConfig);
   registerOutputLimitContinuation(outputLimitContinuationApi(pi));
   registerRemoteCompaction(remoteCompactionApi(pi), codexProvider, resolveConfig);
-  registerCodexModelPolicy(codexModelPolicyApi(pi), resolveConfig);
+  registerCodexModelPolicy(modelPolicy, resolveConfig, commandTools);
   registerCodexSettings(pi, {
     getConfig: resolveConfig,
     onChange(config, ctx) {
       activeConfig = config;
       codexProvider.updateSessionConfig(ctx.sessionId, config);
-      syncCodexTools(pi, ctx.model, config);
+      syncCodexTools(modelPolicy, ctx.model, config, commandTools);
     },
   });
 }

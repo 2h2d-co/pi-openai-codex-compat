@@ -1,10 +1,12 @@
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import type { Api, Model } from "@earendil-works/pi-ai";
+import { DEFAULT_CONFIG } from "./config.ts";
 import type { ConfigResolver } from "./config-context.ts";
 import { hasNativeCheckpointEntry } from "./compaction-checkpoint.ts";
 import { errorFromThrown } from "./error-from-thrown.ts";
 import { selectedRegistryModel } from "./model-context.ts";
 import { syncCodexTools } from "./tools.ts";
+import type { CommandToolsController } from "./command-tools.ts";
 
 export type CodexModelPolicyContext = Parameters<ConfigResolver>[0] & {
   model: Model<Api> | undefined;
@@ -27,9 +29,12 @@ export type CodexModelPolicySessionStartHandler = (
   ctx: CodexModelPolicyContext,
 ) => Promise<void> | void;
 
+export type CodexModelPolicySessionShutdownHandler = () => Promise<void> | void;
+
 export type CodexModelPolicyApi = Pick<ExtensionAPI, "getActiveTools" | "setActiveTools"> & {
   onModelSelect: (handler: CodexModelPolicySelectHandler) => void;
   onSessionStart: (handler: CodexModelPolicySessionStartHandler) => void;
+  onSessionShutdown: (handler: CodexModelPolicySessionShutdownHandler) => void;
   setModel: (model: Model<Api>) => Promise<boolean>;
 };
 
@@ -63,6 +68,7 @@ export function codexModelPolicyApi(pi: ExtensionAPI): CodexModelPolicyApi {
         );
       }),
     onSessionStart: (handler) => pi.on("session_start", (_event, ctx) => handler(context(ctx))),
+    onSessionShutdown: (handler) => pi.on("session_shutdown", handler),
     setActiveTools: (names) => pi.setActiveTools(names),
     setModel: (model) => pi.setModel(model),
   };
@@ -75,16 +81,21 @@ function activeBranchHasCheckpoint(ctx: CodexModelPolicyContext): boolean {
 export default function registerCodexModelPolicy(
   pi: CodexModelPolicyApi,
   resolveConfig: ConfigResolver,
+  commandTools?: CommandToolsController,
 ): void {
   let restoringRejectedSwitch = false;
 
   pi.onSessionStart((ctx) => {
-    syncCodexTools(pi, ctx.model, resolveConfig(ctx));
+    syncCodexTools(pi, ctx.model, resolveConfig(ctx), commandTools);
+  });
+
+  pi.onSessionShutdown(() => {
+    syncCodexTools(pi, undefined, DEFAULT_CONFIG, commandTools);
   });
 
   pi.onModelSelect(async (event, ctx) => {
     if (restoringRejectedSwitch) {
-      syncCodexTools(pi, event.model, resolveConfig(ctx));
+      syncCodexTools(pi, event.model, resolveConfig(ctx), commandTools);
       return;
     }
 
@@ -94,7 +105,7 @@ export default function registerCodexModelPolicy(
       previousModel === undefined ||
       !activeBranchHasCheckpoint(ctx)
     ) {
-      syncCodexTools(pi, event.model, resolveConfig(ctx));
+      syncCodexTools(pi, event.model, resolveConfig(ctx), commandTools);
       return;
     }
 
@@ -116,7 +127,7 @@ export default function registerCodexModelPolicy(
     }
 
     if (!restored) {
-      syncCodexTools(pi, event.model, resolveConfig(ctx));
+      syncCodexTools(pi, event.model, resolveConfig(ctx), commandTools);
       ctx.ui.notify(
         "The active branch contains a native OpenAI Codex compaction checkpoint, but the previous model could not be restored.",
         "error",

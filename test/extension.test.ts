@@ -48,7 +48,14 @@ test("registers the combined Codex compatibility extension", () => {
 
   assert.deepEqual(recording.commands, ["codex-settings"]);
   assert.deepEqual(recording.providers, []);
-  assert.deepEqual(recording.tools, ["apply_patch", "image_gen.imagegen", "web.run"]);
+  assert.deepEqual(recording.tools, [
+    "exec_command",
+    "write_stdin",
+    "shell_command",
+    "apply_patch",
+    "image_gen.imagegen",
+    "web.run",
+  ]);
   for (const event of [
     "session_start",
     "session_before_compact",

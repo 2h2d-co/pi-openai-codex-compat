@@ -20,6 +20,7 @@ test("validates and layers Codex compatibility configuration", () => {
   assert.equal(DEFAULT_CONFIG.responsesLite, false);
   assert.equal(DEFAULT_CONFIG.applyPatchDebug, false);
   assert.equal(DEFAULT_CONFIG.applyPatchDiagnostics, false);
+  assert.equal(DEFAULT_CONFIG.shellTool, "unified_exec");
   assert.equal(DEFAULT_CONFIG.imageGeneration, true);
   assert.equal(DEFAULT_CONFIG.imageDetail, "auto");
   assert.equal(DEFAULT_CONFIG.webRun, false);
@@ -31,6 +32,7 @@ test("validates and layers Codex compatibility configuration", () => {
       applyPatch: false,
       applyPatchDebug: true,
       applyPatchDiagnostics: true,
+      shellTool: "shell_command",
       imageGeneration: false,
       imageDetail: "original",
       webRun: true,
@@ -46,6 +48,7 @@ test("validates and layers Codex compatibility configuration", () => {
       applyPatch: false,
       applyPatchDebug: true,
       applyPatchDiagnostics: true,
+      shellTool: "shell_command",
       imageGeneration: false,
       imageDetail: "original",
       webRun: true,
@@ -63,6 +66,7 @@ test("validates and layers Codex compatibility configuration", () => {
       applyPatch: null,
       applyPatchDebug: "yes",
       applyPatchDiagnostics: "yes",
+      shellTool: "invalid",
       imageGeneration: "yes",
       imageDetail: "medium",
       webRun: null,
@@ -111,6 +115,7 @@ test("parses environment overrides with highest precedence", () => {
     [CONFIG_ENVIRONMENT_VARIABLES.applyPatchDebug]: "on",
     [CONFIG_ENVIRONMENT_VARIABLES.applyPatchDiagnostics]: "on",
     [CONFIG_ENVIRONMENT_VARIABLES.toolBackground]: "status",
+    [CONFIG_ENVIRONMENT_VARIABLES.shellTool]: "shell_command",
     [CONFIG_ENVIRONMENT_VARIABLES.imageGeneration]: "false",
     [CONFIG_ENVIRONMENT_VARIABLES.imageDetail]: "original",
     [CONFIG_ENVIRONMENT_VARIABLES.webRun]: "1",
@@ -128,6 +133,7 @@ test("parses environment overrides with highest precedence", () => {
     applyPatchDebug: true,
     applyPatchDiagnostics: true,
     toolBackground: "status",
+    shellTool: "shell_command",
     imageGeneration: false,
     imageDetail: "original",
     webRun: true,

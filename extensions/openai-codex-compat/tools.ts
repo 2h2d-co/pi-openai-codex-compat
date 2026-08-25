@@ -1,8 +1,15 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import type { Api, Model } from "@earendil-works/pi-ai";
 import registerApplyPatch, { APPLY_PATCH_TOOL_NAME, type ApplyPatchApi } from "./apply-patch.ts";
+import registerCommandTools, {
+  EXEC_COMMAND_TOOL_NAME,
+  SHELL_COMMAND_TOOL_NAME,
+  WRITE_STDIN_TOOL_NAME,
+  type CommandToolsApi,
+  type CommandToolsController,
+} from "./command-tools.ts";
 import type { CodexToolBackgroundResolver } from "./codex-tool-surface.ts";
-import type { CodexCompatConfig } from "./config.ts";
+import type { CodexCompatConfig, CodexShellTool } from "./config.ts";
 import type { ConfigResolver } from "./config-context.ts";
 import { DEFAULT_CONFIG } from "./config.ts";
 import registerImageGeneration, { type ImageGenerationApi } from "./image-generation.ts";
@@ -11,15 +18,26 @@ import { isCodexModel } from "./request-options.ts";
 import registerWebRun, { type WebRunApi } from "./web-run.ts";
 
 const PI_EDIT_TOOLS = ["edit", "write"] as const;
+const PI_BASH_TOOL = "bash";
+const CODEX_COMMAND_TOOLS = [
+  EXEC_COMMAND_TOOL_NAME,
+  WRITE_STDIN_TOOL_NAME,
+  SHELL_COMMAND_TOOL_NAME,
+] as const;
 const CODEX_EXTENSION_TOOLS = [
   APPLY_PATCH_TOOL_NAME,
   IMAGE_GENERATION_TOOL_NAME,
   WEB_RUN_TOOL_NAME,
 ] as const;
 export type CodexToolActivationApi = Pick<ExtensionAPI, "getActiveTools" | "setActiveTools">;
-export type CodexToolsApi = CodexToolActivationApi & ApplyPatchApi & ImageGenerationApi & WebRunApi;
+export type CodexToolsApi = CodexToolActivationApi &
+  ApplyPatchApi &
+  CommandToolsApi &
+  ImageGenerationApi &
+  WebRunApi;
 
 const suppressedEditTools = new WeakMap<CodexToolActivationApi, Set<string>>();
+const suppressedBashTools = new WeakMap<CodexToolActivationApi, boolean>();
 
 export function setApplyPatchEnabled(pi: CodexToolActivationApi, enabled: boolean): void {
   const active = new Set(pi.getActiveTools());
@@ -43,13 +61,47 @@ export function setApplyPatchEnabled(pi: CodexToolActivationApi, enabled: boolea
   pi.setActiveTools([...active]);
 }
 
+export function setCodexCommandTool(
+  pi: CodexToolActivationApi,
+  shellTool: CodexShellTool | undefined,
+): boolean {
+  const active = new Set(pi.getActiveTools());
+  for (const tool of CODEX_COMMAND_TOOLS) active.delete(tool);
+
+  if (shellTool === undefined) {
+    if (suppressedBashTools.get(pi)) active.add(PI_BASH_TOOL);
+    suppressedBashTools.delete(pi);
+    pi.setActiveTools([...active]);
+    return false;
+  }
+
+  if (!suppressedBashTools.has(pi)) {
+    suppressedBashTools.set(pi, active.has(PI_BASH_TOOL));
+  }
+  active.delete(PI_BASH_TOOL);
+  const replacementEnabled = suppressedBashTools.get(pi) === true;
+  if (replacementEnabled) {
+    if (shellTool === "unified_exec") {
+      active.add(EXEC_COMMAND_TOOL_NAME);
+      active.add(WRITE_STDIN_TOOL_NAME);
+    } else {
+      active.add(SHELL_COMMAND_TOOL_NAME);
+    }
+  }
+  pi.setActiveTools([...active]);
+  return replacementEnabled && shellTool === "unified_exec";
+}
+
 export function syncCodexTools(
   pi: CodexToolActivationApi,
   model: Model<Api> | undefined,
   config: CodexCompatConfig,
+  commandTools?: CommandToolsController,
 ): void {
   const codexSelected = isCodexModel(model);
   setApplyPatchEnabled(pi, codexSelected && config.applyPatch);
+  const unifiedExecActive = setCodexCommandTool(pi, codexSelected ? config.shellTool : undefined);
+  if (!unifiedExecActive) commandTools?.terminateUnifiedExecSessions();
 
   const active = new Set(pi.getActiveTools());
   for (const tool of CODEX_EXTENSION_TOOLS) {
@@ -68,7 +120,8 @@ export default function registerCodexTools(
   resolveToolBackground: CodexToolBackgroundResolver = () => DEFAULT_CONFIG.toolBackground,
   resolveApplyPatchDebug: () => boolean = () => DEFAULT_CONFIG.applyPatchDebug,
   resolveApplyPatchDiagnostics: () => boolean = () => DEFAULT_CONFIG.applyPatchDiagnostics,
-): void {
+): CommandToolsController {
+  const commandTools = registerCommandTools(pi, resolveToolBackground);
   registerApplyPatch(
     pi,
     resolveToolBackground,
@@ -77,4 +130,5 @@ export default function registerCodexTools(
   );
   registerImageGeneration(pi, resolveConfig, resolveToolBackground);
   registerWebRun(pi, resolveConfig, resolveToolBackground);
+  return commandTools;
 }

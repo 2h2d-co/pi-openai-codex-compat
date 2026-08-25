@@ -39,6 +39,9 @@
     "lint": "oxlint",
     "lint:fix": "oxlint --fix"
   },
+  "dependencies": {
+    "node-pty": "1.2.0-beta.15"
+  },
   "devDependencies": {
     "@2h2d/oxlint-config": "0.1.0",
     "@2h2d/ts-config": "0.0.1",

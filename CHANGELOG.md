@@ -4,6 +4,11 @@
 
 ### Added
 
+- Add configurable Codex `exec_command` + `write_stdin` and `shell_command`
+  command surfaces, defaulting to persistent unified exec and replacing only
+  an active Pi `bash` tool. Command output follows Pi's 2,000-line/50-KiB tail
+  limit with complete truncated output in temporary files, while PTY sessions
+  use pinned `node-pty` prebuilds.
 - Show the current Pi session ID on the compatibility footer's first line.
 - Add default-off, failure-only `apply_patch` diagnostics capture with
   pre-execution text snapshots and binary metadata for every instruction in a

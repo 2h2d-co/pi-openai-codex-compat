@@ -19,3 +19,16 @@ Pi AI, Copyright (c) 2025 Mario Zechner
 Pi AI is licensed under the MIT License. A copy is included at [`LICENSES/pi-ai-MIT.txt`](LICENSES/pi-ai-MIT.txt).
 
 Source: <https://github.com/earendil-works/pi/tree/main/packages/ai>
+
+## node-pty
+
+Persistent `exec_command` sessions use `node-pty`.
+
+node-pty contributors, Copyright (c) 2012-2015 Christopher Jeffrey,
+Copyright (c) 2016 Daniel Imms, and Copyright (c) 2018-present Microsoft
+Corporation
+
+node-pty is licensed under the MIT License. A copy is included at
+[`LICENSES/node-pty-MIT.txt`](LICENSES/node-pty-MIT.txt).
+
+Source: <https://github.com/microsoft/node-pty>

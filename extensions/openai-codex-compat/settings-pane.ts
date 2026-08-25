@@ -24,6 +24,7 @@ import {
 import { Value } from "typebox/value";
 import {
   CODEX_TOOL_BACKGROUND_SCHEMA,
+  CODEX_SHELL_TOOL_SCHEMA,
   CONFIG_ENVIRONMENT_VARIABLES,
   IMAGE_DETAIL_SCHEMA,
   REASONING_MODE_SCHEMA,
@@ -164,6 +165,13 @@ export function settingItems(
       values: [...CODEX_TOOL_BACKGROUND_SCHEMA.enum],
     },
     {
+      id: "shellTool",
+      label: "Command tool",
+      description: "Choose the unified exec pair or legacy shell_command.",
+      currentValue: config.shellTool,
+      values: [...CODEX_SHELL_TOOL_SCHEMA.enum],
+    },
+    {
       id: "applyPatch",
       label: "apply_patch tool",
       description: "Use Codex apply_patch instead of Pi's edit and write tools.",
@@ -264,6 +272,11 @@ export function settingPatch(id: string, value: string): ConfigLayer | undefined
         return { toolBackground: value };
       }
       return undefined;
+    case "shellTool":
+      if (Value.Check(CODEX_SHELL_TOOL_SCHEMA, value)) {
+        return { shellTool: value };
+      }
+      return undefined;
     case "applyPatch":
       return value === "on" || value === "off" ? { applyPatch: value === "on" } : undefined;
     case "applyPatchDebug":
@@ -306,6 +319,7 @@ function applySettingPatch(config: CodexCompatConfig, patch: ConfigLayer): Codex
     next.applyPatchDiagnostics = patch.applyPatchDiagnostics;
   }
   if (patch.toolBackground) next.toolBackground = patch.toolBackground;
+  if (patch.shellTool) next.shellTool = patch.shellTool;
   if (isBoolean(patch.imageGeneration)) {
     next.imageGeneration = patch.imageGeneration;
   }

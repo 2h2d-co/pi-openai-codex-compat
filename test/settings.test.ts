@@ -25,6 +25,7 @@ import registerCodexSettings, {
 } from "../extensions/openai-codex-compat/settings-pane.ts";
 import {
   setApplyPatchEnabled,
+  setCodexCommandTool,
   syncCodexTools,
   type CodexToolActivationApi,
 } from "../extensions/openai-codex-compat/tools.ts";
@@ -57,6 +58,7 @@ test("persists dedicated settings without discarding unknown configuration", asy
     applyPatchDebug: true,
     applyPatchDiagnostics: true,
     toolBackground: "none",
+    shellTool: "shell_command",
     imageGeneration: false,
     imageDetail: "high",
     webRun: false,
@@ -70,6 +72,7 @@ test("persists dedicated settings without discarding unknown configuration", asy
   assert.equal(stored["applyPatchDebug"], true);
   assert.equal(stored["applyPatchDiagnostics"], true);
   assert.equal(stored["toolBackground"], "none");
+  assert.equal(stored["shellTool"], "shell_command");
   assert.equal(stored["imageGeneration"], false);
   assert.equal(stored["imageDetail"], "high");
   assert.equal(stored["webRun"], false);
@@ -94,6 +97,7 @@ test("exposes every request and tool control in the settings pane", () => {
     fastMode: true,
     responsesLite: false,
     toolBackground: "status",
+    shellTool: "shell_command",
     applyPatch: false,
     applyPatchDebug: true,
     applyPatchDiagnostics: true,
@@ -117,6 +121,7 @@ test("exposes every request and tool control in the settings pane", () => {
       ["reasoningSummary", "detailed"],
       ["reasoningMode", "pro"],
       ["toolBackground", "status"],
+      ["shellTool", "shell_command"],
       ["applyPatch", "off"],
       ["applyPatchDebug", "on"],
       ["applyPatchDiagnostics", "on"],
@@ -135,6 +140,9 @@ test("exposes every request and tool control in the settings pane", () => {
   });
   assert.deepEqual(settingPatch("toolBackground", "none"), {
     toolBackground: "none",
+  });
+  assert.deepEqual(settingPatch("shellTool", "unified_exec"), {
+    shellTool: "unified_exec",
   });
   assert.deepEqual(settingPatch("applyPatchDebug", "on"), {
     applyPatchDebug: true,
@@ -378,6 +386,40 @@ test("does not restore Pi edit tools that were inactive before apply_patch", () 
   setApplyPatchEnabled(pi, true);
   assert.deepEqual(active, ["read", "apply_patch"]);
   setApplyPatchEnabled(pi, false);
+  assert.deepEqual(active, ["read"]);
+});
+
+test("replaces only an active Pi bash tool with the selected Codex command family", () => {
+  let active = ["read", "bash", "exec_command", "write_stdin", "shell_command"];
+  const pi: CodexToolActivationApi = {
+    getActiveTools: () => active,
+    setActiveTools(names: string[]) {
+      active = names;
+    },
+  };
+
+  assert.equal(setCodexCommandTool(pi, "unified_exec"), true);
+  assert.deepEqual(active, ["read", "exec_command", "write_stdin"]);
+
+  assert.equal(setCodexCommandTool(pi, "shell_command"), false);
+  assert.deepEqual(active, ["read", "shell_command"]);
+
+  assert.equal(setCodexCommandTool(pi, undefined), false);
+  assert.deepEqual(active, ["read", "bash"]);
+});
+
+test("does not bypass a Pi session that started without bash", () => {
+  let active = ["read", "exec_command", "write_stdin", "shell_command"];
+  const pi: CodexToolActivationApi = {
+    getActiveTools: () => active,
+    setActiveTools(names: string[]) {
+      active = names;
+    },
+  };
+
+  assert.equal(setCodexCommandTool(pi, "unified_exec"), false);
+  assert.deepEqual(active, ["read"]);
+  setCodexCommandTool(pi, undefined);
   assert.deepEqual(active, ["read"]);
 });
 

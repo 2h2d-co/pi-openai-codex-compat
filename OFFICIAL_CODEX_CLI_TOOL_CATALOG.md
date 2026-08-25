@@ -55,7 +55,8 @@ catalog, one fixed model-callable name was added:
 | Consider later            | `tool_search`                                                           | Pi already supports additive dynamic tool loading and native OpenAI tool-search history. It becomes valuable only after this package owns several optional tools.                                    |
 | Consider only as an alias | `view_image`                                                            | Pi's `read` tool already supports images. Add an alias only if Codex models measurably perform better when the canonical name is present.                                                            |
 | Separate package          | Multi-agent tools                                                       | Useful but operationally large and not specific to provider compatibility. Pi already includes a sub-agent extension example.                                                                        |
-| Separate package          | `exec_command` + `write_stdin`                                          | Requires persistent PTY lifecycle, process cleanup, approvals, and rendering. It conflicts with Pi's intentionally simple `bash` model.                                                              |
+| Keep                      | `exec_command` + `write_stdin`                                          | Implemented as the default command surface with persistent PTY lifecycle, process cleanup, bounded output, temporary complete-output logs, and dedicated rendering.                                  |
+| Keep                      | `shell_command`                                                         | Implemented as the configurable one-shot alternative to unified exec, reusing Pi's shell resolution and output limits.                                                                               |
 | Do not port here          | MCP, plugin-install, goals, memories, skills, async messages, Code Mode | These require separate state, trust, UI, provider, or execution architectures and would make the compatibility entrypoint non-compositional.                                                         |
 
 **Recommended order:** finish the durable citation/reference layer for
@@ -119,7 +120,7 @@ test_sync_tool
 
 ## Package coverage
 
-The package implements four operational official surfaces: three
+The package implements seven operational official surfaces: six
 client-executed tools and one provider-hosted tool. Pi's similarly capable
 built-ins are listed separately so they are not mistaken for wire-compatible
 implementations.
@@ -131,9 +132,9 @@ implementations.
 | `image_gen.imagegen`                                                                                                                                                                    | **Implemented**          | Native namespace declaration, `gpt-image-2` generation/edit execution, local/recent image inputs, artifact persistence, image result, and renderer.                  |
 | Hosted `web_search`                                                                                                                                                                     | **Hosted support**       | The package injects the Responses hosted declaration in cached, indexed, or live mode; OpenAI executes the tool.                                                     |
 | `tool_search`                                                                                                                                                                           | **Protocol only**        | The provider preserves additive `tool_search_call`/`tool_search_output` history, but this package has no searchable deferred-tool catalog or BM25 executor.          |
-| `exec_command`, `shell_command`                                                                                                                                                         | **Pi analogue**          | Pi `bash` runs one-shot commands. It is not Codex's schema, persistent PTY, environment, approval, or session runtime.                                               |
+| `exec_command`, `write_stdin`                                                                                                                                                           | **Implemented**          | Default command surface with optional `node-pty` sessions, writes and polls, process cleanup, Codex-style result metadata, and Pi-style tail truncation.             |
+| `shell_command`                                                                                                                                                                         | **Implemented**          | Configurable one-shot command surface with working-directory, timeout, login-shell, cancellation, process-tree cleanup, and Pi-style tail truncation.                |
 | `view_image`                                                                                                                                                                            | **Pi analogue**          | Pi `read` accepts images, but the package does not register the canonical Codex alias or reproduce its detail/environment contract.                                  |
-| `write_stdin`                                                                                                                                                                           | **Not implemented**      | No persistent `exec_command` session exists to write to or poll.                                                                                                     |
 | `update_plan`, `request_user_input`, `send_user_message_async`, `request_permissions`, `wait_for_environment`, `get_context_remaining`, `new_context`, `clock.curr_time`, `clock.sleep` | **Not implemented**      | These depend on Codex planning, question, asynchronous-message, permission, environment, context-window, or reminder lifecycles.                                     |
 | `list_mcp_resources`, `list_mcp_resource_templates`, `read_mcp_resource`                                                                                                                | **Not implemented**      | No Codex MCP connection/resource runtime is provided.                                                                                                                |
 | `list_available_plugins_to_install`, `request_plugin_install`                                                                                                                           | **Not implemented**      | Model-initiated installation is outside package trust and package-manager policy.                                                                                    |
@@ -144,6 +145,8 @@ implementations.
 
 Exact implementation evidence lives in
 [`extensions/openai-codex-compat/tools.ts`](extensions/openai-codex-compat/tools.ts),
+[`extensions/openai-codex-compat/command-tools.ts`](extensions/openai-codex-compat/command-tools.ts),
+[`extensions/openai-codex-compat/command-runtime.ts`](extensions/openai-codex-compat/command-runtime.ts),
 [`extensions/openai-codex-compat/request-options.ts`](extensions/openai-codex-compat/request-options.ts),
 and the focused `apply-patch`, `web-run`, and `image-generation` modules.
 
@@ -156,20 +159,63 @@ Source:
 and
 [view-image schema](https://github.com/openai/codex/blob/rust-v0.149.1/codex-rs/core/src/tools/handlers/view_image_spec.rs).
 
-| Tool            | Contract                                                                                                                                                                                                              | Availability in Codex                                                                                                                                                                              | Pi fit                                                                                                                                                                                                             | Verdict                                                                        |
-| --------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------ |
-| `exec_command`  | Runs one command in a PTY. Inputs include `cmd`, `workdir`, `tty`, yield time, output-token limit, and optional shell, login, environment, and permission fields. Returns output immediately or a numeric session ID. | Requires an execution environment and a model/runtime selecting unified exec. Unified exec is enabled by default on non-Windows systems, but model metadata still chooses the visible shell shape. | Pi's `bash` covers ordinary commands but not persistent interactive sessions. Exact parity needs a PTY manager, process registry, cancellation, sandbox/approval integration, truncation, and session persistence. | **Separate package or skip.**                                                  |
-| `write_stdin`   | Writes characters to, or polls, an active `exec_command` session. Inputs: `session_id`, optional `chars`, yield time, and output-token limit.                                                                         | Exposed only with unified exec.                                                                                                                                                                    | Has no value without a persistent `exec_command` backend.                                                                                                                                                          | **Do not implement independently.**                                            |
-| `shell_command` | Legacy one-shot shell execution. Inputs: `command`, `workdir`, timeout, optional login, and permission fields.                                                                                                        | Used when model/runtime selects the legacy shell. It remains hidden as a dispatch fallback when unified exec is visible.                                                                           | Directly overlaps Pi's mature `bash` tool.                                                                                                                                                                         | **Skip.** A canonical-name alias would add little value.                       |
-| `apply_patch`   | Freeform Lark-grammar patch tool supporting add, update, delete, and move operations.                                                                                                                                 | Requires an execution environment and model metadata advertising an apply-patch tool type.                                                                                                         | This package already implements the Codex grammar, matching, filesystem semantics, mutation queue integration, history, and rendering.                                                                             | **Keep.**                                                                      |
-| `view_image`    | Reads a local image path and returns an image data URL plus detail metadata. Optional inputs select original detail and an environment.                                                                               | Present whenever an execution environment exists. Original-detail support is model-dependent.                                                                                                      | Pi's built-in `read` already accepts text and common image formats and returns images as tool-result attachments.                                                                                                  | **Consider only as a thin alias** if canonical naming improves model behavior. |
+| Tool            | Contract                                                                                                                                                                                                                                         | Availability in Codex                                                                                                                                                                              | Pi fit                                                                                                                                                                            | Verdict                                                                        |
+| --------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------ |
+| `exec_command`  | Runs one command with plain pipes or an optional PTY. Inputs include `cmd`, `workdir`, `tty`, yield time, output-token limit, and optional shell, login, environment, and permission fields. Returns output immediately or a numeric session ID. | Requires an execution environment and a model/runtime selecting unified exec. Unified exec is enabled by default on non-Windows systems, but model metadata still chooses the visible shell shape. | Implemented with optional PTY allocation, a process registry, cancellation, bounded interaction output, and cleanup. Environment and permission fields are intentionally omitted. | **Keep as the default command surface.**                                       |
+| `write_stdin`   | Writes characters to, or polls, an active `exec_command` session. Inputs: `session_id`, optional `chars`, yield time, and output-token limit.                                                                                                    | Exposed only with unified exec.                                                                                                                                                                    | Implemented against the same in-memory process registry, including empty polling, PTY writes, non-PTY interruption, per-session serialization, and cleanup.                       | **Keep with `exec_command`.**                                                  |
+| `shell_command` | Legacy one-shot shell execution. Inputs: `command`, `workdir`, timeout, optional login, and permission fields.                                                                                                                                   | Used when model/runtime selects the legacy shell. It remains hidden as a dispatch fallback when unified exec is visible.                                                                           | Implemented as a configurable alternative to unified exec, with Pi-compatible shell resolution, process-tree cancellation, timeout, output limits, and complete temporary logs.   | **Keep as the one-shot alternative.**                                          |
+| `apply_patch`   | Freeform Lark-grammar patch tool supporting add, update, delete, and move operations.                                                                                                                                                            | Requires an execution environment and model metadata advertising an apply-patch tool type.                                                                                                         | This package already implements the Codex grammar, matching, filesystem semantics, mutation queue integration, history, and rendering.                                            | **Keep.**                                                                      |
+| `view_image`    | Reads a local image path and returns an image data URL plus detail metadata. Optional inputs select original detail and an environment.                                                                                                          | Present whenever an execution environment exists. Original-detail support is model-dependent.                                                                                                      | Pi's built-in `read` already accepts text and common image formats and returns images as tool-result attachments.                                                                 | **Consider only as a thin alias** if canonical naming improves model behavior. |
 
 ### Shell-family implementation note
 
 Codex treats `exec_command` and `write_stdin` as a coordinated subsystem, not
-as two unrelated tools. Porting only the schemas would be misleading because
-the important behavior is process ownership across tool calls, PTY semantics,
-yielding, bounded output, interruption, and environment-aware permissions.
+as two unrelated tools. This package therefore activates and implements them
+together. Its in-memory process manager owns optional PTYs across calls,
+serializes interactions per session, supports yielding, polling and
+interruption, and terminates sessions when the command surface or Pi session
+changes. Output follows Pi's 2,000-line/50-KiB tail policy and points to a
+complete temporary log when truncated.
+
+Unlike official Codex, the package has no execution-environment, sandbox,
+permission-profile, or approval lifecycle. Those schema fields are omitted,
+and commands run with the Pi extension process's host permissions.
+
+### Implemented command input schemas
+
+All three schemas are closed (`additionalProperties: false`). Types below use
+the official JSON Schema shape; numeric values are additionally required to be
+safe integers by the runtime.
+
+#### `exec_command`
+
+| Field               | Required | Type    | Package behavior                                                                                        |
+| ------------------- | -------- | ------- | ------------------------------------------------------------------------------------------------------- |
+| `cmd`               | yes      | string  | Shell command to execute.                                                                               |
+| `workdir`           | no       | string  | Absolute path or path relative to the Pi session working directory; defaults to that session directory. |
+| `shell`             | no       | string  | Shell binary; defaults to Pi's bash-compatible shell resolution.                                        |
+| `login`             | no       | boolean | Enables login-shell semantics; defaults to `true`.                                                      |
+| `tty`               | no       | boolean | Allocates a persistent PTY when `true`; defaults to plain pipes.                                        |
+| `yield_time_ms`     | no       | number  | Defaults to 10,000 ms and is clamped to 250–30,000 ms, with a 10,000 ms floor on Windows.               |
+| `max_output_tokens` | no       | number  | Defaults to 10,000 approximate tokens and cannot exceed Pi's 50-KiB/2,000-line output cap.              |
+
+#### `write_stdin`
+
+| Field               | Required | Type   | Package behavior                                                                                                        |
+| ------------------- | -------- | ------ | ----------------------------------------------------------------------------------------------------------------------- |
+| `session_id`        | yes      | number | Numeric ID returned by `exec_command`.                                                                                  |
+| `chars`             | no       | string | Characters written to a PTY. Empty or omitted polls; `"\u0003"` interrupts a non-PTY process.                           |
+| `yield_time_ms`     | no       | number | Non-empty writes default to 250 ms and clamp to 250–30,000 ms; empty polls default to 5,000 ms and clamp at 300,000 ms. |
+| `max_output_tokens` | no       | number | Defaults to 10,000 approximate tokens and cannot exceed Pi's 50-KiB/2,000-line output cap.                              |
+
+#### `shell_command`
+
+| Field        | Required | Type    | Package behavior                                                                                        |
+| ------------ | -------- | ------- | ------------------------------------------------------------------------------------------------------- |
+| `command`    | yes      | string  | One-shot shell script to execute.                                                                       |
+| `workdir`    | no       | string  | Absolute path or path relative to the Pi session working directory; defaults to that session directory. |
+| `timeout_ms` | no       | number  | Defaults to 10,000 ms; maximum 2,147,483,647 ms.                                                        |
+| `login`      | no       | boolean | Enables login-shell semantics; defaults to `true`.                                                      |
 
 ## 2. Planning, questions, messages, permissions, and environments
 
@@ -457,17 +503,17 @@ configuration.
 
 For this package, the sensible boundary is:
 
-1. **Continue maintaining** `apply_patch`, hosted `web_search`, `web.run`, and
-   `image_gen.imagegen`.
+1. **Continue maintaining** `exec_command`, `write_stdin`, `shell_command`,
+   `apply_patch`, hosted `web_search`, `web.run`, and `image_gen.imagegen`.
 2. **Finish `web.run` reference persistence**, using the existing structured
    result details and canonical-history design rather than a text-only shortcut.
 3. **Optionally add `request_user_input`** as a focused, independently
    configurable Pi tool.
 4. **Add `tool_search` only after** the package owns enough optional tools to
    justify deferred discovery.
-5. **Do not absorb** persistent shell, asynchronous-message, multi-agent, MCP,
-   plugin installation, goals, memories, skills, Code Mode, or
-   remote-environment runtimes into the compatibility entrypoint.
+5. **Do not absorb** asynchronous-message, multi-agent, MCP, plugin
+   installation, goals, memories, skills, Code Mode, or remote-environment
+   runtimes into the compatibility entrypoint.
 
 ## Primary sources
 

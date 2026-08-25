@@ -7,10 +7,11 @@ OpenAI Codex compatibility for [Pi](https://github.com/earendil-works/pi-mono), 
 - **Request-level fast mode**: keeps the canonical `openai-codex` provider id and models selected while adding `service_tier: "priority"` at the request boundary.
 - **Native compaction**: uses Codex `remote_compaction_v2` for `/compact`, Pi threshold compaction, context-overflow recovery, and an optional percentage threshold.
 - **Codex `apply_patch`**: provides an optional patch tool with the Codex grammar, parser, fuzzy matcher, overwrite semantics, filesystem behavior, model-facing result format, structured history, and diff-oriented TUI rendering. Pi sends it as an OpenAI custom grammar tool when the model supports that protocol and as a normal function tool otherwise.
+- **Codex command tools**: replaces an active Pi `bash` tool with either the persistent `exec_command` + `write_stdin` pair or the one-shot `shell_command` tool. Unified exec is the default and supports optional PTY sessions through `node-pty`.
 - **Opt-in patch diagnostics**: records failed `apply_patch` requests with pre-execution text snapshots or binary metadata for every instruction, outcomes, and Pi/Codex identifiers.
 - **Standalone image generation**: exposes Pi's dotted `image_gen.imagegen` tool as a native Responses namespace and executes generation or edits through the Codex Images endpoints.
 - **Standalone web search**: exposes Pi's dotted `web.run` tool as a native Responses namespace and executes search and browsing through Codex `alpha/search`.
-- **Dedicated Codex tool UI**: renders `apply_patch`, `image_gen.imagegen`, and `web.run` on a shared configurable surface with compact summaries and `Ctrl+O` expansion.
+- **Dedicated Codex tool UI**: renders command tools, `apply_patch`, `image_gen.imagegen`, and `web.run` on a shared configurable surface with compact summaries and `Ctrl+O` expansion.
 - **Hosted web-search fallback**: injects native `web_search` only when `web.run` is inactive, with cached, indexed, or live modes.
 - **Native request controls**: configures Responses API text verbosity, reasoning summaries, and GPT-5.6 standard/pro reasoning mode.
 - **Session-local settings pane**: `/codex-settings` changes every compatibility setting for the current session; `Enter` persists and closes, `Escape` discards unsaved changes and closes, and `Ctrl+S` persists without closing.
@@ -43,6 +44,7 @@ The compatibility baseline is official Codex CLI `0.149.1`, released August 24, 
 | Standalone `web.run`                          | Disabled by default; when enabled, preferred over hosted `web_search` and sent with the complete reserved schema and description.                 | Enabled by default for `gpt-5.6-sol` through Responses Lite; otherwise subject to standalone-search feature and runtime gates.                | `webRun`: boolean.                                                                                                                                                          |
 | Hosted web search                             | Disabled by default; when enabled, injected only for ordinary Responses while `web.run` is inactive. Responses Lite omits hosted tools.           | Omitted for `gpt-5.6-sol` while standalone `web.run` is available; otherwise defaults to cached mode when hosted search is supported.         | `webRun` and `webSearch`: `disabled`, `cached`, `indexed`, or `live`.                                                                                                       |
 | Coding mutation tools                         | Enables `apply_patch` and suppresses Pi's active `edit` and `write` tools.                                                                        | Chooses its tool surface from model metadata and runtime capabilities; there are no Pi `edit` or `write` tools to suppress.                   | `applyPatch`: boolean.                                                                                                                                                      |
+| Command tools                                 | Replaces an active Pi `bash` tool with `exec_command` and `write_stdin`.                                                                          | Chooses unified exec or legacy shell from model metadata, platform, execution environment, and runtime capabilities.                          | `shellTool`: `unified_exec` or `shell_command`.                                                                                                                             |
 | `apply_patch` debug output                    | Disabled; collapsed results show the normal visual summary and instruction rows.                                                                  | Not applicable to Pi's tool-result renderer.                                                                                                  | `applyPatchDebug`: boolean.                                                                                                                                                 |
 | `apply_patch` diagnostics capture             | Disabled; no separate request or filesystem snapshot artifacts are retained.                                                                      | Codex owns its rollout diagnostics rather than writing this package's artifact format.                                                        | `applyPatchDiagnostics`: boolean.                                                                                                                                           |
 | Codex tool background                         | Uses a subtle theme-derived surface for extension-owned Codex tools.                                                                              | Uses Codex's own TUI activity cells rather than Pi tool rows.                                                                                 | `toolBackground`: `subtle`, `status`, or `none`.                                                                                                                            |
@@ -71,7 +73,7 @@ The compatibility baseline is official Codex CLI `0.149.1`, released August 24, 
 | Native retained context     | Deliberately differs from current Codex. The package retains recent user/developer/system messages under a text-only 64k budget before the opaque compaction item. Current Codex applies a second installed-history filter that drops developer/system wrappers and non-real-user messages, can retain eligible structured agent commentary, and trims oversized function outputs before compaction. Codex `0.149.1` also adds a default-disabled mode that charges retained images to the budget and keeps each image with adjacent harness labels as an atomic boundary unit. Pi keeps its existing checkpoint shape by design.                                                                                                                                                                                                                                                                |
 | Tool namespaces             | Responses Lite groups Pi's ordinary function/custom declarations into upstream's canonical `functions` namespace and maps that default namespace back to bare Pi names. Pi registers dotted names such as `web.run` as exact flat identifiers, so the provider converts only the fixed extension-owned allowlist into non-default Responses namespace/member identities and rejects unknown or ambiguously flat namespaced calls.                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
 | Capability gating           | Tool activation is based on the selected `openai-codex` provider plus package settings. It does not reproduce every official model-metadata, plan, feature-stage, executor, mode, or account gate.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
-| Sandbox and approvals       | Pi extensions run with full process permissions. `apply_patch`, local image reads, generated-image writes, and sibling Codex endpoints do not use Codex's sandbox, permission-profile, or approval lifecycle.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
+| Sandbox and approvals       | Pi extensions run with full process permissions. Command tools, `apply_patch`, local image reads, generated-image writes, and sibling Codex endpoints do not use Codex's sandbox, permission-profile, environment, or approval lifecycle.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
 | Image tool instructions     | The package retains the server-reserved image-generation schema while replacing Rust-specific path annotations and Codex Code Mode instructions with model-facing descriptions, a prompt snippet, and system-prompt guidelines. Image-count bounds and selector exclusivity are enforced before execution.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
 | Image artifact hint         | When image saving succeeds, this package always returns the path hint, says “the generated image,” and has no 1,024-byte cutoff. Official Codex says “a generated image” and omits the hint when it exceeds 1,024 UTF-8 bytes.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
 | Image artifacts             | Generated files use Pi's agent directory and the Pi session/tool-call IDs. Official Codex uses its own artifact/output-directory lifecycle.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
@@ -97,6 +99,7 @@ The package implements the Codex-specific pieces that fit a provider compatibili
 
 - native Responses transport and history;
 - remote compaction v2;
+- `exec_command`, `write_stdin`, and `shell_command`;
 - `apply_patch`;
 - hosted `web_search`;
 - `web.run`;
@@ -108,8 +111,6 @@ The following official Codex facilities are not exact equivalents in this packag
 
 | Official Codex facility                                                 | Pi/package behavior                                                                                                                                              |
 | ----------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `exec_command` and `write_stdin` persistent PTY sessions                | Pi `bash` is a one-shot command tool; no persistent PTY/session protocol is implemented.                                                                         |
-| Legacy `shell_command`                                                  | Pi uses `bash`; the Codex schema and execution/approval envelope are not reproduced.                                                                             |
 | `view_image`                                                            | Pi `read` already accepts images; no canonical `view_image` alias is registered.                                                                                 |
 | `update_plan`, `request_user_input`, permissions, and environment tools | Not implemented by this package.                                                                                                                                 |
 | `send_user_message_async`                                               | Not implemented; Pi owns visible assistant output and user-message history, while this package does not own Codex's asynchronous message-injection lifecycle.    |
@@ -177,6 +178,7 @@ Example:
   "fastMode": true,
   "responsesLite": true,
   "toolBackground": "subtle",
+  "shellTool": "unified_exec",
   "applyPatch": true,
   "applyPatchDebug": false,
   "applyPatchDiagnostics": false,
@@ -193,22 +195,23 @@ Example:
 
 Defaults:
 
-| Setting                 | Values                                               | Default    | Behavior                                                                                                                                                                                                                                  |
-| ----------------------- | ---------------------------------------------------- | ---------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `fastMode`              | boolean                                              | `false`    | Adds `service_tier: "priority"` to requests while retaining the current `openai-codex` provider and model.                                                                                                                                |
-| `responsesLite`         | boolean                                              | `false`    | Uses Codex's Responses Lite input envelope on supported GPT-5.6 models when enabled. By default, those models use ordinary Responses instructions and tools.                                                                              |
-| `toolBackground`        | `subtle`, `status`, `none`                           | `subtle`   | Controls the shared self-rendered background for `apply_patch`, `image_gen.imagegen`, and `web.run`. `status` uses Pi's pending/success/error backgrounds; `none` keeps the custom layout transparent.                                    |
-| `applyPatch`            | boolean                                              | `true`     | On selected `openai-codex` models, uses the extension's `apply_patch` tool instead of Pi's active `edit` and `write` tools. Other providers always use their normal Pi tool set.                                                          |
-| `applyPatchDebug`       | boolean                                              | `false`    | Shows the exact model-facing tool result while a completed `apply_patch` result is collapsed. Expanded results continue to show the normal visual summary and complete diffs.                                                             |
-| `applyPatchDiagnostics` | boolean                                              | `false`    | Persists failed patch requests with pre-execution text snapshots or binary metadata for every instruction, outcomes, and trace identifiers. See [`apply_patch`](#apply_patch) for storage and sensitivity details.                        |
-| `imageGeneration`       | boolean                                              | `true`     | Enables the extension-owned `image_gen.imagegen` tool on selected `openai-codex` models.                                                                                                                                                  |
-| `imageDetail`           | `auto`, `low`, `high`, `original`                    | `auto`     | Sets `input_image.detail` when an image tool result is sent back to the model. It does not change `gpt-image-2` generation quality.                                                                                                       |
-| `webRun`                | boolean                                              | `false`    | Enables the extension-owned `web.run` tool on selected `openai-codex` models. When active, it replaces hosted `web_search` in the Responses tool list.                                                                                    |
-| `autoCompactAtPercent`  | number greater than `0` and at most `100`, or `null` | unset      | Adds provider-boundary compaction independently of Pi's normal reserve-token threshold. Mid-response boundaries require Pi auto-compaction. A project value of `null` disables a global percentage threshold.                             |
-| `webSearch`             | `disabled`, `cached`, `indexed`, `live`              | `disabled` | Controls hosted search and standalone-search external access. `disabled` removes hosted search but leaves an independently enabled `web.run` in cached-only mode; `indexed` prefers indexed content; `live` permits live external access. |
-| `textVerbosity`         | `low`, `medium`, `high`                              | `low`      | Sets Responses API `text.verbosity`.                                                                                                                                                                                                      |
-| `reasoningSummary`      | `auto`, `concise`, `detailed`, `off`                 | `auto`     | Sets `reasoning.summary` when reasoning is enabled; `off` omits the summary parameter.                                                                                                                                                    |
-| `reasoningMode`         | `standard`, `pro`                                    | `standard` | Controls GPT-5.6 execution mode independently of Pi's reasoning-effort control. The default omits `reasoning.mode`; `pro` sends `reasoning.mode: "pro"`.                                                                                  |
+| Setting                 | Values                                               | Default        | Behavior                                                                                                                                                                                                                                  |
+| ----------------------- | ---------------------------------------------------- | -------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `fastMode`              | boolean                                              | `false`        | Adds `service_tier: "priority"` to requests while retaining the current `openai-codex` provider and model.                                                                                                                                |
+| `responsesLite`         | boolean                                              | `false`        | Uses Codex's Responses Lite input envelope on supported GPT-5.6 models when enabled. By default, those models use ordinary Responses instructions and tools.                                                                              |
+| `toolBackground`        | `subtle`, `status`, `none`                           | `subtle`       | Controls the shared self-rendered background for command tools, `apply_patch`, `image_gen.imagegen`, and `web.run`. `status` uses Pi's pending/success/error backgrounds; `none` keeps the custom layout transparent.                     |
+| `shellTool`             | `unified_exec`, `shell_command`                      | `unified_exec` | Selects the command surface on `openai-codex` models. The selected Codex command surface replaces Pi `bash` only when `bash` was active.                                                                                                  |
+| `applyPatch`            | boolean                                              | `true`         | On selected `openai-codex` models, uses the extension's `apply_patch` tool instead of Pi's active `edit` and `write` tools. Other providers always use their normal Pi tool set.                                                          |
+| `applyPatchDebug`       | boolean                                              | `false`        | Shows the exact model-facing tool result while a completed `apply_patch` result is collapsed. Expanded results continue to show the normal visual summary and complete diffs.                                                             |
+| `applyPatchDiagnostics` | boolean                                              | `false`        | Persists failed patch requests with pre-execution text snapshots or binary metadata for every instruction, outcomes, and trace identifiers. See [`apply_patch`](#apply_patch) for storage and sensitivity details.                        |
+| `imageGeneration`       | boolean                                              | `true`         | Enables the extension-owned `image_gen.imagegen` tool on selected `openai-codex` models.                                                                                                                                                  |
+| `imageDetail`           | `auto`, `low`, `high`, `original`                    | `auto`         | Sets `input_image.detail` when an image tool result is sent back to the model. It does not change `gpt-image-2` generation quality.                                                                                                       |
+| `webRun`                | boolean                                              | `false`        | Enables the extension-owned `web.run` tool on selected `openai-codex` models. When active, it replaces hosted `web_search` in the Responses tool list.                                                                                    |
+| `autoCompactAtPercent`  | number greater than `0` and at most `100`, or `null` | unset          | Adds provider-boundary compaction independently of Pi's normal reserve-token threshold. Mid-response boundaries require Pi auto-compaction. A project value of `null` disables a global percentage threshold.                             |
+| `webSearch`             | `disabled`, `cached`, `indexed`, `live`              | `disabled`     | Controls hosted search and standalone-search external access. `disabled` removes hosted search but leaves an independently enabled `web.run` in cached-only mode; `indexed` prefers indexed content; `live` permits live external access. |
+| `textVerbosity`         | `low`, `medium`, `high`                              | `low`          | Sets Responses API `text.verbosity`.                                                                                                                                                                                                      |
+| `reasoningSummary`      | `auto`, `concise`, `detailed`, `off`                 | `auto`         | Sets `reasoning.summary` when reasoning is enabled; `off` omits the summary parameter.                                                                                                                                                    |
+| `reasoningMode`         | `standard`, `pro`                                    | `standard`     | Controls GPT-5.6 execution mode independently of Pi's reasoning-effort control. The default omits `reasoning.mode`; `pro` sends `reasoning.mode: "pro"`.                                                                                  |
 
 Invalid JSON setting values are ignored and invalid JSON does not prevent Pi from starting. The settings pane never writes on ordinary changes, refuses to overwrite invalid JSON when `Enter` or `Ctrl+S` attempts to save, and retains unknown keys when saving. Project configuration is read only when the project is trusted.
 
@@ -219,6 +222,7 @@ Every setting can also be overridden for one Pi process with an environment vari
 | `fastMode`              | `PI_OPENAI_CODEX_COMPAT_FAST_MODE`               |
 | `responsesLite`         | `PI_OPENAI_CODEX_COMPAT_RESPONSES_LITE`          |
 | `toolBackground`        | `PI_OPENAI_CODEX_COMPAT_TOOL_BACKGROUND`         |
+| `shellTool`             | `PI_OPENAI_CODEX_COMPAT_SHELL_TOOL`              |
 | `applyPatch`            | `PI_OPENAI_CODEX_COMPAT_APPLY_PATCH`             |
 | `applyPatchDebug`       | `PI_OPENAI_CODEX_COMPAT_APPLY_PATCH_DEBUG`       |
 | `applyPatchDiagnostics` | `PI_OPENAI_CODEX_COMPAT_APPLY_PATCH_DIAGNOSTICS` |
@@ -240,10 +244,53 @@ For example:
 ```bash
 PI_OPENAI_CODEX_COMPAT_WEB_RUN=off \
 PI_OPENAI_CODEX_COMPAT_RESPONSES_LITE=off \
+PI_OPENAI_CODEX_COMPAT_SHELL_TOOL=unified_exec \
 PI_OPENAI_CODEX_COMPAT_IMAGE_DETAIL=high \
 PI_OPENAI_CODEX_COMPAT_AUTO_COMPACT_AT_PERCENT=90 \
 pi
 ```
+
+## Command tools
+
+On an `openai-codex` model, `shellTool` selects exactly one command surface:
+
+- `unified_exec` activates `exec_command` and `write_stdin` and is the default.
+- `shell_command` activates the legacy one-shot command tool.
+
+The extension replaces `bash` only when it was active before the Codex command
+surface was selected. It therefore preserves sessions started with restricted
+tool lists such as `--no-tools`. Switching away from an `openai-codex` model
+restores the previously active `bash` tool. Selecting `shell_command`, or
+switching models, also terminates persistent unified-exec sessions.
+
+`exec_command` returns immediately when a command finishes within its yield
+window. Otherwise it returns a numeric session ID for `write_stdin`.
+`tty: true` allocates a persistent pseudoterminal (PTY), allowing
+`write_stdin` to send characters to interactive programs; without a PTY,
+stdin is closed, but `"\u0003"` can still interrupt the process. Empty
+`write_stdin` calls poll without writing. Sessions are in-memory, are capped at
+64 per Pi process, and are terminated on session shutdown.
+
+`shell_command` is one-shot and has a 10-second default timeout. Both command
+families use Pi's bash-compatible shell resolution and expose the current
+`PI_SESSION_ID`, `PI_SESSION_FILE`, `PI_PROVIDER`, `PI_MODEL`, and
+`PI_REASONING_LEVEL` values to child processes. Login-shell behavior defaults
+to enabled and can be disabled per call.
+
+Model-visible output has a hard cap of the last 2,000 lines or 50 KiB,
+whichever limit is reached first. Unified exec defaults
+`max_output_tokens` to 10,000 approximate tokens (roughly 40 KiB) and allows a
+call to lower that budget, but never to raise the Pi cap. When output is
+truncated, the complete raw output for that interaction is stored in a
+temporary log file and its absolute path is included in the tool result.
+Persistent PTY support uses the pinned
+`node-pty` `1.2.0-beta.15` prebuilds on supported macOS, Linux, and Windows
+architectures.
+
+The schemas intentionally omit Codex execution environments, sandbox
+permissions, additional permission profiles, approval justifications, and
+prefix rules. These tools execute with the Pi extension process's full host
+permissions.
 
 ## Native compaction
 
@@ -272,7 +319,7 @@ Any model switch is rejected while the active branch contains a native Codex che
 
 Native compaction fails closed for Codex models: a failed compaction is cancelled instead of silently replacing the opaque state with a local text summary. Other providers continue to use Pi's default compaction behavior. `/tree` branch summarization is intentionally not intercepted.
 
-When the active branch has no native Codex checkpoint, Pi model switching remains available. Selecting a provider other than `openai-codex` disables `apply_patch`, `image_gen.imagegen`, and `web.run`, and restores the Pi `edit` and `write` tools that `apply_patch` suppressed. Switching back to an `openai-codex` model reapplies the current session settings.
+When the active branch has no native Codex checkpoint, Pi model switching remains available. Selecting a provider other than `openai-codex` disables the extension-owned Codex tools, restores the Pi `edit` and `write` tools that `apply_patch` suppressed, restores a replaced Pi `bash` tool, and terminates persistent unified-exec sessions. Switching back to an `openai-codex` model reapplies the current session settings.
 
 ## `apply_patch`
 

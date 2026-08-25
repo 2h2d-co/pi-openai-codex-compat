@@ -44,6 +44,12 @@ export const CODEX_TOOL_BACKGROUND_SCHEMA = {
 
 export type CodexToolBackground = Static<typeof CODEX_TOOL_BACKGROUND_SCHEMA>;
 
+export const CODEX_SHELL_TOOL_SCHEMA = {
+  enum: ["unified_exec", "shell_command"],
+} as const;
+
+export type CodexShellTool = Static<typeof CODEX_SHELL_TOOL_SCHEMA>;
+
 export const ENV_PREFIX = "PI_OPENAI_CODEX_COMPAT_";
 
 export interface CodexCompatConfig {
@@ -59,6 +65,8 @@ export interface CodexCompatConfig {
   applyPatchDiagnostics: boolean;
   /** Select the shared background surface for extension-owned Codex tools. */
   toolBackground: CodexToolBackground;
+  /** Select the model-visible command tool family for OpenAI Codex models. */
+  shellTool: CodexShellTool;
   /** Expose the standalone Codex image-generation namespace tool. */
   imageGeneration: boolean;
   /** Set input_image.detail when image tool results are returned to the model. */
@@ -84,6 +92,7 @@ export const CONFIG_ENVIRONMENT_VARIABLES = {
   applyPatchDebug: `${ENV_PREFIX}APPLY_PATCH_DEBUG`,
   applyPatchDiagnostics: `${ENV_PREFIX}APPLY_PATCH_DIAGNOSTICS`,
   toolBackground: `${ENV_PREFIX}TOOL_BACKGROUND`,
+  shellTool: `${ENV_PREFIX}SHELL_TOOL`,
   imageGeneration: `${ENV_PREFIX}IMAGE_GENERATION`,
   imageDetail: `${ENV_PREFIX}IMAGE_DETAIL`,
   webRun: `${ENV_PREFIX}WEB_RUN`,
@@ -101,6 +110,7 @@ export type ConfigLayer = {
   applyPatchDebug?: boolean;
   applyPatchDiagnostics?: boolean;
   toolBackground?: CodexToolBackground;
+  shellTool?: CodexShellTool;
   imageGeneration?: boolean;
   imageDetail?: ImageDetail;
   webRun?: boolean;
@@ -119,6 +129,7 @@ export const DEFAULT_CONFIG: CodexCompatConfig = {
   applyPatchDebug: false,
   applyPatchDiagnostics: false,
   toolBackground: "subtle",
+  shellTool: "unified_exec",
   imageGeneration: true,
   imageDetail: "auto",
   webRun: false,
@@ -204,6 +215,13 @@ export function parseEnvironmentConfig(environment: Environment = process.env): 
     CODEX_TOOL_BACKGROUND_SCHEMA,
   );
   if (toolBackground !== undefined) layer.toolBackground = toolBackground;
+
+  const shellTool = environmentEnum(
+    environment,
+    CONFIG_ENVIRONMENT_VARIABLES.shellTool,
+    CODEX_SHELL_TOOL_SCHEMA,
+  );
+  if (shellTool !== undefined) layer.shellTool = shellTool;
 
   const imageGeneration = environmentBoolean(
     environment,
@@ -298,6 +316,11 @@ export function parseConfig(value: unknown): ConfigLayer {
     layer.toolBackground = toolBackground;
   }
 
+  const shellTool = value["shellTool"];
+  if (Value.Check(CODEX_SHELL_TOOL_SCHEMA, shellTool)) {
+    layer.shellTool = shellTool;
+  }
+
   const imageGeneration = value["imageGeneration"];
   if (isBoolean(imageGeneration)) layer.imageGeneration = imageGeneration;
 
@@ -373,6 +396,7 @@ export function resolveConfig(
     config.applyPatchDiagnostics = merged.applyPatchDiagnostics;
   }
   if (merged.toolBackground) config.toolBackground = merged.toolBackground;
+  if (merged.shellTool) config.shellTool = merged.shellTool;
   if (isBoolean(merged.imageGeneration)) config.imageGeneration = merged.imageGeneration;
   if (merged.imageDetail) config.imageDetail = merged.imageDetail;
   if (isBoolean(merged.webRun)) config.webRun = merged.webRun;
@@ -418,6 +442,7 @@ export function configLayer(config: CodexCompatConfig): ConfigLayer {
     applyPatchDebug: config.applyPatchDebug,
     applyPatchDiagnostics: config.applyPatchDiagnostics,
     toolBackground: config.toolBackground,
+    shellTool: config.shellTool,
     imageGeneration: config.imageGeneration,
     imageDetail: config.imageDetail,
     webRun: config.webRun,

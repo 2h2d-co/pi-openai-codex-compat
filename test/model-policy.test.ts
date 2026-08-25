@@ -55,7 +55,7 @@ function createHarness(branch: SessionEntry[], initialModel: Model<Api>) {
   const handlers = new Map<string, TestHandler>();
   const notices: Array<{ message: string; level: string }> = [];
   const setModelCalls: Model<Api>[] = [];
-  let activeTools = ["read", "edit", "write"];
+  let activeTools = ["read", "edit", "write", "bash"];
   let selectedModel = initialModel;
 
   const context = {
@@ -81,6 +81,7 @@ function createHarness(branch: SessionEntry[], initialModel: Model<Api>) {
         return handler(event, ctx);
       }),
     onSessionStart: (handler) => handlers.set("session_start", (_event, ctx) => handler(ctx)),
+    onSessionShutdown: (handler) => handlers.set("session_shutdown", () => handler()),
     getActiveTools: () => activeTools,
     setActiveTools(names: string[]) {
       activeTools = names;
@@ -123,13 +124,28 @@ function createHarness(branch: SessionEntry[], initialModel: Model<Api>) {
 test("activates extension tools only for OpenAI Codex models", async () => {
   const harness = createHarness([], codexModel);
   await harness.handlers.get("session_start")?.(undefined, harness.context);
-  assert.deepEqual(harness.activeTools(), ["read", "apply_patch", "image_gen.imagegen"]);
+  assert.deepEqual(harness.activeTools(), [
+    "read",
+    "apply_patch",
+    "exec_command",
+    "write_stdin",
+    "image_gen.imagegen",
+  ]);
 
   await harness.select(foreignModel);
-  assert.deepEqual(harness.activeTools(), ["read", "edit", "write"]);
+  assert.deepEqual(harness.activeTools(), ["read", "edit", "write", "bash"]);
 
   await harness.select(codexModel);
-  assert.deepEqual(harness.activeTools(), ["read", "apply_patch", "image_gen.imagegen"]);
+  assert.deepEqual(harness.activeTools(), [
+    "read",
+    "apply_patch",
+    "exec_command",
+    "write_stdin",
+    "image_gen.imagegen",
+  ]);
+
+  await harness.handlers.get("session_shutdown")?.(undefined, harness.context);
+  assert.deepEqual(harness.activeTools(), ["read", "edit", "write", "bash"]);
 });
 
 test("rejects model switches while the active branch contains a native checkpoint", async () => {
@@ -140,7 +156,13 @@ test("rejects model switches while the active branch contains a native checkpoin
 
   assert.equal(harness.selectedModel(), codexModel);
   assert.deepEqual(harness.setModelCalls, [codexModel]);
-  assert.deepEqual(harness.activeTools(), ["read", "apply_patch", "image_gen.imagegen"]);
+  assert.deepEqual(harness.activeTools(), [
+    "read",
+    "apply_patch",
+    "exec_command",
+    "write_stdin",
+    "image_gen.imagegen",
+  ]);
   assert.equal(harness.notices.at(-1)?.level, "warning");
   assert.match(harness.notices.at(-1)?.message ?? "", /Model switch rejected/);
 });
