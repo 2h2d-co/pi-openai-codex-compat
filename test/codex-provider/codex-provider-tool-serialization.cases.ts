@@ -5,7 +5,6 @@ import {
 import {
   EXEC_COMMAND_DESCRIPTION,
   EXEC_COMMAND_PARAMETERS,
-  UNIFIED_EXEC_OUTPUT_SCHEMA,
   WRITE_STDIN_DESCRIPTION,
   WRITE_STDIN_PARAMETERS,
 } from "../../extensions/openai-codex-compat/command-tool-contract.ts";
@@ -27,7 +26,7 @@ import {
   type JsonRecord,
 } from "./codex-provider-harness.ts";
 
-test("transports the official unified exec output schemas", async () => {
+test("omits Code Mode-only output schemas from direct command tools", async () => {
   const user = userEntry("user-1", "run a command");
   const harness = createHarness([user]);
   let request: JsonRecord | undefined;
@@ -45,12 +44,49 @@ test("transports the official unified exec output schemas", async () => {
     description: WRITE_STDIN_DESCRIPTION,
     parameters: WRITE_STDIN_PARAMETERS,
   };
+  const assistant = {
+    role: "assistant",
+    content: [
+      {
+        type: "toolCall",
+        id: "call_exec|fc_exec",
+        name: execCommand.name,
+        arguments: { cmd: "pwd" },
+      },
+    ],
+    api: "openai-codex-responses",
+    provider: "openai-codex",
+    model: "gpt-test",
+    usage: {
+      input: 10,
+      output: 5,
+      cacheRead: 0,
+      cacheWrite: 0,
+      totalTokens: 15,
+      cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+    },
+    stopReason: "toolUse",
+    timestamp: 1,
+  } satisfies AssistantMessage;
+  const resultText =
+    "Chunk ID: abc123\nWall time: 0.1 seconds\nProcess exited with code 0\nOutput:\n/tmp";
 
   await harness.runtime
     .streamSimple(
       codexModel(),
       {
-        messages: [user.message],
+        messages: [
+          user.message,
+          assistant,
+          {
+            role: "toolResult",
+            toolCallId: "call_exec|fc_exec",
+            toolName: execCommand.name,
+            content: [{ type: "text", text: resultText }],
+            isError: false,
+            timestamp: 2,
+          },
+        ],
         tools: [execCommand, writeStdin],
       },
       {
@@ -62,8 +98,16 @@ test("transports the official unified exec output schemas", async () => {
 
   assert.ok(request);
   const tools = requireJsonRecords(request.tools);
-  assert.deepEqual(tools[0]?.["output_schema"], UNIFIED_EXEC_OUTPUT_SCHEMA);
-  assert.deepEqual(tools[1]?.["output_schema"], UNIFIED_EXEC_OUTPUT_SCHEMA);
+  assert.equal(Object.hasOwn(tools[0] ?? {}, "output_schema"), false);
+  assert.equal(Object.hasOwn(tools[1] ?? {}, "output_schema"), false);
+  assert.deepEqual(
+    requireJsonRecords(request.input).find((item) => item["type"] === "function_call_output"),
+    {
+      type: "function_call_output",
+      call_id: "call_exec",
+      output: resultText,
+    },
+  );
 });
 
 test("transports dotted Pi tools as native Responses namespaces", async () => {

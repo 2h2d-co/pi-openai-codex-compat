@@ -522,6 +522,12 @@ test("serializes active compaction tools with the same namespace contract", () =
     activeResponsesTools(
       [
         {
+          name: "exec_command",
+          description: "Run a command",
+          parameters: Type.Object({ cmd: Type.String() }),
+          sourceInfo: TEST_TOOL_SOURCE,
+        } satisfies ToolInfo,
+        {
           name: WEB_RUN_TOOL_NAME,
           description: webRunTool.description,
           parameters: webRunTool.parameters,
@@ -534,9 +540,16 @@ test("serializes active compaction tools with the same namespace contract", () =
           sourceInfo: TEST_TOOL_SOURCE,
         } satisfies ToolInfo,
       ],
-      [WEB_RUN_TOOL_NAME, IMAGE_GENERATION_TOOL_NAME],
+      ["exec_command", WEB_RUN_TOOL_NAME, IMAGE_GENERATION_TOOL_NAME],
     ),
     [
+      {
+        type: "function",
+        name: "exec_command",
+        description: "Run a command",
+        parameters: Type.Object({ cmd: Type.String() }),
+        strict: false,
+      },
       {
         type: "namespace",
         name: "web",

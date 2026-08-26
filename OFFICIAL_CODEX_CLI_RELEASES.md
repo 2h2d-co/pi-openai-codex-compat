@@ -60,6 +60,8 @@ The detailed `apply_patch` contracts remain normative:
 - **Compaction keeps a Pi-specific retained-history shape.**
 - **Codex-only runtimes stay excluded until they are implemented as real Pi
   runtimes.**
+- **Code Mode-only output schemas stay excluded; direct command results remain
+  text.**
 - **Retries and compaction must preserve canonical Pi history.**
 - **Transport recovery remains bounded rather than approximating Codex's
   unbounded connection-error category.**
@@ -244,6 +246,25 @@ The detailed `apply_patch` contracts remain normative:
   connection-error category, or this package deliberately adds a
   user-controlled connection-recovery policy.
 
+### P-013 — Do not retain Code Mode-only tool output schemas
+
+- **Our choice:** Do not retain or transmit `output_schema` metadata for
+  `exec_command` or `write_stdin`. Their direct `function_call_output` items
+  carry the existing human-readable text result.
+- **Official Codex:** Retains the shared unified-exec output schema in its
+  in-memory tool specification, marks it `#[serde(skip)]` so normal Responses
+  tool declarations omit it, and consumes it when building Code Mode's nested
+  typed tool surface. Direct dispatch returns text; Code Mode dispatch returns
+  the corresponding structured object.
+- **Why:** This package has no Code Mode runtime. Sending internal-only schema
+  metadata on the direct wire changes the endpoint contract and causes it to
+  reject ordinary text command results as non-JSON.
+- **Classification:** Direct-mode wire behavior is aligned. Not retaining
+  Code Mode's internal metadata is an intentional implementation deviation
+  under P-008.
+- **Revisit only if:** The package implements Code Mode with nested tool
+  dispatch and structured result adaptation.
+
 ## Detailed `apply_patch` decisions
 
 ### A-001 — Official grammar and strict matching are the baseline
@@ -424,6 +445,25 @@ force.
   to the `0.149.1` baseline.
 - No changelog entry was added because the package's user-visible behavior did
   not change.
+
+#### Post-review correction — unified-exec output schemas
+
+On August 26, 2026, a direct-tool failure exposed an error in the focused
+command review: `exec_command` and `write_stdin` do hold output schemas in
+official Codex's in-memory tool specifications, but
+`ResponsesApiTool.output_schema` is marked `#[serde(skip)]`. Official normal
+Responses declarations therefore omit the field and direct dispatch returns
+human-readable text. Only Code Mode consumes the schema and returns the
+matching structured object.
+
+The package had copied that internal metadata onto normal Responses
+declarations while retaining direct text results, causing the endpoint to
+reject subsequent `function_call_output.output` values as non-JSON. The
+package now omits the schemas from immediate, deferred, and compaction tool
+declarations. P-013 records the resulting policy: direct wire behavior aligns
+with official Codex, while retaining Code Mode-only metadata remains
+intentionally excluded until the runtime exists. No `apply_patch` decision
+changed.
 
 ### Codex CLI 0.149.0
 

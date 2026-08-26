@@ -18,6 +18,9 @@
 
 ### Fixed
 
+- Omit Code Mode-only command output schemas from normal Responses tool
+  declarations, matching official direct function calling and preventing plain
+  text command results from being rejected as non-JSON.
 - Cache completed command previews, `apply_patch` diffs, and extension-owned
   Codex tool surfaces, deriving collapsed command tails without splitting full
   output on every TUI frame so long tool-heavy sessions remain responsive.
@@ -55,10 +58,10 @@
 ### Changed
 
 - Align the command tools' official descriptions, retained input-field
-  descriptions, unified output schemas, successful nonzero/timeout semantics,
-  and unified child environment (except `CODEX_CI`), while preserving Pi's
-  complete-output truncation files and retaining initially cancelled processes
-  with a model-visible session ID. Add a `/ps` background-terminal browser
+  descriptions, successful nonzero/timeout semantics, and unified child
+  environment (except `CODEX_CI`), while preserving Pi's complete-output
+  truncation files and retaining initially cancelled processes with a
+  model-visible session ID. Add a `/ps` background-terminal browser
   with live scrollable recent output, confirmed `Ctrl+X` termination for one
   session, and confirmed `Ctrl+S` termination for all sessions. Match Codex's
   zero-value timing inputs, hidden `shell_command.timeout` alias, PowerShell

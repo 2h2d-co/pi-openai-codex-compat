@@ -20,7 +20,6 @@ export const RESPONSES_FUNCTION_TOOL_DEFINITION_SCHEMA = {
     name: { type: "string" },
     description: { type: "string" },
     parameters: { type: "object" },
-    output_schema: { type: "object" },
     strict: { type: "boolean" },
     defer_loading: { type: "boolean" },
   },

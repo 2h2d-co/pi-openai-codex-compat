@@ -1,5 +1,4 @@
 import { Type } from "typebox";
-import type { JsonRecord } from "./codex-protocol.ts";
 
 export const EXEC_COMMAND_TOOL_NAME = "exec_command";
 export const WRITE_STDIN_TOOL_NAME = "write_stdin";
@@ -124,40 +123,3 @@ export const SHELL_COMMAND_PARAMETERS = Type.Object(
   },
   { additionalProperties: false },
 );
-
-export const UNIFIED_EXEC_OUTPUT_SCHEMA: JsonRecord = {
-  type: "object",
-  properties: {
-    chunk_id: {
-      type: "string",
-      description: "Chunk identifier included when the response reports one.",
-    },
-    wall_time_seconds: {
-      type: "number",
-      description: "Elapsed wall time spent waiting for output in seconds.",
-    },
-    exit_code: {
-      type: "number",
-      description: "Process exit code when the command finished during this call.",
-    },
-    session_id: {
-      type: "number",
-      description: "Session identifier to pass to write_stdin when the process is still running.",
-    },
-    original_token_count: {
-      type: "number",
-      description: "Approximate token count before output truncation.",
-    },
-    output: {
-      type: "string",
-      description: "Command output text, possibly truncated.",
-    },
-  },
-  required: ["wall_time_seconds", "output"],
-  additionalProperties: false,
-};
-
-export const CODEX_TOOL_OUTPUT_SCHEMAS: ReadonlyMap<string, JsonRecord> = new Map([
-  [EXEC_COMMAND_TOOL_NAME, UNIFIED_EXEC_OUTPUT_SCHEMA],
-  [WRITE_STDIN_TOOL_NAME, UNIFIED_EXEC_OUTPUT_SCHEMA],
-]);

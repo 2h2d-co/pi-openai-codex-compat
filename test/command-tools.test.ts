@@ -23,7 +23,6 @@ import {
 } from "../extensions/openai-codex-compat/command-runtime.ts";
 import {
   EXEC_COMMAND_DESCRIPTION,
-  UNIFIED_EXEC_OUTPUT_SCHEMA,
   WRITE_STDIN_DESCRIPTION,
   SHELL_COMMAND_DESCRIPTION,
 } from "../extensions/openai-codex-compat/command-tool-contract.ts";
@@ -196,21 +195,6 @@ test("uses the exact official descriptions for retained command fields", () => {
     Reflect.get(SHELL_COMMAND_PARAMETERS.properties.timeout_ms, "description"),
     "Maximum command runtime. Defaults to 10000 ms.",
   );
-});
-
-test("declares the official unified exec output schema", () => {
-  assert.deepEqual(UNIFIED_EXEC_OUTPUT_SCHEMA["required"], ["wall_time_seconds", "output"]);
-  assert.equal(UNIFIED_EXEC_OUTPUT_SCHEMA["additionalProperties"], false);
-  const properties = UNIFIED_EXEC_OUTPUT_SCHEMA["properties"];
-  assert.ok(properties && typeof properties === "object" && !Array.isArray(properties));
-  assert.deepEqual(Object.keys(properties), [
-    "chunk_id",
-    "wall_time_seconds",
-    "exit_code",
-    "session_id",
-    "original_token_count",
-    "output",
-  ]);
 });
 
 test("normalizes the unified exec environment without claiming Codex CI", () => {
