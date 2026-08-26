@@ -1,4 +1,4 @@
-import { Container, type Component, Text, truncateToWidth } from "@earendil-works/pi-tui";
+import { type Component, Text, truncateToWidth } from "@earendil-works/pi-tui";
 import {
   CodexToolSurfaceComponent,
   type CodexToolBackgroundResolver,
@@ -9,6 +9,10 @@ import { DEFAULT_CONFIG } from "./config.ts";
 type CommandRenderContext = {
   isError: boolean;
   isPartial: boolean;
+};
+
+type CommandCallRenderContext = CommandRenderContext & {
+  executionStarted: boolean;
 };
 
 type CommandRenderResult = {
@@ -91,7 +95,7 @@ export function renderCommandCall(
   toolName: string,
   command: string,
   theme: RenderTheme,
-  context: CommandRenderContext,
+  context: CommandCallRenderContext,
   resolveBackground: CodexToolBackgroundResolver = () => DEFAULT_CONFIG.toolBackground,
 ): Component {
   const title = theme.fg("toolTitle", theme.bold(toolName));
@@ -100,7 +104,7 @@ export function renderCommandCall(
     background: resolveBackground,
     status: context.isPartial ? "pending" : context.isError ? "error" : "success",
     top: true,
-    bottom: context.isPartial,
+    bottom: context.isPartial && !context.executionStarted,
   });
 }
 
@@ -111,13 +115,12 @@ export function renderCommandResult(
   context: CommandRenderContext,
   resolveBackground: CodexToolBackgroundResolver = () => DEFAULT_CONFIG.toolBackground,
 ): Component {
-  if (options.isPartial) return new Container();
   return new CodexToolSurfaceComponent(
     new CommandResultComponent(textOutput(result), options.expanded, theme, context.isError),
     theme,
     {
       background: resolveBackground,
-      status: context.isError ? "error" : "success",
+      status: context.isPartial ? "pending" : context.isError ? "error" : "success",
       top: false,
       bottom: true,
     },

@@ -383,6 +383,57 @@ test("uses the advertised default shell for unified and classic execution", asyn
   assert.deepEqual(resolvedShells, [advertisedShell, advertisedShell]);
 });
 
+test("emits live output snapshots for unified and classic commands", async (t) => {
+  let unifiedProcess: FakeCommandProcess | undefined;
+  let unifiedUpdateWhileRunning = false;
+  const manager = new UnifiedExecManager((options) => {
+    unifiedProcess = new FakeCommandProcess(false);
+    queueMicrotask(() => {
+      options.onData("unified live\n");
+      unifiedProcess?.complete(0);
+    });
+    return unifiedProcess;
+  });
+  t.after(async () => manager.terminateAll());
+
+  await manager.execCommand(
+    { cmd: "unified-stream", login: false },
+    runtimeContext(),
+    undefined,
+    (update) => {
+      const text = update.content.find((item) => item.type === "text")?.text ?? "";
+      if (text.includes("unified live")) {
+        unifiedUpdateWhileRunning = unifiedProcess?.hasExited() === false;
+      }
+    },
+  );
+
+  let classicProcess: FakeCommandProcess | undefined;
+  let classicUpdateWhileRunning = false;
+  await executeShellCommand(
+    { command: "classic-stream", login: false },
+    runtimeContext(),
+    undefined,
+    (update) => {
+      const text = update.content.find((item) => item.type === "text")?.text ?? "";
+      if (text.includes("classic live")) {
+        classicUpdateWhileRunning = classicProcess?.hasExited() === false;
+      }
+    },
+    (options) => {
+      classicProcess = new FakeCommandProcess(false);
+      queueMicrotask(() => {
+        options.onData("classic live\n");
+        classicProcess?.complete(0);
+      });
+      return classicProcess;
+    },
+  );
+
+  assert.equal(unifiedUpdateWhileRunning, true);
+  assert.equal(classicUpdateWhileRunning, true);
+});
+
 test("accepts shell_command's hidden legacy timeout alias", () => {
   assert.deepEqual(prepareShellCommandArguments({ command: "pwd", timeout: 15 }), {
     command: "pwd",

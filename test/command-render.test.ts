@@ -72,7 +72,7 @@ test("balances command and apply_patch surface padding", () => {
     "exec_command",
     "printf output",
     plainTheme,
-    { isError: false, isPartial: false },
+    { executionStarted: true, isError: false, isPartial: false },
     () => "none",
   ).render(40);
   const commandResult = renderCommandResult(
@@ -130,6 +130,50 @@ test("balances command and apply_patch surface padding", () => {
   assert.equal(trailingBlankLines(commandResult), 1);
   assert.equal(leadingBlankLines(applyPatchCall), 1);
   assert.equal(trailingBlankLines(applyPatchResult), 1);
+});
+
+test("renders partial command output with balanced running padding", () => {
+  const pendingCall = renderCommandCall(
+    "exec_command",
+    "stream output",
+    plainTheme,
+    { executionStarted: false, isError: false, isPartial: true },
+    () => "none",
+  ).render(40);
+  const runningCall = renderCommandCall(
+    "exec_command",
+    "stream output",
+    plainTheme,
+    { executionStarted: true, isError: false, isPartial: true },
+    () => "none",
+  ).render(40);
+  const emptyUpdate = renderCommandResult(
+    { content: [] },
+    { expanded: false, isPartial: true },
+    plainTheme,
+    { isError: false, isPartial: true },
+    () => "none",
+  ).render(40);
+  const outputUpdate = renderCommandResult(
+    { content: [{ type: "text", text: "first\nsecond\n" }] },
+    { expanded: false, isPartial: true },
+    plainTheme,
+    { isError: false, isPartial: true },
+    () => "none",
+  ).render(40);
+
+  assert.deepEqual(
+    pendingCall.map((line) => line.trim()),
+    ["", "exec_command  stream output", ""],
+  );
+  assert.deepEqual(
+    [...runningCall, ...emptyUpdate].map((line) => line.trim()),
+    ["", "exec_command  stream output", ""],
+  );
+  assert.deepEqual(
+    [...runningCall, ...outputUpdate].map((line) => line.trim()),
+    ["", "exec_command  stream output", "first", "second", ""],
+  );
 });
 
 test("caches completed command rendering by width until invalidated", () => {
