@@ -3,6 +3,7 @@ import test from "node:test";
 import type { Component } from "@earendil-works/pi-tui";
 import { ApplyPatchDiffComponent } from "../extensions/openai-codex-compat/apply-patch-diff-render.ts";
 import type { ApplyPatchDetails } from "../extensions/openai-codex-compat/apply-patch-engine.ts";
+import { renderApplyPatchCall } from "../extensions/openai-codex-compat/apply-patch-render.ts";
 import {
   commandOutputPreviewLines,
   renderCommandResult,
@@ -11,6 +12,8 @@ import {
   CodexToolSurfaceComponent,
   type RenderTheme,
 } from "../extensions/openai-codex-compat/codex-tool-surface.ts";
+import { renderImageGenerationResult } from "../extensions/openai-codex-compat/image-generation-render.ts";
+import { renderWebRunResult } from "../extensions/openai-codex-compat/web-run-render.ts";
 
 const plainTheme: RenderTheme = {
   fg: (_color, text) => text,
@@ -153,4 +156,82 @@ test("caches static apply_patch diff rendering by width", () => {
   const afterInvalidation = component.render(60);
   assert.notStrictEqual(afterInvalidation, resized);
   assert.deepEqual(afterInvalidation, resized);
+});
+
+test("caches immutable extension child renderers until width, debug, or theme changes", () => {
+  let foregroundCalls = 0;
+  const theme: RenderTheme = {
+    fg: (_color, text) => {
+      foregroundCalls++;
+      return text;
+    },
+    bold: (text) => text,
+  };
+  const assertCached = (component: Component): void => {
+    component.render(80);
+    const callsAfterFirstRender = foregroundCalls;
+    component.render(80);
+    assert.equal(foregroundCalls, callsAfterFirstRender);
+    component.invalidate();
+    component.render(80);
+    assert.ok(foregroundCalls > callsAfterFirstRender);
+  };
+
+  assertCached(
+    renderImageGenerationResult(
+      {
+        content: [{ type: "text", text: "generated" }],
+        details: { operation: "generate", revisedPrompt: "A blue square" },
+      },
+      { expanded: false, isPartial: false },
+      theme,
+      {
+        args: { prompt: "A blue square" },
+        expanded: false,
+        isError: false,
+        isPartial: false,
+      },
+      () => "none",
+    ),
+  );
+  assertCached(
+    renderWebRunResult(
+      {
+        content: [{ type: "text", text: "No results" }],
+        details: { results: [] },
+      },
+      { expanded: false, isPartial: false },
+      theme,
+      {
+        args: { search_query: [{ q: "Pi" }] },
+        expanded: false,
+        isError: false,
+        isPartial: false,
+      },
+      () => "none",
+    ),
+  );
+
+  let debug = false;
+  const applyPatch = renderApplyPatchCall(
+    { patch: "*** Begin Patch\n*** End Patch\n" },
+    theme,
+    {
+      cwd: process.cwd(),
+      expanded: false,
+      isError: false,
+      isPartial: false,
+    },
+    () => "none",
+    () => debug,
+  );
+  const ordinary = applyPatch.render(80);
+  const callsAfterOrdinaryRender = foregroundCalls;
+  assert.strictEqual(applyPatch.render(80), ordinary);
+  assert.equal(foregroundCalls, callsAfterOrdinaryRender);
+
+  debug = true;
+  const debugLines = applyPatch.render(80);
+  assert.notStrictEqual(debugLines, ordinary);
+  assert.match(debugLines.join("\n"), /apply_patch \(debug\)/u);
 });

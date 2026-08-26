@@ -18,6 +18,10 @@
 
 ### Fixed
 
+- Cache footer session names, context and cumulative usage, and rendered lines by
+  session and display state, and cache immutable web, image, and debug-aware
+  `apply_patch` child renderers so animation-only frames avoid repeated history
+  and formatting work.
 - Omit Code Mode-only command output schemas from normal Responses tool
   declarations, matching official direct function calling and preventing plain
   text command results from being rejected as non-JSON.

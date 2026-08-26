@@ -34,6 +34,7 @@ class ApplyPatchTitleComponent implements Component {
   private readonly text = new Text("", 0, 0);
   private readonly theme: RenderTheme;
   private readonly resolveDebug: ApplyPatchDebugResolver;
+  private renderedDebug: boolean | undefined;
 
   constructor(theme: RenderTheme, resolveDebug: ApplyPatchDebugResolver) {
     this.theme = theme;
@@ -41,12 +42,17 @@ class ApplyPatchTitleComponent implements Component {
   }
 
   render(width: number): string[] {
-    const title = this.resolveDebug() ? "apply_patch (debug)" : "apply_patch";
-    this.text.setText(this.theme.fg("toolTitle", this.theme.bold(title)));
+    const debug = this.resolveDebug();
+    if (this.renderedDebug !== debug) {
+      const title = debug ? "apply_patch (debug)" : "apply_patch";
+      this.text.setText(this.theme.fg("toolTitle", this.theme.bold(title)));
+      this.renderedDebug = debug;
+    }
     return this.text.render(width);
   }
 
   invalidate(): void {
+    this.renderedDebug = undefined;
     this.text.invalidate();
   }
 }
@@ -63,6 +69,9 @@ class ApplyPatchResultComponent implements Component {
   private readonly feedback: Container | undefined;
   private readonly expanded: boolean;
   private readonly resolveDebug: ApplyPatchDebugResolver;
+  private cachedWidth: number | undefined;
+  private cachedFeedback: boolean | undefined;
+  private cachedLines: string[] | undefined;
 
   constructor(
     ordinary: Component,
@@ -81,12 +90,30 @@ class ApplyPatchResultComponent implements Component {
   }
 
   render(width: number): string[] {
-    return !this.expanded && this.resolveDebug() && this.feedback
-      ? this.feedback.render(width)
-      : this.ordinary.render(width);
+    const effectiveWidth = Math.max(1, width);
+    const showFeedback = Boolean(!this.expanded && this.resolveDebug() && this.feedback);
+    if (
+      this.cachedLines &&
+      this.cachedWidth === effectiveWidth &&
+      this.cachedFeedback === showFeedback
+    ) {
+      return this.cachedLines;
+    }
+
+    const lines =
+      showFeedback && this.feedback
+        ? this.feedback.render(effectiveWidth)
+        : this.ordinary.render(effectiveWidth);
+    this.cachedWidth = effectiveWidth;
+    this.cachedFeedback = showFeedback;
+    this.cachedLines = lines;
+    return lines;
   }
 
   invalidate(): void {
+    this.cachedWidth = undefined;
+    this.cachedFeedback = undefined;
+    this.cachedLines = undefined;
     this.ordinary.invalidate();
     this.feedback?.invalidate();
   }

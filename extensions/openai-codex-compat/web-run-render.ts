@@ -602,6 +602,8 @@ class WebRunResultComponent implements Component {
   private readonly expanded: boolean;
   private readonly theme: RenderTheme;
   private readonly isError: boolean;
+  private cachedWidth: number | undefined;
+  private cachedLines: string[] | undefined;
 
   constructor(
     args: WebRunRenderCommands,
@@ -618,6 +620,21 @@ class WebRunResultComponent implements Component {
   }
 
   render(width: number): string[] {
+    const effectiveWidth = Math.max(1, width);
+    if (this.cachedLines && this.cachedWidth === effectiveWidth) return this.cachedLines;
+
+    const lines = this.renderUncached(effectiveWidth);
+    this.cachedWidth = effectiveWidth;
+    this.cachedLines = lines;
+    return lines;
+  }
+
+  invalidate(): void {
+    this.cachedWidth = undefined;
+    this.cachedLines = undefined;
+  }
+
+  private renderUncached(width: number): string[] {
     const output = textOutput(this.result);
     if (this.isError) {
       const lines = [this.theme.bold(this.theme.fg("error", "✘ web.run failed"))];
@@ -654,8 +671,6 @@ class WebRunResultComponent implements Component {
     }
     return wrapLines(lines, width);
   }
-
-  invalidate(): void {}
 }
 
 export function renderWebRunCall(
