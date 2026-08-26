@@ -3,9 +3,13 @@ import test from "node:test";
 import type { Component } from "@earendil-works/pi-tui";
 import { ApplyPatchDiffComponent } from "../extensions/openai-codex-compat/apply-patch-diff-render.ts";
 import type { ApplyPatchDetails } from "../extensions/openai-codex-compat/apply-patch-engine.ts";
-import { renderApplyPatchCall } from "../extensions/openai-codex-compat/apply-patch-render.ts";
+import {
+  renderApplyPatchCall,
+  renderApplyPatchResult,
+} from "../extensions/openai-codex-compat/apply-patch-render.ts";
 import {
   commandOutputPreviewLines,
+  renderCommandCall,
   renderCommandResult,
 } from "../extensions/openai-codex-compat/command-render.ts";
 import {
@@ -39,13 +43,20 @@ test("builds collapsed command output from only the retained tail", () => {
     "five",
   ]);
   assert.deepEqual(commandOutputPreviewLines("one\ntwo\nthree\nfour\nfive\n", false), [
-    "… (1 earlier lines)",
+    "one",
     "two",
     "three",
     "four",
     "five",
-    "",
   ]);
+  assert.deepEqual(commandOutputPreviewLines("one\ntwo\nthree\nfour\nfive\n\n", false), [
+    "one",
+    "two",
+    "three",
+    "four",
+    "five",
+  ]);
+  assert.deepEqual(commandOutputPreviewLines("\n\n", false), []);
   assert.deepEqual(commandOutputPreviewLines("one\ntwo\nthree\nfour\nfive\nsix", true), [
     "one",
     "two",
@@ -54,6 +65,70 @@ test("builds collapsed command output from only the retained tail", () => {
     "five",
     "six",
   ]);
+});
+
+test("balances command and apply_patch surface padding", () => {
+  const commandCall = renderCommandCall(
+    "exec_command",
+    "printf output",
+    plainTheme,
+    { isError: false, isPartial: false },
+    () => "none",
+  ).render(40);
+  const commandResult = renderCommandResult(
+    { content: [{ type: "text", text: "output\n" }] },
+    { expanded: false, isPartial: false },
+    plainTheme,
+    { isError: false, isPartial: false },
+    () => "none",
+  ).render(40);
+  const applyPatchCall = renderApplyPatchCall(
+    { patch: "*** Begin Patch\n*** End Patch\n" },
+    plainTheme,
+    {
+      cwd: process.cwd(),
+      expanded: false,
+      isError: false,
+      isPartial: false,
+    },
+    () => "none",
+  ).render(40);
+  const applyPatchResult = renderApplyPatchResult(
+    {
+      content: [{ type: "text", text: "Success. No files were changed.\n" }],
+      details: {
+        status: "completed",
+        exact: true,
+        changes: [],
+        added: [],
+        modified: [],
+        deleted: [],
+      },
+    },
+    { isPartial: false },
+    plainTheme,
+    {
+      cwd: process.cwd(),
+      expanded: false,
+      isError: false,
+      isPartial: false,
+    },
+    () => "none",
+  ).render(40);
+
+  const leadingBlankLines = (lines: string[]): number => {
+    return lines.findIndex((line) => line.trim() !== "");
+  };
+  const trailingBlankLines = (lines: string[]): number => {
+    return lines.findLastIndex((line) => line.trim() !== "") === -1
+      ? lines.length
+      : lines.length - 1 - lines.findLastIndex((line) => line.trim() !== "");
+  };
+
+  assert.equal(leadingBlankLines(commandCall), 1);
+  assert.equal(trailingBlankLines(commandResult), 1);
+  assert.equal(leadingBlankLines(applyPatchCall), 1);
+  assert.equal(trailingBlankLines(applyPatchResult), 1);
 });
 
 test("caches completed command rendering by width until invalidated", () => {

@@ -28,12 +28,14 @@ function textOutput(result: CommandRenderResult): string {
 const COLLAPSED_OUTPUT_LINE_LIMIT = 5;
 
 export function commandOutputPreviewLines(output: string, expanded: boolean): string[] {
-  if (expanded) return output.split("\n");
+  const visibleOutput = output.replace(/(?:\r?\n)+$/u, "");
+  if (!visibleOutput) return [];
+  if (expanded) return visibleOutput.split("\n");
 
   let totalLines = 1;
   const recentLineStarts = [0];
-  for (let index = 0; index < output.length; index++) {
-    if (output.charCodeAt(index) !== 10) continue;
+  for (let index = 0; index < visibleOutput.length; index++) {
+    if (visibleOutput.charCodeAt(index) !== 10) continue;
     totalLines++;
     recentLineStarts.push(index + 1);
     if (recentLineStarts.length > COLLAPSED_OUTPUT_LINE_LIMIT) {
@@ -41,12 +43,12 @@ export function commandOutputPreviewLines(output: string, expanded: boolean): st
     }
   }
 
-  if (totalLines <= COLLAPSED_OUTPUT_LINE_LIMIT) return output.split("\n");
+  if (totalLines <= COLLAPSED_OUTPUT_LINE_LIMIT) return visibleOutput.split("\n");
 
   const tailStart = recentLineStarts[0] ?? 0;
   return [
     `… (${totalLines - COLLAPSED_OUTPUT_LINE_LIMIT} earlier lines)`,
-    ...output.slice(tailStart).split("\n"),
+    ...visibleOutput.slice(tailStart).split("\n"),
   ];
 }
 
