@@ -3,6 +3,13 @@ import {
   requireJsonRecords,
 } from "../../extensions/openai-codex-compat/codex-protocol.ts";
 import {
+  EXEC_COMMAND_DESCRIPTION,
+  EXEC_COMMAND_PARAMETERS,
+  UNIFIED_EXEC_OUTPUT_SCHEMA,
+  WRITE_STDIN_DESCRIPTION,
+  WRITE_STDIN_PARAMETERS,
+} from "../../extensions/openai-codex-compat/command-tool-contract.ts";
+import {
   assert,
   test,
   Type,
@@ -19,6 +26,45 @@ import {
   type Tool,
   type JsonRecord,
 } from "./codex-provider-harness.ts";
+
+test("transports the official unified exec output schemas", async () => {
+  const user = userEntry("user-1", "run a command");
+  const harness = createHarness([user]);
+  let request: JsonRecord | undefined;
+  harness.runtime.transport.request = async function* (_model, body) {
+    request = structuredClone(requireJsonRecord(body));
+    yield* textEvents("done");
+  };
+  const execCommand: Tool = {
+    name: "exec_command",
+    description: EXEC_COMMAND_DESCRIPTION,
+    parameters: EXEC_COMMAND_PARAMETERS,
+  };
+  const writeStdin: Tool = {
+    name: "write_stdin",
+    description: WRITE_STDIN_DESCRIPTION,
+    parameters: WRITE_STDIN_PARAMETERS,
+  };
+
+  await harness.runtime
+    .streamSimple(
+      codexModel(),
+      {
+        messages: [user.message],
+        tools: [execCommand, writeStdin],
+      },
+      {
+        apiKey: accessToken(),
+        transport: "sse",
+      },
+    )
+    .result();
+
+  assert.ok(request);
+  const tools = requireJsonRecords(request.tools);
+  assert.deepEqual(tools[0]?.["output_schema"], UNIFIED_EXEC_OUTPUT_SCHEMA);
+  assert.deepEqual(tools[1]?.["output_schema"], UNIFIED_EXEC_OUTPUT_SCHEMA);
+});
 
 test("transports dotted Pi tools as native Responses namespaces", async () => {
   const user = userEntry("user-1", "search");

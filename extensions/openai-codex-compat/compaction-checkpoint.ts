@@ -10,6 +10,7 @@ import {
 import type { Api, Message, Model, Tool } from "@earendil-works/pi-ai";
 import { Value } from "typebox/value";
 import { APPLY_PATCH_LARK_GRAMMAR, APPLY_PATCH_TOOL_NAME } from "./apply-patch.ts";
+import { CODEX_TOOL_OUTPUT_SCHEMAS, UNIFIED_EXEC_OUTPUT_SCHEMA } from "./command-tool-contract.ts";
 import { CODEX_TOOL_CALL_PROVIDERS } from "./codex-identifiers.ts";
 import type { ImageDetail } from "./config.ts";
 import {
@@ -139,6 +140,9 @@ function asResponsesTool(
     description: tool.description,
     parameters: responsesToolParameters(tool),
     strict: false,
+    ...(CODEX_TOOL_OUTPUT_SCHEMAS.has(tool.name)
+      ? { output_schema: UNIFIED_EXEC_OUTPUT_SCHEMA }
+      : {}),
   };
 }
 
@@ -212,6 +216,7 @@ function encodeMessages(options: EncodeMessagesOptions): ResponsesInputItem[] {
       strict: false,
       supportsStrictMode: compat?.supportsStrictMode ?? true,
       supportsOpenAIGrammarTools: compat?.supportsOpenAIGrammarTools ?? false,
+      outputSchemas: CODEX_TOOL_OUTPUT_SCHEMAS,
     },
     namespacedToolNames: CODEX_NAMESPACED_TOOL_NAMES,
     textContentItemToolResultNames: CODEX_TEXT_CONTENT_ITEM_TOOL_RESULT_NAMES,

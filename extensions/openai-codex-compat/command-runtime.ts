@@ -4,6 +4,7 @@ import {
   commandEnvironment,
   resolveCommandWorkingDirectory,
   spawnCommandProcess,
+  unifiedExecEnvironment,
   type CommandEnvironmentContext,
   type CommandProcess,
   type CommandProcessSpawner,
@@ -133,7 +134,7 @@ function formatShellResult(
   const output =
     timeoutMs === undefined
       ? snapshot.text
-      : appendStatus(snapshot.text, `command timed out after ${timeoutMs} milliseconds`);
+      : `command timed out after ${timeoutMs} milliseconds\n${snapshot.text}`;
   return [
     `Exit code: ${exitCode}`,
     `Wall time: ${wallTimeSeconds.toFixed(1)} seconds`,
@@ -327,7 +328,6 @@ export async function executeShellCommand(
       cause: executionError,
     });
   }
-  if (timedOut || exitCode !== 0) throw new Error(text);
   return {
     content: [{ type: "text", text }],
     details: {
@@ -359,6 +359,7 @@ export class UnifiedExecManager {
     const yieldTimeMs = initialYieldTime(request.yield_time_ms);
     if (signal?.aborted) throw new Error("Command aborted", { cause: new CommandAbortedError() });
     const cwd = await resolveCommandWorkingDirectory(ctx.cwd, request.workdir);
+    if (signal?.aborted) throw new Error("Command aborted", { cause: new CommandAbortedError() });
     this.pruneProcesses();
     const id = this.allocateProcessId();
     const initialOutput = new CommandOutputAccumulator("pi-codex-exec-command");
@@ -366,7 +367,7 @@ export class UnifiedExecManager {
     const commandProcess = this.spawnProcess({
       command: request.cmd,
       cwd,
-      env: commandEnvironment(ctx),
+      env: unifiedExecEnvironment(ctx),
       login: request.login ?? true,
       onData: (data) => (record?.output ?? initialOutput).append(data),
       ...(request.shell === undefined ? {} : { shell: request.shell }),
@@ -387,18 +388,14 @@ export class UnifiedExecManager {
       await waitForProcess(commandProcess, yieldTimeMs, signal);
     } catch (error) {
       if (error instanceof CommandAbortedError) {
-        this.processes.delete(id);
-        commandProcess.terminate();
-        await settleTerminatedProcess(commandProcess);
-        const snapshot = await this.drainOutput(record, maxOutputTokens);
+        const result = await this.completeInteraction(record, startedAt, maxOutputTokens);
+        const sessionId = result.details.sessionId;
         throw new Error(
           appendStatus(
-            formatUnifiedExecResult(snapshot, {
-              chunkId: chunkId(),
-              exitCode: commandProcess.exitCode() ?? -1,
-              wallTimeSeconds: (performance.now() - startedAt) / 1_000,
-            }),
-            "Command aborted",
+            result.content[0]?.text ?? "",
+            sessionId === undefined
+              ? "Command aborted after the process exited."
+              : `Command aborted; process continues with session ID ${sessionId}.`,
           ),
           { cause: error },
         );

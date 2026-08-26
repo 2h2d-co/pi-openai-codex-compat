@@ -51,6 +51,11 @@
 
 ### Changed
 
+- Align the command tools' official descriptions, retained input-field
+  descriptions, unified output schemas, successful nonzero/timeout semantics,
+  and unified child environment (except `CODEX_CI`), while preserving Pi's
+  complete-output truncation files and retaining initially cancelled processes
+  with a model-visible session ID.
 - Replace the multi-line startup configuration dump with a concise package and
   settings-command notice, and simplify the fallback settings-save error.
 - Align deferred tool loading with Pi 0.84.3, preferring message-anchored

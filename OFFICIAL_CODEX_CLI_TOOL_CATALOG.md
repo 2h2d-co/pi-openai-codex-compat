@@ -175,7 +175,14 @@ together. Its in-memory process manager owns optional PTYs across calls,
 serializes interactions per session, supports yielding, polling and
 interruption, and terminates sessions when the command surface or Pi session
 changes. Output follows Pi's 2,000-line/50-KiB tail policy and points to a
-complete temporary log when truncated.
+complete temporary log when truncated. The unified tools use the official
+descriptions, retained-field descriptions, and output schemas. Unified child
+processes receive the official non-color, UTF-8 locale, and pager environment
+normalization except `CODEX_CI`, which this package deliberately does not set.
+Cancelling the initial wait preserves a started process and reports its session
+ID in Pi's cancellation result rather than relying on Codex's background
+terminal UI. One-shot nonzero exits and timeouts remain successful tool
+results, matching official tool-call semantics.
 
 Unlike official Codex, the package has no execution-environment, sandbox,
 permission-profile, or approval lifecycle. Those schema fields are omitted,
@@ -216,6 +223,13 @@ safe integers by the runtime.
 | `workdir`    | no       | string  | Absolute path or path relative to the Pi session working directory; defaults to that session directory. |
 | `timeout_ms` | no       | number  | Defaults to 10,000 ms; maximum 2,147,483,647 ms.                                                        |
 | `login`      | no       | boolean | Enables login-shell semantics; defaults to `true`.                                                      |
+
+The `exec_command` and `write_stdin` Responses declarations share the official
+closed output schema. It requires `wall_time_seconds` and `output`, and can
+also report `chunk_id`, `exit_code`, `session_id`, and
+`original_token_count`. This declaration describes the same Codex-style text
+result metadata that the model receives; Pi's temporary complete-output path
+remains an intentional extension when output is truncated.
 
 ## 2. Planning, questions, messages, permissions, and environments
 

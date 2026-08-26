@@ -63,6 +63,7 @@ export type ConvertResponsesToolsOptions = {
   supportsOpenAIGrammarTools?: boolean;
   deferLoading?: boolean;
   namespacedToolNames?: ReadonlySet<string>;
+  outputSchemas?: ReadonlyMap<string, JsonRecord>;
 };
 
 function shortHash(value: string): string {
@@ -226,6 +227,8 @@ export function convertResponsesTools(
       description: tool.description,
       parameters: tool.parameters,
     };
+    const outputSchema = options?.outputSchemas?.get(tool.name);
+    if (outputSchema) converted["output_schema"] = outputSchema;
     if (options?.deferLoading) converted["defer_loading"] = true;
     if (supportsStrictMode) converted["strict"] = constrainedStrict ?? defaultStrict;
     return converted;

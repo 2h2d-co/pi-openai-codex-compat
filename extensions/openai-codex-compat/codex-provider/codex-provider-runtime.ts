@@ -69,6 +69,7 @@ import {
   NATIVE_RESPONSE_ENTRY_TYPE,
   type NativeResponseAttempt,
 } from "../native-history.ts";
+import { CODEX_TOOL_OUTPUT_SCHEMAS } from "../command-tool-contract.ts";
 import {
   CODEX_NAMESPACED_TOOL_NAMES,
   CODEX_TEXT_CONTENT_ITEM_TOOL_RESULT_NAMES,
@@ -505,6 +506,7 @@ export class CodexProviderRuntime {
           strict: false,
           supportsStrictMode: compat.supportsStrictMode ?? true,
           supportsOpenAIGrammarTools: compat.supportsOpenAIGrammarTools ?? false,
+          outputSchemas: CODEX_TOOL_OUTPUT_SCHEMAS,
         },
         namespacedToolNames: CODEX_NAMESPACED_TOOL_NAMES,
         textContentItemToolResultNames: CODEX_TEXT_CONTENT_ITEM_TOOL_RESULT_NAMES,
@@ -568,6 +570,7 @@ export class CodexProviderRuntime {
         supportsStrictMode: compat.supportsStrictMode ?? true,
         supportsOpenAIGrammarTools: compat.supportsOpenAIGrammarTools ?? false,
         namespacedToolNames: CODEX_NAMESPACED_TOOL_NAMES,
+        outputSchemas: CODEX_TOOL_OUTPUT_SCHEMAS,
       });
     }
     if (requestOptions.reasoningEffort !== undefined) {
@@ -1163,6 +1166,7 @@ export class CodexProviderRuntime {
           strict: false,
           supportsStrictMode: compat.supportsStrictMode ?? true,
           supportsOpenAIGrammarTools: compat.supportsOpenAIGrammarTools ?? false,
+          outputSchemas: CODEX_TOOL_OUTPUT_SCHEMAS,
         },
         namespacedToolNames: CODEX_NAMESPACED_TOOL_NAMES,
         textContentItemToolResultNames: CODEX_TEXT_CONTENT_ITEM_TOOL_RESULT_NAMES,

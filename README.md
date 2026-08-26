@@ -269,13 +269,21 @@ window. Otherwise it returns a numeric session ID for `write_stdin`.
 `write_stdin` to send characters to interactive programs; without a PTY,
 stdin is closed, but `"\u0003"` can still interrupt the process. Empty
 `write_stdin` calls poll without writing. Sessions are in-memory, are capped at
-64 per Pi process, and are terminated on session shutdown.
+64 per Pi process, and are terminated on session shutdown. If an initial
+`exec_command` call is cancelled after its process starts, the process remains
+available and the cancellation result reports its session ID for later
+`write_stdin` interaction.
 
-`shell_command` is one-shot and has a 10-second default timeout. Both command
-families use Pi's bash-compatible shell resolution and expose the current
+`shell_command` is one-shot and has a 10-second default timeout. Nonzero exits
+and timeouts are successful tool results carrying exit metadata, so the model
+can inspect and react to command failure normally. Both command families use
+Pi's bash-compatible shell resolution and expose the current
 `PI_SESSION_ID`, `PI_SESSION_FILE`, `PI_PROVIDER`, `PI_MODEL`, and
 `PI_REASONING_LEVEL` values to child processes. Login-shell behavior defaults
-to enabled and can be disabled per call.
+to enabled and can be disabled per call. Unified exec additionally normalizes
+`NO_COLOR`, `TERM`, UTF-8 locale variables, `COLORTERM`, and common pager
+variables to the official Codex values; it deliberately does not set
+`CODEX_CI`.
 
 Model-visible output has a hard cap of the last 2,000 lines or 50 KiB,
 whichever limit is reached first. Unified exec defaults

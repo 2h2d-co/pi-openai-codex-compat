@@ -41,6 +41,18 @@ export type CommandEnvironmentContext = Pick<ExtensionContext, "model" | "thinki
   sessionManager: Pick<ExtensionContext["sessionManager"], "getSessionFile" | "getSessionId">;
 };
 
+const UNIFIED_EXEC_ENVIRONMENT: Readonly<Record<string, string>> = {
+  NO_COLOR: "1",
+  TERM: "dumb",
+  LANG: "C.UTF-8",
+  LC_CTYPE: "C.UTF-8",
+  LC_ALL: "C.UTF-8",
+  COLORTERM: "",
+  PAGER: "cat",
+  GIT_PAGER: "cat",
+  GH_PAGER: "cat",
+};
+
 function isLegacyWslBashPath(path: string): boolean {
   const normalized = path.replaceAll("/", "\\").toLowerCase();
   return /^[a-z]:\\windows\\(?:system32|sysnative)\\bash\.exe$/u.test(normalized);
@@ -261,7 +273,7 @@ class PtyCommandProcess implements CommandProcess {
       cols: 80,
       cwd: options.cwd,
       env: environment,
-      name: "xterm-256color",
+      name: environment["TERM"] || "xterm-256color",
       rows: 24,
     });
     this.pid = this.process.pid;
@@ -363,4 +375,11 @@ export function commandEnvironment(ctx: CommandEnvironmentContext): NodeJS.Proce
   }
   if (ctx.thinkingLevel) environment["PI_REASONING_LEVEL"] = ctx.thinkingLevel;
   return environment;
+}
+
+export function unifiedExecEnvironment(ctx: CommandEnvironmentContext): NodeJS.ProcessEnv {
+  return {
+    ...commandEnvironment(ctx),
+    ...UNIFIED_EXEC_ENVIRONMENT,
+  };
 }
