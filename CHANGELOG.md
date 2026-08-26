@@ -18,6 +18,9 @@
 
 ### Fixed
 
+- Cache completed command previews, `apply_patch` diffs, and extension-owned
+  Codex tool surfaces, deriving collapsed command tails without splitting full
+  output on every TUI frame so long tool-heavy sessions remain responsive.
 - Give the `/codex-settings` search field explicit focus that follows typed
   input into search and Up/Down back to the result list, allowing Space to
   change a filtered setting and applying accent color to the result cursor and

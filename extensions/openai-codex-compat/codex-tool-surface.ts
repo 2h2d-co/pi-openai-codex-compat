@@ -155,6 +155,14 @@ export class CodexToolSurfaceComponent implements Component {
   private readonly status: CodexToolSurfaceStatus;
   private readonly topPadding: boolean;
   private readonly bottomPadding: boolean;
+  private renderCache:
+    | {
+        width: number;
+        background: string;
+        componentLines: string[];
+        lines: string[];
+      }
+    | undefined;
 
   constructor(
     component: Component,
@@ -179,18 +187,38 @@ export class CodexToolSurfaceComponent implements Component {
     const background = surfaceBackground(this.theme, this.resolveBackground(), this.status);
     const horizontalPadding = effectiveWidth > 2 ? 1 : 0;
     const contentWidth = Math.max(1, effectiveWidth - horizontalPadding * 2);
-    const lines = this.component
-      .render(contentWidth)
-      .map((line) =>
-        fillLine(`${" ".repeat(horizontalPadding)}${line}`, effectiveWidth, background),
-      );
-    const blankLine = fillLine("", effectiveWidth, background);
-    if (this.topPadding) lines.unshift(blankLine);
-    if (this.bottomPadding) lines.push(blankLine);
+    const componentLines = this.component.render(contentWidth);
+    const cached = this.renderCache;
+    if (
+      cached &&
+      cached.width === effectiveWidth &&
+      cached.background === background &&
+      cached.componentLines.length === componentLines.length &&
+      cached.componentLines.every((line, index) => line === componentLines[index])
+    ) {
+      return cached.lines;
+    }
+
+    const horizontalInset = " ".repeat(horizontalPadding);
+    const lines = componentLines.map((line) =>
+      fillLine(`${horizontalInset}${line}`, effectiveWidth, background),
+    );
+    if (this.topPadding || this.bottomPadding) {
+      const blankLine = fillLine("", effectiveWidth, background);
+      if (this.topPadding) lines.unshift(blankLine);
+      if (this.bottomPadding) lines.push(blankLine);
+    }
+    this.renderCache = {
+      width: effectiveWidth,
+      background,
+      componentLines: [...componentLines],
+      lines,
+    };
     return lines;
   }
 
   invalidate(): void {
+    this.renderCache = undefined;
     this.component.invalidate();
   }
 }

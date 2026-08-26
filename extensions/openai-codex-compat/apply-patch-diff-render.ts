@@ -511,6 +511,8 @@ export class ApplyPatchDiffComponent implements Component {
   private readonly theme: RenderTheme;
   private readonly cwd: string;
   private readonly expanded: boolean;
+  private cachedWidth: number | undefined;
+  private cachedLines: string[] | undefined;
 
   constructor(details: ApplyPatchDetails, theme: RenderTheme, cwd: string, expanded: boolean) {
     this.details = details;
@@ -521,6 +523,8 @@ export class ApplyPatchDiffComponent implements Component {
 
   render(width: number): string[] {
     const effectiveWidth = Math.max(1, width);
+    if (this.cachedLines && this.cachedWidth === effectiveWidth) return this.cachedLines;
+
     const changes = sortedChanges(this.details, this.cwd);
     const showInstructionResults = applyPatchNeedsInstructionResults(this.details, this.cwd);
     const lines: string[] = [];
@@ -588,8 +592,13 @@ export class ApplyPatchDiffComponent implements Component {
       }
     }
 
+    this.cachedWidth = effectiveWidth;
+    this.cachedLines = lines;
     return lines;
   }
 
-  invalidate(): void {}
+  invalidate(): void {
+    this.cachedWidth = undefined;
+    this.cachedLines = undefined;
+  }
 }

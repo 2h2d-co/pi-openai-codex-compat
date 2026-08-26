@@ -25,36 +25,64 @@ function textOutput(result: CommandRenderResult): string {
     .join("\n");
 }
 
-function previewLines(output: string, expanded: boolean): string[] {
-  const lines = output.split("\n");
-  if (expanded || lines.length <= 5) return lines;
-  return [`… (${lines.length - 5} earlier lines)`, ...lines.slice(-5)];
+const COLLAPSED_OUTPUT_LINE_LIMIT = 5;
+
+export function commandOutputPreviewLines(output: string, expanded: boolean): string[] {
+  if (expanded) return output.split("\n");
+
+  let totalLines = 1;
+  const recentLineStarts = [0];
+  for (let index = 0; index < output.length; index++) {
+    if (output.charCodeAt(index) !== 10) continue;
+    totalLines++;
+    recentLineStarts.push(index + 1);
+    if (recentLineStarts.length > COLLAPSED_OUTPUT_LINE_LIMIT) {
+      recentLineStarts.shift();
+    }
+  }
+
+  if (totalLines <= COLLAPSED_OUTPUT_LINE_LIMIT) return output.split("\n");
+
+  const tailStart = recentLineStarts[0] ?? 0;
+  return [
+    `… (${totalLines - COLLAPSED_OUTPUT_LINE_LIMIT} earlier lines)`,
+    ...output.slice(tailStart).split("\n"),
+  ];
 }
 
 class CommandResultComponent implements Component {
-  private readonly output: string;
-  private readonly expanded: boolean;
+  private readonly previewLines: string[];
   private readonly theme: RenderTheme;
   private readonly isError: boolean;
+  private cachedWidth: number | undefined;
+  private cachedLines: string[] | undefined;
 
   constructor(output: string, expanded: boolean, theme: RenderTheme, isError: boolean) {
-    this.output = output;
-    this.expanded = expanded;
+    this.previewLines = commandOutputPreviewLines(output, expanded);
     this.theme = theme;
     this.isError = isError;
   }
 
   render(width: number): string[] {
-    return previewLines(this.output, this.expanded).map((line) =>
+    const effectiveWidth = Math.max(1, width);
+    if (this.cachedLines && this.cachedWidth === effectiveWidth) return this.cachedLines;
+
+    const lines = this.previewLines.map((line) =>
       truncateToWidth(
         this.theme.fg(this.isError ? "error" : "toolOutput", line),
-        Math.max(1, width),
+        effectiveWidth,
         "…",
       ),
     );
+    this.cachedWidth = effectiveWidth;
+    this.cachedLines = lines;
+    return lines;
   }
 
-  invalidate(): void {}
+  invalidate(): void {
+    this.cachedWidth = undefined;
+    this.cachedLines = undefined;
+  }
 }
 
 export function renderCommandCall(
