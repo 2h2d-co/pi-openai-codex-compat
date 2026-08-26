@@ -41,7 +41,7 @@ The detailed `apply_patch` contracts remain normative:
 | npm `latest`            | `@openai/codex@0.149.1`                                                                        |
 | Package review baseline | `pi-openai-codex-compat` `0.0.10-alpha.3` at commit `32380caa762180de4a748bcacbfe8f4d32155093` |
 | Reviewed                | August 25, 2026                                                                                |
-| Latest prerelease seen  | `0.150.0-alpha.9`; noted only, not used as the baseline                                        |
+| Latest prerelease seen  | `0.150.0-alpha.11`; noted only, not used as the baseline                                       |
 
 ## Decisions at a glance
 
@@ -373,7 +373,8 @@ The detailed `apply_patch` contracts remain normative:
 - Source comparison:
   [`rust-v0.149.0...rust-v0.149.1`](https://github.com/openai/codex/compare/rust-v0.149.0...rust-v0.149.1)
 - GitHub's latest stable release and npm's `latest` dist-tag both resolved to
-  `0.149.1`. The newest prerelease observed was `0.150.0-alpha.9`.
+  `0.149.1`. A fresh command-tool review on August 25, 2026 reconfirmed that
+  baseline; the newest prerelease then observed was `0.150.0-alpha.11`.
 
 #### What changed in the protocol
 

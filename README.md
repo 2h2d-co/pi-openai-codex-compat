@@ -274,7 +274,7 @@ stdin is closed, but `"\u0003"` can still interrupt the process. Empty
 available and the cancellation result reports its session ID for later
 `write_stdin` interaction. `/ps` lists live background sessions with their
 session ID, operating-system process ID, command, working directory, and
-PTY/pipe mode. `/stop` terminates all background sessions.
+PTY/pipe mode. Pressing `s` in that browser terminates all background sessions.
 
 `shell_command` is one-shot and has a 10-second default timeout. Nonzero exits
 and timeouts are successful tool results carrying exit metadata, so the model

@@ -19,6 +19,7 @@ import {
   WRITE_STDIN_DESCRIPTION,
   SHELL_COMMAND_DESCRIPTION,
 } from "../extensions/openai-codex-compat/command-tool-contract.ts";
+import { createBackgroundProcessBrowser } from "../extensions/openai-codex-compat/background-process-browser.ts";
 import {
   EXEC_COMMAND_PARAMETERS,
   formatBackgroundProcesses,
@@ -385,6 +386,30 @@ test("formats empty and bounded background terminal listings", () => {
   assert.match(listing, /session 1001 · pid 2001 · pipes/u);
   assert.doesNotMatch(listing, /session 1016/u);
   assert.match(listing, /\.\.\. and 2 more running$/u);
+});
+
+test("stops all background terminals from the ps browser shortcut", () => {
+  const actions: string[] = [];
+  const browser = createBackgroundProcessBrowser(
+    [
+      {
+        sessionId: 1_234,
+        pid: 4_321,
+        command: "sleep 30",
+        cwd: "/tmp/project",
+        tty: true,
+      },
+    ],
+    {
+      bold: (text) => text,
+      fg: (_color, text) => text,
+    },
+    (action) => actions.push(action),
+    () => {},
+  );
+
+  browser.handleInput?.("s");
+  assert.deepEqual(actions, ["stop"]);
 });
 
 test("preserves an initially cancelled unified exec process and exposes its session ID", async (t) => {

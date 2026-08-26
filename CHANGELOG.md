@@ -55,8 +55,8 @@
   descriptions, unified output schemas, successful nonzero/timeout semantics,
   and unified child environment (except `CODEX_CI`), while preserving Pi's
   complete-output truncation files and retaining initially cancelled processes
-  with a model-visible session ID. Add Codex-compatible `/ps` and `/stop`
-  commands for listing and terminating background terminals.
+  with a model-visible session ID. Add a `/ps` background-terminal browser
+  whose `s` shortcut terminates every listed process.
 - Replace the multi-line startup configuration dump with a concise package and
   settings-command notice, and simplify the fallback settings-save error.
 - Align deferred tool loading with Pi 0.84.3, preferring message-anchored

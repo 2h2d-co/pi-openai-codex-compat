@@ -46,7 +46,7 @@ test("registers the combined Codex compatibility extension", () => {
 
   extension(recordingExtensionApi(recording));
 
-  assert.deepEqual(recording.commands, ["ps", "stop", "codex-settings"]);
+  assert.deepEqual(recording.commands, ["ps", "codex-settings"]);
   assert.deepEqual(recording.providers, []);
   assert.deepEqual(recording.tools, [
     "exec_command",
