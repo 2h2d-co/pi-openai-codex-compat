@@ -2,10 +2,15 @@ import { constants } from "node:fs";
 import { access } from "node:fs/promises";
 import { randomBytes } from "node:crypto";
 import { constants as osConstants } from "node:os";
-import { basename, resolve } from "node:path";
+import { resolve } from "node:path";
 import { spawn as spawnChild, type ChildProcess, type SpawnOptions } from "node:child_process";
-import { getShellConfig, type ExtensionContext } from "@earendil-works/pi-coding-agent";
+import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { spawn as spawnPty, type IPty } from "node-pty";
+import {
+  detectCommandShellType,
+  resolveCommandShell,
+  type ResolvedCommandShell,
+} from "./command-shell.ts";
 
 const EXIT_STDIO_GRACE_MS = 100;
 
@@ -34,6 +39,9 @@ export type CommandProcessOptions = {
   tty: boolean;
   env: NodeJS.ProcessEnv;
   onData: (data: Buffer | string) => void;
+  onStdout?: (data: Buffer | string) => void;
+  onStderr?: (data: Buffer | string) => void;
+  resolvedShell?: ResolvedCommandShell;
 };
 
 export type CommandProcessSpawner = (options: CommandProcessOptions) => CommandProcess;
@@ -54,29 +62,14 @@ const UNIFIED_EXEC_ENVIRONMENT: Readonly<Record<string, string>> = {
   GH_PAGER: "cat",
 };
 
-function isLegacyWslBashPath(path: string): boolean {
-  const normalized = path.replaceAll("/", "\\").toLowerCase();
-  return /^[a-z]:\\windows\\(?:system32|sysnative)\\bash\.exe$/u.test(normalized);
-}
-
-export function resolveDefaultCommandShell(): string {
-  return getShellConfig().shell;
-}
-
 export function commandArguments(shell: string, command: string, login: boolean): string[] {
-  if (isLegacyWslBashPath(shell)) return ["-s"];
-  const name = basename(shell).toLowerCase();
-  if (
-    name === "powershell" ||
-    name === "powershell.exe" ||
-    name === "pwsh" ||
-    name === "pwsh.exe"
-  ) {
+  const shellType = detectCommandShellType(shell) ?? (process.platform === "win32" ? "cmd" : "sh");
+  if (shellType === "powershell") {
     return login
       ? ["-NoLogo", "-Command", command]
       : ["-NoLogo", "-NoProfile", "-Command", command];
   }
-  if (name === "cmd" || name === "cmd.exe") return ["/c", command];
+  if (shellType === "cmd") return ["/c", command];
   return [login ? "-lc" : "-c", command];
 }
 
@@ -171,19 +164,17 @@ class PlainCommandProcess implements CommandProcess {
   private observedExitCode: number | null | undefined;
 
   constructor(options: CommandProcessOptions, shell: string, args: string[]) {
-    const commandFromStdin = isLegacyWslBashPath(shell);
     const spawnOptions: SpawnOptions = {
       cwd: options.cwd,
       detached: process.platform !== "win32",
       env: options.env,
-      stdio: [commandFromStdin ? "pipe" : "ignore", "pipe", "pipe"],
+      stdio: ["ignore", "pipe", "pipe"],
       windowsHide: true,
     };
     this.child = spawnChild(shell, args, spawnOptions);
     this.pid = this.child.pid ?? 0;
-    if (commandFromStdin) this.child.stdin?.end(options.command);
-    this.child.stdout?.on("data", options.onData);
-    this.child.stderr?.on("data", options.onData);
+    this.child.stdout?.on("data", options.onStdout ?? options.onData);
+    this.child.stderr?.on("data", options.onStderr ?? options.onData);
     this.exited = this.waitForExit();
   }
 
@@ -380,11 +371,11 @@ class PtyCommandProcess implements CommandProcess {
 }
 
 export const spawnCommandProcess: CommandProcessSpawner = (options) => {
-  const shell = options.shell?.trim() || resolveDefaultCommandShell();
-  const args = commandArguments(shell, options.command, options.login);
+  const shell = options.resolvedShell ?? resolveCommandShell(options.shell?.trim() || undefined);
+  const args = commandArguments(shell.path, options.command, options.login);
   return options.tty
-    ? new PtyCommandProcess(options, shell, args)
-    : new PlainCommandProcess(options, shell, args);
+    ? new PtyCommandProcess(options, shell.path, args)
+    : new PlainCommandProcess(options, shell.path, args);
 };
 
 export async function resolveCommandWorkingDirectory(

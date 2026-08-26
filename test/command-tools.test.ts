@@ -16,6 +16,13 @@ import {
   unifiedExecEnvironment,
 } from "../extensions/openai-codex-compat/command-process.ts";
 import {
+  codexCommandInvocation,
+  detectCommandShellType,
+  resolveCommandShell,
+  resolveDefaultCommandShell,
+  type CommandShellResolutionHost,
+} from "../extensions/openai-codex-compat/command-shell.ts";
+import {
   executeShellCommand,
   UnifiedExecManager,
   type CommandRuntimeContext,
@@ -100,6 +107,20 @@ function runtimeContext(cwd = process.cwd()): CommandRuntimeContext {
       getSessionId: () => "command-tools-test",
       getSessionFile: () => undefined,
     },
+  };
+}
+
+function shellResolutionHost(
+  overrides: Partial<CommandShellResolutionHost> = {},
+): CommandShellResolutionHost {
+  return {
+    platform: "linux",
+    pathEnvironment: "/usr/local/bin:/usr/bin:/bin",
+    homeDirectory: "/users/test",
+    userShell: () => undefined,
+    fileExists: () => false,
+    executableExists: () => false,
+    ...overrides,
   };
 }
 
@@ -218,6 +239,36 @@ test("uses Codex PowerShell launch arguments without NonInteractive", () => {
     "-Command",
     "Get-ChildItem",
   ]);
+  assert.deepEqual(
+    codexCommandInvocation({ type: "powershell", path: "/usr/bin/pwsh" }, "Get-ChildItem", false),
+    ["/usr/bin/pwsh", "-NoProfile", "-Command", "Get-ChildItem"],
+  );
+});
+
+test("resolves supported shells using Codex's type-first discovery policy", () => {
+  const existingFiles = new Set(["/users/test/zsh", "/bin/sh"]);
+  const executables = new Set(["/users/test/bin/bash", "/usr/local/bin/zsh"]);
+  const host = shellResolutionHost({
+    pathEnvironment: "~/bin:/usr/local/bin:/usr/bin:/bin",
+    userShell: () => "/users/test/zsh",
+    fileExists: (path) => existingFiles.has(path),
+    executableExists: (path) => executables.has(path),
+  });
+
+  assert.equal(detectCommandShellType("/bin/bash.backup.exe", "linux"), "bash");
+  assert.equal(detectCommandShellType("/bin/BASH", "linux"), undefined);
+  assert.deepEqual(resolveDefaultCommandShell(host), {
+    type: "zsh",
+    path: "/users/test/zsh",
+  });
+  assert.deepEqual(resolveCommandShell("/model/supplied/bash", host), {
+    type: "bash",
+    path: "/users/test/bin/bash",
+  });
+  assert.deepEqual(resolveCommandShell("/model/supplied/fish", host), {
+    type: "sh",
+    path: "/bin/sh",
+  });
 });
 
 test("accepts shell_command's hidden legacy timeout alias", () => {
@@ -238,23 +289,79 @@ test("accepts shell_command's hidden legacy timeout alias", () => {
 
 test("recognizes only official top-level shell apply_patch forms", () => {
   const patch = "*** Begin Patch\n*** Add File: added.txt\n+added\n*** End Patch";
-  assert.deepEqual(parseShellApplyPatchInvocation(`apply_patch <<'PATCH'\n${patch}\nPATCH`), {
+  const cwd = process.cwd();
+  const bashInvocation = (script: string): string[] => ["bash", "-lc", script];
+  assert.deepEqual(
+    parseShellApplyPatchInvocation(bashInvocation(`apply_patch <<'PATCH'\n${patch}\nPATCH`), cwd),
+    {
+      kind: "apply-patch",
+      patch,
+    },
+  );
+  assert.deepEqual(
+    parseShellApplyPatchInvocation(
+      bashInvocation(`cd "nested dir" && applypatch <<EOF\n${patch}\nEOF`),
+      cwd,
+    ),
+    { kind: "apply-patch", patch, workdir: "nested dir" },
+  );
+  assert.deepEqual(
+    parseShellApplyPatchInvocation(
+      bashInvocation(`cd 'single quoted dir' && apply_patch <<EOF\n${patch}\nEOF`),
+      cwd,
+    ),
+    { kind: "apply-patch", patch, workdir: "single quoted dir" },
+  );
+  assert.deepEqual(parseShellApplyPatchInvocation(["apply_patch", patch], cwd), {
     kind: "apply-patch",
     patch,
   });
+  assert.deepEqual(parseShellApplyPatchInvocation([patch], cwd), {
+    kind: "implicit-patch",
+  });
+  assert.deepEqual(parseShellApplyPatchInvocation(["bash", "-lc", patch], cwd), {
+    kind: "implicit-patch",
+  });
   assert.deepEqual(
-    parseShellApplyPatchInvocation(`cd "nested dir" && applypatch <<EOF\n${patch}\nEOF`),
-    { kind: "apply-patch", patch, workdir: "nested dir" },
+    parseShellApplyPatchInvocation(
+      ["powershell.exe", "-NoProfile", "-Command", `apply_patch <<EOF\n${patch}\nEOF`],
+      String.raw`C:\workspace`,
+    ),
+    { kind: "apply-patch", patch },
   );
-  assert.deepEqual(parseShellApplyPatchInvocation(patch), { kind: "implicit-patch" });
+  assert.deepEqual(
+    parseShellApplyPatchInvocation(
+      [
+        String.raw`C:\Program Files\PowerShell\7\pwsh.exe`,
+        "-NoProfile",
+        "-Command",
+        `apply_patch <<EOF\n${patch}\nEOF`,
+      ],
+      "file:///C:/workspace",
+    ),
+    { kind: "apply-patch", patch },
+  );
   for (const script of [
     `echo before; apply_patch <<'PATCH'\n${patch}\nPATCH`,
     `apply_patch extra <<'PATCH'\n${patch}\nPATCH`,
     `apply_patch <<'PATCH'\n${patch}\nPATCH\n&& echo after`,
     `cd first && cd second && apply_patch <<'PATCH'\n${patch}\nPATCH`,
   ]) {
-    assert.deepEqual(parseShellApplyPatchInvocation(script), { kind: "not-apply-patch" });
+    assert.deepEqual(parseShellApplyPatchInvocation(bashInvocation(script), cwd), {
+      kind: "not-apply-patch",
+    });
   }
+  assert.deepEqual(
+    parseShellApplyPatchInvocation(
+      ["powershell.exe", "-NoLogo", "-Command", `apply_patch <<EOF\n${patch}\nEOF`],
+      String.raw`C:\workspace`,
+    ),
+    { kind: "not-apply-patch" },
+  );
+  assert.deepEqual(
+    parseShellApplyPatchInvocation(["bash", "--login", `apply_patch <<EOF\n${patch}\nEOF`], cwd),
+    { kind: "not-apply-patch" },
+  );
 });
 
 test("intercepts shell_command and exec_command apply_patch heredocs without a shell binary", async (t) => {
@@ -293,16 +400,12 @@ test("intercepts shell_command and exec_command apply_patch heredocs without a s
   assert.equal(manager.activeSessionCount(), 0);
   assert.equal(spawnCalls, 0);
 
-  let unsupportedShellSpawns = 0;
   const unsupportedShellManager = new UnifiedExecManager(() => {
-    unsupportedShellSpawns++;
-    const process = new FakeCommandProcess(false);
-    queueMicrotask(() => process.complete(0));
-    return process;
+    throw new Error("unsupported shells must fall back before spawning a patch");
   });
   const unsupportedResult = await unsupportedShellManager.execCommand(
     {
-      cmd: "apply_patch <<'PATCH'\n*** Begin Patch\n*** Add File: ignored.txt\n+ignored\n*** End Patch\nPATCH",
+      cmd: "apply_patch <<'PATCH'\n*** Begin Patch\n*** Add File: fallback.txt\n+fallback\n*** End Patch\nPATCH",
       shell: "/usr/bin/fish",
       yield_time_ms: 0,
     },
@@ -310,9 +413,8 @@ test("intercepts shell_command and exec_command apply_patch heredocs without a s
     undefined,
     undefined,
   );
-  assert.equal(unsupportedResult.details.exitCode, 0);
-  assert.equal(unsupportedShellSpawns, 1);
-  await assert.rejects(readFile(join(cwd, "ignored.txt"), "utf8"), /ENOENT/u);
+  assert.equal(unsupportedResult.details.exitCode, undefined);
+  assert.equal(await readFile(join(cwd, "fallback.txt"), "utf8"), "fallback\n");
 });
 
 test("fails closed on explicit malformed and implicit shell patches", async () => {
@@ -378,6 +480,32 @@ test("runs shell_command with Pi-style tail truncation and a complete temp file"
   assert.match(result.content[0]?.text ?? "", /finished/);
   assert.match(result.content[0]?.text ?? "", /Full output:/);
   assert.match(result.content[0]?.text ?? "", /Exit code: 0/);
+});
+
+test("preserves complete ordered stdout and stderr in shell_command temp files", async (t) => {
+  const stdout = `${"o".repeat(60 * 1_024)}\nstdout-finished\n`;
+  const stderr = "stderr-finished\n";
+  const result = await executeShellCommand(
+    { command: "large-interleaved-output", login: false },
+    runtimeContext(),
+    undefined,
+    undefined,
+    (options) => {
+      const commandProcess = new FakeCommandProcess(false);
+      queueMicrotask(() => {
+        options.onStderr?.(stderr);
+        options.onStdout?.(stdout);
+        commandProcess.complete(0);
+      });
+      return commandProcess;
+    },
+  );
+  const fullOutputPath = result.details.fullOutputPath;
+  assert.ok(fullOutputPath);
+  t.after(async () => rm(fullOutputPath, { force: true }));
+
+  assert.equal(await readFile(fullOutputPath, "utf8"), `${stdout}${stderr}`);
+  assert.match(result.content[0]?.text ?? "", /stdout-finished\nstderr-finished/u);
 });
 
 test("returns shell_command timeouts as successful results with captured output", async () => {
@@ -521,6 +649,47 @@ test("returns nonzero shell_command exits as successful results", async () => {
   assert.match(result.content[0]?.text ?? "", /Exit code: 7/);
   assert.match(result.content[0]?.text ?? "", /failed/);
 });
+
+test("aggregates shell_command stdout before stderr like Codex", async () => {
+  const result = await executeShellCommand(
+    { command: "interleaved-command", login: false },
+    runtimeContext(),
+    undefined,
+    undefined,
+    (options) => {
+      const commandProcess = new FakeCommandProcess(false);
+      queueMicrotask(() => {
+        options.onStderr?.("stderr-one\n");
+        options.onStdout?.("stdout-one\n");
+        options.onStderr?.("stderr-two\n");
+        options.onStdout?.("stdout-two\n");
+        commandProcess.complete(0);
+      });
+      return commandProcess;
+    },
+  );
+
+  const text = result.content[0]?.text ?? "";
+  assert.ok(text.indexOf("stdout-one") < text.indexOf("stdout-two"));
+  assert.ok(text.indexOf("stdout-two") < text.indexOf("stderr-one"));
+  assert.ok(text.indexOf("stderr-one") < text.indexOf("stderr-two"));
+});
+
+test(
+  "aggregates real shell_command pipes as stdout then stderr",
+  { skip: process.platform === "win32" },
+  async () => {
+    const result = await executeShellCommand(
+      { command: "printf 'stderr\\n' >&2; printf 'stdout\\n'", login: false },
+      runtimeContext(),
+      undefined,
+      undefined,
+    );
+
+    const text = result.content[0]?.text ?? "";
+    assert.ok(text.indexOf("stdout") < text.indexOf("stderr"));
+  },
+);
 
 test("applies unified exec's output-token budget within Pi's hard cap", async (t) => {
   const completeOutput = `${"u".repeat(45 * 1_024)}\nfinished\n`;

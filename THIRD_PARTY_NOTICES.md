@@ -32,3 +32,20 @@ node-pty is licensed under the MIT License. A copy is included at
 [`LICENSES/node-pty-MIT.txt`](LICENSES/node-pty-MIT.txt).
 
 Source: <https://github.com/microsoft/node-pty>
+
+## tree-sitter and tree-sitter-bash
+
+Shell-text `apply_patch` detection uses the Tree-sitter runtime and Bash
+grammar.
+
+tree-sitter, Copyright (c) 2014 maxbrunsfeld
+
+tree-sitter-bash, Copyright (c) 2017 Max Brunsfeld
+
+Both packages are licensed under the MIT License. Copies are included at
+[`LICENSES/tree-sitter-MIT.txt`](LICENSES/tree-sitter-MIT.txt).
+
+Sources:
+
+- <https://github.com/tree-sitter/node-tree-sitter>
+- <https://github.com/tree-sitter/tree-sitter-bash>

@@ -2,7 +2,6 @@ import { randomBytes } from "node:crypto";
 import type { AgentToolUpdateCallback, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import {
   commandEnvironment,
-  resolveDefaultCommandShell,
   resolveCommandWorkingDirectory,
   spawnCommandProcess,
   unifiedExecEnvironment,
@@ -12,11 +11,13 @@ import {
 } from "./command-process.ts";
 import {
   CommandOutputAccumulator,
+  CommandOutputSpool,
   RecentCommandOutputBuffer,
   type CommandOutputDetails,
   type CommandOutputSnapshot,
 } from "./command-output.ts";
 import { interceptShellApplyPatch } from "./command-apply-patch.ts";
+import { codexCommandInvocation, resolveCommandShell } from "./command-shell.ts";
 import { errorFromThrown } from "./error-from-thrown.ts";
 
 const DEFAULT_EXEC_YIELD_TIME_MS = 10_000;
@@ -354,25 +355,47 @@ export async function executeShellCommand(
   const timeoutMs = timeout(request.timeout_ms ?? request.timeout);
   if (signal?.aborted) throw new Error("Command aborted", { cause: new CommandAbortedError() });
   const cwd = await resolveCommandWorkingDirectory(ctx.cwd, request.workdir);
+  const shell = resolveCommandShell(undefined);
   const interceptedPatch = await interceptShellApplyPatch(
-    request.command,
+    codexCommandInvocation(shell, request.command, request.login ?? true),
     cwd,
-    resolveDefaultCommandShell(),
     signal,
     onUpdate,
   );
   if (interceptedPatch) return interceptedPatch;
-  const output = new CommandOutputAccumulator("pi-codex-shell-command");
-  const commandProcess = spawnProcess({
-    command: request.command,
-    cwd,
-    env: commandEnvironment(ctx),
-    login: request.login ?? true,
-    onData: (data) => output.append(data),
-    tty: false,
+  const liveOutput = new CommandOutputAccumulator("pi-codex-shell-command-live", {
+    retainCompleteOutput: false,
   });
+  const stdout = new CommandOutputSpool("pi-codex-shell-command-stdout");
+  const stderr = new CommandOutputSpool("pi-codex-shell-command-stderr");
+  const appendStdout = (data: Buffer | string): void => {
+    stdout.append(data);
+    liveOutput.append(data);
+  };
+  const appendStderr = (data: Buffer | string): void => {
+    stderr.append(data);
+    liveOutput.append(data);
+  };
+  let commandProcess: CommandProcess;
+  try {
+    commandProcess = spawnProcess({
+      command: request.command,
+      cwd,
+      env: commandEnvironment(ctx),
+      login: request.login ?? true,
+      onData: appendStdout,
+      onStderr: appendStderr,
+      onStdout: appendStdout,
+      resolvedShell: shell,
+      tty: false,
+    });
+  } catch (error) {
+    liveOutput.finish();
+    await Promise.all([liveOutput.discard(), stdout.dispose(), stderr.dispose()]);
+    throw error;
+  }
   const startedAt = performance.now();
-  const finishUpdates = streamUpdates(output, onUpdate, undefined);
+  const finishUpdates = streamUpdates(liveOutput, onUpdate, undefined);
   let timedOut = false;
   let aborted = false;
   let executionError: unknown;
@@ -399,7 +422,20 @@ export async function executeShellCommand(
     finishUpdates();
   }
 
-  const snapshot = await closeOutput(output, undefined);
+  liveOutput.finish();
+  await liveOutput.close();
+  const output = new CommandOutputAccumulator("pi-codex-shell-command");
+  let snapshot: CommandOutputSnapshot;
+  try {
+    await stdout.replayTo(output);
+    await stderr.replayTo(output);
+    snapshot = await closeOutput(output, undefined);
+  } catch (error) {
+    await output.discard();
+    throw error;
+  } finally {
+    await Promise.all([stdout.dispose(), stderr.dispose()]);
+  }
   const wallTimeSeconds = (performance.now() - startedAt) / 1_000;
   const exitCode = timedOut ? 124 : (processExit?.exitCode ?? commandProcess.exitCode() ?? -1);
   const text = formatShellResult(
@@ -449,11 +485,10 @@ export class UnifiedExecManager {
     if (signal?.aborted) throw new Error("Command aborted", { cause: new CommandAbortedError() });
     const cwd = await resolveCommandWorkingDirectory(ctx.cwd, request.workdir);
     if (signal?.aborted) throw new Error("Command aborted", { cause: new CommandAbortedError() });
-    const shell = request.shell?.trim() || resolveDefaultCommandShell();
+    const shell = resolveCommandShell(request.shell?.trim() || undefined);
     const interceptedPatch = await interceptShellApplyPatch(
-      request.cmd,
+      codexCommandInvocation(shell, request.cmd, request.login ?? true),
       cwd,
-      shell,
       signal,
       onUpdate,
     );
@@ -474,7 +509,7 @@ export class UnifiedExecManager {
           (record?.output ?? initialOutput).append(data);
           recentOutput.append(data);
         },
-        ...(request.shell === undefined ? {} : { shell: request.shell }),
+        resolvedShell: shell,
         tty: request.tty ?? false,
       });
     } catch (error) {

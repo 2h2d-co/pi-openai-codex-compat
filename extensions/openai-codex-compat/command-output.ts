@@ -1,5 +1,6 @@
 import { randomBytes } from "node:crypto";
-import { createWriteStream, type WriteStream } from "node:fs";
+import { createReadStream, createWriteStream, type WriteStream } from "node:fs";
+import { rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -135,9 +136,11 @@ export class CommandOutputAccumulator {
   private tempFilePath: string | undefined;
   private tempFileStream: WriteStream | undefined;
   private tempFileError: Error | undefined;
+  private readonly retainCompleteOutput: boolean;
 
-  constructor(tempFilePrefix: string) {
+  constructor(tempFilePrefix: string, options: { retainCompleteOutput?: boolean } = {}) {
     this.tempFilePrefix = tempFilePrefix;
+    this.retainCompleteOutput = options.retainCompleteOutput ?? true;
   }
 
   append(data: Buffer | string): void {
@@ -146,10 +149,10 @@ export class CommandOutputAccumulator {
     this.totalRawBytes += bytes.length;
     this.appendDecodedText(this.decoder.decode(bytes, { stream: true }));
 
-    if (this.tempFileStream || this.shouldUseTempFile()) {
+    if (this.retainCompleteOutput && (this.tempFileStream || this.shouldUseTempFile())) {
       this.ensureTempFile();
       this.tempFileStream?.write(bytes);
-    } else if (bytes.length > 0) {
+    } else if (this.retainCompleteOutput && bytes.length > 0) {
       this.rawChunks.push(Buffer.from(bytes));
     }
 
@@ -165,7 +168,7 @@ export class CommandOutputAccumulator {
     if (this.finished) return;
     this.finished = true;
     this.appendDecodedText(this.decoder.decode());
-    if (this.shouldUseTempFile()) this.ensureTempFile();
+    if (this.retainCompleteOutput && this.shouldUseTempFile()) this.ensureTempFile();
   }
 
   snapshot(
@@ -192,7 +195,7 @@ export class CommandOutputAccumulator {
       maxBytes,
     };
 
-    if (options.persistIfTruncated && effectiveTruncation.truncated) {
+    if (this.retainCompleteOutput && options.persistIfTruncated && effectiveTruncation.truncated) {
       this.ensureTempFile();
     }
 
@@ -201,16 +204,18 @@ export class CommandOutputAccumulator {
     const details: CommandOutputDetails = { originalTokenCount };
     if (effectiveTruncation.truncated) {
       const fullOutputPath = this.tempFilePath;
-      if (!fullOutputPath) {
+      if (this.retainCompleteOutput && !fullOutputPath) {
         throw new Error("Truncated command output is missing its complete-output file.");
       }
-      text = `${text}${text ? "\n\n" : ""}${truncationNotice(
-        effectiveTruncation,
-        fullOutputPath,
-        this.currentLineBytes,
-      )}`;
       details.truncation = effectiveTruncation;
-      details.fullOutputPath = fullOutputPath;
+      if (fullOutputPath !== undefined) {
+        text = `${text}${text ? "\n\n" : ""}${truncationNotice(
+          effectiveTruncation,
+          fullOutputPath,
+          this.currentLineBytes,
+        )}`;
+        details.fullOutputPath = fullOutputPath;
+      }
     }
 
     return { text, details, originalTokenCount };
@@ -239,6 +244,22 @@ export class CommandOutputAccumulator {
       stream.end();
     });
     if (this.tempFileError) throw this.tempFileError;
+  }
+
+  async discard(): Promise<void> {
+    let closeError: Error | undefined;
+    try {
+      await this.close();
+    } catch (error) {
+      closeError =
+        error instanceof Error
+          ? error
+          : new Error("Could not close discarded command output.", { cause: error });
+    }
+    if (this.tempFilePath !== undefined) {
+      await rm(this.tempFilePath, { force: true });
+    }
+    if (closeError) throw closeError;
   }
 
   private appendDecodedText(text: string): void {
@@ -299,6 +320,104 @@ export class CommandOutputAccumulator {
       this.totalDecodedBytes > DEFAULT_MAX_BYTES ||
       this.totalLines > DEFAULT_MAX_LINES
     );
+  }
+
+  private ensureTempFile(): void {
+    if (this.tempFilePath) return;
+    this.tempFilePath = tempFilePath(this.tempFilePrefix);
+    const stream = createWriteStream(this.tempFilePath);
+    stream.on("error", (error) => {
+      this.tempFileError = error;
+    });
+    this.tempFileStream = stream;
+    for (const chunk of this.rawChunks) stream.write(chunk);
+    this.rawChunks.length = 0;
+  }
+}
+
+/**
+ * Bounded-memory raw output storage used when streams must be replayed in a
+ * deterministic order after a process exits.
+ */
+export class CommandOutputSpool {
+  private readonly rawChunks: Buffer[] = [];
+  private readonly tempFilePrefix: string;
+  private totalBytes = 0;
+  private tempFilePath: string | undefined;
+  private tempFileStream: WriteStream | undefined;
+  private tempFileError: Error | undefined;
+  private finishing: Promise<void> | undefined;
+
+  constructor(tempFilePrefix: string) {
+    this.tempFilePrefix = tempFilePrefix;
+  }
+
+  append(data: Buffer | string): void {
+    if (this.finishing) return;
+    const bytes = typeof data === "string" ? Buffer.from(data, "utf8") : data;
+    this.totalBytes += bytes.length;
+    if (this.tempFileStream || this.totalBytes > DEFAULT_MAX_BYTES) {
+      this.ensureTempFile();
+      this.tempFileStream?.write(bytes);
+    } else if (bytes.length > 0) {
+      this.rawChunks.push(Buffer.from(bytes));
+    }
+  }
+
+  async replayTo(output: CommandOutputAccumulator): Promise<void> {
+    await this.finish();
+    if (this.tempFileError) throw this.tempFileError;
+    if (this.tempFilePath === undefined) {
+      for (const chunk of this.rawChunks) output.append(chunk);
+      return;
+    }
+    for await (const unsafeChunk of createReadStream(this.tempFilePath)) {
+      const chunk: unknown = unsafeChunk;
+      if (!Buffer.isBuffer(chunk)) {
+        throw new Error("Command output spool produced a non-buffer chunk.");
+      }
+      output.append(chunk);
+    }
+  }
+
+  async dispose(): Promise<void> {
+    let finishError: Error | undefined;
+    try {
+      await this.finish();
+    } catch (error) {
+      finishError =
+        error instanceof Error
+          ? error
+          : new Error("Could not finish disposable command output.", { cause: error });
+    }
+    if (this.tempFilePath !== undefined) {
+      await rm(this.tempFilePath, { force: true });
+    }
+    if (finishError) throw finishError;
+  }
+
+  private finish(): Promise<void> {
+    if (this.finishing) return this.finishing;
+    const stream = this.tempFileStream;
+    this.tempFileStream = undefined;
+    if (!stream) {
+      this.finishing = Promise.resolve();
+      return this.finishing;
+    }
+    this.finishing = new Promise<void>((resolveFinish, reject) => {
+      const onError = (error: Error): void => {
+        stream.off("finish", onFinish);
+        reject(error);
+      };
+      const onFinish = (): void => {
+        stream.off("error", onError);
+        resolveFinish();
+      };
+      stream.once("error", onError);
+      stream.once("finish", onFinish);
+      stream.end();
+    });
+    return this.finishing;
   }
 
   private ensureTempFile(): void {

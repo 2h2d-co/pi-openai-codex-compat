@@ -69,7 +69,11 @@
   cancellation. Intercept top-level `apply_patch` shell heredocs before process
   creation, match Codex's protected and interaction-safe process pruning,
   count invalid UTF-8 output tokens from raw bytes, and align command argument,
-  session, stdin, and spawn-error prefixes.
+  session, stdin, and spawn-error prefixes. Resolve default and model-requested
+  shells with Codex's type-first discovery and fallback policy, recognize
+  shell-text `apply_patch` calls with Codex's exact Tree-sitter query and argv
+  routing, and aggregate classic `shell_command` output as stdout followed by
+  stderr while retaining Pi's complete-output files.
 - Replace the multi-line startup configuration dump with a concise package and
   settings-command notice, and simplify the fallback settings-save error.
 - Align deferred tool loading with Pi 0.84.3, preferring message-anchored

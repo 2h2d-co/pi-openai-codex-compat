@@ -40,7 +40,9 @@
     "lint:fix": "oxlint --fix"
   },
   "dependencies": {
-    "node-pty": "1.2.0-beta.15"
+    "node-pty": "1.2.0-beta.15",
+    "tree-sitter": "0.25.1",
+    "tree-sitter-bash": "0.25.1"
   },
   "devDependencies": {
     "@2h2d/oxlint-config": "0.1.0",
