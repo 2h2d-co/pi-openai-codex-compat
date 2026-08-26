@@ -28,6 +28,62 @@ export type CommandOutputSnapshot = {
   originalTokenCount: number;
 };
 
+export class RecentCommandOutputBuffer {
+  private readonly decoder = new TextDecoder();
+  private text = "";
+  private textBytes = 0;
+  private lineBreaks = 0;
+  private finished = false;
+
+  append(data: Buffer | string): void {
+    if (this.finished) return;
+    const bytes = typeof data === "string" ? Buffer.from(data, "utf8") : data;
+    this.appendText(this.decoder.decode(bytes, { stream: true }));
+    if (this.textBytes > DEFAULT_MAX_BYTES * 2 || this.lineBreaks > DEFAULT_MAX_LINES * 2) {
+      this.trim();
+    }
+  }
+
+  finish(): void {
+    if (this.finished) return;
+    this.finished = true;
+    this.appendText(this.decoder.decode());
+    this.trim();
+  }
+
+  snapshot(): string {
+    return this.truncatedText();
+  }
+
+  private truncatedText(): string {
+    return truncateTail(this.text, {
+      maxLines: DEFAULT_MAX_LINES,
+      maxBytes: DEFAULT_MAX_BYTES,
+    }).content;
+  }
+
+  private appendText(text: string): void {
+    this.text += text;
+    this.textBytes += byteLength(text);
+    for (let index = text.indexOf("\n"); index !== -1; index = text.indexOf("\n", index + 1)) {
+      this.lineBreaks++;
+    }
+  }
+
+  private trim(): void {
+    this.text = this.truncatedText();
+    this.textBytes = byteLength(this.text);
+    this.lineBreaks = 0;
+    for (
+      let index = this.text.indexOf("\n");
+      index !== -1;
+      index = this.text.indexOf("\n", index + 1)
+    ) {
+      this.lineBreaks++;
+    }
+  }
+}
+
 function tempFilePath(prefix: string): string {
   return join(tmpdir(), `${prefix}-${randomBytes(8).toString("hex")}.log`);
 }

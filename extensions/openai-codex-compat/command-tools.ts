@@ -31,8 +31,12 @@ export {
   WRITE_STDIN_TOOL_NAME,
 } from "./command-tool-contract.ts";
 import {
+  type BackgroundProcessBrowserAction,
+  type BackgroundProcessDetailsAction,
   createBackgroundProcessBrowser,
+  createBackgroundProcessDetails,
   formatBackgroundProcesses,
+  singleLineCommand,
 } from "./background-process-browser.ts";
 
 export const BACKGROUND_PROCESSES_COMMAND_NAME = "ps";
@@ -61,22 +65,77 @@ export default function registerCommandTools(
   const manager = new UnifiedExecManager(spawnProcess);
 
   pi.registerCommand(BACKGROUND_PROCESSES_COMMAND_NAME, {
-    description: "list background terminals",
+    description: "browse background terminals",
     handler: async (_args, ctx) => {
-      const processes = manager.listProcesses();
-      if (processes.length === 0 || ctx.mode !== "tui") {
-        ctx.ui.notify(formatBackgroundProcesses(processes), "info");
-        return;
+      let opened = false;
+      for (;;) {
+        const processes = manager.listProcesses();
+        if (processes.length === 0 || ctx.mode !== "tui") {
+          if (!opened || ctx.mode !== "tui") {
+            ctx.ui.notify(formatBackgroundProcesses(processes), "info");
+          }
+          return;
+        }
+        opened = true;
+        const action = await ctx.ui.custom<BackgroundProcessBrowserAction>(
+          (tui, theme, _keybindings, done) =>
+            createBackgroundProcessBrowser(processes, theme, done, () => tui.requestRender()),
+        );
+        if (action.type === "close") return;
+        let stopSessionId = action.type === "stop" ? action.sessionId : undefined;
+
+        if (action.type === "inspect") {
+          const observeProcess = manager.observeProcess(action.sessionId);
+          if (!observeProcess) continue;
+          const detailsAction = await ctx.ui.custom<BackgroundProcessDetailsAction>(
+            (tui, theme, _keybindings, done) =>
+              createBackgroundProcessDetails(observeProcess, theme, done, () =>
+                tui.requestRender(),
+              ),
+            {
+              overlay: true,
+              overlayOptions: {
+                width: "85%",
+                minWidth: 50,
+                maxHeight: "85%",
+                margin: 1,
+              },
+            },
+          );
+          if (detailsAction === "close") continue;
+          stopSessionId = action.sessionId;
+        }
+
+        if (action.type === "stop-all") {
+          const confirmed = await ctx.ui.confirm(
+            "Stop all background terminals?",
+            `Terminate all ${processes.length} running terminal${processes.length === 1 ? "" : "s"}?`,
+          );
+          if (!confirmed) continue;
+          await manager.terminateAll();
+          ctx.ui.notify(
+            `Stopped ${processes.length} background terminal${processes.length === 1 ? "" : "s"}.`,
+            "info",
+          );
+          return;
+        }
+
+        if (stopSessionId === undefined) continue;
+        const process = processes.find((candidate) => candidate.sessionId === stopSessionId);
+        if (!process) continue;
+        const confirmed = await ctx.ui.confirm(
+          `Stop terminal session ${process.sessionId}?`,
+          `${singleLineCommand(process.command)}\n${process.cwd}`,
+        );
+        if (!confirmed) continue;
+        const stopped = await manager.terminateProcess(process.sessionId);
+        ctx.ui.notify(
+          stopped
+            ? `Stopped background terminal session ${process.sessionId}.`
+            : `Background terminal session ${process.sessionId} is no longer running.`,
+          "info",
+        );
       }
-      const action = await ctx.ui.custom<"close" | "stop">((tui, theme, _keybindings, done) =>
-        createBackgroundProcessBrowser(processes, theme, done, () => tui.requestRender()),
-      );
-      if (action !== "stop") return;
-      await manager.terminateAll();
-      ctx.ui.notify(
-        `Stopped ${processes.length} background terminal${processes.length === 1 ? "" : "s"}.`,
-        "info",
-      );
     },
   });
 

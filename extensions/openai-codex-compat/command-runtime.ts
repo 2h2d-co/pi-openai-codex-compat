@@ -11,6 +11,7 @@ import {
 } from "./command-process.ts";
 import {
   CommandOutputAccumulator,
+  RecentCommandOutputBuffer,
   type CommandOutputDetails,
   type CommandOutputSnapshot,
 } from "./command-output.ts";
@@ -67,6 +68,9 @@ export type UnifiedExecProcessInfo = {
   command: string;
   cwd: string;
   tty: boolean;
+  running: boolean;
+  exitCode?: number;
+  recentOutput: string;
 };
 
 type UnifiedExecRecord = {
@@ -75,6 +79,7 @@ type UnifiedExecRecord = {
   cwd: string;
   process: CommandProcess;
   output: CommandOutputAccumulator;
+  recentOutput: RecentCommandOutputBuffer;
   lastUsed: number;
   interaction: Promise<void>;
   initialInteractionDone: Promise<void>;
@@ -375,16 +380,27 @@ export class UnifiedExecManager {
     this.pruneProcesses();
     const id = this.allocateProcessId();
     const initialOutput = new CommandOutputAccumulator("pi-codex-exec-command");
+    const recentOutput = new RecentCommandOutputBuffer();
     let record: UnifiedExecRecord | undefined;
     const commandProcess = this.spawnProcess({
       command: request.cmd,
       cwd,
       env: unifiedExecEnvironment(ctx),
       login: request.login ?? true,
-      onData: (data) => (record?.output ?? initialOutput).append(data),
+      onData: (data) => {
+        (record?.output ?? initialOutput).append(data);
+        recentOutput.append(data);
+      },
       ...(request.shell === undefined ? {} : { shell: request.shell }),
       tty: request.tty ?? false,
     });
+    void commandProcess.exited.then(
+      () => recentOutput.finish(),
+      (error: unknown) => {
+        void error;
+        recentOutput.finish();
+      },
+    );
     let finishInitialInteraction = (): void => {};
     const initialInteractionDone = new Promise<void>((resolveInteraction) => {
       finishInitialInteraction = resolveInteraction;
@@ -399,6 +415,7 @@ export class UnifiedExecManager {
       lastUsed: Date.now(),
       output: initialOutput,
       process: commandProcess,
+      recentOutput,
     };
     this.processes.set(id, record);
 
@@ -549,21 +566,34 @@ export class UnifiedExecManager {
     return this.shuttingDown;
   }
 
+  async terminateProcess(sessionId: number): Promise<boolean> {
+    const record = this.processes.get(sessionId);
+    if (!record) return false;
+    this.processes.delete(sessionId);
+    record.process.terminate();
+    await settleTerminatedProcess(record.process);
+    await record.initialInteractionDone;
+    await record.interaction;
+    record.recentOutput.finish();
+    record.output.finish();
+    await record.output.close();
+    return true;
+  }
+
   activeSessionCount(): number {
     return this.processes.size;
+  }
+
+  observeProcess(sessionId: number): (() => UnifiedExecProcessInfo) | undefined {
+    const record = this.processes.get(sessionId);
+    return record ? () => this.processInfo(record) : undefined;
   }
 
   listProcesses(): UnifiedExecProcessInfo[] {
     return [...this.processes.values()]
       .filter((record) => !record.process.hasExited())
       .sort((left, right) => left.id - right.id)
-      .map((record) => ({
-        sessionId: record.id,
-        pid: record.process.pid,
-        command: record.command,
-        cwd: record.cwd,
-        tty: record.process.tty,
-      }));
+      .map((record) => this.processInfo(record));
   }
 
   private async completeInteraction(
@@ -575,7 +605,10 @@ export class UnifiedExecManager {
     record.output = new CommandOutputAccumulator("pi-codex-exec-command");
     const done = record.process.hasExited();
     const exitCode = done ? (record.process.exitCode() ?? -1) : undefined;
-    if (done) this.processes.delete(record.id);
+    if (done) {
+      this.processes.delete(record.id);
+      record.recentOutput.finish();
+    }
     const snapshot = await closeOutput(output, maxOutputTokens);
     const wallTimeSeconds = (performance.now() - startedAt) / 1_000;
     const metadata: CommandOutputDetails & {
@@ -610,6 +643,21 @@ export class UnifiedExecManager {
       const id = 1_000 + Math.floor(Math.random() * 99_000);
       if (!this.processes.has(id)) return id;
     }
+  }
+
+  private processInfo(record: UnifiedExecRecord): UnifiedExecProcessInfo {
+    const running = !record.process.hasExited();
+    const exitCode = record.process.exitCode();
+    return {
+      sessionId: record.id,
+      pid: record.process.pid,
+      command: record.command,
+      cwd: record.cwd,
+      tty: record.process.tty,
+      running,
+      ...(exitCode === undefined || exitCode === null ? {} : { exitCode }),
+      recentOutput: record.recentOutput.snapshot(),
+    };
   }
 
   private pruneProcesses(): void {

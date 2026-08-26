@@ -19,7 +19,10 @@ import {
   WRITE_STDIN_DESCRIPTION,
   SHELL_COMMAND_DESCRIPTION,
 } from "../extensions/openai-codex-compat/command-tool-contract.ts";
-import { createBackgroundProcessBrowser } from "../extensions/openai-codex-compat/background-process-browser.ts";
+import {
+  createBackgroundProcessBrowser,
+  createBackgroundProcessDetails,
+} from "../extensions/openai-codex-compat/background-process-browser.ts";
 import {
   EXEC_COMMAND_PARAMETERS,
   formatBackgroundProcesses,
@@ -348,6 +351,8 @@ test("runs and interacts with a persistent unified exec session", async (t) => {
       command: "interactive",
       cwd: process.cwd(),
       tty: true,
+      running: true,
+      recentOutput: "ready\n",
     },
   ]);
   assert.equal(
@@ -380,6 +385,8 @@ test("formats empty and bounded background terminal listings", () => {
     command: `printf ${index}\nwith more`,
     cwd: `/tmp/process-${index}`,
     tty: index % 2 === 0,
+    running: true,
+    recentOutput: `output ${index}`,
   }));
   const listing = formatBackgroundProcesses(processes);
   assert.match(listing, /session 1000 · pid 2000 · PTY · printf 0 with more/u);
@@ -388,18 +395,19 @@ test("formats empty and bounded background terminal listings", () => {
   assert.match(listing, /\.\.\. and 2 more running$/u);
 });
 
-test("stops all background terminals from the ps browser shortcut", () => {
-  const actions: string[] = [];
+test("inspects and safely stops background terminals from the ps browser", () => {
+  const actions: unknown[] = [];
+  const processInfo = {
+    sessionId: 1_234,
+    pid: 4_321,
+    command: "sleep 30",
+    cwd: "/tmp/project",
+    tty: true,
+    running: true,
+    recentOutput: "ready\n",
+  };
   const browser = createBackgroundProcessBrowser(
-    [
-      {
-        sessionId: 1_234,
-        pid: 4_321,
-        command: "sleep 30",
-        cwd: "/tmp/project",
-        tty: true,
-      },
-    ],
+    [processInfo],
     {
       bold: (text) => text,
       fg: (_color, text) => text,
@@ -408,7 +416,58 @@ test("stops all background terminals from the ps browser shortcut", () => {
     () => {},
   );
 
+  browser.handleInput?.("\r");
+  assert.deepEqual(actions, [{ type: "inspect", sessionId: 1_234 }]);
+  actions.length = 0;
+
+  browser.handleInput?.("\u0018");
+  assert.deepEqual(actions, [{ type: "stop", sessionId: 1_234 }]);
+  actions.length = 0;
+
+  browser.handleInput?.("\u0013");
+  assert.deepEqual(actions, [{ type: "stop-all" }]);
+  actions.length = 0;
+
   browser.handleInput?.("s");
+  assert.deepEqual(actions, []);
+});
+
+test("shows live recent output in a scrollable terminal details popup", (t) => {
+  const actions: string[] = [];
+  let recentOutput = Array.from({ length: 20 }, (_, index) => `line ${index}`).join("\n");
+  const details = createBackgroundProcessDetails(
+    () => ({
+      sessionId: 1_234,
+      pid: 4_321,
+      command: "long-running-command",
+      cwd: "/tmp/project",
+      tty: true,
+      running: true,
+      recentOutput,
+    }),
+    {
+      bold: (text) => text,
+      fg: (_color, text) => text,
+    },
+    (action) => actions.push(action),
+    () => {},
+  );
+  t.after(() => details.dispose());
+
+  const initial = details.render(80).join("\n");
+  assert.doesNotMatch(initial, /line 0$/mu);
+  assert.match(initial, /line 19$/mu);
+
+  details.handleInput?.("\u001b[H");
+  const scrolled = details.render(80).join("\n");
+  assert.match(scrolled, /line 0$/mu);
+  assert.doesNotMatch(scrolled, /line 19$/mu);
+
+  recentOutput += "\nline 20";
+  details.handleInput?.("\u001b[F");
+  assert.match(details.render(80).join("\n"), /line 20$/mu);
+
+  details.handleInput?.("\u0018");
   assert.deepEqual(actions, ["stop"]);
 });
 
@@ -486,6 +545,40 @@ test("stops a process safely while its initial exec_command call is active", asy
   assert.equal(result.details.sessionId, undefined);
   assert.match(result.content[0]?.text ?? "", /started/);
   assert.equal(manager.activeSessionCount(), 0);
+});
+
+test("terminates one selected background terminal without stopping the others", async (t) => {
+  const commandProcesses: FakeCommandProcess[] = [];
+  const manager = new UnifiedExecManager((options) => {
+    const commandProcess = new FakeCommandProcess(false);
+    commandProcesses.push(commandProcess);
+    options.onData(`started ${commandProcesses.length}\n`);
+    return commandProcess;
+  });
+  t.after(async () => manager.terminateAll());
+
+  const first = await manager.execCommand(
+    { cmd: "first", login: false, yield_time_ms: 250 },
+    runtimeContext(),
+    undefined,
+    undefined,
+  );
+  const second = await manager.execCommand(
+    { cmd: "second", login: false, yield_time_ms: 250 },
+    runtimeContext(),
+    undefined,
+    undefined,
+  );
+  assert.ok(first.details.sessionId);
+  assert.ok(second.details.sessionId);
+
+  assert.equal(await manager.terminateProcess(first.details.sessionId), true);
+  assert.equal(commandProcesses[0]?.terminateCalls, 1);
+  assert.equal(commandProcesses[1]?.terminateCalls, 0);
+  assert.deepEqual(
+    manager.listProcesses().map((process) => process.sessionId),
+    [second.details.sessionId],
+  );
 });
 
 test("carries output forward when a process exits while an interaction is closing", async (t) => {
