@@ -17,7 +17,12 @@ import {
   type CommandOutputSnapshot,
 } from "./command-output.ts";
 import { interceptShellApplyPatch } from "./command-apply-patch.ts";
-import { codexCommandInvocation, resolveCommandShell } from "./command-shell.ts";
+import {
+  codexCommandInvocation,
+  resolveCommandShell,
+  resolveDefaultCommandShell,
+  type ResolvedCommandShell,
+} from "./command-shell.ts";
 import { errorFromThrown } from "./error-from-thrown.ts";
 
 const DEFAULT_EXEC_YIELD_TIME_MS = 10_000;
@@ -348,6 +353,7 @@ export async function executeShellCommand(
   signal: AbortSignal | undefined,
   onUpdate: AgentToolUpdateCallback<CommandOutputDetails> | undefined,
   spawnProcess: CommandProcessSpawner = spawnCommandProcess,
+  resolvedShell: ResolvedCommandShell = resolveDefaultCommandShell(),
 ): Promise<CommandToolResult> {
   if (request.timeout_ms !== undefined && request.timeout !== undefined) {
     throw functionArgumentError("duplicate field `timeout_ms`");
@@ -355,9 +361,8 @@ export async function executeShellCommand(
   const timeoutMs = timeout(request.timeout_ms ?? request.timeout);
   if (signal?.aborted) throw new Error("Command aborted", { cause: new CommandAbortedError() });
   const cwd = await resolveCommandWorkingDirectory(ctx.cwd, request.workdir);
-  const shell = resolveCommandShell(undefined);
   const interceptedPatch = await interceptShellApplyPatch(
-    codexCommandInvocation(shell, request.command, request.login ?? true),
+    codexCommandInvocation(resolvedShell, request.command, request.login ?? true),
     cwd,
     signal,
     onUpdate,
@@ -386,7 +391,7 @@ export async function executeShellCommand(
       onData: appendStdout,
       onStderr: appendStderr,
       onStdout: appendStdout,
-      resolvedShell: shell,
+      resolvedShell,
       tty: false,
     });
   } catch (error) {

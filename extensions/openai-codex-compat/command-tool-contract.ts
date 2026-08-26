@@ -17,22 +17,24 @@ export const EXEC_COMMAND_DESCRIPTION =
 export const WRITE_STDIN_DESCRIPTION =
   "Writes characters to an existing unified exec session and returns recent output.";
 
-export const SHELL_COMMAND_DESCRIPTION =
-  process.platform === "win32"
-    ? `Runs a Powershell command (Windows) and returns its output.
+export type ShellCommandPromptMetadata = {
+  description: string;
+  promptSnippet: string;
+  promptGuidelines: [string];
+};
 
-Examples of valid command strings:
-
-- ls -a (show hidden): "Get-ChildItem -Force"
-- recursive find by name: "Get-ChildItem -Recurse -Filter *.py"
-- recursive grep: "Get-ChildItem -Path C:\\\\myrepo -Recurse | Select-String -Pattern 'TODO' -CaseSensitive"
-- ps aux | grep python: "Get-Process | Where-Object { $_.ProcessName -like '*python*' }"
-- setting an env var: "$env:FOO='bar'; echo $env:FOO"
-- running an inline Python script: "@'\\\\nprint('Hello, world!')\\\\n'@ | python -"
-
-${WINDOWS_SHELL_GUIDANCE}`
-    : `Runs a shell command and returns its output.
-- Always set the \`workdir\` param when using the shell_command function. Do not use \`cd\` unless absolutely necessary.`;
+export function shellCommandPromptMetadata(shell: string): ShellCommandPromptMetadata {
+  return {
+    promptSnippet: `Run commands using ${shell}`,
+    promptGuidelines: [
+      `Use \`shell_command\` to execute commands using ${shell}; always set \`workdir\` to the directory in which the command should run.`,
+    ],
+    description: `Runs a command using ${shell} and returns its output.
+- Always set the \`workdir\` param when using the shell_command function. Do not use \`cd\` unless absolutely necessary.
+- If \`workdir\` is omitted, it defaults to the turn cwd.
+- Commands can inspect current Pi session and model details through the \`PI_SESSION_ID\`, \`PI_SESSION_FILE\`, \`PI_PROVIDER\`, \`PI_MODEL\`, and \`PI_REASONING_LEVEL\` environment variables.`,
+  };
+}
 
 const yieldTimeDescription =
   process.platform === "win32"

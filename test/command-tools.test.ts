@@ -16,6 +16,7 @@ import {
   unifiedExecEnvironment,
 } from "../extensions/openai-codex-compat/command-process.ts";
 import {
+  commandShellDisplayName,
   codexCommandInvocation,
   detectCommandShellType,
   resolveCommandShell,
@@ -30,8 +31,8 @@ import {
 } from "../extensions/openai-codex-compat/command-runtime.ts";
 import {
   EXEC_COMMAND_DESCRIPTION,
+  shellCommandPromptMetadata,
   WRITE_STDIN_DESCRIPTION,
-  SHELL_COMMAND_DESCRIPTION,
 } from "../extensions/openai-codex-compat/command-tool-contract.ts";
 import {
   createBackgroundProcessBrowser,
@@ -164,24 +165,16 @@ test("advertises the simplified official command schemas", () => {
   }
 });
 
-test("uses the exact official descriptions for retained command fields", () => {
+test("uses the exact official descriptions for retained unified command fields", () => {
   if (process.platform === "win32") {
     assert.match(
       EXEC_COMMAND_DESCRIPTION,
       /^Runs a command in a PTY, returning output or a session ID for ongoing interaction\.\n\nWindows safety rules:/u,
     );
-    assert.match(
-      SHELL_COMMAND_DESCRIPTION,
-      /^Runs a Powershell command \(Windows\) and returns its output\.\n\nExamples of valid command strings:/u,
-    );
   } else {
     assert.equal(
       EXEC_COMMAND_DESCRIPTION,
       "Runs a command in a PTY, returning output or a session ID for ongoing interaction.",
-    );
-    assert.equal(
-      SHELL_COMMAND_DESCRIPTION,
-      "Runs a shell command and returns its output.\n- Always set the `workdir` param when using the shell_command function. Do not use `cd` unless absolutely necessary.",
     );
   }
   assert.equal(
@@ -216,6 +209,25 @@ test("uses the exact official descriptions for retained command fields", () => {
     Reflect.get(SHELL_COMMAND_PARAMETERS.properties.timeout_ms, "description"),
     "Maximum command runtime. Defaults to 10000 ms.",
   );
+});
+
+test("describes shell_command using its resolved shell", () => {
+  assert.equal(
+    commandShellDisplayName({ type: "powershell", path: "/usr/bin/pwsh" }),
+    "PowerShell",
+  );
+  assert.equal(commandShellDisplayName({ type: "zsh", path: "/bin/zsh" }), "zsh");
+  assert.deepEqual(shellCommandPromptMetadata("zsh"), {
+    promptSnippet: "Run commands using zsh",
+    promptGuidelines: [
+      "Use `shell_command` to execute commands using zsh; always set `workdir` to the directory in which the command should run.",
+    ],
+    description:
+      "Runs a command using zsh and returns its output.\n" +
+      "- Always set the `workdir` param when using the shell_command function. Do not use `cd` unless absolutely necessary.\n" +
+      "- If `workdir` is omitted, it defaults to the turn cwd.\n" +
+      "- Commands can inspect current Pi session and model details through the `PI_SESSION_ID`, `PI_SESSION_FILE`, `PI_PROVIDER`, `PI_MODEL`, and `PI_REASONING_LEVEL` environment variables.",
+  });
 });
 
 test("normalizes the unified exec environment without claiming Codex CI", () => {

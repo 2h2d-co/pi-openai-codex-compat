@@ -9,6 +9,10 @@ export type ResolvedCommandShell = {
   path: string;
 };
 
+export function commandShellDisplayName(shell: ResolvedCommandShell): string {
+  return shell.type === "powershell" ? "PowerShell" : shell.type;
+}
+
 export type CommandShellResolutionHost = {
   platform: NodeJS.Platform;
   pathEnvironment?: string;

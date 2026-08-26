@@ -8,6 +8,11 @@ import {
   type WriteStdinRequest,
 } from "./command-runtime.ts";
 import type { CommandProcessSpawner } from "./command-process.ts";
+import {
+  commandShellDisplayName,
+  resolveDefaultCommandShell,
+  type ResolvedCommandShell,
+} from "./command-shell.ts";
 import type { CodexToolBackgroundResolver } from "./codex-tool-surface.ts";
 import { DEFAULT_CONFIG } from "./config.ts";
 import { renderCommandCall, renderCommandResult } from "./command-render.ts";
@@ -15,9 +20,9 @@ import {
   EXEC_COMMAND_DESCRIPTION,
   EXEC_COMMAND_PARAMETERS,
   EXEC_COMMAND_TOOL_NAME,
-  SHELL_COMMAND_DESCRIPTION,
   SHELL_COMMAND_PARAMETERS,
   SHELL_COMMAND_TOOL_NAME,
+  shellCommandPromptMetadata,
   WRITE_STDIN_DESCRIPTION,
   WRITE_STDIN_PARAMETERS,
   WRITE_STDIN_TOOL_NAME,
@@ -80,8 +85,10 @@ export default function registerCommandTools(
   pi: CommandToolsApi,
   resolveToolBackground: CodexToolBackgroundResolver = () => DEFAULT_CONFIG.toolBackground,
   spawnProcess?: CommandProcessSpawner,
+  shellCommandShell: ResolvedCommandShell = resolveDefaultCommandShell(),
 ): CommandToolsController {
   const manager = new UnifiedExecManager(spawnProcess);
+  const shellCommandPrompt = shellCommandPromptMetadata(commandShellDisplayName(shellCommandShell));
 
   pi.registerCommand(BACKGROUND_PROCESSES_COMMAND_NAME, {
     description: "browse background terminals",
@@ -215,11 +222,9 @@ export default function registerCommandTools(
   pi.registerTool({
     name: SHELL_COMMAND_TOOL_NAME,
     label: SHELL_COMMAND_TOOL_NAME,
-    description: SHELL_COMMAND_DESCRIPTION,
-    promptSnippet: "Run one-shot shell commands",
-    promptGuidelines: [
-      "Use shell_command for shell commands and set workdir explicitly when the command is project-specific.",
-    ],
+    description: shellCommandPrompt.description,
+    promptSnippet: shellCommandPrompt.promptSnippet,
+    promptGuidelines: shellCommandPrompt.promptGuidelines,
     parameters: SHELL_COMMAND_PARAMETERS,
     prepareArguments: prepareShellCommandArguments,
     renderShell: "self",
@@ -230,6 +235,7 @@ export default function registerCommandTools(
         signal,
         onUpdate,
         spawnProcess,
+        shellCommandShell,
       );
     },
     renderCall(args, theme, context) {

@@ -61,11 +61,15 @@
 
 ### Changed
 
-- Align the command tools' official descriptions, retained input-field
-  descriptions, successful nonzero/timeout semantics, and unified child
-  environment (except `CODEX_CI`), while preserving Pi's complete-output
-  truncation files and retaining initially cancelled processes with a
-  model-visible session ID. Add a `/ps` background-terminal browser
+- Describe `shell_command` in Pi's tool list, guidelines, and detailed tool
+  contract using the actual resolved default shell, document its working
+  directory fallback and `PI_*` context environment, and bind execution to the
+  same advertised shell for the extension lifecycle.
+- Align the unified command tools' official descriptions and all command tools'
+  retained input-field descriptions, successful nonzero/timeout semantics, and
+  unified child environment (except `CODEX_CI`), while preserving Pi's
+  complete-output truncation files and retaining initially cancelled processes
+  with a model-visible session ID. Add a `/ps` background-terminal browser
   with live scrollable recent output, confirmed `Ctrl+X` termination for one
   session, and confirmed `Ctrl+S` termination for all sessions. Match Codex's
   zero-value timing inputs, hidden `shell_command.timeout` alias, PowerShell
