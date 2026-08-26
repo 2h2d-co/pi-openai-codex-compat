@@ -196,7 +196,7 @@ export class CommandOutputAccumulator {
       this.ensureTempFile();
     }
 
-    const originalTokenCount = Math.ceil(this.totalDecodedBytes / TOKEN_BYTES);
+    const originalTokenCount = Math.ceil(this.totalRawBytes / TOKEN_BYTES);
     let text = effectiveTruncation.content;
     const details: CommandOutputDetails = { originalTokenCount };
     if (effectiveTruncation.truncated) {

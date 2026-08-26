@@ -2,6 +2,7 @@ import { randomBytes } from "node:crypto";
 import type { AgentToolUpdateCallback, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import {
   commandEnvironment,
+  resolveDefaultCommandShell,
   resolveCommandWorkingDirectory,
   spawnCommandProcess,
   unifiedExecEnvironment,
@@ -15,6 +16,7 @@ import {
   type CommandOutputDetails,
   type CommandOutputSnapshot,
 } from "./command-output.ts";
+import { interceptShellApplyPatch } from "./command-apply-patch.ts";
 import { errorFromThrown } from "./error-from-thrown.ts";
 
 const DEFAULT_EXEC_YIELD_TIME_MS = 10_000;
@@ -27,6 +29,7 @@ const MAX_YIELD_TIME_MS = 30_000;
 const MAX_EMPTY_POLL_MS = 300_000;
 const WINDOWS_INITIAL_YIELD_FLOOR_MS = 10_000;
 const MAX_PROCESSES = 64;
+const PROTECTED_RECENT_PROCESSES = 8;
 const UPDATE_THROTTLE_MS = 100;
 const POST_PTY_WRITE_DELAY_MS = 100;
 const CANCELLATION_TERMINATION_GRACE_MS = 50;
@@ -84,10 +87,52 @@ type UnifiedExecRecord = {
   output: CommandOutputAccumulator;
   recentOutput: RecentCommandOutputBuffer;
   lastUsed: number;
+  interactionActive: boolean;
   interaction: Promise<void>;
   initialInteractionDone: Promise<void>;
   finishInitialInteraction: () => void;
 };
+
+export type UnifiedExecPruningCandidate = {
+  id: number;
+  lastUsed: number;
+  exited: boolean;
+  interactionActive: boolean;
+};
+
+function processIdToPruneFromCandidates(
+  candidates: readonly UnifiedExecPruningCandidate[],
+): number | undefined {
+  if (candidates.length === 0) return undefined;
+  const protectedIds = new Set(
+    [...candidates]
+      .sort((left, right) => right.lastUsed - left.lastUsed)
+      .slice(0, PROTECTED_RECENT_PROCESSES)
+      .map((candidate) => candidate.id),
+  );
+  const leastRecentlyUsed = [...candidates].sort((left, right) => left.lastUsed - right.lastUsed);
+  return (
+    leastRecentlyUsed.find((candidate) => !protectedIds.has(candidate.id) && candidate.exited) ??
+    leastRecentlyUsed.find((candidate) => !protectedIds.has(candidate.id))
+  )?.id;
+}
+
+export function unifiedExecProcessIdToPrune(
+  candidates: readonly UnifiedExecPruningCandidate[],
+): number | undefined {
+  let remaining = [...candidates];
+  let foundLockedExitedProcess = false;
+  for (;;) {
+    const processId = processIdToPruneFromCandidates(remaining);
+    if (processId === undefined) return undefined;
+    const candidate = remaining.find((entry) => entry.id === processId);
+    if (!candidate) return undefined;
+    if (foundLockedExitedProcess && !candidate.exited) return undefined;
+    if (!candidate.interactionActive) return processId;
+    foundLockedExitedProcess ||= candidate.exited;
+    remaining = remaining.filter((entry) => entry.id !== processId);
+  }
+}
 
 class CommandAbortedError extends Error {
   constructor() {
@@ -95,9 +140,13 @@ class CommandAbortedError extends Error {
   }
 }
 
+function functionArgumentError(message: string): Error {
+  return new Error(`failed to parse function arguments: ${message}`);
+}
+
 function requiredInteger(name: string, value: number): number {
   if (!Number.isSafeInteger(value)) {
-    throw new Error(`${name} must be an integer.`);
+    throw functionArgumentError(`${name} must be an integer.`);
   }
   return value;
 }
@@ -105,7 +154,7 @@ function requiredInteger(name: string, value: number): number {
 function nonnegativeInteger(name: string, value: number | undefined): number | undefined {
   if (value === undefined) return undefined;
   const integer = requiredInteger(name, value);
-  if (integer < 0) throw new Error(`${name} must not be negative.`);
+  if (integer < 0) throw functionArgumentError(`${name} must not be negative.`);
   return integer;
 }
 
@@ -113,14 +162,14 @@ function nonnegativeInteger(name: string, value: number | undefined): number | u
 function positiveInteger(name: string, value: number | undefined, fallback: number): number {
   if (value === undefined) return fallback;
   const integer = requiredInteger(name, value);
-  if (integer < 0) throw new Error(`${name} must not be negative.`);
+  if (integer < 0) throw functionArgumentError(`${name} must not be negative.`);
   return integer;
 }
 
 function timeout(value: number | undefined): number {
   const timeoutMs = positiveInteger("timeout_ms", value, DEFAULT_SHELL_TIMEOUT_MS);
   if (timeoutMs > MAX_TIMEOUT_MS) {
-    throw new Error(`timeout_ms must not exceed ${MAX_TIMEOUT_MS}.`);
+    throw functionArgumentError(`timeout_ms must not exceed ${MAX_TIMEOUT_MS}.`);
   }
   return timeoutMs;
 }
@@ -144,6 +193,10 @@ function chunkId(): string {
 
 function appendStatus(output: string, status: string): string {
   return `${output ? `${output}\n\n` : ""}${status}`;
+}
+
+function execCommandFailure(command: string, message: string): string {
+  return `exec_command failed for \`${command}\`: ${message}`;
 }
 
 function formatShellResult(
@@ -296,11 +349,19 @@ export async function executeShellCommand(
   spawnProcess: CommandProcessSpawner = spawnCommandProcess,
 ): Promise<CommandToolResult> {
   if (request.timeout_ms !== undefined && request.timeout !== undefined) {
-    throw new Error("duplicate field `timeout_ms`");
+    throw functionArgumentError("duplicate field `timeout_ms`");
   }
   const timeoutMs = timeout(request.timeout_ms ?? request.timeout);
   if (signal?.aborted) throw new Error("Command aborted", { cause: new CommandAbortedError() });
   const cwd = await resolveCommandWorkingDirectory(ctx.cwd, request.workdir);
+  const interceptedPatch = await interceptShellApplyPatch(
+    request.command,
+    cwd,
+    resolveDefaultCommandShell(),
+    signal,
+    onUpdate,
+  );
+  if (interceptedPatch) return interceptedPatch;
   const output = new CommandOutputAccumulator("pi-codex-shell-command");
   const commandProcess = spawnProcess({
     command: request.command,
@@ -388,23 +449,38 @@ export class UnifiedExecManager {
     if (signal?.aborted) throw new Error("Command aborted", { cause: new CommandAbortedError() });
     const cwd = await resolveCommandWorkingDirectory(ctx.cwd, request.workdir);
     if (signal?.aborted) throw new Error("Command aborted", { cause: new CommandAbortedError() });
+    const shell = request.shell?.trim() || resolveDefaultCommandShell();
+    const interceptedPatch = await interceptShellApplyPatch(
+      request.cmd,
+      cwd,
+      shell,
+      signal,
+      onUpdate,
+    );
+    if (interceptedPatch) return interceptedPatch;
     this.pruneProcesses();
     const id = this.allocateProcessId();
     const initialOutput = new CommandOutputAccumulator("pi-codex-exec-command");
     const recentOutput = new RecentCommandOutputBuffer();
     let record: UnifiedExecRecord | undefined;
-    const commandProcess = this.spawnProcess({
-      command: request.cmd,
-      cwd,
-      env: unifiedExecEnvironment(ctx),
-      login: request.login ?? true,
-      onData: (data) => {
-        (record?.output ?? initialOutput).append(data);
-        recentOutput.append(data);
-      },
-      ...(request.shell === undefined ? {} : { shell: request.shell }),
-      tty: request.tty ?? false,
-    });
+    let commandProcess: CommandProcess;
+    try {
+      commandProcess = this.spawnProcess({
+        command: request.cmd,
+        cwd,
+        env: unifiedExecEnvironment(ctx),
+        login: request.login ?? true,
+        onData: (data) => {
+          (record?.output ?? initialOutput).append(data);
+          recentOutput.append(data);
+        },
+        ...(request.shell === undefined ? {} : { shell: request.shell }),
+        tty: request.tty ?? false,
+      });
+    } catch (error) {
+      const spawnError = errorFromThrown(error, "Unified exec failed with a non-Error value.");
+      throw new Error(execCommandFailure(request.cmd, spawnError.message), { cause: error });
+    }
     void commandProcess.exited.then(
       () => recentOutput.finish(),
       (error: unknown) => {
@@ -422,6 +498,7 @@ export class UnifiedExecManager {
       cwd,
       finishInitialInteraction,
       initialInteractionDone,
+      interactionActive: true,
       interaction: Promise.resolve(),
       lastUsed: Date.now(),
       output: initialOutput,
@@ -458,13 +535,16 @@ export class UnifiedExecManager {
           "Unified exec failed with a non-Error value.",
         );
         throw new Error(
-          appendStatus(
-            formatUnifiedExecResult(snapshot, {
-              chunkId: chunkId(),
-              exitCode: commandProcess.exitCode() ?? -1,
-              wallTimeSeconds: (performance.now() - startedAt) / 1_000,
-            }),
-            `execution error: ${executionError.message}`,
+          execCommandFailure(
+            request.cmd,
+            appendStatus(
+              formatUnifiedExecResult(snapshot, {
+                chunkId: chunkId(),
+                exitCode: commandProcess.exitCode() ?? -1,
+                wallTimeSeconds: (performance.now() - startedAt) / 1_000,
+              }),
+              `execution error: ${executionError.message}`,
+            ),
           ),
           { cause: error },
         );
@@ -473,6 +553,7 @@ export class UnifiedExecManager {
       return result;
     } finally {
       finishUpdates();
+      record.interactionActive = false;
       record.finishInitialInteraction();
     }
   }
@@ -484,8 +565,10 @@ export class UnifiedExecManager {
   ): Promise<CommandToolResult> {
     const sessionId = requiredInteger("session_id", request.session_id);
     const record = this.processes.get(sessionId);
-    if (!record) throw new Error(`Unknown exec_command session ID ${sessionId}.`);
-    const execute = async (): Promise<CommandToolResult> => {
+    if (!record) {
+      throw new Error(`write_stdin failed: Unknown exec_command session ID ${sessionId}.`);
+    }
+    const performInteraction = async (): Promise<CommandToolResult> => {
       record.lastUsed = Date.now();
       if (signal?.aborted) {
         throw new Error("write_stdin aborted; the exec_command session is still running.", {
@@ -507,10 +590,15 @@ export class UnifiedExecManager {
           } else if (chars === INTERRUPT) {
             record.process.interrupt();
           } else {
-            throw new Error("stdin is closed for a non-TTY exec_command session.");
+            throw new Error(
+              "stdin is closed for this session; rerun exec_command with tty=true to keep stdin open",
+            );
           }
         } catch (error) {
-          if (!record.process.hasExited()) throw error;
+          if (!record.process.hasExited()) {
+            const writeError = errorFromThrown(error, "failed to write to stdin");
+            throw new Error(`write_stdin failed: ${writeError.message}`, { cause: error });
+          }
         }
       }
 
@@ -530,20 +618,28 @@ export class UnifiedExecManager {
         const snapshot = await this.drainOutput(record, maxOutputTokens);
         const executionError = errorFromThrown(error, "write_stdin failed with a non-Error value.");
         throw new Error(
-          appendStatus(
+          `write_stdin failed: ${appendStatus(
             formatUnifiedExecResult(snapshot, {
               chunkId: chunkId(),
               exitCode: record.process.exitCode() ?? -1,
               wallTimeSeconds: (performance.now() - startedAt) / 1_000,
             }),
             `execution error: ${executionError.message}`,
-          ),
+          )}`,
           { cause: error },
         );
       } finally {
         finishUpdates();
       }
       return this.completeInteraction(record, startedAt, maxOutputTokens);
+    };
+    const execute = async (): Promise<CommandToolResult> => {
+      record.interactionActive = true;
+      try {
+        return await performInteraction();
+      } finally {
+        record.interactionActive = false;
+      }
     };
 
     const interaction = record.interaction.then(execute, (error: unknown) => {
@@ -676,10 +772,15 @@ export class UnifiedExecManager {
 
   private pruneProcesses(): void {
     if (this.processes.size < MAX_PROCESSES) return;
-    const records = [...this.processes.values()].sort(
-      (left, right) => left.lastUsed - right.lastUsed,
+    const processId = unifiedExecProcessIdToPrune(
+      [...this.processes.values()].map((record) => ({
+        id: record.id,
+        lastUsed: record.lastUsed,
+        exited: record.process.hasExited(),
+        interactionActive: record.interactionActive,
+      })),
     );
-    const record = records.find((candidate) => candidate.process.hasExited()) ?? records[0];
+    const record = processId === undefined ? undefined : this.processes.get(processId);
     if (!record) return;
     this.processes.delete(record.id);
     record.process.terminate();

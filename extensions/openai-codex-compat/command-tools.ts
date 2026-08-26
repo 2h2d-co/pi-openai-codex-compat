@@ -59,7 +59,9 @@ export function prepareShellCommandArguments(args: unknown): unknown {
   if (typeof args !== "object" || args === null || Array.isArray(args)) return args;
   const prepared: Record<string, unknown> = { ...args };
   if (Object.hasOwn(prepared, "timeout")) {
-    if (Object.hasOwn(prepared, "timeout_ms")) throw new Error("duplicate field `timeout_ms`");
+    if (Object.hasOwn(prepared, "timeout_ms")) {
+      throw new Error("failed to parse function arguments: duplicate field `timeout_ms`");
+    }
     prepared["timeout_ms"] = prepared["timeout"];
     Reflect.deleteProperty(prepared, "timeout");
   }

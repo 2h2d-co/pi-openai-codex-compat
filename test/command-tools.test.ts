@@ -1,6 +1,10 @@
 import assert from "node:assert/strict";
-import { readFile, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import test from "node:test";
+import { parseShellApplyPatchInvocation } from "../extensions/openai-codex-compat/command-apply-patch.ts";
+import { CommandOutputAccumulator } from "../extensions/openai-codex-compat/command-output.ts";
 import type {
   CommandProcess,
   CommandProcessExit,
@@ -15,6 +19,7 @@ import {
   executeShellCommand,
   UnifiedExecManager,
   type CommandRuntimeContext,
+  unifiedExecProcessIdToPrune,
 } from "../extensions/openai-codex-compat/command-runtime.ts";
 import {
   EXEC_COMMAND_DESCRIPTION,
@@ -243,8 +248,123 @@ test("accepts shell_command's hidden legacy timeout alias", () => {
         timeout: 15,
         timeout_ms: 20,
       }),
-    /duplicate field `timeout_ms`/u,
+    /failed to parse function arguments: duplicate field `timeout_ms`/u,
   );
+});
+
+test("recognizes only official top-level shell apply_patch forms", () => {
+  const patch = "*** Begin Patch\n*** Add File: added.txt\n+added\n*** End Patch";
+  assert.deepEqual(parseShellApplyPatchInvocation(`apply_patch <<'PATCH'\n${patch}\nPATCH`), {
+    kind: "apply-patch",
+    patch,
+  });
+  assert.deepEqual(
+    parseShellApplyPatchInvocation(`cd "nested dir" && applypatch <<EOF\n${patch}\nEOF`),
+    { kind: "apply-patch", patch, workdir: "nested dir" },
+  );
+  assert.deepEqual(parseShellApplyPatchInvocation(patch), { kind: "implicit-patch" });
+  for (const script of [
+    `echo before; apply_patch <<'PATCH'\n${patch}\nPATCH`,
+    `apply_patch extra <<'PATCH'\n${patch}\nPATCH`,
+    `apply_patch <<'PATCH'\n${patch}\nPATCH\n&& echo after`,
+    `cd first && cd second && apply_patch <<'PATCH'\n${patch}\nPATCH`,
+  ]) {
+    assert.deepEqual(parseShellApplyPatchInvocation(script), { kind: "not-apply-patch" });
+  }
+});
+
+test("intercepts shell_command and exec_command apply_patch heredocs without a shell binary", async (t) => {
+  const cwd = await mkdtemp(join(tmpdir(), "pi-codex-command-patch-"));
+  t.after(async () => rm(cwd, { recursive: true, force: true }));
+  let spawnCalls = 0;
+  const spawnProcess: CommandProcessSpawner = () => {
+    spawnCalls++;
+    throw new Error("shell spawning must be bypassed");
+  };
+  const shellPatch =
+    "apply_patch <<'PATCH'\n*** Begin Patch\n*** Add File: shell.txt\n+shell\n*** End Patch\nPATCH";
+  const shellResult = await executeShellCommand(
+    { command: shellPatch, login: false },
+    runtimeContext(cwd),
+    undefined,
+    undefined,
+    spawnProcess,
+  );
+  assert.equal(await readFile(join(cwd, "shell.txt"), "utf8"), "shell\n");
+  assert.match(shellResult.content[0]?.text ?? "", /shell\.txt/u);
+
+  const manager = new UnifiedExecManager(spawnProcess);
+  t.after(async () => manager.terminateAll());
+  const execPatch =
+    "apply_patch <<'PATCH'\n*** Begin Patch\n*** Add File: exec.txt\n+exec\n*** End Patch\nPATCH";
+  const execResult = await manager.execCommand(
+    { cmd: execPatch, login: false, tty: true },
+    runtimeContext(cwd),
+    undefined,
+    undefined,
+  );
+  assert.equal(await readFile(join(cwd, "exec.txt"), "utf8"), "exec\n");
+  assert.match(execResult.content[0]?.text ?? "", /exec\.txt/u);
+  assert.equal(execResult.details.sessionId, undefined);
+  assert.equal(manager.activeSessionCount(), 0);
+  assert.equal(spawnCalls, 0);
+
+  let unsupportedShellSpawns = 0;
+  const unsupportedShellManager = new UnifiedExecManager(() => {
+    unsupportedShellSpawns++;
+    const process = new FakeCommandProcess(false);
+    queueMicrotask(() => process.complete(0));
+    return process;
+  });
+  const unsupportedResult = await unsupportedShellManager.execCommand(
+    {
+      cmd: "apply_patch <<'PATCH'\n*** Begin Patch\n*** Add File: ignored.txt\n+ignored\n*** End Patch\nPATCH",
+      shell: "/usr/bin/fish",
+      yield_time_ms: 0,
+    },
+    runtimeContext(cwd),
+    undefined,
+    undefined,
+  );
+  assert.equal(unsupportedResult.details.exitCode, 0);
+  assert.equal(unsupportedShellSpawns, 1);
+  await assert.rejects(readFile(join(cwd, "ignored.txt"), "utf8"), /ENOENT/u);
+});
+
+test("fails closed on explicit malformed and implicit shell patches", async () => {
+  let spawnCalls = 0;
+  const spawnProcess: CommandProcessSpawner = () => {
+    spawnCalls++;
+    throw new Error("shell spawning must be bypassed");
+  };
+  await assert.rejects(
+    executeShellCommand(
+      {
+        command:
+          "apply_patch <<'PATCH'\n*** Begin Patch\n*** Add File: broken.txt\nbroken\n*** End Patch\nPATCH",
+        login: false,
+      },
+      runtimeContext(),
+      undefined,
+      undefined,
+      spawnProcess,
+    ),
+    /Patch failed at instruction/u,
+  );
+  await assert.rejects(
+    executeShellCommand(
+      {
+        command: "*** Begin Patch\n*** Add File: implicit.txt\n+implicit\n*** End Patch",
+        login: false,
+      },
+      runtimeContext(),
+      undefined,
+      undefined,
+      spawnProcess,
+    ),
+    /patch detected without explicit call to apply_patch/u,
+  );
+  assert.equal(spawnCalls, 0);
 });
 
 test("runs shell_command with Pi-style tail truncation and a complete temp file", async (t) => {
@@ -296,6 +416,18 @@ test("returns shell_command timeouts as successful results with captured output"
   assert.match(result.content[0]?.text ?? "", /command timed out after 5 milliseconds/);
 });
 
+test("counts invalid UTF-8 output tokens from raw bytes like Codex", async () => {
+  const output = new CommandOutputAccumulator("pi-codex-invalid-utf8-test");
+  output.append(Buffer.from([0xff, 0xff, 0xff, 0xff]));
+  output.finish();
+  const snapshot = output.snapshot();
+  await output.close();
+
+  assert.equal(snapshot.originalTokenCount, 1);
+  assert.equal(snapshot.details.originalTokenCount, 1);
+  assert.equal(snapshot.text, "\uFFFD\uFFFD\uFFFD\uFFFD");
+});
+
 test("accepts zero as an immediate shell_command timeout through the legacy alias", async () => {
   let commandProcess: FakeCommandProcess | undefined;
   const result = await executeShellCommand(
@@ -313,6 +445,49 @@ test("accepts zero as an immediate shell_command timeout through the legacy alia
   assert.equal(result.details.exitCode, 124);
   assert.equal(commandProcess?.terminateCalls, 1);
   assert.match(result.content[0]?.text ?? "", /command timed out after 0 milliseconds/u);
+});
+
+test("prefixes numeric command argument failures like Codex", async () => {
+  const spawnProcess: CommandProcessSpawner = () => {
+    throw new Error("invalid timing values must fail before spawning");
+  };
+  await assert.rejects(
+    executeShellCommand(
+      { command: "pwd", timeout_ms: -1 },
+      runtimeContext(),
+      undefined,
+      undefined,
+      spawnProcess,
+    ),
+    /^Error: failed to parse function arguments: timeout_ms must not be negative\.$/u,
+  );
+  const manager = new UnifiedExecManager(spawnProcess);
+  await assert.rejects(
+    manager.execCommand({ cmd: "pwd", yield_time_ms: 1.5 }, runtimeContext(), undefined, undefined),
+    (error: unknown) => {
+      assert.ok(error instanceof Error);
+      assert.equal(
+        error.message,
+        "failed to parse function arguments: yield_time_ms must be an integer.",
+      );
+      return true;
+    },
+  );
+});
+
+test("wraps unified exec spawn errors in the Codex template", async () => {
+  const manager = new UnifiedExecManager(() => {
+    throw new Error("node spawn failed");
+  });
+  await assert.rejects(
+    manager.execCommand(
+      { cmd: "broken-command", login: false },
+      runtimeContext(),
+      undefined,
+      undefined,
+    ),
+    /^Error: exec_command failed for `broken-command`: node spawn failed$/u,
+  );
 });
 
 test("gracefully terminates shell_command after cancellation", async () => {
@@ -460,6 +635,32 @@ test("runs and interacts with a persistent unified exec session", async (t) => {
   assert.ok(performance.now() - writeStartedAt >= 90);
 });
 
+test("uses Codex-prefixed write_stdin session errors", async (t) => {
+  const manager = new UnifiedExecManager(() => new FakeCommandProcess(false));
+  t.after(async () => manager.terminateAll());
+
+  await assert.rejects(
+    manager.writeStdin({ session_id: 12_345 }, undefined, undefined),
+    /write_stdin failed: Unknown exec_command session ID 12345\./u,
+  );
+
+  const started = await manager.execCommand(
+    { cmd: "non-tty", login: false, yield_time_ms: 0 },
+    runtimeContext(),
+    undefined,
+    undefined,
+  );
+  assert.ok(started.details.sessionId);
+  await assert.rejects(
+    manager.writeStdin(
+      { session_id: started.details.sessionId, chars: "input", yield_time_ms: 0 },
+      undefined,
+      undefined,
+    ),
+    /write_stdin failed: stdin is closed for this session; rerun exec_command with tty=true to keep stdin open/u,
+  );
+});
+
 test("formats empty and bounded background terminal listings", () => {
   assert.equal(formatBackgroundProcesses([]), "No background terminals running.");
   const processes = Array.from({ length: 18 }, (_, index) => ({
@@ -476,6 +677,32 @@ test("formats empty and bounded background terminal listings", () => {
   assert.match(listing, /session 1001 · pid 2001 · pipes/u);
   assert.doesNotMatch(listing, /session 1016/u);
   assert.match(listing, /\.\.\. and 2 more running$/u);
+});
+
+test("matches Codex's protected, exited-first, and interaction-safe pruning policy", () => {
+  const candidates = Array.from({ length: 12 }, (_, index) => ({
+    id: index + 1,
+    lastUsed: index + 1,
+    exited: false,
+    interactionActive: false,
+  }));
+  const updateCandidate = (index: number, update: Partial<(typeof candidates)[number]>): void => {
+    const candidate = candidates[index];
+    assert.ok(candidate);
+    candidates[index] = { ...candidate, ...update };
+  };
+
+  assert.equal(unifiedExecProcessIdToPrune(candidates), 1);
+  updateCandidate(2, { exited: true });
+  updateCandidate(11, { exited: true });
+  assert.equal(unifiedExecProcessIdToPrune(candidates), 3);
+
+  updateCandidate(2, { interactionActive: true });
+  assert.equal(unifiedExecProcessIdToPrune(candidates), undefined);
+
+  updateCandidate(2, { exited: false });
+  updateCandidate(0, { interactionActive: true });
+  assert.equal(unifiedExecProcessIdToPrune(candidates), 2);
 });
 
 test("inspects and safely stops background terminals from the ps browser", () => {

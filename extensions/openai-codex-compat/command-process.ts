@@ -197,7 +197,9 @@ class PlainCommandProcess implements CommandProcess {
   }
 
   write(_chars: string): void {
-    throw new Error("stdin is closed for a non-TTY exec_command session.");
+    throw new Error(
+      "stdin is closed for this session; rerun exec_command with tty=true to keep stdin open",
+    );
   }
 
   interrupt(): void {

@@ -60,7 +60,10 @@
   session, and confirmed `Ctrl+S` termination for all sessions. Match Codex's
   zero-value timing inputs, hidden `shell_command.timeout` alias, PowerShell
   arguments, post-PTY-write reaction delay, and graceful one-shot
-  cancellation.
+  cancellation. Intercept top-level `apply_patch` shell heredocs before process
+  creation, match Codex's protected and interaction-safe process pruning,
+  count invalid UTF-8 output tokens from raw bytes, and align command argument,
+  session, stdin, and spawn-error prefixes.
 - Replace the multi-line startup configuration dump with a concise package and
   settings-command notice, and simplify the fallback settings-save error.
 - Align deferred tool loading with Pi 0.84.3, preferring message-anchored
