@@ -181,8 +181,10 @@ processes receive the official non-color, UTF-8 locale, and pager environment
 normalization except `CODEX_CI`, which this package deliberately does not set.
 Cancelling the initial wait preserves a started process and reports its session
 ID in Pi's cancellation result rather than relying on Codex's background
-terminal UI. One-shot nonzero exits and timeouts remain successful tool
-results, matching official tool-call semantics.
+terminal UI. Like Codex, the package provides `/ps` to list live background
+terminals and `/stop` to terminate all of them. One-shot nonzero exits and
+timeouts remain successful tool results, matching official tool-call
+semantics.
 
 Unlike official Codex, the package has no execution-environment, sandbox,
 permission-profile, or approval lifecycle. Those schema fields are omitted,

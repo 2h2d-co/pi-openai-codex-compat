@@ -4,6 +4,7 @@ import {
   UnifiedExecManager,
   type ExecCommandRequest,
   type ShellCommandRequest,
+  type UnifiedExecProcessInfo,
   type WriteStdinRequest,
 } from "./command-runtime.ts";
 import type { CommandProcessSpawner } from "./command-process.ts";
@@ -31,7 +32,10 @@ export {
   WRITE_STDIN_TOOL_NAME,
 } from "./command-tool-contract.ts";
 
-export type CommandToolsApi = Pick<ExtensionAPI, "on" | "registerTool">;
+export const BACKGROUND_PROCESSES_COMMAND_NAME = "ps";
+export const STOP_BACKGROUND_PROCESSES_COMMAND_NAME = "stop";
+
+export type CommandToolsApi = Pick<ExtensionAPI, "on" | "registerCommand" | "registerTool">;
 
 export type CommandToolsController = {
   terminateUnifiedExecSessions: () => void;
@@ -45,12 +49,54 @@ function writeStdinSummary(request: Partial<WriteStdinRequest>): string {
   return `write ${JSON.stringify(singleLine)} to session ${id}`;
 }
 
+function singleLineCommand(command: string): string {
+  const line = command.replaceAll(/\s+/gu, " ").trim();
+  return line.length > 160 ? `${line.slice(0, 157)}...` : line;
+}
+
+export function formatBackgroundProcesses(processes: readonly UnifiedExecProcessInfo[]): string {
+  if (processes.length === 0) return "No background terminals running.";
+
+  const maximum = 16;
+  const lines = ["Background terminals"];
+  for (const process of processes.slice(0, maximum)) {
+    lines.push(
+      `• session ${process.sessionId} · pid ${process.pid} · ${process.tty ? "PTY" : "pipes"} · ${singleLineCommand(process.command)}`,
+      `  cwd: ${process.cwd}`,
+    );
+  }
+  const remaining = processes.length - maximum;
+  if (remaining > 0) lines.push(`... and ${remaining} more running`);
+  return lines.join("\n");
+}
+
 export default function registerCommandTools(
   pi: CommandToolsApi,
   resolveToolBackground: CodexToolBackgroundResolver = () => DEFAULT_CONFIG.toolBackground,
   spawnProcess?: CommandProcessSpawner,
 ): CommandToolsController {
   const manager = new UnifiedExecManager(spawnProcess);
+
+  pi.registerCommand(BACKGROUND_PROCESSES_COMMAND_NAME, {
+    description: "list background terminals",
+    handler: async (_args, ctx) => {
+      ctx.ui.notify(formatBackgroundProcesses(manager.listProcesses()), "info");
+    },
+  });
+
+  pi.registerCommand(STOP_BACKGROUND_PROCESSES_COMMAND_NAME, {
+    description: "stop all background terminals",
+    handler: async (_args, ctx) => {
+      const count = manager.listProcesses().length;
+      await manager.terminateAll();
+      ctx.ui.notify(
+        count === 0
+          ? "No background terminals running."
+          : `Stopped ${count} background terminal${count === 1 ? "" : "s"}.`,
+        "info",
+      );
+    },
+  });
 
   pi.registerTool({
     name: EXEC_COMMAND_TOOL_NAME,

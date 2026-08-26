@@ -61,12 +61,24 @@ export type CommandToolResult = {
   details: CommandOutputDetails;
 };
 
+export type UnifiedExecProcessInfo = {
+  sessionId: number;
+  pid: number;
+  command: string;
+  cwd: string;
+  tty: boolean;
+};
+
 type UnifiedExecRecord = {
   id: number;
+  command: string;
+  cwd: string;
   process: CommandProcess;
   output: CommandOutputAccumulator;
   lastUsed: number;
   interaction: Promise<void>;
+  initialInteractionDone: Promise<void>;
+  finishInitialInteraction: () => void;
 };
 
 class CommandAbortedError extends Error {
@@ -373,8 +385,16 @@ export class UnifiedExecManager {
       ...(request.shell === undefined ? {} : { shell: request.shell }),
       tty: request.tty ?? false,
     });
+    let finishInitialInteraction = (): void => {};
+    const initialInteractionDone = new Promise<void>((resolveInteraction) => {
+      finishInitialInteraction = resolveInteraction;
+    });
     record = {
       id,
+      command: request.cmd,
+      cwd,
+      finishInitialInteraction,
+      initialInteractionDone,
       interaction: Promise.resolve(),
       lastUsed: Date.now(),
       output: initialOutput,
@@ -385,42 +405,48 @@ export class UnifiedExecManager {
     const startedAt = performance.now();
     const finishUpdates = streamUpdates(record.output, onUpdate, maxOutputTokens);
     try {
-      await waitForProcess(commandProcess, yieldTimeMs, signal);
-    } catch (error) {
-      if (error instanceof CommandAbortedError) {
-        const result = await this.completeInteraction(record, startedAt, maxOutputTokens);
-        const sessionId = result.details.sessionId;
+      try {
+        await waitForProcess(commandProcess, yieldTimeMs, signal);
+      } catch (error) {
+        if (error instanceof CommandAbortedError) {
+          const result = await this.completeInteraction(record, startedAt, maxOutputTokens);
+          const sessionId = result.details.sessionId;
+          throw new Error(
+            appendStatus(
+              result.content[0]?.text ?? "",
+              sessionId === undefined
+                ? "Command aborted after the process exited."
+                : `Command aborted; process continues with session ID ${sessionId}.`,
+            ),
+            { cause: error },
+          );
+        }
+        this.processes.delete(id);
+        commandProcess.terminate();
+        await settleTerminatedProcess(commandProcess);
+        const snapshot = await this.drainOutput(record, maxOutputTokens);
+        const executionError = errorFromThrown(
+          error,
+          "Unified exec failed with a non-Error value.",
+        );
         throw new Error(
           appendStatus(
-            result.content[0]?.text ?? "",
-            sessionId === undefined
-              ? "Command aborted after the process exited."
-              : `Command aborted; process continues with session ID ${sessionId}.`,
+            formatUnifiedExecResult(snapshot, {
+              chunkId: chunkId(),
+              exitCode: commandProcess.exitCode() ?? -1,
+              wallTimeSeconds: (performance.now() - startedAt) / 1_000,
+            }),
+            `execution error: ${executionError.message}`,
           ),
           { cause: error },
         );
       }
-      this.processes.delete(id);
-      commandProcess.terminate();
-      await settleTerminatedProcess(commandProcess);
-      const snapshot = await this.drainOutput(record, maxOutputTokens);
-      const executionError = errorFromThrown(error, "Unified exec failed with a non-Error value.");
-      throw new Error(
-        appendStatus(
-          formatUnifiedExecResult(snapshot, {
-            chunkId: chunkId(),
-            exitCode: commandProcess.exitCode() ?? -1,
-            wallTimeSeconds: (performance.now() - startedAt) / 1_000,
-          }),
-          `execution error: ${executionError.message}`,
-        ),
-        { cause: error },
-      );
+      const result = await this.completeInteraction(record, startedAt, maxOutputTokens);
+      return result;
     } finally {
       finishUpdates();
+      record.finishInitialInteraction();
     }
-
-    return this.completeInteraction(record, startedAt, maxOutputTokens);
   }
 
   async writeStdin(
@@ -510,6 +536,8 @@ export class UnifiedExecManager {
     this.shuttingDown = Promise.all(
       records.map(async (record) => {
         await settleTerminatedProcess(record.process);
+        await record.initialInteractionDone;
+        await record.interaction;
         record.output.finish();
         await record.output.close();
       }),
@@ -523,6 +551,19 @@ export class UnifiedExecManager {
 
   activeSessionCount(): number {
     return this.processes.size;
+  }
+
+  listProcesses(): UnifiedExecProcessInfo[] {
+    return [...this.processes.values()]
+      .filter((record) => !record.process.hasExited())
+      .sort((left, right) => left.id - right.id)
+      .map((record) => ({
+        sessionId: record.id,
+        pid: record.process.pid,
+        command: record.command,
+        cwd: record.cwd,
+        tty: record.process.tty,
+      }));
   }
 
   private async completeInteraction(

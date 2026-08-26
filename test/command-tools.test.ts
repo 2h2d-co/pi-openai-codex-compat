@@ -21,6 +21,7 @@ import {
 } from "../extensions/openai-codex-compat/command-tool-contract.ts";
 import {
   EXEC_COMMAND_PARAMETERS,
+  formatBackgroundProcesses,
   SHELL_COMMAND_PARAMETERS,
   WRITE_STDIN_PARAMETERS,
 } from "../extensions/openai-codex-compat/command-tools.ts";
@@ -339,6 +340,19 @@ test("runs and interacts with a persistent unified exec session", async (t) => {
   assert.equal(processOptions?.env["NO_COLOR"], "1");
   assert.equal(processOptions?.env["PAGER"], "cat");
   assert.equal(processOptions?.env["CODEX_CI"], process.env["CODEX_CI"]);
+  assert.deepEqual(manager.listProcesses(), [
+    {
+      sessionId,
+      pid: 42,
+      command: "interactive",
+      cwd: process.cwd(),
+      tty: true,
+    },
+  ]);
+  assert.equal(
+    formatBackgroundProcesses(manager.listProcesses()),
+    `Background terminals\n• session ${sessionId} · pid 42 · PTY · interactive\n  cwd: ${process.cwd()}`,
+  );
   assert.match(started.content[0]?.text ?? "", /Process running with session ID/);
   assert.match(started.content[0]?.text ?? "", /ready/);
 
@@ -355,6 +369,22 @@ test("runs and interacts with a persistent unified exec session", async (t) => {
   assert.equal(completed.details.sessionId, undefined);
   assert.match(completed.content[0]?.text ?? "", /received:hello/);
   assert.equal(manager.activeSessionCount(), 0);
+});
+
+test("formats empty and bounded background terminal listings", () => {
+  assert.equal(formatBackgroundProcesses([]), "No background terminals running.");
+  const processes = Array.from({ length: 18 }, (_, index) => ({
+    sessionId: 1_000 + index,
+    pid: 2_000 + index,
+    command: `printf ${index}\nwith more`,
+    cwd: `/tmp/process-${index}`,
+    tty: index % 2 === 0,
+  }));
+  const listing = formatBackgroundProcesses(processes);
+  assert.match(listing, /session 1000 · pid 2000 · PTY · printf 0 with more/u);
+  assert.match(listing, /session 1001 · pid 2001 · pipes/u);
+  assert.doesNotMatch(listing, /session 1016/u);
+  assert.match(listing, /\.\.\. and 2 more running$/u);
 });
 
 test("preserves an initially cancelled unified exec process and exposes its session ID", async (t) => {
@@ -400,6 +430,36 @@ test("preserves an initially cancelled unified exec process and exposes its sess
     undefined,
   );
   assert.equal(completed.details.exitCode, 0);
+  assert.equal(manager.activeSessionCount(), 0);
+});
+
+test("stops a process safely while its initial exec_command call is active", async () => {
+  let notifySpawned: (() => void) | undefined;
+  const spawned = new Promise<void>((resolveSpawned) => {
+    notifySpawned = resolveSpawned;
+  });
+  const spawnProcess: CommandProcessSpawner = (options) => {
+    const commandProcess = new FakeCommandProcess(false);
+    options.onData("started\n");
+    notifySpawned?.();
+    return commandProcess;
+  };
+  const manager = new UnifiedExecManager(spawnProcess);
+  const execution = manager.execCommand(
+    { cmd: "long-command", login: false, yield_time_ms: 30_000 },
+    runtimeContext(),
+    undefined,
+    undefined,
+  );
+  await spawned;
+
+  const stopping = manager.terminateAll();
+  const result = await execution;
+  await stopping;
+
+  assert.equal(result.details.exitCode, -1);
+  assert.equal(result.details.sessionId, undefined);
+  assert.match(result.content[0]?.text ?? "", /started/);
   assert.equal(manager.activeSessionCount(), 0);
 });
 
