@@ -3,10 +3,10 @@ import {
   requireJsonRecords,
 } from "../../extensions/openai-codex-compat/codex-protocol.ts";
 import {
-  EXEC_COMMAND_DESCRIPTION,
   EXEC_COMMAND_PARAMETERS,
-  WRITE_STDIN_DESCRIPTION,
+  execCommandPromptMetadata,
   WRITE_STDIN_PARAMETERS,
+  writeStdinPromptMetadata,
 } from "../../extensions/openai-codex-compat/command-tool-contract.ts";
 import {
   assert,
@@ -34,14 +34,16 @@ test("omits Code Mode-only output schemas from direct command tools", async () =
     request = structuredClone(requireJsonRecord(body));
     yield* textEvents("done");
   };
+  const execCommandPrompt = execCommandPromptMetadata("zsh", ["/bin/bash", "/bin/sh"]);
+  const writeStdinPrompt = writeStdinPromptMetadata();
   const execCommand: Tool = {
     name: "exec_command",
-    description: EXEC_COMMAND_DESCRIPTION,
+    description: execCommandPrompt.description,
     parameters: EXEC_COMMAND_PARAMETERS,
   };
   const writeStdin: Tool = {
     name: "write_stdin",
-    description: WRITE_STDIN_DESCRIPTION,
+    description: writeStdinPrompt.description,
     parameters: WRITE_STDIN_PARAMETERS,
   };
   const assistant = {

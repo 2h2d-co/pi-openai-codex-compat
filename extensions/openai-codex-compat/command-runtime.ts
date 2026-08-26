@@ -471,10 +471,15 @@ export async function executeShellCommand(
 export class UnifiedExecManager {
   private readonly processes = new Map<number, UnifiedExecRecord>();
   private readonly spawnProcess: CommandProcessSpawner;
+  private readonly defaultShell: ResolvedCommandShell;
   private shuttingDown: Promise<void> | undefined;
 
-  constructor(spawnProcess: CommandProcessSpawner = spawnCommandProcess) {
+  constructor(
+    spawnProcess: CommandProcessSpawner = spawnCommandProcess,
+    defaultShell: ResolvedCommandShell = resolveDefaultCommandShell(),
+  ) {
     this.spawnProcess = spawnProcess;
+    this.defaultShell = defaultShell;
   }
 
   async execCommand(
@@ -490,7 +495,8 @@ export class UnifiedExecManager {
     if (signal?.aborted) throw new Error("Command aborted", { cause: new CommandAbortedError() });
     const cwd = await resolveCommandWorkingDirectory(ctx.cwd, request.workdir);
     if (signal?.aborted) throw new Error("Command aborted", { cause: new CommandAbortedError() });
-    const shell = resolveCommandShell(request.shell?.trim() || undefined);
+    const requestedShell = request.shell?.trim();
+    const shell = requestedShell ? resolveCommandShell(requestedShell) : this.defaultShell;
     const interceptedPatch = await interceptShellApplyPatch(
       codexCommandInvocation(shell, request.cmd, request.login ?? true),
       cwd,

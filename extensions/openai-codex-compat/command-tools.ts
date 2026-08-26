@@ -10,22 +10,22 @@ import {
 import type { CommandProcessSpawner } from "./command-process.ts";
 import {
   commandShellDisplayName,
-  resolveDefaultCommandShell,
-  type ResolvedCommandShell,
+  resolveCommandShellCatalog,
+  type CommandShellCatalog,
 } from "./command-shell.ts";
 import type { CodexToolBackgroundResolver } from "./codex-tool-surface.ts";
 import { DEFAULT_CONFIG } from "./config.ts";
 import { renderCommandCall, renderCommandResult } from "./command-render.ts";
 import {
-  EXEC_COMMAND_DESCRIPTION,
   EXEC_COMMAND_PARAMETERS,
   EXEC_COMMAND_TOOL_NAME,
+  execCommandPromptMetadata,
   SHELL_COMMAND_PARAMETERS,
   SHELL_COMMAND_TOOL_NAME,
   shellCommandPromptMetadata,
-  WRITE_STDIN_DESCRIPTION,
   WRITE_STDIN_PARAMETERS,
   WRITE_STDIN_TOOL_NAME,
+  writeStdinPromptMetadata,
 } from "./command-tool-contract.ts";
 
 export {
@@ -85,10 +85,16 @@ export default function registerCommandTools(
   pi: CommandToolsApi,
   resolveToolBackground: CodexToolBackgroundResolver = () => DEFAULT_CONFIG.toolBackground,
   spawnProcess?: CommandProcessSpawner,
-  shellCommandShell: ResolvedCommandShell = resolveDefaultCommandShell(),
+  shellCatalog: CommandShellCatalog = resolveCommandShellCatalog(),
 ): CommandToolsController {
-  const manager = new UnifiedExecManager(spawnProcess);
-  const shellCommandPrompt = shellCommandPromptMetadata(commandShellDisplayName(shellCommandShell));
+  const manager = new UnifiedExecManager(spawnProcess, shellCatalog.defaultShell);
+  const shellName = commandShellDisplayName(shellCatalog.defaultShell);
+  const alternativeShells = shellCatalog.availableShells
+    .filter((shell) => shell.path !== shellCatalog.defaultShell.path)
+    .map((shell) => shell.path);
+  const execCommandPrompt = execCommandPromptMetadata(shellName, alternativeShells);
+  const writeStdinPrompt = writeStdinPromptMetadata();
+  const shellCommandPrompt = shellCommandPromptMetadata(shellName);
 
   pi.registerCommand(BACKGROUND_PROCESSES_COMMAND_NAME, {
     description: "browse background terminals",
@@ -168,11 +174,9 @@ export default function registerCommandTools(
   pi.registerTool({
     name: EXEC_COMMAND_TOOL_NAME,
     label: EXEC_COMMAND_TOOL_NAME,
-    description: EXEC_COMMAND_DESCRIPTION,
-    promptSnippet: "Run shell commands with optional persistent PTY sessions",
-    promptGuidelines: [
-      "Use exec_command for shell commands and use write_stdin to poll or interact with a returned session ID.",
-    ],
+    description: execCommandPrompt.description,
+    promptSnippet: execCommandPrompt.promptSnippet,
+    promptGuidelines: execCommandPrompt.promptGuidelines,
     parameters: EXEC_COMMAND_PARAMETERS,
     renderShell: "self",
     async execute(_toolCallId, params, signal, onUpdate, ctx) {
@@ -195,11 +199,9 @@ export default function registerCommandTools(
   pi.registerTool({
     name: WRITE_STDIN_TOOL_NAME,
     label: WRITE_STDIN_TOOL_NAME,
-    description: WRITE_STDIN_DESCRIPTION,
-    promptSnippet: "Write to or poll a persistent exec_command session",
-    promptGuidelines: [
-      "Use write_stdin only with a session ID returned by exec_command; omit chars to poll without writing.",
-    ],
+    description: writeStdinPrompt.description,
+    promptSnippet: writeStdinPrompt.promptSnippet,
+    promptGuidelines: writeStdinPrompt.promptGuidelines,
     parameters: WRITE_STDIN_PARAMETERS,
     renderShell: "self",
     async execute(_toolCallId, params, signal, onUpdate) {
@@ -235,7 +237,7 @@ export default function registerCommandTools(
         signal,
         onUpdate,
         spawnProcess,
-        shellCommandShell,
+        shellCatalog.defaultShell,
       );
     },
     renderCall(args, theme, context) {

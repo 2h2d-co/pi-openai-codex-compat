@@ -9,6 +9,11 @@ export type ResolvedCommandShell = {
   path: string;
 };
 
+export type CommandShellCatalog = {
+  defaultShell: ResolvedCommandShell;
+  availableShells: ResolvedCommandShell[];
+};
+
 export function commandShellDisplayName(shell: ResolvedCommandShell): string {
   return shell.type === "powershell" ? "PowerShell" : shell.type;
 }
@@ -230,6 +235,24 @@ export function resolveDefaultCommandShell(
       ? (resolvedUserShell ?? getShell("zsh", host) ?? getShell("bash", host))
       : (resolvedUserShell ?? getShell("bash", host) ?? getShell("zsh", host));
   return resolvedFallback ?? ultimateFallbackShell(host.platform);
+}
+
+export function resolveCommandShellCatalog(
+  host: CommandShellResolutionHost = defaultHost(),
+): CommandShellCatalog {
+  const defaultShell = resolveDefaultCommandShell(host);
+  const types: readonly CommandShellType[] =
+    host.platform === "win32" ? ["powershell", "cmd"] : ["zsh", "bash", "sh"];
+  const availableShells: ResolvedCommandShell[] = [];
+  const seen = new Set<string>();
+  for (const shell of [defaultShell, ...types.map((type) => getShell(type, host))]) {
+    if (shell === undefined) continue;
+    const key = `${shell.type}\0${shell.path}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    availableShells.push(shell);
+  }
+  return { defaultShell, availableShells };
 }
 
 export function resolveCommandShell(

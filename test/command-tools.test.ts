@@ -20,6 +20,7 @@ import {
   codexCommandInvocation,
   detectCommandShellType,
   resolveCommandShell,
+  resolveCommandShellCatalog,
   resolveDefaultCommandShell,
   type CommandShellResolutionHost,
 } from "../extensions/openai-codex-compat/command-shell.ts";
@@ -30,9 +31,9 @@ import {
   unifiedExecProcessIdToPrune,
 } from "../extensions/openai-codex-compat/command-runtime.ts";
 import {
-  EXEC_COMMAND_DESCRIPTION,
+  execCommandPromptMetadata,
   shellCommandPromptMetadata,
-  WRITE_STDIN_DESCRIPTION,
+  writeStdinPromptMetadata,
 } from "../extensions/openai-codex-compat/command-tool-contract.ts";
 import {
   createBackgroundProcessBrowser,
@@ -165,22 +166,7 @@ test("advertises the simplified official command schemas", () => {
   }
 });
 
-test("uses the exact official descriptions for retained unified command fields", () => {
-  if (process.platform === "win32") {
-    assert.match(
-      EXEC_COMMAND_DESCRIPTION,
-      /^Runs a command in a PTY, returning output or a session ID for ongoing interaction\.\n\nWindows safety rules:/u,
-    );
-  } else {
-    assert.equal(
-      EXEC_COMMAND_DESCRIPTION,
-      "Runs a command in a PTY, returning output or a session ID for ongoing interaction.",
-    );
-  }
-  assert.equal(
-    WRITE_STDIN_DESCRIPTION,
-    "Writes characters to an existing unified exec session and returns recent output.",
-  );
+test("uses the exact official descriptions for retained command fields", () => {
   assert.equal(
     Reflect.get(EXEC_COMMAND_PARAMETERS.properties.workdir, "description"),
     "Working directory for the command. Defaults to the turn cwd.",
@@ -209,6 +195,43 @@ test("uses the exact official descriptions for retained unified command fields",
     Reflect.get(SHELL_COMMAND_PARAMETERS.properties.timeout_ms, "description"),
     "Maximum command runtime. Defaults to 10000 ms.",
   );
+});
+
+test("describes unified exec using its resolved shell and lifecycle", () => {
+  assert.deepEqual(execCommandPromptMetadata("zsh", ["/bin/bash", "/bin/sh"]), {
+    promptSnippet: "Run commands using zsh, with optional persistent PTY sessions",
+    promptGuidelines: [
+      "Use `exec_command` to execute commands using zsh; always set `workdir` to the directory in which the command should run. Use `write_stdin` to poll or interact with a session ID returned from `exec_command`.",
+    ],
+    description:
+      "Runs a command using zsh, optionally in a PTY, and returns its available output and process status.\n" +
+      "- Set `shell` if you want to use a shell different from zsh. You can use `/bin/bash` or `/bin/sh`.\n" +
+      "- Always set the `workdir` param when using the exec_command function. Do not use `cd` unless absolutely necessary.\n" +
+      "- If `workdir` is omitted, it defaults to the turn cwd.\n" +
+      "- The call waits up to `yield_time_ms` for the process to exit. If it exits, the result contains its output and exit code, without a session ID. If it remains running, the result contains the output produced so far and a session ID.\n" +
+      "- Pass the session ID to `write_stdin` to poll for more output or interact with the process. Each interaction returns only the output produced since the previous interaction.\n" +
+      "- Commands can inspect current Pi session and model details through the `PI_SESSION_ID`, `PI_SESSION_FILE`, `PI_PROVIDER`, `PI_MODEL`, and `PI_REASONING_LEVEL` environment variables.",
+  });
+
+  const oneAlternative = execCommandPromptMetadata("PowerShell", ["cmd.exe"]);
+  assert.match(
+    oneAlternative.description,
+    /Set `shell` if you want to use a shell different from PowerShell\. You can use `cmd\.exe`\./u,
+  );
+  assert.doesNotMatch(execCommandPromptMetadata("sh", []).description, /Set `shell`/u);
+
+  assert.deepEqual(writeStdinPromptMetadata(), {
+    promptSnippet: "Write to or poll a long-running exec_command session",
+    promptGuidelines: [
+      "Use `write_stdin` only with a session ID returned from `exec_command`; omit `chars` to wait for more output or for the process to exit.",
+    ],
+    description:
+      "Writes characters to or polls an existing `exec_command` session and returns its new output and process status.\n" +
+      "- Pass the session ID returned from `exec_command` as `session_id`.\n" +
+      "- Omit `chars` to wait for more output or for the process to exit without writing to stdin.\n" +
+      "- If the process remains running, the result contains output produced since the previous interaction and the same session ID. If it exits, the result contains any remaining output and its exit code, without a session ID; the session is then complete.\n" +
+      "- Arbitrary input requires an `exec_command` session started with `tty: true`; non-PTY sessions accept Ctrl-C only.",
+  });
 });
 
 test("describes shell_command using its resolved shell", () => {
@@ -273,6 +296,26 @@ test("resolves supported shells using Codex's type-first discovery policy", () =
     type: "zsh",
     path: "/users/test/zsh",
   });
+  assert.deepEqual(resolveCommandShellCatalog(host), {
+    defaultShell: {
+      type: "zsh",
+      path: "/users/test/zsh",
+    },
+    availableShells: [
+      {
+        type: "zsh",
+        path: "/users/test/zsh",
+      },
+      {
+        type: "bash",
+        path: "/users/test/bin/bash",
+      },
+      {
+        type: "sh",
+        path: "/bin/sh",
+      },
+    ],
+  });
   assert.deepEqual(resolveCommandShell("/model/supplied/bash", host), {
     type: "bash",
     path: "/users/test/bin/bash",
@@ -281,6 +324,63 @@ test("resolves supported shells using Codex's type-first discovery policy", () =
     type: "sh",
     path: "/bin/sh",
   });
+});
+
+test("discovers only platform-appropriate Windows shell values", () => {
+  const executables = new Set([String.raw`C:\shells\pwsh.EXE`, String.raw`C:\shells\cmd.EXE`]);
+  const host = shellResolutionHost({
+    platform: "win32",
+    pathEnvironment: String.raw`C:\shells`,
+    pathExtensions: ".EXE",
+    userShell: () => undefined,
+    executableExists: (path) => executables.has(path),
+  });
+
+  assert.deepEqual(resolveCommandShellCatalog(host), {
+    defaultShell: {
+      type: "powershell",
+      path: String.raw`C:\shells\pwsh.EXE`,
+    },
+    availableShells: [
+      {
+        type: "powershell",
+        path: String.raw`C:\shells\pwsh.EXE`,
+      },
+      {
+        type: "cmd",
+        path: String.raw`C:\shells\cmd.EXE`,
+      },
+    ],
+  });
+});
+
+test("uses the advertised default shell for unified and classic execution", async () => {
+  const advertisedShell = { type: "bash", path: "/advertised/bash" } as const;
+  const resolvedShells: CommandProcessOptions["resolvedShell"][] = [];
+  const spawnProcess: CommandProcessSpawner = (options) => {
+    resolvedShells.push(options.resolvedShell);
+    const commandProcess = new FakeCommandProcess(options.tty);
+    queueMicrotask(() => commandProcess.complete(0));
+    return commandProcess;
+  };
+
+  const manager = new UnifiedExecManager(spawnProcess, advertisedShell);
+  await manager.execCommand(
+    { cmd: "unified", login: false, yield_time_ms: 250 },
+    runtimeContext(),
+    undefined,
+    undefined,
+  );
+  await executeShellCommand(
+    { command: "classic", login: false },
+    runtimeContext(),
+    undefined,
+    undefined,
+    spawnProcess,
+    advertisedShell,
+  );
+
+  assert.deepEqual(resolvedShells, [advertisedShell, advertisedShell]);
 });
 
 test("accepts shell_command's hidden legacy timeout alias", () => {

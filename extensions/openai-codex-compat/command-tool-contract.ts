@@ -4,26 +4,62 @@ export const EXEC_COMMAND_TOOL_NAME = "exec_command";
 export const WRITE_STDIN_TOOL_NAME = "write_stdin";
 export const SHELL_COMMAND_TOOL_NAME = "shell_command";
 
-const WINDOWS_SHELL_GUIDANCE = `Windows safety rules:
-- Do not compose destructive filesystem commands across shells. Do not enumerate paths in PowerShell and then pass them to \`cmd /c\`, batch builtins, or another shell for deletion or moving. Use one shell end-to-end, prefer native PowerShell cmdlets such as \`Remove-Item\` / \`Move-Item\` with \`-LiteralPath\`, and avoid string-built shell commands for file operations.
-- Before any recursive delete or move on Windows, verify the resolved absolute target paths stay within the intended workspace or explicitly named target directory. Never issue a recursive delete or move against a computed path if the final target has not been checked.
-- When using \`Start-Process\` to launch a background helper or service, pass \`-WindowStyle Hidden\` unless the user explicitly asked for a visible interactive window. Use visible windows only for interactive tools the user needs to see or control.`;
-
-export const EXEC_COMMAND_DESCRIPTION =
-  process.platform === "win32"
-    ? `Runs a command in a PTY, returning output or a session ID for ongoing interaction.\n\n${WINDOWS_SHELL_GUIDANCE}`
-    : "Runs a command in a PTY, returning output or a session ID for ongoing interaction.";
-
-export const WRITE_STDIN_DESCRIPTION =
-  "Writes characters to an existing unified exec session and returns recent output.";
-
-export type ShellCommandPromptMetadata = {
+export type CommandToolPromptMetadata = {
   description: string;
   promptSnippet: string;
   promptGuidelines: [string];
 };
 
-export function shellCommandPromptMetadata(shell: string): ShellCommandPromptMetadata {
+function inlineCodeList(values: readonly string[]): string {
+  const formatted = values.map((value) => `\`${value}\``);
+  if (formatted.length === 1) return formatted[0] ?? "";
+  if (formatted.length === 2) return `${formatted[0]} or ${formatted[1]}`;
+  return `${formatted.slice(0, -1).join(", ")}, or ${formatted.at(-1)}`;
+}
+
+function alternativeShellDescription(shell: string, alternatives: readonly string[]): string[] {
+  if (alternatives.length === 0) return [];
+  return [
+    `- Set \`shell\` if you want to use a shell different from ${shell}. You can use ${inlineCodeList(alternatives)}.`,
+  ];
+}
+
+export function execCommandPromptMetadata(
+  shell: string,
+  alternativeShells: readonly string[],
+): CommandToolPromptMetadata {
+  return {
+    promptSnippet: `Run commands using ${shell}, with optional persistent PTY sessions`,
+    promptGuidelines: [
+      `Use \`exec_command\` to execute commands using ${shell}; always set \`workdir\` to the directory in which the command should run. Use \`write_stdin\` to poll or interact with a session ID returned from \`exec_command\`.`,
+    ],
+    description: [
+      `Runs a command using ${shell}, optionally in a PTY, and returns its available output and process status.`,
+      ...alternativeShellDescription(shell, alternativeShells),
+      "- Always set the `workdir` param when using the exec_command function. Do not use `cd` unless absolutely necessary.",
+      "- If `workdir` is omitted, it defaults to the turn cwd.",
+      "- The call waits up to `yield_time_ms` for the process to exit. If it exits, the result contains its output and exit code, without a session ID. If it remains running, the result contains the output produced so far and a session ID.",
+      "- Pass the session ID to `write_stdin` to poll for more output or interact with the process. Each interaction returns only the output produced since the previous interaction.",
+      "- Commands can inspect current Pi session and model details through the `PI_SESSION_ID`, `PI_SESSION_FILE`, `PI_PROVIDER`, `PI_MODEL`, and `PI_REASONING_LEVEL` environment variables.",
+    ].join("\n"),
+  };
+}
+
+export function writeStdinPromptMetadata(): CommandToolPromptMetadata {
+  return {
+    promptSnippet: "Write to or poll a long-running exec_command session",
+    promptGuidelines: [
+      "Use `write_stdin` only with a session ID returned from `exec_command`; omit `chars` to wait for more output or for the process to exit.",
+    ],
+    description: `Writes characters to or polls an existing \`exec_command\` session and returns its new output and process status.
+- Pass the session ID returned from \`exec_command\` as \`session_id\`.
+- Omit \`chars\` to wait for more output or for the process to exit without writing to stdin.
+- If the process remains running, the result contains output produced since the previous interaction and the same session ID. If it exits, the result contains any remaining output and its exit code, without a session ID; the session is then complete.
+- Arbitrary input requires an \`exec_command\` session started with \`tty: true\`; non-PTY sessions accept Ctrl-C only.`,
+  };
+}
+
+export function shellCommandPromptMetadata(shell: string): CommandToolPromptMetadata {
   return {
     promptSnippet: `Run commands using ${shell}`,
     promptGuidelines: [
