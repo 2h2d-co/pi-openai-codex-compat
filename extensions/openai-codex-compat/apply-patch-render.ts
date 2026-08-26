@@ -61,7 +61,8 @@ function modelFeedback(result: ApplyPatchResult): string | undefined {
   const text = result.content.flatMap((item) =>
     item.type === "text" && isString(item.text) ? [item.text] : [],
   );
-  return text.length > 0 ? text.join("\n") : undefined;
+  const feedback = text.join("\n").replace(/(?:\r?\n)+$/u, "");
+  return feedback || undefined;
 }
 
 class ApplyPatchResultComponent implements Component {

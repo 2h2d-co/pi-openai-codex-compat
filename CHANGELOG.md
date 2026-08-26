@@ -18,6 +18,8 @@
 
 ### Fixed
 
+- Remove trailing line endings from debug `apply_patch` result previews so they
+  do not add an empty output row before the intended bottom padding.
 - Remove trailing command-output line endings from TUI previews so the intended
   bottom padding matches the top padding instead of rendering an extra blank
   output row.

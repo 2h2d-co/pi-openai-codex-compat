@@ -114,6 +114,7 @@ test("balances command and apply_patch surface padding", () => {
       isPartial: false,
     },
     () => "none",
+    () => true,
   ).render(40);
 
   const leadingBlankLines = (lines: string[]): number => {
