@@ -25,6 +25,8 @@ import {
   type CommandShellResolutionHost,
 } from "../extensions/openai-codex-compat/command-shell.ts";
 import {
+  effectiveExecCommandYieldTimeMs,
+  effectiveWriteStdinYieldTimeMs,
   executeShellCommand,
   UnifiedExecManager,
   type CommandRuntimeContext,
@@ -195,6 +197,16 @@ test("uses the exact official descriptions for retained command fields", () => {
     Reflect.get(SHELL_COMMAND_PARAMETERS.properties.timeout_ms, "description"),
     "Maximum command runtime. Defaults to 10000 ms.",
   );
+});
+
+test("computes effective unified-exec yield durations", () => {
+  assert.equal(effectiveExecCommandYieldTimeMs(undefined), 10_000);
+  assert.equal(effectiveExecCommandYieldTimeMs(0), process.platform === "win32" ? 10_000 : 250);
+  assert.equal(effectiveExecCommandYieldTimeMs(60_000), 30_000);
+  assert.equal(effectiveWriteStdinYieldTimeMs(undefined, false), 250);
+  assert.equal(effectiveWriteStdinYieldTimeMs(undefined, true), 5_000);
+  assert.equal(effectiveWriteStdinYieldTimeMs(30_000, true), 30_000);
+  assert.equal(effectiveWriteStdinYieldTimeMs(600_000, true), 300_000);
 });
 
 test("describes unified exec using its resolved shell and lifecycle", () => {

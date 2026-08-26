@@ -71,6 +71,7 @@ test("balances command and apply_patch surface padding", () => {
   const commandCall = renderCommandCall(
     "exec_command",
     "printf output",
+    undefined,
     plainTheme,
     { executionStarted: true, isError: false, isPartial: false },
     () => "none",
@@ -136,44 +137,99 @@ test("renders partial command output with balanced running padding", () => {
   const pendingCall = renderCommandCall(
     "exec_command",
     "stream output",
+    "250ms",
     plainTheme,
     { executionStarted: false, isError: false, isPartial: true },
     () => "none",
-  ).render(40);
+  ).render(80);
   const runningCall = renderCommandCall(
     "exec_command",
     "stream output",
+    "250ms",
     plainTheme,
     { executionStarted: true, isError: false, isPartial: true },
     () => "none",
-  ).render(40);
+  ).render(80);
   const emptyUpdate = renderCommandResult(
     { content: [] },
     { expanded: false, isPartial: true },
     plainTheme,
     { isError: false, isPartial: true },
     () => "none",
-  ).render(40);
+  ).render(80);
   const outputUpdate = renderCommandResult(
     { content: [{ type: "text", text: "first\nsecond\n" }] },
     { expanded: false, isPartial: true },
     plainTheme,
     { isError: false, isPartial: true },
     () => "none",
-  ).render(40);
+  ).render(80);
 
   assert.deepEqual(
     pendingCall.map((line) => line.trim()),
-    ["", "exec_command  stream output", ""],
+    ["", "exec_command  [yield: 250ms]  stream output", ""],
   );
   assert.deepEqual(
     [...runningCall, ...emptyUpdate].map((line) => line.trim()),
-    ["", "exec_command  stream output", ""],
+    ["", "exec_command  [yield: 250ms]  stream output", ""],
   );
   assert.deepEqual(
     [...runningCall, ...outputUpdate].map((line) => line.trim()),
-    ["", "exec_command  stream output", "first", "second", ""],
+    ["", "exec_command  [yield: 250ms]  stream output", "", "first", "second", ""],
   );
+});
+
+test("emphasizes command calls while muting their output and metadata", () => {
+  const colors = new Map<string, string>();
+  const theme: RenderTheme = {
+    fg: (color, text) => {
+      colors.set(text, color);
+      return text;
+    },
+    bold: (text) => text,
+  };
+  renderCommandCall(
+    "exec_command",
+    "highlighted command",
+    "30s",
+    theme,
+    { executionStarted: true, isError: false, isPartial: true },
+    () => "none",
+  ).render(80);
+  assert.equal(colors.get("exec_command"), "warning");
+  assert.equal(colors.get("[yield: 30s]"), "muted");
+  assert.equal(colors.get("highlighted command"), "text");
+
+  colors.clear();
+  renderCommandResult(
+    {
+      content: [
+        {
+          type: "text",
+          text: "Chunk ID: abc123\nWall time: 1.0000 seconds\nProcess exited with code 0\nOriginal token count: 2\nOutput:\nbright output\n",
+        },
+      ],
+    },
+    { expanded: true, isPartial: false },
+    theme,
+    { isError: false, isPartial: false },
+    () => "none",
+  ).render(80);
+
+  assert.equal(colors.get("Chunk ID: abc123"), "dim");
+  assert.equal(colors.get("Output:"), "dim");
+  assert.equal(colors.get("bright output"), "muted");
+
+  colors.clear();
+  renderCommandResult(
+    { content: [{ type: "text", text: "one\ntwo\nthree\nfour\nfive\nsix\n" }] },
+    { expanded: false, isPartial: true },
+    theme,
+    { isError: false, isPartial: true },
+    () => "none",
+  ).render(80);
+  assert.equal(colors.get("… (1 earlier lines)"), "dim");
+  assert.equal(colors.get("six"), "muted");
 });
 
 test("caches completed command rendering by width until invalidated", () => {

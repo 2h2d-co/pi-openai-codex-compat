@@ -180,13 +180,13 @@ function timeout(value: number | undefined): number {
   return timeoutMs;
 }
 
-function initialYieldTime(value: number | undefined): number {
+export function effectiveExecCommandYieldTimeMs(value: number | undefined): number {
   const requested = positiveInteger("yield_time_ms", value, DEFAULT_EXEC_YIELD_TIME_MS);
   const floor = process.platform === "win32" ? WINDOWS_INITIAL_YIELD_FLOOR_MS : MIN_YIELD_TIME_MS;
   return Math.min(MAX_YIELD_TIME_MS, Math.max(floor, requested));
 }
 
-function writeYieldTime(value: number | undefined, empty: boolean): number {
+export function effectiveWriteStdinYieldTimeMs(value: number | undefined, empty: boolean): number {
   const requested = positiveInteger("yield_time_ms", value, DEFAULT_WRITE_YIELD_TIME_MS);
   return empty
     ? Math.min(MAX_EMPTY_POLL_MS, Math.max(MIN_EMPTY_POLL_MS, requested))
@@ -491,7 +491,7 @@ export class UnifiedExecManager {
     const maxOutputTokens =
       nonnegativeInteger("max_output_tokens", request.max_output_tokens) ??
       DEFAULT_MAX_OUTPUT_TOKENS;
-    const yieldTimeMs = initialYieldTime(request.yield_time_ms);
+    const yieldTimeMs = effectiveExecCommandYieldTimeMs(request.yield_time_ms);
     if (signal?.aborted) throw new Error("Command aborted", { cause: new CommandAbortedError() });
     const cwd = await resolveCommandWorkingDirectory(ctx.cwd, request.workdir);
     if (signal?.aborted) throw new Error("Command aborted", { cause: new CommandAbortedError() });
@@ -625,7 +625,7 @@ export class UnifiedExecManager {
       const maxOutputTokens =
         nonnegativeInteger("max_output_tokens", request.max_output_tokens) ??
         DEFAULT_MAX_OUTPUT_TOKENS;
-      const yieldTimeMs = writeYieldTime(request.yield_time_ms, chars.length === 0);
+      const yieldTimeMs = effectiveWriteStdinYieldTimeMs(request.yield_time_ms, chars.length === 0);
       if (chars && !record.process.hasExited()) {
         try {
           if (record.process.tty) {

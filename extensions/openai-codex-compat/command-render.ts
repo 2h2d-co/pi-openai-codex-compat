@@ -19,6 +19,11 @@ type CommandRenderResult = {
   content: Array<{ type: string; text?: string }>;
 };
 
+type CommandOutputPreviewLine = {
+  text: string;
+  sourceLine?: number;
+};
+
 function textOutput(result: CommandRenderResult): string {
   return result.content
     .filter(
@@ -31,10 +36,18 @@ function textOutput(result: CommandRenderResult): string {
 
 const COLLAPSED_OUTPUT_LINE_LIMIT = 5;
 
-export function commandOutputPreviewLines(output: string, expanded: boolean): string[] {
-  const visibleOutput = output.replace(/(?:\r?\n)+$/u, "");
+function visibleCommandOutput(output: string): string {
+  return output.replace(/(?:\r?\n)+$/u, "");
+}
+
+function commandOutputPreviewFromVisibleOutput(
+  visibleOutput: string,
+  expanded: boolean,
+): CommandOutputPreviewLine[] {
   if (!visibleOutput) return [];
-  if (expanded) return visibleOutput.split("\n");
+  if (expanded) {
+    return visibleOutput.split("\n").map((text, sourceLine) => ({ sourceLine, text }));
+  }
 
   let totalLines = 1;
   const recentLineStarts = [0];
@@ -47,39 +60,80 @@ export function commandOutputPreviewLines(output: string, expanded: boolean): st
     }
   }
 
-  if (totalLines <= COLLAPSED_OUTPUT_LINE_LIMIT) return visibleOutput.split("\n");
+  if (totalLines <= COLLAPSED_OUTPUT_LINE_LIMIT) {
+    return visibleOutput.split("\n").map((text, sourceLine) => ({ sourceLine, text }));
+  }
 
   const tailStart = recentLineStarts[0] ?? 0;
+  const retainedStartLine = totalLines - COLLAPSED_OUTPUT_LINE_LIMIT;
   return [
-    `… (${totalLines - COLLAPSED_OUTPUT_LINE_LIMIT} earlier lines)`,
-    ...visibleOutput.slice(tailStart).split("\n"),
+    { text: `… (${retainedStartLine} earlier lines)` },
+    ...visibleOutput
+      .slice(tailStart)
+      .split("\n")
+      .map((text, index) => ({ sourceLine: retainedStartLine + index, text })),
   ];
 }
 
+function commandOutputPreview(output: string, expanded: boolean): CommandOutputPreviewLine[] {
+  return commandOutputPreviewFromVisibleOutput(visibleCommandOutput(output), expanded);
+}
+
+export function commandOutputPreviewLines(output: string, expanded: boolean): string[] {
+  return commandOutputPreview(output, expanded).map((line) => line.text);
+}
+
+function commandOutputBodyStartLine(visibleOutput: string): number | undefined {
+  const embeddedMarker = visibleOutput.indexOf("\nOutput:");
+  const markerStart = visibleOutput.startsWith("Output:")
+    ? 0
+    : embeddedMarker === -1
+      ? -1
+      : embeddedMarker + 1;
+  if (markerStart === -1) return undefined;
+  const markerEnd = markerStart + "Output:".length;
+  if (!["", "\n"].includes(visibleOutput[markerEnd] ?? "")) return undefined;
+
+  let markerLine = 0;
+  for (let index = 0; index < markerStart; index++) {
+    if (visibleOutput.charCodeAt(index) === 10) markerLine++;
+  }
+  return markerLine + 1;
+}
+
 class CommandResultComponent implements Component {
-  private readonly previewLines: string[];
+  private readonly previewLines: CommandOutputPreviewLine[];
   private readonly theme: RenderTheme;
   private readonly isError: boolean;
+  private readonly outputBodyStartLine: number | undefined;
   private cachedWidth: number | undefined;
   private cachedLines: string[] | undefined;
 
-  constructor(output: string, expanded: boolean, theme: RenderTheme, isError: boolean) {
-    this.previewLines = commandOutputPreviewLines(output, expanded);
+  constructor(
+    visibleOutput: string,
+    expanded: boolean,
+    theme: RenderTheme,
+    isError: boolean,
+    isPartial: boolean,
+  ) {
+    this.previewLines = commandOutputPreviewFromVisibleOutput(visibleOutput, expanded);
     this.theme = theme;
     this.isError = isError;
+    this.outputBodyStartLine = isPartial ? 0 : commandOutputBodyStartLine(visibleOutput);
   }
 
   render(width: number): string[] {
     const effectiveWidth = Math.max(1, width);
     if (this.cachedLines && this.cachedWidth === effectiveWidth) return this.cachedLines;
 
-    const lines = this.previewLines.map((line) =>
-      truncateToWidth(
-        this.theme.fg(this.isError ? "error" : "toolOutput", line),
-        effectiveWidth,
-        "…",
-      ),
-    );
+    const lines = this.previewLines.map((line) => {
+      const isOutput =
+        line.sourceLine !== undefined &&
+        (this.outputBodyStartLine === undefined || line.sourceLine >= this.outputBodyStartLine);
+      const color =
+        line.sourceLine === undefined ? "dim" : this.isError ? "error" : isOutput ? "muted" : "dim";
+      return truncateToWidth(this.theme.fg(color, line.text), effectiveWidth, "…");
+    });
     this.cachedWidth = effectiveWidth;
     this.cachedLines = lines;
     return lines;
@@ -94,13 +148,15 @@ class CommandResultComponent implements Component {
 export function renderCommandCall(
   toolName: string,
   command: string,
+  yieldDuration: string | undefined,
   theme: RenderTheme,
   context: CommandCallRenderContext,
   resolveBackground: CodexToolBackgroundResolver = () => DEFAULT_CONFIG.toolBackground,
 ): Component {
-  const title = theme.fg("toolTitle", theme.bold(toolName));
-  const summary = theme.fg("muted", command || "…");
-  return new CodexToolSurfaceComponent(new Text(`${title}  ${summary}`, 0, 0), theme, {
+  const title = theme.fg("warning", theme.bold(toolName));
+  const yieldLabel = yieldDuration ? `  ${theme.fg("muted", `[yield: ${yieldDuration}]`)}` : "";
+  const summary = theme.fg("text", command || "…");
+  return new CodexToolSurfaceComponent(new Text(`${title}${yieldLabel}  ${summary}`, 0, 0), theme, {
     background: resolveBackground,
     status: context.isPartial ? "pending" : context.isError ? "error" : "success",
     top: true,
@@ -115,13 +171,14 @@ export function renderCommandResult(
   context: CommandRenderContext,
   resolveBackground: CodexToolBackgroundResolver = () => DEFAULT_CONFIG.toolBackground,
 ): Component {
+  const output = visibleCommandOutput(textOutput(result));
   return new CodexToolSurfaceComponent(
-    new CommandResultComponent(textOutput(result), options.expanded, theme, context.isError),
+    new CommandResultComponent(output, options.expanded, theme, context.isError, options.isPartial),
     theme,
     {
       background: resolveBackground,
       status: context.isPartial ? "pending" : context.isError ? "error" : "success",
-      top: false,
+      top: output.length > 0,
       bottom: true,
     },
   );

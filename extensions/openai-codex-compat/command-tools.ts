@@ -1,6 +1,8 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import type { Static } from "typebox";
 import {
+  effectiveExecCommandYieldTimeMs,
+  effectiveWriteStdinYieldTimeMs,
   executeShellCommand,
   UnifiedExecManager,
   type ExecCommandRequest,
@@ -79,6 +81,18 @@ function writeStdinSummary(request: Partial<WriteStdinRequest>): string {
   if (!chars) return `poll session ${id}`;
   const singleLine = chars.replaceAll("\n", "\\n").replaceAll("\r", "\\r");
   return `write ${JSON.stringify(singleLine)} to session ${id}`;
+}
+
+function formatYieldDuration(milliseconds: number): string {
+  return milliseconds >= 1_000 ? `${milliseconds / 1_000}s` : `${milliseconds}ms`;
+}
+
+function resolveYieldDuration(
+  value: number | undefined,
+  resolveMilliseconds: (value: number | undefined) => number,
+): string | undefined {
+  if (value !== undefined && (!Number.isSafeInteger(value) || value < 0)) return undefined;
+  return formatYieldDuration(resolveMilliseconds(value));
 }
 
 export default function registerCommandTools(
@@ -186,6 +200,7 @@ export default function registerCommandTools(
       return renderCommandCall(
         EXEC_COMMAND_TOOL_NAME,
         typeof args.cmd === "string" ? args.cmd : "",
+        resolveYieldDuration(args.yield_time_ms, effectiveExecCommandYieldTimeMs),
         theme,
         context,
         resolveToolBackground,
@@ -211,6 +226,9 @@ export default function registerCommandTools(
       return renderCommandCall(
         WRITE_STDIN_TOOL_NAME,
         writeStdinSummary(args),
+        resolveYieldDuration(args.yield_time_ms, (value) =>
+          effectiveWriteStdinYieldTimeMs(value, !(args.chars ?? "")),
+        ),
         theme,
         context,
         resolveToolBackground,
@@ -244,6 +262,7 @@ export default function registerCommandTools(
       return renderCommandCall(
         SHELL_COMMAND_TOOL_NAME,
         typeof args.command === "string" ? args.command : "",
+        undefined,
         theme,
         context,
         resolveToolBackground,
