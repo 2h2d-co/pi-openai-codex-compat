@@ -7,7 +7,10 @@ import type {
   CommandProcessOptions,
   CommandProcessSpawner,
 } from "../extensions/openai-codex-compat/command-process.ts";
-import { unifiedExecEnvironment } from "../extensions/openai-codex-compat/command-process.ts";
+import {
+  commandArguments,
+  unifiedExecEnvironment,
+} from "../extensions/openai-codex-compat/command-process.ts";
 import {
   executeShellCommand,
   UnifiedExecManager,
@@ -26,6 +29,7 @@ import {
 import {
   EXEC_COMMAND_PARAMETERS,
   formatBackgroundProcesses,
+  prepareShellCommandArguments,
   SHELL_COMMAND_PARAMETERS,
   WRITE_STDIN_PARAMETERS,
 } from "../extensions/openai-codex-compat/command-tools.ts";
@@ -39,6 +43,7 @@ class FakeCommandProcess implements CommandProcess {
   private code: number | null | undefined;
   private readonly onWrite: ((chars: string) => void) | undefined;
   terminateCalls = 0;
+  gracefulTerminationGraceMs: number[] = [];
 
   constructor(tty: boolean, onWrite?: (chars: string) => void) {
     this.tty = tty;
@@ -74,6 +79,12 @@ class FakeCommandProcess implements CommandProcess {
   terminate(): void {
     this.terminateCalls++;
     this.complete(-1);
+  }
+
+  terminateGracefully(graceMs: number): Promise<void> {
+    this.gracefulTerminationGraceMs.push(graceMs);
+    this.complete(1);
+    return Promise.resolve();
   }
 }
 
@@ -211,6 +222,31 @@ test("normalizes the unified exec environment without claiming Codex CI", () => 
   assert.equal(environment["CODEX_CI"], process.env["CODEX_CI"]);
 });
 
+test("uses Codex PowerShell launch arguments without NonInteractive", () => {
+  assert.deepEqual(commandArguments("/usr/bin/pwsh", "Get-ChildItem", false), [
+    "-NoLogo",
+    "-NoProfile",
+    "-Command",
+    "Get-ChildItem",
+  ]);
+});
+
+test("accepts shell_command's hidden legacy timeout alias", () => {
+  assert.deepEqual(prepareShellCommandArguments({ command: "pwd", timeout: 15 }), {
+    command: "pwd",
+    timeout_ms: 15,
+  });
+  assert.throws(
+    () =>
+      prepareShellCommandArguments({
+        command: "pwd",
+        timeout: 15,
+        timeout_ms: 20,
+      }),
+    /duplicate field `timeout_ms`/u,
+  );
+});
+
 test("runs shell_command with Pi-style tail truncation and a complete temp file", async (t) => {
   const completeOutput = `${"x".repeat(60 * 1_024)}\nfinished\n`;
   const spawnProcess: CommandProcessSpawner = (options) => {
@@ -258,6 +294,51 @@ test("returns shell_command timeouts as successful results with captured output"
   assert.match(result.content[0]?.text ?? "", /Exit code: 124/);
   assert.match(result.content[0]?.text ?? "", /started/);
   assert.match(result.content[0]?.text ?? "", /command timed out after 5 milliseconds/);
+});
+
+test("accepts zero as an immediate shell_command timeout through the legacy alias", async () => {
+  let commandProcess: FakeCommandProcess | undefined;
+  const result = await executeShellCommand(
+    { command: "slow-command", login: false, timeout: 0 },
+    runtimeContext(),
+    undefined,
+    undefined,
+    (options) => {
+      commandProcess = new FakeCommandProcess(false);
+      options.onData("started\n");
+      return commandProcess;
+    },
+  );
+
+  assert.equal(result.details.exitCode, 124);
+  assert.equal(commandProcess?.terminateCalls, 1);
+  assert.match(result.content[0]?.text ?? "", /command timed out after 0 milliseconds/u);
+});
+
+test("gracefully terminates shell_command after cancellation", async () => {
+  let commandProcess: FakeCommandProcess | undefined;
+  let notifySpawned: (() => void) | undefined;
+  const spawned = new Promise<void>((resolveSpawned) => {
+    notifySpawned = resolveSpawned;
+  });
+  const abortController = new AbortController();
+  const execution = executeShellCommand(
+    { command: "long-command", login: false },
+    runtimeContext(),
+    abortController.signal,
+    undefined,
+    () => {
+      commandProcess = new FakeCommandProcess(false);
+      notifySpawned?.();
+      return commandProcess;
+    },
+  );
+  await spawned;
+  abortController.abort();
+
+  await assert.rejects(execution, /Command aborted/u);
+  assert.deepEqual(commandProcess?.gracefulTerminationGraceMs, [50]);
+  assert.equal(commandProcess?.terminateCalls, 0);
 });
 
 test("returns nonzero shell_command exits as successful results", async () => {
@@ -331,7 +412,7 @@ test("runs and interacts with a persistent unified exec session", async (t) => {
       cmd: "interactive",
       login: false,
       tty: true,
-      yield_time_ms: 250,
+      yield_time_ms: 0,
     },
     runtimeContext(),
     undefined,
@@ -362,11 +443,12 @@ test("runs and interacts with a persistent unified exec session", async (t) => {
   assert.match(started.content[0]?.text ?? "", /Process running with session ID/);
   assert.match(started.content[0]?.text ?? "", /ready/);
 
+  const writeStartedAt = performance.now();
   const completed = await manager.writeStdin(
     {
       session_id: sessionId,
       chars: "hello\n",
-      yield_time_ms: 250,
+      yield_time_ms: 0,
     },
     undefined,
     undefined,
@@ -375,6 +457,7 @@ test("runs and interacts with a persistent unified exec session", async (t) => {
   assert.equal(completed.details.sessionId, undefined);
   assert.match(completed.content[0]?.text ?? "", /received:hello/);
   assert.equal(manager.activeSessionCount(), 0);
+  assert.ok(performance.now() - writeStartedAt >= 90);
 });
 
 test("formats empty and bounded background terminal listings", () => {

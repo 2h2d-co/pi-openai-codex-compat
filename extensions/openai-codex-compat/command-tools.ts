@@ -1,4 +1,5 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import type { Static } from "typebox";
 import {
   executeShellCommand,
   UnifiedExecManager,
@@ -48,6 +49,22 @@ export type CommandToolsApi = Pick<ExtensionAPI, "on" | "registerCommand" | "reg
 export type CommandToolsController = {
   terminateUnifiedExecSessions: () => void;
 };
+
+// Pi validates the prepared value against SHELL_COMMAND_PARAMETERS immediately
+// after this compatibility rewrite.
+export function prepareShellCommandArguments(
+  args: unknown,
+): Static<typeof SHELL_COMMAND_PARAMETERS>;
+export function prepareShellCommandArguments(args: unknown): unknown {
+  if (typeof args !== "object" || args === null || Array.isArray(args)) return args;
+  const prepared: Record<string, unknown> = { ...args };
+  if (Object.hasOwn(prepared, "timeout")) {
+    if (Object.hasOwn(prepared, "timeout_ms")) throw new Error("duplicate field `timeout_ms`");
+    prepared["timeout_ms"] = prepared["timeout"];
+    Reflect.deleteProperty(prepared, "timeout");
+  }
+  return prepared;
+}
 
 function writeStdinSummary(request: Partial<WriteStdinRequest>): string {
   const id = typeof request.session_id === "number" ? request.session_id : "?";
@@ -202,6 +219,7 @@ export default function registerCommandTools(
       "Use shell_command for shell commands and set workdir explicitly when the command is project-specific.",
     ],
     parameters: SHELL_COMMAND_PARAMETERS,
+    prepareArguments: prepareShellCommandArguments,
     renderShell: "self",
     async execute(_toolCallId, params, signal, onUpdate, ctx) {
       return executeShellCommand(

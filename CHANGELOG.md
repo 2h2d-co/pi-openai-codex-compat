@@ -57,7 +57,10 @@
   complete-output truncation files and retaining initially cancelled processes
   with a model-visible session ID. Add a `/ps` background-terminal browser
   with live scrollable recent output, confirmed `Ctrl+X` termination for one
-  session, and confirmed `Ctrl+S` termination for all sessions.
+  session, and confirmed `Ctrl+S` termination for all sessions. Match Codex's
+  zero-value timing inputs, hidden `shell_command.timeout` alias, PowerShell
+  arguments, post-PTY-write reaction delay, and graceful one-shot
+  cancellation.
 - Replace the multi-line startup configuration dump with a concise package and
   settings-command notice, and simplify the fallback settings-save error.
 - Align deferred tool loading with Pi 0.84.3, preferring message-anchored

@@ -28,6 +28,8 @@ const MAX_EMPTY_POLL_MS = 300_000;
 const WINDOWS_INITIAL_YIELD_FLOOR_MS = 10_000;
 const MAX_PROCESSES = 64;
 const UPDATE_THROTTLE_MS = 100;
+const POST_PTY_WRITE_DELAY_MS = 100;
+const CANCELLATION_TERMINATION_GRACE_MS = 50;
 const INTERRUPT = "\u0003";
 const MAX_TIMEOUT_MS = 2_147_483_647;
 
@@ -54,6 +56,7 @@ export type ShellCommandRequest = {
   command: string;
   workdir?: string;
   timeout_ms?: number;
+  timeout?: number;
   login?: boolean;
 };
 
@@ -106,10 +109,11 @@ function nonnegativeInteger(name: string, value: number | undefined): number | u
   return integer;
 }
 
+// Codex's timing fields accept zero before the effective wait is clamped.
 function positiveInteger(name: string, value: number | undefined, fallback: number): number {
   if (value === undefined) return fallback;
   const integer = requiredInteger(name, value);
-  if (integer <= 0) throw new Error(`${name} must be greater than zero.`);
+  if (integer < 0) throw new Error(`${name} must not be negative.`);
   return integer;
 }
 
@@ -291,7 +295,10 @@ export async function executeShellCommand(
   onUpdate: AgentToolUpdateCallback<CommandOutputDetails> | undefined,
   spawnProcess: CommandProcessSpawner = spawnCommandProcess,
 ): Promise<CommandToolResult> {
-  const timeoutMs = timeout(request.timeout_ms);
+  if (request.timeout_ms !== undefined && request.timeout !== undefined) {
+    throw new Error("duplicate field `timeout_ms`");
+  }
+  const timeoutMs = timeout(request.timeout_ms ?? request.timeout);
   if (signal?.aborted) throw new Error("Command aborted", { cause: new CommandAbortedError() });
   const cwd = await resolveCommandWorkingDirectory(ctx.cwd, request.workdir);
   const output = new CommandOutputAccumulator("pi-codex-shell-command");
@@ -321,7 +328,11 @@ export async function executeShellCommand(
   } catch (error) {
     aborted = error instanceof CommandAbortedError;
     executionError = error;
-    commandProcess.terminate();
+    if (aborted) {
+      await commandProcess.terminateGracefully(CANCELLATION_TERMINATION_GRACE_MS);
+    } else {
+      commandProcess.terminate();
+    }
     await settleTerminatedProcess(commandProcess);
   } finally {
     finishUpdates();
@@ -490,6 +501,9 @@ export class UnifiedExecManager {
         try {
           if (record.process.tty) {
             record.process.write(chars);
+            await new Promise<void>((resolveDelay) =>
+              setTimeout(resolveDelay, POST_PTY_WRITE_DELAY_MS),
+            );
           } else if (chars === INTERRUPT) {
             record.process.interrupt();
           } else {

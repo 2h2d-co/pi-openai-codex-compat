@@ -23,6 +23,7 @@ export interface CommandProcess {
   write: (chars: string) => void;
   interrupt: () => void;
   terminate: () => void;
+  terminateGracefully: (graceMs: number) => Promise<void>;
 }
 
 export type CommandProcessOptions = {
@@ -62,7 +63,7 @@ export function resolveDefaultCommandShell(): string {
   return getShellConfig().shell;
 }
 
-function commandArguments(shell: string, command: string, login: boolean): string[] {
+export function commandArguments(shell: string, command: string, login: boolean): string[] {
   if (isLegacyWslBashPath(shell)) return ["-s"];
   const name = basename(shell).toLowerCase();
   if (
@@ -73,7 +74,7 @@ function commandArguments(shell: string, command: string, login: boolean): strin
   ) {
     return login
       ? ["-NoLogo", "-Command", command]
-      : ["-NoLogo", "-NoProfile", "-NonInteractive", "-Command", command];
+      : ["-NoLogo", "-NoProfile", "-Command", command];
   }
   if (name === "cmd" || name === "cmd.exe") return ["/c", command];
   return [login ? "-lc" : "-c", command];
@@ -132,6 +133,35 @@ export function terminateProcessTree(pid: number): void {
   signalProcess(pid, "SIGKILL");
 }
 
+async function waitForExitOrGrace(
+  exited: Promise<CommandProcessExit>,
+  graceMs: number,
+): Promise<void> {
+  await Promise.race([
+    exited.then(
+      () => undefined,
+      (error: unknown) => {
+        void error;
+      },
+    ),
+    new Promise<void>((resolveWait) => setTimeout(resolveWait, graceMs)),
+  ]);
+}
+
+async function terminateGracefully(
+  pid: number,
+  exited: Promise<CommandProcessExit>,
+  hardTerminate: () => void,
+  graceMs: number,
+): Promise<void> {
+  if (pid <= 0) return;
+  signalProcess(pid, "SIGTERM");
+  await waitForExitOrGrace(exited, graceMs);
+  // Match Codex's process-group cleanup: even when the direct shell exits
+  // during the grace period, kill descendants left in its original group.
+  hardTerminate();
+}
+
 class PlainCommandProcess implements CommandProcess {
   readonly tty = false;
   readonly pid: number;
@@ -176,6 +206,11 @@ class PlainCommandProcess implements CommandProcess {
 
   terminate(): void {
     if (this.pid > 0) terminateProcessTree(this.pid);
+  }
+
+  terminateGracefully(graceMs: number): Promise<void> {
+    if (this.settled) return Promise.resolve();
+    return terminateGracefully(this.pid, this.exited, () => this.terminate(), graceMs);
   }
 
   private waitForExit(): Promise<CommandProcessExit> {
@@ -334,6 +369,11 @@ class PtyCommandProcess implements CommandProcess {
     if (this.settled) return;
     terminateProcessTree(this.pid);
     this.process.kill();
+  }
+
+  terminateGracefully(graceMs: number): Promise<void> {
+    if (this.settled) return Promise.resolve();
+    return terminateGracefully(this.pid, this.exited, () => this.terminate(), graceMs);
   }
 }
 
