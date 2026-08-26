@@ -2,7 +2,9 @@ APPLY_PATCH_INSTRUCTION_FEEDBACK.md
 CHANGELOG.md
 LICENSE
 LICENSES/Apache-2.0.txt
+LICENSES/node-pty-MIT.txt
 LICENSES/pi-ai-MIT.txt
+LICENSES/tree-sitter-MIT.txt
 README.md
 THIRD_PARTY_NOTICES.md
 extensions/index.ts
@@ -30,6 +32,7 @@ extensions/openai-codex-compat/apply-patch-matcher/apply-patch-matcher-line-matc
 extensions/openai-codex-compat/apply-patch-matcher/apply-patch-matcher-strict-content.ts
 extensions/openai-codex-compat/apply-patch-render.ts
 extensions/openai-codex-compat/apply-patch.ts
+extensions/openai-codex-compat/background-process-browser.ts
 extensions/openai-codex-compat/codex-cache-diagnostics.ts
 extensions/openai-codex-compat/codex-cache-key.ts
 extensions/openai-codex-compat/codex-identifiers.ts
@@ -56,6 +59,14 @@ extensions/openai-codex-compat/codex-transport/codex-transport-turn-state.ts
 extensions/openai-codex-compat/codex-transport/codex-transport-websocket-continuation.ts
 extensions/openai-codex-compat/codex-transport/codex-transport-websocket-pool.ts
 extensions/openai-codex-compat/codex-transport/codex-transport-websocket-stream.ts
+extensions/openai-codex-compat/command-apply-patch.ts
+extensions/openai-codex-compat/command-output.ts
+extensions/openai-codex-compat/command-process.ts
+extensions/openai-codex-compat/command-render.ts
+extensions/openai-codex-compat/command-runtime.ts
+extensions/openai-codex-compat/command-shell.ts
+extensions/openai-codex-compat/command-tool-contract.ts
+extensions/openai-codex-compat/command-tools.ts
 extensions/openai-codex-compat/compaction-checkpoint.ts
 extensions/openai-codex-compat/config-context.ts
 extensions/openai-codex-compat/config.ts
