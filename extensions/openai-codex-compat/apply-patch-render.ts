@@ -45,7 +45,7 @@ class ApplyPatchTitleComponent implements Component {
     const debug = this.resolveDebug();
     if (this.renderedDebug !== debug) {
       const title = debug ? "apply_patch (debug)" : "apply_patch";
-      this.text.setText(this.theme.fg("toolTitle", this.theme.bold(title)));
+      this.text.setText(this.theme.fg("accent", this.theme.bold(title)));
       this.renderedDebug = debug;
     }
     return this.text.render(width);
@@ -164,7 +164,7 @@ export function renderApplyPatchResult(
       {
         background: resolveBackground,
         status: context.isError ? "error" : "success",
-        top: false,
+        top: true,
         bottom: true,
       },
     );
@@ -177,7 +177,7 @@ export function renderApplyPatchResult(
     {
       background: resolveBackground,
       status: "error",
-      top: false,
+      top: true,
       bottom: true,
     },
   );

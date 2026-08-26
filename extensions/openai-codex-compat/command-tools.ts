@@ -201,6 +201,7 @@ export default function registerCommandTools(
         EXEC_COMMAND_TOOL_NAME,
         typeof args.cmd === "string" ? args.cmd : "",
         resolveYieldDuration(args.yield_time_ms, effectiveExecCommandYieldTimeMs),
+        typeof args.workdir === "string" ? args.workdir : undefined,
         theme,
         context,
         resolveToolBackground,
@@ -229,6 +230,7 @@ export default function registerCommandTools(
         resolveYieldDuration(args.yield_time_ms, (value) =>
           effectiveWriteStdinYieldTimeMs(value, !(args.chars ?? "")),
         ),
+        undefined,
         theme,
         context,
         resolveToolBackground,
@@ -263,6 +265,7 @@ export default function registerCommandTools(
         SHELL_COMMAND_TOOL_NAME,
         typeof args.command === "string" ? args.command : "",
         undefined,
+        typeof args.workdir === "string" ? args.workdir : undefined,
         theme,
         context,
         resolveToolBackground,

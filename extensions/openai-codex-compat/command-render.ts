@@ -149,19 +149,25 @@ export function renderCommandCall(
   toolName: string,
   command: string,
   yieldDuration: string | undefined,
+  workdir: string | undefined,
   theme: RenderTheme,
   context: CommandCallRenderContext,
   resolveBackground: CodexToolBackgroundResolver = () => DEFAULT_CONFIG.toolBackground,
 ): Component {
-  const title = theme.fg("warning", theme.bold(toolName));
+  const title = theme.fg("accent", theme.bold(toolName));
   const yieldLabel = yieldDuration ? `  ${theme.fg("muted", `[yield: ${yieldDuration}]`)}` : "";
+  const workdirLabel = workdir ? `  ${theme.fg("muted", `[workdir: ${workdir}]`)}` : "";
   const summary = theme.fg("text", command || "…");
-  return new CodexToolSurfaceComponent(new Text(`${title}${yieldLabel}  ${summary}`, 0, 0), theme, {
-    background: resolveBackground,
-    status: context.isPartial ? "pending" : context.isError ? "error" : "success",
-    top: true,
-    bottom: context.isPartial && !context.executionStarted,
-  });
+  return new CodexToolSurfaceComponent(
+    new Text(`${title}${yieldLabel}${workdirLabel}\n\n${summary}`, 0, 0),
+    theme,
+    {
+      background: resolveBackground,
+      status: context.isPartial ? "pending" : context.isError ? "error" : "success",
+      top: true,
+      bottom: context.isPartial && !context.executionStarted,
+    },
+  );
 }
 
 export function renderCommandResult(

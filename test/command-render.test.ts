@@ -72,6 +72,7 @@ test("balances command and apply_patch surface padding", () => {
     "exec_command",
     "printf output",
     undefined,
+    undefined,
     plainTheme,
     { executionStarted: true, isError: false, isPartial: false },
     () => "none",
@@ -128,8 +129,10 @@ test("balances command and apply_patch surface padding", () => {
   };
 
   assert.equal(leadingBlankLines(commandCall), 1);
+  assert.equal(leadingBlankLines(commandResult), 1);
   assert.equal(trailingBlankLines(commandResult), 1);
   assert.equal(leadingBlankLines(applyPatchCall), 1);
+  assert.equal(leadingBlankLines(applyPatchResult), 1);
   assert.equal(trailingBlankLines(applyPatchResult), 1);
 });
 
@@ -138,6 +141,7 @@ test("renders partial command output with balanced running padding", () => {
     "exec_command",
     "stream output",
     "250ms",
+    "/workspace",
     plainTheme,
     { executionStarted: false, isError: false, isPartial: true },
     () => "none",
@@ -146,6 +150,7 @@ test("renders partial command output with balanced running padding", () => {
     "exec_command",
     "stream output",
     "250ms",
+    "/workspace",
     plainTheme,
     { executionStarted: true, isError: false, isPartial: true },
     () => "none",
@@ -167,15 +172,24 @@ test("renders partial command output with balanced running padding", () => {
 
   assert.deepEqual(
     pendingCall.map((line) => line.trim()),
-    ["", "exec_command  [yield: 250ms]  stream output", ""],
+    ["", "exec_command  [yield: 250ms]  [workdir: /workspace]", "", "stream output", ""],
   );
   assert.deepEqual(
     [...runningCall, ...emptyUpdate].map((line) => line.trim()),
-    ["", "exec_command  [yield: 250ms]  stream output", ""],
+    ["", "exec_command  [yield: 250ms]  [workdir: /workspace]", "", "stream output", ""],
   );
   assert.deepEqual(
     [...runningCall, ...outputUpdate].map((line) => line.trim()),
-    ["", "exec_command  [yield: 250ms]  stream output", "", "first", "second", ""],
+    [
+      "",
+      "exec_command  [yield: 250ms]  [workdir: /workspace]",
+      "",
+      "stream output",
+      "",
+      "first",
+      "second",
+      "",
+    ],
   );
 });
 
@@ -192,13 +206,29 @@ test("emphasizes command calls while muting their output and metadata", () => {
     "exec_command",
     "highlighted command",
     "30s",
+    "/workspace",
     theme,
     { executionStarted: true, isError: false, isPartial: true },
     () => "none",
   ).render(80);
-  assert.equal(colors.get("exec_command"), "warning");
+  assert.equal(colors.get("exec_command"), "accent");
   assert.equal(colors.get("[yield: 30s]"), "muted");
+  assert.equal(colors.get("[workdir: /workspace]"), "muted");
   assert.equal(colors.get("highlighted command"), "text");
+
+  colors.clear();
+  renderApplyPatchCall(
+    { patch: "*** Begin Patch\n*** End Patch\n" },
+    theme,
+    {
+      cwd: process.cwd(),
+      expanded: false,
+      isError: false,
+      isPartial: false,
+    },
+    () => "none",
+  ).render(80);
+  assert.equal(colors.get("apply_patch"), "accent");
 
   colors.clear();
   renderCommandResult(

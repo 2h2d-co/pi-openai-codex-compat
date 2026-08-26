@@ -18,9 +18,10 @@
 
 ### Fixed
 
-- Show effective unified-exec yield durations beside warning-colored command
-  tool titles, emphasize command summaries, separate non-empty results with a
-  blank row, and mute command output and protocol metadata.
+- Show effective unified-exec yield durations beside accent-colored command
+  tool titles, include explicit working directories, emphasize commands on
+  their own separated rows, separate `apply_patch` results, and mute command
+  output and protocol metadata.
 - Stream live `exec_command`, `write_stdin`, and `shell_command` output in the
   TUI while each tool call is running instead of hiding updates until it exits
   or yields.
