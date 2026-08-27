@@ -994,7 +994,7 @@ test("renders original exec_command context only for write_stdin polls", () => {
     ).render(160),
   );
   assert.deepEqual(pollText, [
-    "write_stdin  [session id: 4321]  [yield: 5s]  [workdir: /workspace]",
+    "write_stdin (polling)  [session id: 4321]  [yield: 5s]  [workdir: /workspace]",
     "long-running-command",
   ]);
 
@@ -1025,7 +1025,7 @@ test("renders original exec_command context only for write_stdin polls", () => {
       () => "none",
     ).render(160),
   );
-  assert.deepEqual(unknownPollText, ["write_stdin  [yield: 5s]", "poll session 4321"]);
+  assert.deepEqual(unknownPollText, ["write_stdin (polling)  [yield: 5s]", "poll session 4321"]);
 });
 
 test("uses Codex-prefixed write_stdin session errors", async (t) => {

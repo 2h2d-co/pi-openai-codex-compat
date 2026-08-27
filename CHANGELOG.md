@@ -22,8 +22,9 @@
   tool titles, include explicit working directories, emphasize commands on
   their own separated rows, separate `apply_patch` results, and mute command
   output and protocol metadata. Show yielded `exec_command` session IDs before
-  their output, and identify `write_stdin` polls with the original command,
-  working directory, and session ID without repeating that context for writes.
+  their output, and identify `write_stdin` polls in the title and with the
+  original command, working directory, and session ID without repeating that
+  context for writes.
 - Stream live `exec_command`, `write_stdin`, and `shell_command` output in the
   TUI while each tool call is running instead of hiding updates until it exits
   or yields.

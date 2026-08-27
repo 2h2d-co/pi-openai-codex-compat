@@ -112,7 +112,7 @@ export function renderWriteStdinCall(
   const polling = !(request.chars ?? "");
   const process = polling ? polledProcess : undefined;
   return renderCommandCall(
-    WRITE_STDIN_TOOL_NAME,
+    polling ? `${WRITE_STDIN_TOOL_NAME} (polling)` : WRITE_STDIN_TOOL_NAME,
     writeStdinSummary(request, process),
     yieldDuration,
     process?.workdir,
