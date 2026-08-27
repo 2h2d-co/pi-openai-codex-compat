@@ -10,14 +10,19 @@ import {
   type WriteStdinRequest,
 } from "./command-runtime.ts";
 import type { CommandProcessSpawner } from "./command-process.ts";
+import type { CommandOutputDetails } from "./command-output.ts";
 import {
   commandShellDisplayName,
   resolveCommandShellCatalog,
   type CommandShellCatalog,
 } from "./command-shell.ts";
-import type { CodexToolBackgroundResolver } from "./codex-tool-surface.ts";
+import type { CodexToolBackgroundResolver, RenderTheme } from "./codex-tool-surface.ts";
 import { DEFAULT_CONFIG } from "./config.ts";
-import { renderCommandCall, renderCommandResult } from "./command-render.ts";
+import {
+  renderCommandCall,
+  renderCommandResult,
+  type CommandCallRenderContext,
+} from "./command-render.ts";
 import {
   EXEC_COMMAND_PARAMETERS,
   EXEC_COMMAND_TOOL_NAME,
@@ -57,6 +62,16 @@ export type CommandToolsController = {
   terminateUnifiedExecSessions: () => void;
 };
 
+export type WriteStdinRenderProcess = {
+  sessionId: number;
+  command: string;
+  workdir: string;
+};
+
+type WriteStdinRenderState = {
+  polledProcess?: WriteStdinRenderProcess;
+};
+
 // Pi validates the prepared value against SHELL_COMMAND_PARAMETERS immediately
 // after this compatibility rewrite.
 export function prepareShellCommandArguments(
@@ -75,12 +90,57 @@ export function prepareShellCommandArguments(args: unknown): unknown {
   return prepared;
 }
 
-function writeStdinSummary(request: Partial<WriteStdinRequest>): string {
+function writeStdinSummary(
+  request: Partial<WriteStdinRequest>,
+  polledProcess: WriteStdinRenderProcess | undefined,
+): string {
   const id = typeof request.session_id === "number" ? request.session_id : "?";
   const chars = typeof request.chars === "string" ? request.chars : "";
-  if (!chars) return `poll session ${id}`;
+  if (!chars) return polledProcess?.command ?? `poll session ${id}`;
   const singleLine = chars.replaceAll("\n", "\\n").replaceAll("\r", "\\r");
   return `write ${JSON.stringify(singleLine)} to session ${id}`;
+}
+
+export function renderWriteStdinCall(
+  request: Partial<WriteStdinRequest>,
+  polledProcess: WriteStdinRenderProcess | undefined,
+  yieldDuration: string | undefined,
+  theme: RenderTheme,
+  context: CommandCallRenderContext,
+  resolveBackground: CodexToolBackgroundResolver = () => DEFAULT_CONFIG.toolBackground,
+): ReturnType<typeof renderCommandCall> {
+  const polling = !(request.chars ?? "");
+  const process = polling ? polledProcess : undefined;
+  return renderCommandCall(
+    WRITE_STDIN_TOOL_NAME,
+    writeStdinSummary(request, process),
+    yieldDuration,
+    process?.workdir,
+    theme,
+    context,
+    resolveBackground,
+    process ? { sessionId: process.sessionId } : {},
+  );
+}
+
+function resolvePolledProcess(
+  request: Partial<WriteStdinRequest>,
+  manager: UnifiedExecManager,
+  state: WriteStdinRenderState,
+): WriteStdinRenderState["polledProcess"] {
+  if ((request.chars ?? "") || typeof request.session_id !== "number") return undefined;
+  if (state.polledProcess?.sessionId === request.session_id) return state.polledProcess;
+  const process = manager.observeProcess(request.session_id)?.();
+  if (!process) {
+    Reflect.deleteProperty(state, "polledProcess");
+    return undefined;
+  }
+  state.polledProcess = {
+    sessionId: process.sessionId,
+    command: process.command,
+    workdir: process.cwd,
+  };
+  return state.polledProcess;
 }
 
 function formatYieldDuration(milliseconds: number): string {
@@ -185,7 +245,7 @@ export default function registerCommandTools(
     },
   });
 
-  pi.registerTool({
+  pi.registerTool<typeof EXEC_COMMAND_PARAMETERS, CommandOutputDetails>({
     name: EXEC_COMMAND_TOOL_NAME,
     label: EXEC_COMMAND_TOOL_NAME,
     description: execCommandPrompt.description,
@@ -208,11 +268,13 @@ export default function registerCommandTools(
       );
     },
     renderResult(result, options, theme, context) {
-      return renderCommandResult(result, options, theme, context, resolveToolBackground);
+      return renderCommandResult(result, options, theme, context, resolveToolBackground, {
+        ...(result.details.sessionId === undefined ? {} : { sessionId: result.details.sessionId }),
+      });
     },
   });
 
-  pi.registerTool({
+  pi.registerTool<typeof WRITE_STDIN_PARAMETERS, CommandOutputDetails, WriteStdinRenderState>({
     name: WRITE_STDIN_TOOL_NAME,
     label: WRITE_STDIN_TOOL_NAME,
     description: writeStdinPrompt.description,
@@ -224,13 +286,13 @@ export default function registerCommandTools(
       return manager.writeStdin(params satisfies WriteStdinRequest, signal, onUpdate);
     },
     renderCall(args, theme, context) {
-      return renderCommandCall(
-        WRITE_STDIN_TOOL_NAME,
-        writeStdinSummary(args),
+      const polledProcess = resolvePolledProcess(args, manager, context.state);
+      return renderWriteStdinCall(
+        args,
+        polledProcess,
         resolveYieldDuration(args.yield_time_ms, (value) =>
           effectiveWriteStdinYieldTimeMs(value, !(args.chars ?? "")),
         ),
-        undefined,
         theme,
         context,
         resolveToolBackground,

@@ -45,6 +45,7 @@ import {
   EXEC_COMMAND_PARAMETERS,
   formatBackgroundProcesses,
   prepareShellCommandArguments,
+  renderWriteStdinCall,
   SHELL_COMMAND_PARAMETERS,
   WRITE_STDIN_PARAMETERS,
 } from "../extensions/openai-codex-compat/command-tools.ts";
@@ -961,6 +962,70 @@ test("runs and interacts with a persistent unified exec session", async (t) => {
   assert.match(completed.content[0]?.text ?? "", /received:hello/);
   assert.equal(manager.activeSessionCount(), 0);
   assert.ok(performance.now() - writeStartedAt >= 90);
+});
+
+test("renders original exec_command context only for write_stdin polls", () => {
+  const polledProcess = {
+    sessionId: 4_321,
+    command: "long-running-command",
+    workdir: "/workspace",
+  };
+  const theme = {
+    fg: (_color: string, text: string) => text,
+    bold: (text: string) => text,
+  };
+  const renderContext = {
+    executionStarted: true,
+    isError: false,
+    isPartial: true,
+  };
+  const visibleLines = (lines: string[]): string[] => {
+    return lines.map((line) => line.trim()).filter(Boolean);
+  };
+
+  const pollText = visibleLines(
+    renderWriteStdinCall(
+      { session_id: polledProcess.sessionId },
+      polledProcess,
+      "5s",
+      theme,
+      renderContext,
+      () => "none",
+    ).render(160),
+  );
+  assert.deepEqual(pollText, [
+    "write_stdin  [session id: 4321]  [yield: 5s]  [workdir: /workspace]",
+    "long-running-command",
+  ]);
+
+  const writeText = visibleLines(
+    renderWriteStdinCall(
+      { session_id: polledProcess.sessionId, chars: "hello\n" },
+      polledProcess,
+      "250ms",
+      theme,
+      renderContext,
+      () => "none",
+    ).render(160),
+  );
+  assert.deepEqual(writeText, [
+    "write_stdin  [yield: 250ms]",
+    'write "hello\\\\n" to session 4321',
+  ]);
+  assert.doesNotMatch(writeText.join("\n"), /long-running-command/u);
+  assert.doesNotMatch(writeText.join("\n"), /\[workdir:/u);
+
+  const unknownPollText = visibleLines(
+    renderWriteStdinCall(
+      { session_id: polledProcess.sessionId },
+      undefined,
+      "5s",
+      theme,
+      renderContext,
+      () => "none",
+    ).render(160),
+  );
+  assert.deepEqual(unknownPollText, ["write_stdin  [yield: 5s]", "poll session 4321"]);
 });
 
 test("uses Codex-prefixed write_stdin session errors", async (t) => {

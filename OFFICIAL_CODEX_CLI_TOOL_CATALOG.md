@@ -331,16 +331,16 @@ and
 | `/ps` presentation           | Adds a static history cell containing command snippets and recent output chunks, up to 16 processes.                                                                       | Opens a Pi browser showing session ID, OS PID, PTY/pipe mode, command, and cwd. `Enter` opens a live, scrollable recent-output popup. Non-TUI mode emits a text notification. | Pi UI adaptation.                   |
 | Stop shortcut                | Uses separate `/stop` or `/clean` commands.                                                                                                                                | Registers no `/stop`; confirmed `Ctrl+X` stops the selected session and confirmed `Ctrl+S` stops all sessions from `/ps`.                                                     | Explicitly requested adaptation.    |
 | Persistent footer            | Shows the live background-terminal count and `/ps`/`/stop` hints near the editor.                                                                                          | Does not currently add a background-terminal line to Pi's footer.                                                                                                             | Explicitly deferred UI work.        |
-| `write_stdin` call context   | Terminal interaction events let the TUI associate a poll or write with the original command.                                                                               | Renders the session ID and current poll/write interaction, not the original command or working directory.                                                                     | Explicitly deferred UI work.        |
+| `write_stdin` call context   | Terminal interaction events let the TUI associate a poll or write with the original command.                                                                               | Polls render the original command, working directory, and session ID; writes render only the current interaction and target session.                                          | Pi UI adaptation.                   |
 | Live output updates          | Emits raw command-output delta events as chunks arrive.                                                                                                                    | Streams Pi tool updates with an approximately 100 ms throttle; final model-visible output is unaffected.                                                                      | Pi UI adaptation.                   |
 
 These differences are cataloged rather than automatically treated as defects.
 The approved exclusions and Pi output behavior should remain stable. Windows
 model guidance, exact edge-case error and input behavior, Windows graceful
-cancellation, natural-signal classification, the optional background footer,
-and richer `write_stdin` call rendering are explicitly noted for possible
-future review rather than release blockers. Official `/cd` blocking is not
-applicable because Pi exposes no corresponding cwd-changing command.
+cancellation, natural-signal classification, and the optional background
+footer are explicitly noted for possible future review rather than release
+blockers. Official `/cd` blocking is not applicable because Pi exposes no
+corresponding cwd-changing command.
 
 ## 2. Planning, questions, messages, permissions, and environments
 
