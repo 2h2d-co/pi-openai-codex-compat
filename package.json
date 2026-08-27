@@ -45,14 +45,14 @@
     "tree-sitter-bash": "0.25.1"
   },
   "devDependencies": {
-    "@2h2d/oxlint-config": "0.1.0",
+    "@2h2d/oxlint-config": "0.1.1",
     "@2h2d/ts-config": "0.0.1",
     "@earendil-works/pi-ai": "0.84.3",
     "@earendil-works/pi-coding-agent": "0.84.3",
     "@earendil-works/pi-tui": "0.84.3",
     "@types/node": "22.20.1",
     "oxfmt": "0.64.0",
-    "oxlint": "1.78.0",
+    "oxlint": "1.79.0",
     "oxlint-tsgolint": "7.0.2001",
     "typebox": "1.3.11",
     "typescript": "7.0.2"
