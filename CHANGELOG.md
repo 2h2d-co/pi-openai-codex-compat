@@ -109,6 +109,10 @@
 - Adopt the shared 2h2d Oxlint policy and exact supported Oxlint and Oxfmt versions.
 - Run isolated test files across four workers, bypass unasserted wall-clock response-retry waits in integration coverage, and assert the retry-delay calculation directly.
 
+### Security
+
+- Generate command session IDs with cryptographically secure randomness.
+
 ## 0.0.9 - 2026-08-16
 
 ### Fixed

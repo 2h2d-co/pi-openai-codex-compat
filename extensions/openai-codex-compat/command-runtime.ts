@@ -1,4 +1,4 @@
-import { randomBytes } from "node:crypto";
+import { randomBytes, randomInt } from "node:crypto";
 import type { AgentToolUpdateCallback, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import {
   commandEnvironment,
@@ -796,7 +796,7 @@ export class UnifiedExecManager {
 
   private allocateProcessId(): number {
     for (;;) {
-      const id = 1_000 + Math.floor(Math.random() * 99_000);
+      const id = randomInt(1_000, 100_000);
       if (!this.processes.has(id)) return id;
     }
   }

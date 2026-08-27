@@ -67,8 +67,7 @@ export function conciseInstructionError(error: string): string {
     .replace(/^Failed to move .*? to .*?:\s*/u, "Move failed: ")
     .replace(/^Failed to find context [^\n]*/u, "Context was not found.")
     .replace(/^Failed to find expected lines in [^\n]*/u, "Old content was not found.")
-    .replace(/; destination was removed before replacement failed$/u, "")
-    .replace(/^apply_patch was cancelled\.$/u, "apply_patch was cancelled.");
+    .replace(/; destination was removed before replacement failed$/u, "");
   return message.split("\n")[0] ?? "";
 }
 

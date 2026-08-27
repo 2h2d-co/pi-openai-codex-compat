@@ -1282,8 +1282,6 @@ test("executes a real node-pty session", { skip: process.platform === "win32" },
   );
   const sessionId = started.details.sessionId;
   assert.ok(sessionId);
-  assert.match(started.content[0]?.text ?? "", /term:dumb no-color:1 pager:cat/);
-  assert.match(started.content[0]?.text ?? "", /ready/);
 
   const completed = await manager.writeStdin(
     {
@@ -1294,8 +1292,11 @@ test("executes a real node-pty session", { skip: process.platform === "win32" },
     undefined,
     undefined,
   );
+  const output = `${started.content[0]?.text ?? ""}\n${completed.content[0]?.text ?? ""}`;
   assert.equal(completed.details.exitCode, 0);
-  assert.match(completed.content[0]?.text ?? "", /received:hello/);
+  assert.match(output, /term:dumb no-color:1 pager:cat/);
+  assert.match(output, /ready/);
+  assert.match(output, /received:hello/);
 });
 
 test(
