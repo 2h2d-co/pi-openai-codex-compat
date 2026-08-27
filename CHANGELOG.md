@@ -30,6 +30,8 @@
 - Remove trailing command-output line endings from TUI previews so the intended
   bottom padding matches the top padding instead of rendering an extra blank
   output row.
+- Normalize CRLF and standalone carriage returns in command TUI previews so
+  command output cannot corrupt the rendered tool surface.
 - Cache footer session names, context and cumulative usage, and rendered lines by
   session and display state, and cache immutable web, image, and debug-aware
   `apply_patch` child renderers so animation-only frames avoid repeated history

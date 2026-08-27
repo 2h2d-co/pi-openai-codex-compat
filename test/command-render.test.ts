@@ -67,6 +67,30 @@ test("builds collapsed command output from only the retained tail", () => {
   ]);
 });
 
+test("normalizes command carriage returns before rendering", () => {
+  assert.deepEqual(commandOutputPreviewLines("one\r\ntwo\r\n", true), ["one", "two"]);
+  assert.deepEqual(commandOutputPreviewLines("one\rtwo\rthree", true), ["one", "two", "three"]);
+
+  const rendered = renderCommandResult(
+    {
+      content: [
+        {
+          type: "text",
+          text: 'Chunk ID: failure\nOutput:\n{\r\n  "message": "Not Found",\r\n  "status": "404"\r\n}gh: Not Found (HTTP 404)\n',
+        },
+      ],
+    },
+    { expanded: false, isPartial: false },
+    plainTheme,
+    { isError: false, isPartial: false },
+    () => "none",
+  ).render(80);
+
+  assert.ok(rendered.every((line) => !line.includes("\r")));
+  assert.ok(rendered.some((line) => line.includes('"message": "Not Found"')));
+  assert.ok(rendered.some((line) => line.includes("}gh: Not Found (HTTP 404)")));
+});
+
 test("balances command and apply_patch surface padding", () => {
   const commandCall = renderCommandCall(
     "exec_command",

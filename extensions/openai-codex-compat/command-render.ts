@@ -37,7 +37,7 @@ function textOutput(result: CommandRenderResult): string {
 const COLLAPSED_OUTPUT_LINE_LIMIT = 5;
 
 function visibleCommandOutput(output: string): string {
-  return output.replace(/(?:\r?\n)+$/u, "");
+  return output.replaceAll("\r\n", "\n").replaceAll("\r", "\n").replace(/\n+$/u, "");
 }
 
 function commandOutputPreviewFromVisibleOutput(
