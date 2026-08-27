@@ -19,13 +19,11 @@ type CommandRenderResult = {
   content: Array<{ type: string; text?: string }>;
 };
 
-type CommandResultMetadata = {
-  sessionId?: number;
-};
-
 type CommandCallMetadata = {
   sessionId?: number;
 };
+
+type CommandCallMetadataSource = CommandCallMetadata | (() => CommandCallMetadata);
 
 type CommandOutputPreviewLine = {
   text: string;
@@ -123,12 +121,8 @@ class CommandResultComponent implements Component {
     theme: RenderTheme,
     isError: boolean,
     isPartial: boolean,
-    sessionId: number | undefined,
   ) {
-    this.previewLines = [
-      ...(sessionId === undefined ? [] : [{ text: `[session id: ${sessionId}]` }]),
-      ...commandOutputPreviewFromVisibleOutput(visibleOutput, expanded),
-    ];
+    this.previewLines = commandOutputPreviewFromVisibleOutput(visibleOutput, expanded);
     this.theme = theme;
     this.isError = isError;
     this.outputBodyStartLine = isPartial ? 0 : commandOutputBodyStartLine(visibleOutput);
@@ -157,6 +151,59 @@ class CommandResultComponent implements Component {
   }
 }
 
+class CommandCallComponent implements Component {
+  private readonly text: Text;
+  private readonly title: string;
+  private readonly yieldLabel: string;
+  private readonly workdirLabel: string;
+  private readonly summary: string;
+  private readonly theme: RenderTheme;
+  private readonly metadata: CommandCallMetadataSource;
+  private renderedSessionId: number | undefined;
+
+  constructor(
+    title: string,
+    yieldLabel: string,
+    workdirLabel: string,
+    summary: string,
+    theme: RenderTheme,
+    metadata: CommandCallMetadataSource,
+  ) {
+    this.title = title;
+    this.yieldLabel = yieldLabel;
+    this.workdirLabel = workdirLabel;
+    this.summary = summary;
+    this.theme = theme;
+    this.metadata = metadata;
+    this.renderedSessionId = this.resolveSessionId();
+    this.text = new Text(this.renderText(this.renderedSessionId), 0, 0);
+  }
+
+  render(width: number): string[] {
+    const sessionId = this.resolveSessionId();
+    if (sessionId !== this.renderedSessionId) {
+      this.renderedSessionId = sessionId;
+      this.text.setText(this.renderText(sessionId));
+    }
+    return this.text.render(width);
+  }
+
+  invalidate(): void {
+    this.text.invalidate();
+  }
+
+  private resolveSessionId(): number | undefined {
+    const metadata = typeof this.metadata === "function" ? this.metadata() : this.metadata;
+    return metadata.sessionId;
+  }
+
+  private renderText(sessionId: number | undefined): string {
+    const sessionLabel =
+      sessionId === undefined ? "" : `  ${this.theme.fg("muted", `[session id: ${sessionId}]`)}`;
+    return `${this.title}${sessionLabel}${this.yieldLabel}${this.workdirLabel}\n\n${this.summary}`;
+  }
+}
+
 export function renderCommandCall(
   toolName: string,
   command: string,
@@ -165,18 +212,14 @@ export function renderCommandCall(
   theme: RenderTheme,
   context: CommandCallRenderContext,
   resolveBackground: CodexToolBackgroundResolver = () => DEFAULT_CONFIG.toolBackground,
-  metadata: CommandCallMetadata = {},
+  metadata: CommandCallMetadataSource = {},
 ): Component {
   const title = theme.fg("accent", theme.bold(toolName));
-  const sessionLabel =
-    metadata.sessionId === undefined
-      ? ""
-      : `  ${theme.fg("muted", `[session id: ${metadata.sessionId}]`)}`;
   const yieldLabel = yieldDuration ? `  ${theme.fg("muted", `[yield: ${yieldDuration}]`)}` : "";
   const workdirLabel = workdir ? `  ${theme.fg("muted", `[workdir: ${workdir}]`)}` : "";
   const summary = theme.fg("text", command || "…");
   return new CodexToolSurfaceComponent(
-    new Text(`${title}${sessionLabel}${yieldLabel}${workdirLabel}\n\n${summary}`, 0, 0),
+    new CommandCallComponent(title, yieldLabel, workdirLabel, summary, theme, metadata),
     theme,
     {
       background: resolveBackground,
@@ -193,23 +236,15 @@ export function renderCommandResult(
   theme: RenderTheme,
   context: CommandRenderContext,
   resolveBackground: CodexToolBackgroundResolver = () => DEFAULT_CONFIG.toolBackground,
-  metadata: CommandResultMetadata = {},
 ): Component {
   const output = visibleCommandOutput(textOutput(result));
   return new CodexToolSurfaceComponent(
-    new CommandResultComponent(
-      output,
-      options.expanded,
-      theme,
-      context.isError,
-      options.isPartial,
-      metadata.sessionId,
-    ),
+    new CommandResultComponent(output, options.expanded, theme, context.isError, options.isPartial),
     theme,
     {
       background: resolveBackground,
       status: context.isPartial ? "pending" : context.isError ? "error" : "success",
-      top: output.length > 0 || metadata.sessionId !== undefined,
+      top: output.length > 0,
       bottom: true,
     },
   );

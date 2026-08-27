@@ -21,8 +21,8 @@
 - Show effective unified-exec yield durations beside accent-colored command
   tool titles, include explicit working directories, emphasize commands on
   their own separated rows, separate `apply_patch` results, and mute command
-  output and protocol metadata. Show yielded `exec_command` session IDs before
-  their output, and identify `write_stdin` polls in the title and with the
+  output and protocol metadata. Show yielded `exec_command` session IDs on
+  their title line, and identify `write_stdin` polls in the title and with the
   original command, working directory, and session ID without repeating that
   context for writes.
 - Stream live `exec_command`, `write_stdin`, and `shell_command` output in the

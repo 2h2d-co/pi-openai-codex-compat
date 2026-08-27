@@ -72,6 +72,10 @@ type WriteStdinRenderState = {
   polledProcess?: WriteStdinRenderProcess;
 };
 
+type ExecCommandRenderState = {
+  sessionId?: number;
+};
+
 // Pi validates the prepared value against SHELL_COMMAND_PARAMETERS immediately
 // after this compatibility rewrite.
 export function prepareShellCommandArguments(
@@ -245,7 +249,7 @@ export default function registerCommandTools(
     },
   });
 
-  pi.registerTool<typeof EXEC_COMMAND_PARAMETERS, CommandOutputDetails>({
+  pi.registerTool<typeof EXEC_COMMAND_PARAMETERS, CommandOutputDetails, ExecCommandRenderState>({
     name: EXEC_COMMAND_TOOL_NAME,
     label: EXEC_COMMAND_TOOL_NAME,
     description: execCommandPrompt.description,
@@ -257,6 +261,7 @@ export default function registerCommandTools(
       return manager.execCommand(params satisfies ExecCommandRequest, ctx, signal, onUpdate);
     },
     renderCall(args, theme, context) {
+      const state = context.state;
       return renderCommandCall(
         EXEC_COMMAND_TOOL_NAME,
         typeof args.cmd === "string" ? args.cmd : "",
@@ -265,12 +270,18 @@ export default function registerCommandTools(
         theme,
         context,
         resolveToolBackground,
+        () => (state.sessionId === undefined ? {} : { sessionId: state.sessionId }),
       );
     },
     renderResult(result, options, theme, context) {
-      return renderCommandResult(result, options, theme, context, resolveToolBackground, {
-        ...(result.details.sessionId === undefined ? {} : { sessionId: result.details.sessionId }),
-      });
+      if (!options.isPartial) {
+        if (result.details.sessionId === undefined) {
+          Reflect.deleteProperty(context.state, "sessionId");
+        } else {
+          context.state.sessionId = result.details.sessionId;
+        }
+      }
+      return renderCommandResult(result, options, theme, context, resolveToolBackground);
     },
   });
 

@@ -91,28 +91,30 @@ test("normalizes command carriage returns before rendering", () => {
   assert.ok(rendered.some((line) => line.includes("}gh: Not Found (HTTP 404)")));
 });
 
-test("renders a yielded exec_command session ID before its output", () => {
-  const rendered = renderCommandResult(
-    {
-      content: [
-        {
-          type: "text",
-          text: "Chunk ID: abc123\nWall time: 1.0000 seconds\nProcess running with session ID 4321\nOriginal token count: 2\nOutput:\nready\n",
-        },
-      ],
-    },
-    { expanded: false, isPartial: false },
+test("adds a yielded exec_command session ID to its title line", () => {
+  let sessionId: number | undefined;
+  const component = renderCommandCall(
+    "exec_command",
+    "long-running-command",
+    "250ms",
+    "/workspace",
     plainTheme,
-    { isError: false, isPartial: false },
+    { executionStarted: true, isError: false, isPartial: false },
     () => "none",
-    { sessionId: 4_321 },
-  )
-    .render(80)
-    .map((line) => line.trim())
-    .filter(Boolean);
+    () => (sessionId === undefined ? {} : { sessionId }),
+  );
+  const visibleLines = (): string[] =>
+    component
+      .render(120)
+      .map((line) => line.trim())
+      .filter(Boolean);
 
-  assert.equal(rendered[0], "[session id: 4321]");
-  assert.equal(rendered.at(-1), "ready");
+  assert.equal(visibleLines()[0], "exec_command  [yield: 250ms]  [workdir: /workspace]");
+  sessionId = 4_321;
+  assert.equal(
+    visibleLines()[0],
+    "exec_command  [session id: 4321]  [yield: 250ms]  [workdir: /workspace]",
+  );
 });
 
 test("balances command and apply_patch surface padding", () => {
@@ -297,17 +299,6 @@ test("emphasizes command calls while muting their output and metadata", () => {
   assert.equal(colors.get("Chunk ID: abc123"), "dim");
   assert.equal(colors.get("Output:"), "dim");
   assert.equal(colors.get("bright output"), "muted");
-
-  colors.clear();
-  renderCommandResult(
-    { content: [{ type: "text", text: "waiting" }] },
-    { expanded: false, isPartial: false },
-    theme,
-    { isError: false, isPartial: false },
-    () => "none",
-    { sessionId: 4_321 },
-  ).render(80);
-  assert.equal(colors.get("[session id: 4321]"), "dim");
 
   colors.clear();
   renderCommandResult(
