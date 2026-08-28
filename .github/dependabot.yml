@@ -6,6 +6,10 @@ updates:
       interval: daily
     cooldown:
       default-days: 7
+    commit-message:
+      prefix: chore
+      prefix-development: chore
+      include: scope
     ignore:
       - dependency-name: "@types/node"
         update-types:
@@ -16,3 +20,6 @@ updates:
       interval: daily
     cooldown:
       default-days: 7
+    commit-message:
+      prefix: ci
+      include: scope
