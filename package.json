@@ -47,9 +47,9 @@
   "devDependencies": {
     "@2h2d/oxlint-config": "0.1.1",
     "@2h2d/ts-config": "0.0.1",
-    "@earendil-works/pi-ai": "0.84.3",
-    "@earendil-works/pi-coding-agent": "0.84.3",
-    "@earendil-works/pi-tui": "0.84.3",
+    "@earendil-works/pi-ai": "0.84.4",
+    "@earendil-works/pi-coding-agent": "0.84.4",
+    "@earendil-works/pi-tui": "0.84.4",
     "@types/node": "22.20.1",
     "oxfmt": "0.64.0",
     "oxlint": "1.79.0",

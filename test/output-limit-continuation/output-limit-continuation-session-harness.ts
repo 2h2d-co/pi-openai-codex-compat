@@ -266,7 +266,12 @@ export async function pointBuiltInCodexAt(baseUrl: string, t: TestContext): Prom
 export async function createTestSession(
   t: TestContext,
   baseUrl: string,
-  options?: { tools?: boolean; autoCompactAtPercent?: number },
+  options?: {
+    tools?: boolean;
+    autoCompactAtPercent?: number;
+    keepRecentTokens?: number;
+    reserveTokens?: number;
+  },
 ) {
   await pointBuiltInCodexAt(baseUrl, t);
 
@@ -305,8 +310,8 @@ export async function createTestSession(
     retry: { enabled: false, provider: { maxRetries: 0 } },
     compaction: {
       enabled: true,
-      reserveTokens: 16_384,
-      keepRecentTokens: 1,
+      reserveTokens: options?.reserveTokens ?? 16_384,
+      keepRecentTokens: options?.keepRecentTokens ?? 1,
     },
   });
   const resourceLoader = new DefaultResourceLoader({

@@ -348,3 +348,80 @@ test("executes an output-limit tool call before the next provider request", asyn
   );
   assert.equal(session.isIdle, true);
 });
+
+test("compacts a large tool result before the next assistant request", async (t) => {
+  const call = {
+    type: "function_call",
+    id: "fc_read_large",
+    call_id: "call_read_large",
+    name: "read",
+    status: "completed",
+    arguments: '{"path":"large-fixture.txt"}',
+  };
+  const server = await startCodexServer(t, (requestNumber, body) => {
+    const input = requireJsonRecords(body["input"]);
+    if (input.some((item) => item["type"] === "compaction_trigger")) {
+      return compactionEvents();
+    }
+    if (requestNumber === 1) return textEvents(`old-history:${"a".repeat(4_000)}`);
+    if (requestNumber === 2) return textEvents(`recent-history:${"b".repeat(4_000)}`);
+    if (requestNumber === 3) {
+      return [
+        { type: "response.output_item.done", output_index: 0, item: call },
+        {
+          type: "response.completed",
+          response: {
+            id: "resp_read_large",
+            status: "completed",
+            output: [call],
+            usage: { input_tokens: 10, output_tokens: 10, total_tokens: 20 },
+          },
+        },
+      ];
+    }
+    return textEvents("finished after tool-result compaction");
+  });
+  const { cwd, session } = await createTestSession(t, server.baseUrl, {
+    tools: true,
+    keepRecentTokens: 13_000,
+    reserveTokens: 268_000,
+  });
+  await writeFile(join(cwd, "large-fixture.txt"), "x".repeat(50_000));
+
+  await session.prompt("seed old history", { expandPromptTemplates: false });
+  await session.prompt("seed recent history", { expandPromptTemplates: false });
+  await session.prompt("read the large fixture", { expandPromptTemplates: false });
+  await session.waitForIdle();
+
+  assert.equal(server.requests.length, 5);
+  const [initial, recent, toolCall, compaction, continued] = server.requests;
+  assert.ok(initial);
+  assert.ok(recent);
+  assert.ok(toolCall);
+  assert.ok(compaction);
+  assert.ok(continued);
+  assert.deepEqual(requireJsonRecords(compaction["input"]).at(-1), {
+    type: "compaction_trigger",
+  });
+  assert.match(JSON.stringify(compaction["input"]), /call_read_large/);
+  assert.match(JSON.stringify(continued["input"]), /opaque-state/);
+  assert.doesNotMatch(JSON.stringify(continued["input"]), /x{100}/);
+
+  const branch = session.sessionManager.getBranch();
+  const toolResultIndex = branch.findIndex(
+    (entry) =>
+      entry.type === "message" &&
+      entry.message.role === "toolResult" &&
+      entry.message.toolCallId.startsWith("call_read_large|"),
+  );
+  const compactionIndex = branch.findIndex((entry) => entry.type === "compaction");
+  assert.ok(toolResultIndex >= 0);
+  assert.ok(compactionIndex > toolResultIndex);
+  assert.match(
+    JSON.stringify(
+      branch.findLast((entry) => entry.type === "message" && entry.message.role === "assistant"),
+    ),
+    /finished after tool-result compaction/,
+  );
+  assert.equal(session.isIdle, true);
+});
