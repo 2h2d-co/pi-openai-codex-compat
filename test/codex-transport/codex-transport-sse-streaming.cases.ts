@@ -43,6 +43,28 @@ test("finishes SSE requests when the terminal event arrives before EOF", async (
   assert.equal(cancelled, true);
 });
 
+test("processes a terminal SSE event without a trailing blank line", async () => {
+  const terminalEvent = {
+    type: "response.completed",
+    response: { id: "response-1", status: "completed" },
+  };
+  const events: JsonRecord[] = [];
+
+  for await (const event of new CodexTransport().request(
+    codexModel(),
+    { input: [] },
+    {
+      apiKey: accessToken(),
+      transport: "sse",
+      fetch: async () => new Response(`data: ${JSON.stringify(terminalEvent)}`, { status: 200 }),
+    },
+  )) {
+    events.push(event);
+  }
+
+  assert.deepEqual(events, [terminalEvent]);
+});
+
 test("delivers response.failed to the provider-owned resampling loop", async () => {
   const terminalEvent = {
     type: "response.failed",

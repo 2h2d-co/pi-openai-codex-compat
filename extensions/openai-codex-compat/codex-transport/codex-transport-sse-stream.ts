@@ -61,16 +61,20 @@ export async function* parseSse(
       const chunk = await reader.read();
       const { done } = chunk;
       if (signal?.aborted) throw new Error("Request was aborted");
-      if (done) break;
-      const value: unknown = chunk.value;
-      if (!(value instanceof Uint8Array)) {
-        throw new CodexProtocolError(
-          "Codex returned a non-byte SSE stream chunk.",
-          value,
-          undefined,
-        );
+      if (done) {
+        buffer += decoder.decode();
+        if (buffer.trim()) buffer += "\n\n";
+      } else {
+        const value: unknown = chunk.value;
+        if (!(value instanceof Uint8Array)) {
+          throw new CodexProtocolError(
+            "Codex returned a non-byte SSE stream chunk.",
+            value,
+            undefined,
+          );
+        }
+        buffer += decoder.decode(value, { stream: true }).replaceAll("\r\n", "\n");
       }
-      buffer += decoder.decode(value, { stream: true }).replaceAll("\r\n", "\n");
       let boundary = buffer.indexOf("\n\n");
       while (boundary !== -1) {
         const block = buffer.slice(0, boundary);
@@ -97,6 +101,7 @@ export async function* parseSse(
         }
         boundary = buffer.indexOf("\n\n");
       }
+      if (done) break;
     }
   } finally {
     signal?.removeEventListener("abort", onAbort);

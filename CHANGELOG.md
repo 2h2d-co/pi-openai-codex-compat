@@ -75,6 +75,8 @@
 - Validate complete apply-patch result details against schema-derived contracts before rendering, including integer metadata and nested instruction relationships.
 - Distinguish an unavailable Pi compaction append capability from a missing percentage-compaction retention boundary.
 - Validate supported Responses input, completed-output, content, and tool-definition variants with closed schema-derived unions, failing closed on unknown or malformed item types while preserving additional fields on known variants.
+- Process a final Codex SSE event when the stream ends without a trailing blank
+  line, matching Pi 0.85's parser recovery.
 
 ### Changed
 
