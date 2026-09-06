@@ -80,6 +80,7 @@
 
 ### Changed
 
+- Support Pi 0.85.x and update the development baseline to Pi 0.85.1.
 - Describe `shell_command`, `exec_command`, and `write_stdin` in Pi's tool list,
   guidelines, and detailed tool contracts using the actual resolved default
   shell. Document command working-directory and `PI_*` context behavior,

@@ -15,6 +15,7 @@ class TestTheme extends Theme {
         dim: "#ffffff",
         text: "#ffffff",
         thinkingText: "#ffffff",
+        scrollbarThumb: "#282832",
         userMessageText: "#ffffff",
         customMessageText: "#ffffff",
         customMessageLabel: "#ffffff",
@@ -53,7 +54,6 @@ class TestTheme extends Theme {
       },
       {
         selectedBg: "#282832",
-        scrollbarThumb: "#282832",
         userMessageBg: "#282832",
         customMessageBg: "#282832",
         toolPendingBg: "#282832",
