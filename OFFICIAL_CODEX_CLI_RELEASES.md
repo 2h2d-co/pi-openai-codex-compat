@@ -378,6 +378,50 @@ The detailed `apply_patch` contracts remain normative:
 - **Revisit only if:** Pi introduces a richer canonical mutation-result
   protocol that can carry the same facts.
 
+## Focused research after the current baseline
+
+### September 8, 2026 — Compaction through Codex CLI 0.153.4
+
+GitHub's stable release and npm's `latest` both resolved to `0.153.4`, published
+September 4 at commit `3d2ee51ca2d5db578f328aa75e20aa22c0197c9a`.
+The focused comparison is
+[`rust-v0.149.1...rust-v0.153.4`](https://github.com/openai/codex/compare/rust-v0.149.1...rust-v0.153.4);
+the newest prerelease observed was `0.154.0-alpha.6`, not used as the baseline.
+
+The [compaction approach report](CODEX_COMPACTION_APPROACH_REVIEW.md) records
+source evidence, exact context transformations, implementation options,
+trade-offs, and proposed validation.
+
+Protocol decisions:
+
+- **P-007 unchanged:** image budgeting became stable/default-on in `0.150.1`.
+  This supplies new evidence for its revisit condition, not authorization to
+  replace Pi's deliberately retained roles or migrate checkpoints.
+- **P-008 unchanged:** `0.153.0` exposes experimental activation of token-budget
+  context, backend history/notes, and `new_context`. These remain unimplemented.
+  The proposed Pi-backed prototype requires a real recovery/reset runtime.
+- **P-001/P-011 unchanged:** Pi remains canonical; no session reset, migration,
+  runtime change, or private history/notes backend request was performed.
+- **P-002 finding:** the existing compaction collector and a dedicated test
+  accept terminal-only compaction output, unlike the official item-done-only
+  collector. Correcting this pre-existing discrepancy is proposed, not
+  implemented in this documentation review.
+
+Focused `apply_patch` comparison:
+
+- No changes under `codex-rs/apply-patch/`.
+- The tool grammar moved to `core/assets/tools/apply_patch.lark`; the tool
+  specification now includes that asset.
+- Inspected handler/runtime changes carry cancellation and selected-environment
+  permission/sandbox context. They do not justify changing this package's
+  parser, matcher, or queued single-writer filesystem policy.
+- All A-series decisions remain in force. This focused check is not a complete
+  certification of intervening tool orchestration changes.
+
+The package-wide baseline remains `0.149.1`: the full protocol and tool release
+review required to advance it was outside this report's scope. No changelog
+entry is needed because user-visible runtime behavior is unchanged.
+
 ## Release log
 
 ### Codex CLI 0.149.1

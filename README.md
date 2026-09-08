@@ -306,6 +306,12 @@ permissions.
 
 ## Native compaction
 
+See the [Codex compaction approach review](CODEX_COMPACTION_APPROACH_REVIEW.md)
+for a focused `0.153.4` source review, including experimental notes/history
+recovery and unsummarized context resets, implementation options, and trade-offs.
+That proposal does not change this package's runtime or its package-wide
+compatibility baseline.
+
 The extension handles native compaction for `openai-codex`. It follows the Codex v2 flow:
 
 1. Send normal Responses history followed by `{ "type": "compaction_trigger" }`.
