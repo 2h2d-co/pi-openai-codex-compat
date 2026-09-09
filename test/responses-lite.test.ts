@@ -13,130 +13,145 @@ import {
   usesResponsesLite,
 } from "../extensions/openai-codex-compat/responses-lite.ts";
 
-test("selects the official GPT-5.6 Responses Lite models", () => {
+test("selects only supported Responses Lite models when enabled", () => {
   assert.equal(usesResponsesLite("gpt-5.6-sol"), true);
   assert.equal(usesResponsesLite("gpt-5.6-terra"), true);
   assert.equal(usesResponsesLite("gpt-5.6-luna"), true);
+  assert.equal(usesResponsesLite("gpt-6-astra"), true);
+  assert.equal(usesResponsesLite("gpt-6-astra-preview"), false);
+  assert.equal(usesResponsesLite("gpt-6"), false);
+  assert.equal(usesResponsesLite("gpt-6-astra", false), false);
   assert.equal(usesResponsesLite("gpt-5.5"), false);
   assert.equal(usesResponsesLite("gpt-5.6-sol", false), false);
 });
 
-test("builds the Responses Lite instruction and tool prefix", () => {
-  const payload = applyResponsesLite(
-    {
-      model: "gpt-5.6-sol",
-      instructions: "Stable instructions",
-      input: [
-        {
-          type: "message",
-          role: "user",
-          content: [
-            { type: "input_image", image_url: "data:image/png;base64,eA==", detail: "auto" },
-          ],
-        },
-        {
-          type: "function_call",
-          call_id: "call-1",
-          name: "read",
-          arguments: "{}",
-        },
-      ],
-      tools: [
-        { type: "tool_search", execution: "client", description: "Search", parameters: {} },
-        { type: "function", name: "read", description: "Read", parameters: {}, strict: false },
-        {
-          type: "namespace",
-          name: "web",
-          description: "Tools in the web namespace.",
-          tools: [{ type: "function", name: "run", description: "Search", parameters: {} }],
-        },
-        {
-          type: "custom",
-          name: "apply_patch",
-          description: "Patch",
-          format: { type: "grammar", syntax: "lark", definition: "start: /.+/" },
-        },
-        { type: "web_search_preview" },
-      ],
-      parallel_tool_calls: true,
-      reasoning: { effort: "low", summary: "auto" },
-      client_metadata: { retained: "value" },
-    },
-    "gpt-5.6-sol",
-  );
+for (const modelId of ["gpt-5.6-sol", "gpt-6-astra"]) {
+  test(`builds the Responses Lite instruction and tool prefix for ${modelId}`, () => {
+    const payload = applyResponsesLite(
+      {
+        model: modelId,
+        instructions: "Stable instructions",
+        input: [
+          {
+            type: "message",
+            role: "user",
+            content: [
+              { type: "input_image", image_url: "data:image/png;base64,eA==", detail: "auto" },
+            ],
+          },
+          {
+            type: "function_call",
+            call_id: "call-1",
+            name: "read",
+            arguments: "{}",
+          },
+        ],
+        tools: [
+          { type: "tool_search", execution: "client", description: "Search", parameters: {} },
+          { type: "function", name: "read", description: "Read", parameters: {}, strict: false },
+          {
+            type: "namespace",
+            name: "web",
+            description: "Tools in the web namespace.",
+            tools: [{ type: "function", name: "run", description: "Search", parameters: {} }],
+          },
+          {
+            type: "custom",
+            name: "apply_patch",
+            description: "Patch",
+            format: { type: "grammar", syntax: "lark", definition: "start: /.+/" },
+          },
+          { type: "web_search_preview" },
+        ],
+        parallel_tool_calls: true,
+        reasoning: { effort: "low", summary: "auto" },
+        client_metadata: { retained: "value" },
+      },
+      modelId,
+    );
 
-  assert.equal(payload.instructions, undefined);
-  assert.equal(payload.tools, undefined);
-  assert.equal(payload.parallel_tool_calls, false);
-  assert.deepEqual(payload["reasoning"], {
-    effort: "low",
-    summary: "auto",
-    context: "all_turns",
-  });
-  assert.deepEqual(payload.client_metadata, {
-    retained: "value",
-    [RESPONSES_LITE_WS_METADATA_KEY]: "true",
-  });
+    assert.equal(payload.instructions, undefined);
+    assert.equal(payload.tools, undefined);
+    assert.equal(payload.parallel_tool_calls, false);
+    assert.deepEqual(payload["reasoning"], {
+      effort: "low",
+      summary: "auto",
+      context: "all_turns",
+    });
+    assert.deepEqual(payload.client_metadata, {
+      retained: "value",
+      [RESPONSES_LITE_WS_METADATA_KEY]: "true",
+    });
 
-  const input = requireJsonRecords(payload.input);
-  assert.deepEqual(input.slice(0, 2), [
-    {
-      type: "additional_tools",
-      role: "developer",
-      tools: [
-        { type: "tool_search", execution: "client", description: "Search", parameters: {} },
-        {
-          type: "namespace",
-          name: "functions",
-          description: "",
-          tools: [
-            { type: "function", name: "read", description: "Read", parameters: {}, strict: false },
-            {
-              type: "custom",
-              name: "apply_patch",
-              description: "Patch",
-              format: { type: "grammar", syntax: "lark", definition: "start: /.+/" },
-            },
-          ],
-        },
-        {
-          type: "namespace",
-          name: "web",
-          description: "Tools in the web namespace.",
-          tools: [{ type: "function", name: "run", description: "Search", parameters: {} }],
-        },
-      ],
-    },
-    {
+    const input = requireJsonRecords(payload.input);
+    assert.deepEqual(input.slice(0, 2), [
+      {
+        type: "additional_tools",
+        role: "developer",
+        tools: [
+          { type: "tool_search", execution: "client", description: "Search", parameters: {} },
+          {
+            type: "namespace",
+            name: "functions",
+            description: "",
+            tools: [
+              {
+                type: "function",
+                name: "read",
+                description: "Read",
+                parameters: {},
+                strict: false,
+              },
+              {
+                type: "custom",
+                name: "apply_patch",
+                description: "Patch",
+                format: { type: "grammar", syntax: "lark", definition: "start: /.+/" },
+              },
+            ],
+          },
+          {
+            type: "namespace",
+            name: "web",
+            description: "Tools in the web namespace.",
+            tools: [{ type: "function", name: "run", description: "Search", parameters: {} }],
+          },
+        ],
+      },
+      {
+        type: "message",
+        role: "developer",
+        content: [{ type: "input_text", text: "Stable instructions" }],
+      },
+    ]);
+    assert.deepEqual(input[2], {
       type: "message",
-      role: "developer",
-      content: [{ type: "input_text", text: "Stable instructions" }],
-    },
-  ]);
-  assert.deepEqual(input[2], {
-    type: "message",
-    role: "user",
-    content: [{ type: "input_image", image_url: "data:image/png;base64,eA==" }],
-  });
-  assert.deepEqual(input[3], {
-    type: "function_call",
-    call_id: "call-1",
-    name: "read",
-    arguments: "{}",
-  });
+      role: "user",
+      content: [{ type: "input_image", image_url: "data:image/png;base64,eA==" }],
+    });
+    assert.deepEqual(input[3], {
+      type: "function_call",
+      call_id: "call-1",
+      name: "read",
+      arguments: "{}",
+    });
 
-  const headers = new Headers();
-  applyResponsesLiteHeaders(headers, payload);
-  assert.equal(headers.get(RESPONSES_LITE_HEADER), "true");
+    const headers = new Headers();
+    applyResponsesLiteHeaders(headers, payload);
+    assert.equal(headers.get(RESPONSES_LITE_HEADER), "true");
 
-  const ssePayload = responsesLiteSsePayload(payload);
-  assert.equal(
-    requireJsonRecord(ssePayload.client_metadata)[RESPONSES_LITE_WS_METADATA_KEY],
-    undefined,
-  );
-  assert.equal(requireJsonRecord(ssePayload.client_metadata)["retained"], "value");
-  assert.equal(requireJsonRecord(payload.client_metadata)[RESPONSES_LITE_WS_METADATA_KEY], "true");
-});
+    const ssePayload = responsesLiteSsePayload(payload);
+    assert.equal(
+      requireJsonRecord(ssePayload.client_metadata)[RESPONSES_LITE_WS_METADATA_KEY],
+      undefined,
+    );
+    assert.equal(requireJsonRecord(ssePayload.client_metadata)["retained"], "value");
+    assert.equal(
+      requireJsonRecord(payload.client_metadata)[RESPONSES_LITE_WS_METADATA_KEY],
+      "true",
+    );
+  });
+}
 
 test("matches upstream default-namespace grouping and ordering", () => {
   const payload = applyResponsesLite(
@@ -250,4 +265,6 @@ test("leaves ordinary Responses requests unchanged", () => {
   const payload = { input: [], instructions: "ordinary" };
   assert.equal(applyResponsesLite(payload, "gpt-5.5"), payload);
   assert.equal(applyResponsesLite(payload, "gpt-5.6-sol", false), payload);
+  assert.equal(applyResponsesLite(payload, "gpt-6-astra", false), payload);
+  assert.throws(() => applyResponsesLite({}, "gpt-6-astra"), /requires array input/);
 });

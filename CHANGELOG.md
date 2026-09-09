@@ -4,6 +4,9 @@
 
 ### Added
 
+- Support `gpt-6-astra` for opt-in Responses Lite requests and `pro` reasoning
+  mode, without changing either setting's default.
+
 - Add configurable Codex `exec_command` + `write_stdin` and `shell_command`
   command surfaces, defaulting to persistent unified exec and replacing only
   an active Pi `bash` tool. Command output follows Pi's 2,000-line/50-KiB tail

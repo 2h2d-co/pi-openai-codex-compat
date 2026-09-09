@@ -20,7 +20,7 @@ export function isCodexModel(model: Model<Api> | undefined): model is Model<type
 }
 
 export function supportsReasoningMode(modelId: string): boolean {
-  return /^gpt-5\.6(?:-|$)/.test(modelId);
+  return modelId === "gpt-6-astra" || /^gpt-5\.6(?:-|$)/.test(modelId);
 }
 
 function isWebSearchTool(value: unknown): boolean {

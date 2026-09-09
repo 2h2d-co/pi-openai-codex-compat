@@ -236,17 +236,41 @@ test("applies priority, GPT-5.6 reasoning mode, and native request controls", ()
   });
 });
 
-test("omits the default GPT-5.6 reasoning mode", () => {
-  const result = applyCodexRequestOptions(
-    {
-      reasoning: { effort: "high", summary: "concise", mode: "pro" },
-    },
-    DEFAULT_CONFIG,
-    { modelId: "gpt-5.6-sol", supportsImageSearch: false },
-  );
+for (const modelId of ["gpt-5.6-sol", "gpt-6-astra"]) {
+  test(`sends pro reasoning mode only when requested for ${modelId}`, () => {
+    const payload = { reasoning: { effort: "high" } };
+    const result = applyCodexRequestOptions(
+      payload,
+      { ...DEFAULT_CONFIG, reasoningMode: "pro" },
+      { modelId, supportsImageSearch: false },
+    );
+    assert.deepEqual(result["reasoning"], { effort: "high", summary: "auto", mode: "pro" });
+    assert.deepEqual(payload.reasoning, { effort: "high" });
+  });
 
-  assert.deepEqual(result["reasoning"], { effort: "high", summary: "auto" });
-});
+  test(`omits the default reasoning mode for ${modelId}`, () => {
+    const result = applyCodexRequestOptions(
+      {
+        reasoning: { effort: "high", summary: "concise", mode: "pro" },
+      },
+      DEFAULT_CONFIG,
+      { modelId, supportsImageSearch: false },
+    );
+
+    assert.deepEqual(result["reasoning"], { effort: "high", summary: "auto" });
+  });
+}
+
+for (const modelId of ["gpt-5.5", "gpt-6", "gpt-6-astra-preview"]) {
+  test(`omits configured pro reasoning mode for unsupported ${modelId}`, () => {
+    const result = applyCodexRequestOptions(
+      { reasoning: { effort: "high", mode: "pro" } },
+      { ...DEFAULT_CONFIG, reasoningMode: "pro" },
+      { modelId, supportsImageSearch: false },
+    );
+    assert.deepEqual(result["reasoning"], { effort: "high", summary: "auto" });
+  });
+}
 
 test("disables request tools and omits unsupported reasoning mode and summary", () => {
   const disabled = applyCodexRequestOptions(
