@@ -19,7 +19,11 @@
     "type": "git",
     "url": "git+https://github.com/2h2d-co/pi-openai-codex-compat.git"
   },
+  "bin": {
+    "pi-apply-patch": "./bin/pi-apply-patch.ts"
+  },
   "files": [
+    "bin",
     "extensions",
     "APPLY_PATCH_INSTRUCTION_FEEDBACK.md",
     "README.md",

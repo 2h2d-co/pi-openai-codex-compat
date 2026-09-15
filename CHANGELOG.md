@@ -4,6 +4,9 @@
 
 ### Added
 
+- Add the `pi-apply-patch parse` command-line entry point, which parses a
+  Codex patch document from a file or standard input and prints its
+  operations as JSON without touching the filesystem.
 - Support `gpt-6-astra` for opt-in Responses Lite requests and `pro` reasoning
   mode, without changing either setting's default.
 

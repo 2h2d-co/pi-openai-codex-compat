@@ -478,6 +478,23 @@ cannot be inspected, it says that the final state was not verified.
 The complete feedback and rendering contract is documented in
 [`APPLY_PATCH_INSTRUCTION_FEEDBACK.md`](APPLY_PATCH_INSTRUCTION_FEEDBACK.md).
 
+### `pi-apply-patch` command line
+
+The package installs a `pi-apply-patch` executable for use outside Pi sessions:
+
+```bash
+pi-apply-patch parse patch.txt
+cat patch.txt | pi-apply-patch parse
+```
+
+`parse` runs the same parser as the tool and prints `{ operations, environmentId? }` as JSON.
+Each operation is `add` with `content`, `delete`, or `update` with `chunks` and an optional
+`moveTo`. It does not read or write any other file. Exit status is `0` when parsed, `1` for an
+invalid patch, and `2` for a usage or read error.
+
+The command line does not apply patches. Applying through a standalone process would bypass Pi's
+file mutation queue and the tool-result contract, so applying stays inside the `apply_patch` tool.
+
 ## `image_gen.imagegen`
 
 The package registers the dotted Pi tool name `image_gen.imagegen` and serializes it as a native Responses API namespace:
