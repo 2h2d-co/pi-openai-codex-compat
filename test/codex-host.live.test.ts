@@ -80,7 +80,11 @@ function historyInstructions(mode: HistoryMode): string {
   const action =
     mode === "text"
       ? "Respond with only those values, one value per line."
-      : 'Call report_history exactly once with {"items":[...]} containing those values.';
+      : [
+          "On every new user message, call report_history once for that turn.",
+          'Use {"items":[...]} containing all values collected through the current user message.',
+          "Earlier reports do not satisfy the current turn; make a new call with the updated history.",
+        ].join(" ");
   const cachePadding =
     mode === "text"
       ? [
@@ -416,10 +420,20 @@ test(
       );
       const promptFrames = traffic.frames.slice(frameStart);
 
-      assert.deepEqual(reports[index], values.slice(0, index + 1));
       const assistant = latestAssistant(session);
+      assert.equal(
+        assistant.stopReason,
+        "toolUse",
+        JSON.stringify(
+          assistant.content.map((block) => ({
+            type: block.type,
+            text: block.type === "text" ? block.text : undefined,
+            thinking: block.type === "thinking" ? block.thinking : undefined,
+          })),
+        ),
+      );
+      assert.deepEqual(reports[index], values.slice(0, index + 1));
       cache.push(cacheObservation(assistant));
-      assert.equal(assistant.stopReason, "toolUse");
       assert.equal(
         assistant.content.some(
           (block) => block.type === "toolCall" && block.name === "report_history",
