@@ -24,8 +24,9 @@ description = "Run all non-writing quality checks and tests"
 run = ["npm run check", "npm test"]
 
 [tasks."test:live:codex"]
-description = "Run live Pi/Codex continuation tests with gpt-5.6-luna"
+description = "Verify packaged Pi CLI and SDK workflows against live Codex"
 run = '''
+export PI_PACKAGE_DIR="$PWD/node_modules/@earendil-works/pi-coding-agent"
 PI_CODEX_LIVE_API_KEY="$(./node_modules/.bin/pi auth print-bearer-token --provider openai-codex --model gpt-5.6-luna)" \
   npm run test:live:codex
 '''

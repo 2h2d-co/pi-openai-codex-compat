@@ -36,7 +36,7 @@
   "scripts": {
     "check": "hk check --all --check",
     "test": "node --test --test-concurrency=4 test/*.test.ts",
-    "test:live:codex": "PI_CODEX_LIVE_TEST=1 node --test --test-concurrency=1 test/codex-host.live.test.ts",
+    "test:live:codex": "PI_CODEX_LIVE_TEST=1 node --test --test-concurrency=1 test/codex-host.live.test.ts test/codex-cli.live.test.ts",
     "pack:dry": "npm pack --dry-run --allow-directory=all",
     "release": "node scripts/release.ts",
     "fmt": "oxfmt",

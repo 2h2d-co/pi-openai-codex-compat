@@ -1,4 +1,6 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import * as piAi from "@earendil-works/pi-ai";
+import { requirePiTranscriptRuntime } from "./pi-runtime.ts";
 import { DEFAULT_CONFIG, loadConfig, type CodexCompatConfig } from "./config.ts";
 import type { ConfigContext } from "./config-context.ts";
 import { registerCodexProvider } from "./codex-provider.ts";
@@ -21,6 +23,7 @@ export {
 } from "./codex-transport.ts";
 
 export default function registerOpenAICodexCompat(pi: ExtensionAPI): void {
+  requirePiTranscriptRuntime(piAi);
   let activeConfig: CodexCompatConfig | undefined;
   const resolveConfig = (ctx: ConfigContext): CodexCompatConfig => {
     activeConfig ??= loadConfig(ctx.cwd, ctx.isProjectTrusted());

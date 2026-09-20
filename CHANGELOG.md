@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+## 0.0.11 - 2026-09-20
+
+### Fixed
+
+- Report missing Pi transcript APIs when loading the extension instead of
+  failing on the first request.
+
 ## 0.0.10 - 2026-09-20
 
 ### Added

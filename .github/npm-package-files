@@ -83,6 +83,7 @@ extensions/openai-codex-compat/model-policy.ts
 extensions/openai-codex-compat/namespaced-tools.ts
 extensions/openai-codex-compat/native-history.ts
 extensions/openai-codex-compat/output-limit-continuation.ts
+extensions/openai-codex-compat/pi-runtime.ts
 extensions/openai-codex-compat/remote-compaction.ts
 extensions/openai-codex-compat/request-options.ts
 extensions/openai-codex-compat/required-value.ts

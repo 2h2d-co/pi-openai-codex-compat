@@ -25,6 +25,11 @@ Pi provides the Codex OAuth flow and model catalog. At session start, this packa
 - Pi `>=0.86.0 <0.87.0`
 - An OpenAI Codex login in Pi
 
+Restart Pi after upgrading its runtime. `/reload` reloads extensions but cannot
+upgrade the running Pi process. The extension checks the host's transcript APIs
+at load time. `PI_PACKAGE_DIR` can point an older executable at newer package
+metadata, so its displayed version alone does not establish compatibility.
+
 Authenticate through Pi if needed:
 
 ```text
@@ -581,6 +586,11 @@ mise run test:live:codex
 
 The task obtains the local Codex bearer token and runs the tests with
 `gpt-5.6-luna` at medium reasoning effort.
+It also packs the extension and loads that archive through the shipped Pi
+0.86.0 CLI. Ordinary Responses and Responses Lite tests exercise tool calls,
+prompt reload, native compaction, and persisted-session resume against Codex.
+Test credentials stay in memory and child-process environments. Test sessions
+and configuration are isolated from the user's agent directory.
 
 The public package entrypoint is `extensions/index.ts`; implementation modules remain under
 `extensions/openai-codex-compat/`. The focused Pi AI serializer copy lives under
@@ -593,7 +603,7 @@ search, and compaction continuation.
 ## Release staging
 
 1. Run `npm run release -- X.Y.Z` from a clean, synchronized `main`.
-2. The command builds the exact package locally, records its SHA-256 in an SSH-signed release commit, proves a clean rebuild is reproducible, and creates a lightweight tag.
+2. The command builds the exact package locally and runs live CLI tests against that archive. It also runs the existing live SDK tests against checkout source. Both suites must pass before it records the archive's SHA-256 in an SSH-signed release commit, proves a clean rebuild is reproducible, and creates a lightweight tag. Missing credentials or failing live tests stop the release.
 3. Inspect the result, then push atomically with `git push --atomic origin main vX.Y.Z`.
 4. A read-only GitHub Actions job validates and packs the package. After approval in the tag-restricted `npm-publish` environment, a separate GitHub-owned job verifies the signature and signed digest before attesting and staging that exact archive through npm trusted publishing.
 5. Approve the staged package on npmjs.com, or with `npm stage approve <stage-id>`.

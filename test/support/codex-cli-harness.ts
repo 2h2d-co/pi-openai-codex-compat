@@ -1,0 +1,212 @@
+import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
+import { mkdir, mkdtemp, readFile, realpath, rm, symlink, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { dirname, join, resolve } from "node:path";
+import type { TestContext } from "node:test";
+import { fileURLToPath } from "node:url";
+import { RpcClient } from "../../node_modules/@earendil-works/pi-coding-agent/dist/modes/rpc/rpc-client.js";
+import {
+  parseJsonRecord,
+  requireJsonRecord,
+  requireJsonRecords,
+} from "../../extensions/openai-codex-compat/codex-protocol.ts";
+
+const root = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
+const fixture = join(root, "test/support/codex-cli-extension.ts");
+const instruction = (marker: string) =>
+  `The current system marker is ${marker}. Call verify_release exactly once with that marker ` +
+  "and the value from the latest user message. Do not respond with text.";
+
+export async function verifyPackagedCli(
+  t: TestContext,
+  options: { live: boolean; lite: boolean },
+): Promise<void> {
+  const temporary = await mkdtemp(join(tmpdir(), "codex-packaged-cli-"));
+  t.after(() => rm(temporary, { recursive: true, force: true }));
+  const agent = join(temporary, "agent");
+  await mkdir(agent);
+  let archive = process.env["PI_CODEX_PACKAGE_ARCHIVE"];
+  if (!archive) {
+    const packed = requireJsonRecords(
+      JSON.parse(
+        execFileSync(
+          "npm",
+          [
+            "pack",
+            "--json",
+            "--ignore-scripts",
+            "--allow-directory=all",
+            "--pack-destination",
+            temporary,
+          ],
+          { cwd: root, encoding: "utf8" },
+        ),
+      ),
+    );
+    assert.equal(packed.length, 1);
+    const filename = packed[0]?.["filename"];
+    assert.ok(typeof filename === "string");
+    archive = join(temporary, filename);
+  }
+  const files = execFileSync("tar", ["-tzf", archive], { encoding: "utf8" })
+    .trim()
+    .split("\n")
+    .sort();
+  const expected = (await readFile(join(root, ".github/npm-package-files"), "utf8"))
+    .trim()
+    .split("\n")
+    .map((file) => `package/${file}`)
+    .sort();
+  assert.deepEqual(files, expected);
+  execFileSync("tar", ["-xzf", archive, "-C", temporary]);
+  const packageRoot = join(temporary, "package");
+  const packaged = parseJsonRecord(await readFile(join(packageRoot, "package.json"), "utf8"));
+  assert.equal(packaged["name"], "pi-openai-codex-compat");
+  const packageVersion = packaged["version"];
+  assert.ok(typeof packageVersion === "string");
+  await symlink(join(root, "node_modules"), join(packageRoot, "node_modules"), "dir");
+
+  const cli = await realpath(
+    process.env["PI_CODEX_CLI_PATH"] ??
+      join(root, "node_modules/@earendil-works/pi-coding-agent/dist/bundle/cli.js"),
+  );
+  const piRoot = resolve(dirname(cli), "../..");
+  const piManifest = parseJsonRecord(await readFile(join(piRoot, "package.json"), "utf8"));
+  assert.equal(piManifest["version"], "0.86.0");
+  const token = options.live
+    ? process.env["PI_CODEX_LIVE_API_KEY"]
+    : `test.${Buffer.from(
+        JSON.stringify({
+          "https://api.openai.com/auth": { chatgpt_account_id: "test-account" },
+        }),
+      ).toString("base64url")}.test`;
+  assert.ok(token, "The live CLI test requires PI_CODEX_LIVE_API_KEY");
+  await writeFile(
+    join(agent, "models.json"),
+    JSON.stringify({
+      providers: { "openai-codex": { apiKey: "$PI_CODEX_LIVE_API_KEY" } },
+    }),
+  );
+  await writeFile(
+    join(agent, "settings.json"),
+    JSON.stringify({
+      transport: "sse",
+      retry: { enabled: false, provider: { timeoutMs: 60_000, maxRetries: 0 } },
+      compaction: { enabled: false, keepRecentTokens: 1 },
+    }),
+  );
+  await writeFile(
+    join(agent, "openai-codex-compat.json"),
+    JSON.stringify({
+      responsesLite: options.lite,
+      fastMode: false,
+      applyPatch: false,
+      imageGeneration: false,
+      webRun: false,
+      webSearch: "disabled",
+    }),
+  );
+  await writeFile(join(agent, "SYSTEM.md"), instruction("FIRST"));
+  const sessionFile = join(temporary, "session.jsonl");
+  const clientOptions = {
+    cliPath: cli,
+    cwd: temporary,
+    provider: "openai-codex",
+    model: "gpt-5.6-luna",
+    env: {
+      HOME: temporary,
+      PI_CODING_AGENT_DIR: agent,
+      PI_PACKAGE_DIR: piRoot,
+      PI_OFFLINE: "1",
+      PI_TELEMETRY: "0",
+      PI_CODEX_LIVE_API_KEY: token,
+      PI_CODEX_CLI_MOCK: options.live ? "0" : "1",
+    },
+    args: [
+      "--offline",
+      "--no-extensions",
+      "--no-skills",
+      "--no-prompt-templates",
+      "--no-context-files",
+      "--no-builtin-tools",
+      "--tools",
+      "verify_release",
+      "--thinking",
+      "medium",
+      "--session",
+      sessionFile,
+      "-e",
+      packageRoot,
+      "-e",
+      fixture,
+    ],
+  };
+  assert.equal(
+    execFileSync(process.execPath, [cli, "--version"], {
+      env: { ...process.env, ...clientOptions.env },
+      encoding: "utf8",
+    }).trim(),
+    "0.86.0",
+  );
+  let client = new RpcClient(clientOptions);
+  t.after(async () => client.stop());
+  await client.start();
+  assert.ok((await client.getCommands()).some((command) => command.name === "codex-settings"));
+
+  async function turn(marker: string, value: string): Promise<void> {
+    const events = await client.promptAndWait(`user value: ${value}`, undefined, 90_000);
+    assert.deepEqual(
+      events.filter((event: { type: string }) => event.type === "extension_error"),
+      [],
+    );
+    const messages = await client.getMessages();
+    const assistant = messages.filter((message) => message.role === "assistant").at(-1);
+    assert.ok(assistant);
+    assert.equal(assistant.stopReason, "toolUse", assistant.errorMessage);
+    const call = assistant.content.find((block) => block.type === "toolCall");
+    assert.ok(call);
+    assert.equal(call.name, "verify_release");
+    assert.deepEqual(call.arguments, { marker, value });
+    const diagnostic = assistant.diagnostics?.find(
+      (entry) => entry.type === "codex_transport_request",
+    );
+    assert.ok(diagnostic);
+    assert.equal(
+      requireJsonRecord(diagnostic.details?.["cache"])["envelope"],
+      options.lite ? "responses_lite" : "responses",
+    );
+    const { entries } = await client.getEntries();
+    const observation = entries
+      .filter((entry) => entry.type === "custom" && entry.customType === "release-test-request")
+      .at(-1);
+    assert.ok(observation?.type === "custom");
+    const data = requireJsonRecord(observation.data);
+    assert.equal(data["marker"], marker);
+    assert.doesNotMatch(client.getStderr(), /Failed to load extension|not a function/);
+  }
+
+  await turn("FIRST", "alpha");
+  await writeFile(join(agent, "SYSTEM.md"), instruction("SECOND"));
+  await client.prompt("/release-test-reload");
+  await turn("SECOND", "bravo");
+  const compacted = await client.compact();
+  assert.match(compacted.summary, /OpenAI Codex remote compaction checkpoint/);
+  await turn("SECOND", "charlie");
+  await client.stop();
+  client = new RpcClient(clientOptions);
+  await client.start();
+  await turn("SECOND", "delta");
+  const { entries } = await client.getEntries();
+  const requests = entries.flatMap((entry) =>
+    entry.type === "custom" && entry.customType === "release-test-request"
+      ? [requireJsonRecord(entry.data)]
+      : [],
+  );
+  assert.equal(requests.at(-1)?.["checkpoint"], true);
+  await client.stop();
+  t.diagnostic(
+    `Pi ${String(piManifest["version"])} packaged ${packageVersion}: ` +
+      `${options.lite ? "Lite" : "Responses"}, tools, reload, native compaction, and resume passed`,
+  );
+}
