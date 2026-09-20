@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.0.12 - 2026-09-20
+
 ### Fixed
 
 - Send Pi's strict-sampling tools (`read`, `bash`, `edit`, `write`) with the strict
