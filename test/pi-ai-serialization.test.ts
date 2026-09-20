@@ -6,7 +6,11 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { Type } from "typebox";
 import {
+  createBashTool,
+  createEditTool,
+  createReadTool,
   createSyntheticSourceInfo,
+  createWriteTool,
   type SessionEntry,
   type ToolInfo,
 } from "@earendil-works/pi-coding-agent";
@@ -19,7 +23,10 @@ import {
   type SystemMessage,
   type Tool,
 } from "@earendil-works/pi-ai";
-import { convertResponsesMessages as referenceConvertResponsesMessages } from "@earendil-works/pi-ai/api/openai-responses-shared";
+import {
+  convertResponsesMessages as referenceConvertResponsesMessages,
+  convertResponsesTools as referenceConvertResponsesTools,
+} from "@earendil-works/pi-ai/api/openai-responses-shared";
 import {
   activeResponsesTools,
   encodeSessionEntries,
@@ -665,4 +672,84 @@ test("serializes active compaction tools with the same namespace contract", () =
       },
     ],
   );
+});
+
+test("strict JSON-schema tools serialize the strict schema subset exactly like Pi AI", () => {
+  const builtinTools: Tool[] = [createReadTool, createBashTool, createEditTool, createWriteTool]
+    .map((create) => create(process.cwd()))
+    .map((tool) => ({
+      name: tool.name,
+      description: tool.description,
+      parameters: tool.parameters,
+      ...(tool.constrainedSampling === undefined
+        ? {}
+        : { constrainedSampling: tool.constrainedSampling }),
+    }));
+  assert.ok(
+    builtinTools.some(
+      (tool) =>
+        tool.constrainedSampling !== undefined &&
+        tool.constrainedSampling !== false &&
+        tool.constrainedSampling.type === "json_schema",
+    ),
+    "Pi's built-in tools request JSON-schema constrained sampling.",
+  );
+  const requireTool: Tool = {
+    name: "strict_required",
+    description: "Requires strict sampling",
+    parameters: Type.Object({ value: Type.String(), note: Type.Optional(Type.String()) }),
+    constrainedSampling: { type: "json_schema", strict: "require" },
+  };
+  // Object unions are outside the strict subset, so a "prefer" tool falls back to a
+  // non-strict schema.
+  const unsupportedPreferTool: Tool = {
+    name: "loose_preferred",
+    description: "Prefers strict sampling but cannot be made strict",
+    parameters: Type.Object({
+      value: Type.Union([Type.Object({ nested: Type.String() }), Type.Number()]),
+    }),
+    constrainedSampling: { type: "json_schema", strict: "prefer" },
+  };
+  const tools = [...builtinTools, requireTool, unsupportedPreferTool, deferredTool];
+  for (const supportsStrictMode of [true, false]) {
+    if (!supportsStrictMode) {
+      assert.throws(
+        () => convertResponsesTools([requireTool], { strict: null, supportsStrictMode }),
+        /requires JSON-schema constrained sampling/,
+      );
+      assert.throws(
+        () => referenceConvertResponsesTools([requireTool], { strict: null, supportsStrictMode }),
+        /requires JSON-schema constrained sampling/,
+      );
+    }
+    const candidates = supportsStrictMode ? tools : tools.filter((tool) => tool !== requireTool);
+    const copied = convertResponsesTools(candidates, { strict: null, supportsStrictMode });
+    assert.deepEqual(
+      copied,
+      JSON.parse(
+        JSON.stringify(
+          referenceConvertResponsesTools(candidates, { strict: null, supportsStrictMode }),
+        ),
+      ),
+    );
+    if (!supportsStrictMode) continue;
+    for (const item of copied) {
+      if (item["type"] !== "function") continue;
+      const parameters = requireJsonRecord(item["parameters"]);
+      if (item["strict"] === true) {
+        assert.equal(parameters["additionalProperties"], false, JSON.stringify(item["name"]));
+        assert.deepEqual(
+          parameters["required"],
+          Object.keys(requireJsonRecord(parameters["properties"])),
+        );
+      } else {
+        assert.equal(parameters["additionalProperties"], undefined, JSON.stringify(item["name"]));
+      }
+    }
+    assert.equal(copied.find((item) => item["name"] === "read")?.["strict"], true);
+    // The fallback keeps the request-level default, which Codex sends as null.
+    assert.equal(copied.find((item) => item["name"] === "loose_preferred")?.["strict"], null);
+  }
+  // Conversion never mutates the caller's tool schemas.
+  assert.equal(requireJsonRecord(requireTool.parameters)["additionalProperties"], undefined);
 });

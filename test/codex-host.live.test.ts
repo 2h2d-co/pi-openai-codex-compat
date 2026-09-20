@@ -1,4 +1,7 @@
-import { requireJsonRecords } from "../extensions/openai-codex-compat/codex-protocol.ts";
+import {
+  requireJsonRecord,
+  requireJsonRecords,
+} from "../extensions/openai-codex-compat/codex-protocol.ts";
 import assert from "node:assert/strict";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -37,7 +40,7 @@ const CODEX_PROVIDER = "openai-codex";
 const rootDir = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const extensionPath = resolve(rootDir, "extensions/index.ts");
 
-type HistoryMode = "text" | "tool";
+type HistoryMode = "text" | "tool" | "read";
 
 type ObservedWebSocketTraffic = {
   connections: number;
@@ -77,6 +80,13 @@ function liveApiKey(): string {
 }
 
 function historyInstructions(mode: HistoryMode): string {
+  if (mode === "read") {
+    return [
+      "You are a deterministic file reader.",
+      "When the user names a file, call the read tool with that path, then reply with only",
+      "the file content, without quotes, code fences, or commentary.",
+    ].join(" ");
+  }
   const action =
     mode === "text"
       ? "Respond with only those values, one value per line."
@@ -104,6 +114,13 @@ function historyInstructions(mode: HistoryMode): string {
     "Do not add, remove, rewrite, sort, explain, or decorate any value.",
     ...cachePadding,
   ].join(" ");
+}
+
+function functionDeclarations(value: unknown): JsonRecord[] {
+  if (Array.isArray(value)) return value.flatMap(functionDeclarations);
+  if (!isObject(value)) return [];
+  const nested = Object.values(value).flatMap(functionDeclarations);
+  return value["type"] === "function" && isString(value["name"]) ? [value, ...nested] : nested;
 }
 
 function assistantMessages(session: AgentSession): AssistantMessage[] {
@@ -233,6 +250,7 @@ async function createLivePiHost(
   t: TestContext,
   mode: HistoryMode,
   customTools: ToolDefinition[] = [],
+  options: { builtinTools?: string[] } = {},
 ): Promise<AgentSession> {
   const tempRoot = await mkdtemp(join(tmpdir(), "pi-codex-live-host-"));
   const cwd = join(tempRoot, "cwd");
@@ -318,7 +336,9 @@ async function createLivePiHost(
     resourceLoader,
     model,
     thinkingLevel: "medium",
-    noTools: customTools.length > 0 ? "builtin" : "all",
+    ...(options.builtinTools
+      ? { tools: [...options.builtinTools, ...customTools.map((tool) => tool.name)] }
+      : { noTools: customTools.length > 0 ? "builtin" : "all" }),
     customTools,
   });
   await result.session.bindExtensions({});
@@ -483,5 +503,44 @@ test(
       true,
     );
     t.diagnostic(`tool cache observations: ${JSON.stringify(cache)}`);
+  },
+);
+
+test(
+  "live Pi host sends Pi's strict built-in tool schemas and reads a file through Codex",
+  { skip: !LIVE_TEST_ENABLED, timeout: LIVE_TEST_TIMEOUT_MS },
+  async (t) => {
+    // Pi's built-in tools request JSON-schema constrained sampling. Codex rejects
+    // `strict: true` unless the schema is the strict subset, so a real request with the
+    // built-in `read` tool is the only proof that serialization matches upstream.
+    const traffic = observeRealWebSocketTraffic(t);
+    const session = await createLivePiHost(t, "read", [], { builtinTools: ["read"] });
+    assert.deepEqual(session.getActiveToolNames(), ["read"]);
+    const marker = `strict-read-${Date.now().toString(36)}`;
+    await writeFile(join(session.sessionManager.getCwd(), "marker.txt"), `${marker}\n`);
+    await session.prompt("Read the file marker.txt in the working directory.", {
+      expandPromptTemplates: false,
+    });
+    // Tool declarations travel either in the top-level tools list or anchored to
+    // system messages as additional_tools; search every declaration in every frame.
+    const readTool = traffic.frames
+      .flatMap(functionDeclarations)
+      .find((tool) => tool["name"] === "read");
+    assert.ok(readTool, "The request declared the built-in read tool.");
+    assert.equal(readTool["strict"], true);
+    assert.equal(requireJsonRecord(readTool["parameters"])["additionalProperties"], false);
+    const messages = assistantMessages(session);
+    assert.ok(
+      messages.some((message) =>
+        message.content.some((block) => block.type === "toolCall" && block.name === "read"),
+      ),
+      "Codex called the read tool.",
+    );
+    const final = latestAssistant(session);
+    assert.equal(final.stopReason, "stop", final.errorMessage);
+    assert.match(
+      final.content.flatMap((block) => (block.type === "text" ? [block.text] : [])).join(""),
+      new RegExp(marker),
+    );
   },
 );

@@ -158,9 +158,10 @@ export async function verifyPackagedCli(
       "--no-skills",
       "--no-prompt-templates",
       "--no-context-files",
-      "--no-builtin-tools",
+      // Keep Pi's built-in read tool declared: its strict JSON-schema sampling must
+      // serialize into the strict subset Codex accepts on every request.
       "--tools",
-      "verify_release",
+      "read,verify_release",
       "--thinking",
       "medium",
       "--session",

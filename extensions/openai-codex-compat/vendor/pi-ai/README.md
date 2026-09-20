@@ -2,7 +2,7 @@
 
 This directory intentionally contains only the Pi AI methods needed to serialize checkpoint and native replay history for OpenAI's Responses API. It does not contain Pi AI's complete source dependency graph.
 
-[`openai-responses-serialization.ts`](openai-responses-serialization.ts) adapts the relevant methods from `@earendil-works/pi-ai@0.86.0`. Its header lists the upstream source files. Keep the wire-equivalence tests in [`test/pi-ai-serialization.test.ts`](../../../../test/pi-ai-serialization.test.ts) passing when updating the Pi dependencies.
+[`openai-responses-serialization.ts`](openai-responses-serialization.ts) adapts the relevant methods from `@earendil-works/pi-ai@0.86.0`. Its header lists the upstream source files. It also carries the strict JSON-schema conversion from `src/api/constrained-sampling.ts`; Pi's built-in tools request strict sampling, and Codex rejects `strict: true` without that subset. Keep the wire-equivalence tests in [`test/pi-ai-serialization.test.ts`](../../../../test/pi-ai-serialization.test.ts) passing when updating the Pi dependencies.
 
 Pi AI's transcript helpers replay system sections and tool declarations.
 `supportsAdditionalTools` and `supportsToolSearch` select the dynamic tool

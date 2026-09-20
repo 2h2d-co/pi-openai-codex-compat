@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+### Fixed
+
+- Send Pi's strict-sampling tools (`read`, `bash`, `edit`, `write`) with the strict
+  JSON-schema subset Codex requires. On Pi 0.86 every request that declared a
+  built-in tool failed with an `Invalid schema for function` error.
+
 ## 0.0.11 - 2026-09-20
 
 ### Fixed
