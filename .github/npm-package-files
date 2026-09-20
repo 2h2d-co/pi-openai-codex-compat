@@ -7,7 +7,9 @@ LICENSES/pi-ai-MIT.txt
 LICENSES/tree-sitter-MIT.txt
 README.md
 THIRD_PARTY_NOTICES.md
+bin/pi-apply-patch.ts
 extensions/index.ts
+extensions/openai-codex-compat/apply-patch-cli.ts
 extensions/openai-codex-compat/apply-patch-diagnostics.ts
 extensions/openai-codex-compat/apply-patch-diff-render.ts
 extensions/openai-codex-compat/apply-patch-engine.ts
