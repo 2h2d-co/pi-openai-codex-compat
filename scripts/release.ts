@@ -6,6 +6,7 @@ import { mkdir, mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { assertChangelogSection } from "./release-notes.ts";
 import type { Static } from "typebox";
 import { Value } from "typebox/value";
 
@@ -64,6 +65,9 @@ await createRelease(version, tag);
 
 async function createRelease(releaseVersion: string, releaseTag: string): Promise<void> {
   requireCleanMain();
+  // The tag workflow publishes these notes as an immutable release; refuse to create a
+  // release commit or tag when the changelog section is missing or empty.
+  assertChangelogSection(await readFile(join(root, "CHANGELOG.md"), "utf8"), releaseVersion);
   git(["fetch", "--quiet", "--tags", "origin", "main"]);
 
   const head = gitOutput(["rev-parse", "HEAD"]);

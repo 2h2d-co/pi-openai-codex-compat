@@ -66,23 +66,43 @@ function escapeRegExp(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
+/** Fail before any release artifact exists when the changelog lacks the version's section. */
+export function assertChangelogSection(changelog: string, version: string): void {
+  changelogSection(changelog, version);
+}
+
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   const required = (name: string): string => {
     const value = process.env[name];
     if (!value) throw new Error(`${name} is required.`);
     return value;
   };
-  const output = required("RELEASE_NOTES_FILE");
-  const notes = releaseNotes({
-    changelog: readFileSync(resolve(process.cwd(), "CHANGELOG.md"), "utf8"),
-    packageName: required("PACKAGE_NAME"),
-    version: required("PACKAGE_VERSION"),
-    npmTag: required("NPM_DIST_TAG"),
-    archiveName: required("ARCHIVE_NAME"),
-    archiveDigest: required("ARCHIVE_DIGEST"),
-  });
-  writeFileSync(output, notes);
-  console.log(
-    `Wrote release notes for ${required("PACKAGE_NAME")}@${required("PACKAGE_VERSION")}.`,
-  );
+  const changelog = readFileSync(resolve(process.cwd(), "CHANGELOG.md"), "utf8");
+  if (process.argv[2] === "--check") {
+    // Pre-release gate: validate the section for the version in package.json.
+    const manifest: unknown = JSON.parse(
+      readFileSync(resolve(process.cwd(), "package.json"), "utf8"),
+    );
+    const version =
+      typeof manifest === "object" && manifest !== null && "version" in manifest
+        ? manifest.version
+        : undefined;
+    if (typeof version !== "string") throw new Error("package.json has no version.");
+    assertChangelogSection(changelog, version);
+    console.log(`CHANGELOG.md has release notes for ${version}.`);
+  } else {
+    const output = required("RELEASE_NOTES_FILE");
+    const notes = releaseNotes({
+      changelog,
+      packageName: required("PACKAGE_NAME"),
+      version: required("PACKAGE_VERSION"),
+      npmTag: required("NPM_DIST_TAG"),
+      archiveName: required("ARCHIVE_NAME"),
+      archiveDigest: required("ARCHIVE_DIGEST"),
+    });
+    writeFileSync(output, notes);
+    console.log(
+      `Wrote release notes for ${required("PACKAGE_NAME")}@${required("PACKAGE_VERSION")}.`,
+    );
+  }
 }
