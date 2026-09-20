@@ -2,7 +2,15 @@ import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import test from "node:test";
 import type { ExtensionAPI, ExtensionContext, SessionEntry } from "@earendil-works/pi-coding-agent";
-import type { Api, AssistantMessage, Context, Model, Tool, Usage } from "@earendil-works/pi-ai";
+import type {
+  Api,
+  AssistantMessage,
+  Context,
+  JsonObject,
+  Model,
+  Tool,
+  Usage,
+} from "@earendil-works/pi-ai";
 import { Type } from "typebox";
 import { CodexProviderRuntime } from "../../extensions/openai-codex-compat/codex-provider.ts";
 import type { CodexProviderRuntimeApi } from "../../extensions/openai-codex-compat/codex-provider/codex-provider-runtime.ts";
@@ -134,11 +142,11 @@ export function textEvents(text: string, responseId = "resp_text"): JsonRecord[]
   ];
 }
 
-export function responseDecisions(message: AssistantMessage): JsonRecord[] {
+export function responseDecisions(message: AssistantMessage): JsonObject[] {
   return (message.diagnostics ?? [])
     .filter((diagnostic) => diagnostic.type === "codex_response_decision")
     .map((diagnostic) => diagnostic.details)
-    .filter(isObject);
+    .filter((details) => details !== undefined);
 }
 
 export const REPORT_TOOL = {

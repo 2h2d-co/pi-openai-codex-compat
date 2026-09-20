@@ -1,42 +1,10 @@
 import type { SessionEntry, ToolInfo } from "@earendil-works/pi-coding-agent";
-import type { Api, Context, Model, Tool } from "@earendil-works/pi-ai";
+import type { Api, Model } from "@earendil-works/pi-ai";
 import { providerHistory, type GrammarToolInputProperties } from "../compaction-checkpoint.ts";
 import type { ImageDetail } from "../config.ts";
 import { normalizeReplayItem, stableResponsesJson } from "../responses-replay.ts";
 import type { ResponsesInputItem, ResponsesOutputItem } from "../responses-item-schema.ts";
 import type { ResponsesItem as SerializedResponsesItem } from "../vendor/pi-ai/openai-responses-serialization.ts";
-
-export interface DeferredToolGroups {
-  immediate: Tool[];
-  deferred: Map<string, Tool>;
-}
-
-export function splitDeferredTools(context: Context, enabled: boolean): DeferredToolGroups {
-  const unique = new Map((context.tools ?? []).map((tool) => [tool.name, tool]));
-  if (!enabled) return { immediate: [...unique.values()], deferred: new Map() };
-
-  const deferredNames = new Set<string>();
-  const usedNames = new Set<string>();
-  for (const message of context.messages) {
-    if (message.role === "assistant") {
-      for (const block of message.content) {
-        if (block.type === "toolCall") usedNames.add(block.name);
-      }
-    } else if (message.role === "toolResult") {
-      for (const name of message.addedToolNames ?? []) {
-        if (!usedNames.has(name)) deferredNames.add(name);
-      }
-    }
-  }
-
-  const immediate: Tool[] = [];
-  const deferred = new Map<string, Tool>();
-  for (const [name, tool] of unique) {
-    if (deferredNames.has(name)) deferred.set(name, tool);
-    else immediate.push(tool);
-  }
-  return { immediate, deferred };
-}
 
 export function nativeOverrideRequired(
   rawItems: readonly ResponsesOutputItem[],
@@ -91,6 +59,7 @@ export function splitUnsampledUserInput(options: {
     allTools: options.allTools,
     grammarToolInputProperties: options.grammarToolInputProperties,
     imageDetail: options.imageDetail,
+    anchorsToolAdditions: false,
   });
   if (encoded.length === 0 || encoded.length > options.history.length) return { kind: "unsafe" };
 

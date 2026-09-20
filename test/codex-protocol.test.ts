@@ -12,6 +12,7 @@ import {
   requestRemoteCompaction,
   requireResponsesInputItems,
   selectRetainedContext,
+  toPiJsonObject,
   truncateMiddleWithTokenBudget,
   type JsonRecord,
 } from "../extensions/openai-codex-compat/codex-protocol.ts";
@@ -60,6 +61,24 @@ const codexModel = {
   contextWindow: 100_000,
   maxTokens: 10_000,
 } satisfies Model<Api>;
+
+test("omits undefined diagnostic fields recursively without changing wire data", () => {
+  const diagnostic = {
+    promptCacheKey: undefined,
+    retained: null,
+    attempts: [{ index: 0, previousResponseId: undefined, nested: { enabled: false } }],
+    historyMismatch: { baselineItem: { content: ["text", 1] }, currentItem: undefined },
+  };
+  const original = structuredClone(diagnostic);
+  const details = toPiJsonObject(diagnostic);
+  assert.deepEqual(details, {
+    retained: null,
+    attempts: [{ index: 0, nested: { enabled: false } }],
+    historyMismatch: { baselineItem: { content: ["text", 1] } },
+  });
+  assert.deepEqual(details, JSON.parse(JSON.stringify(details)));
+  assert.deepEqual(diagnostic, original);
+});
 
 function user(text: string): ResponsesInputItem {
   return { role: "user", content: [{ type: "input_text", text }] };

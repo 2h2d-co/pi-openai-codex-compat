@@ -5,7 +5,7 @@ import type {
 } from "@earendil-works/pi-ai";
 import type { CodexCacheDiagnosticContext } from "../codex-cache-diagnostics.ts";
 import type { CodexRequestKind } from "../codex-metadata.ts";
-import type { JsonRecord } from "../codex-protocol.ts";
+import type { JsonRecord, JsonValue } from "../codex-protocol.ts";
 import type { CodexTurnState } from "./codex-transport-turn-state.ts";
 
 export type CodexJsonRequestOptions = {
@@ -43,8 +43,8 @@ export type CodexContinuationHistoryMismatch = {
   index: number;
   baselineInputItems: number;
   currentInputItems: number;
-  baselineItem?: unknown;
-  currentItem?: unknown;
+  baselineItem?: JsonValue;
+  currentItem?: JsonValue;
 };
 
 export type CodexTransportRecoveryAttempt = {

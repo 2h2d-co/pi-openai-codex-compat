@@ -7,7 +7,7 @@ import {
   type SessionEntry,
   type ToolInfo,
 } from "@earendil-works/pi-coding-agent";
-import type { Api, Message, Model, Tool } from "@earendil-works/pi-ai";
+import type { Api, Message, Model, SystemMessage } from "@earendil-works/pi-ai";
 import { Value } from "typebox/value";
 import { APPLY_PATCH_LARK_GRAMMAR, APPLY_PATCH_TOOL_NAME } from "./apply-patch.ts";
 import { CODEX_TOOL_CALL_PROVIDERS } from "./codex-identifiers.ts";
@@ -32,10 +32,7 @@ import {
   type ResponsesOutputItem,
 } from "./responses-item-schema.ts";
 import type { ResponsesToolDefinition } from "./responses-tool-schema.ts";
-import {
-  convertResponsesMessages,
-  type DeferredToolsMode,
-} from "./vendor/pi-ai/openai-responses-serialization.ts";
+import { convertResponsesMessages } from "./vendor/pi-ai/openai-responses-serialization.ts";
 
 export const CHECKPOINT_ENTRY_TYPE = "openai-codex-compat-remote-compaction";
 export const CHECKPOINT_FORMAT_VERSION = 1;
@@ -83,14 +80,6 @@ export function responsesCompatibility(value: unknown): ResponsesCompatibility {
     compatibility.supportsToolSearch = value["supportsToolSearch"];
   }
   return compatibility;
-}
-
-export function responsesDeferredToolsMode(
-  compatibility: ResponsesCompatibility,
-): DeferredToolsMode | undefined {
-  if (compatibility.supportsAdditionalTools) return "additional-tools";
-  if (compatibility.supportsToolSearch) return "tool-search";
-  return undefined;
 }
 
 function responsesToolParameters(tool: ToolInfo): JsonRecord {
@@ -164,6 +153,7 @@ type EncodeMessagesOptions = {
   allTools: readonly ToolInfo[];
   grammarToolInputProperties: GrammarToolInputProperties;
   imageDetail: ImageDetail;
+  anchorsToolAdditions?: boolean;
   nativeAssistantItems?: ReadonlyMap<string, readonly ResponsesOutputItem[]>;
 };
 
@@ -174,40 +164,24 @@ export type EncodeSessionEntriesOptions = {
   grammarToolInputProperties?: GrammarToolInputProperties;
   imageDetail?: ImageDetail;
   nativeAssistantItems?: ReadonlyMap<string, readonly ResponsesOutputItem[]>;
+  initialSystemMessage?: SystemMessage;
+  anchorsToolAdditions?: boolean;
 };
-
-function asPiTool(tool: ToolInfo, grammarToolInputProperties: GrammarToolInputProperties): Tool {
-  const piTool: Tool = {
-    name: tool.name,
-    description: tool.description,
-    parameters: tool.parameters,
-  };
-  if (tool.name === APPLY_PATCH_TOOL_NAME && grammarToolInputProperties.has(tool.name)) {
-    piTool.constrainedSampling = {
-      type: "grammar",
-      variants: { openai_lark: APPLY_PATCH_LARK_GRAMMAR },
-    };
-  }
-  return piTool;
-}
 
 /** Encode Pi's canonical messages using Pi AI's OpenAI Responses serializer. */
 function encodeMessages(options: EncodeMessagesOptions): ResponsesInputItem[] {
-  const {
-    model,
-    messages,
-    allTools,
-    grammarToolInputProperties,
-    imageDetail,
-    nativeAssistantItems,
-  } = options;
-  const tools = allTools.map((tool) => asPiTool(tool, grammarToolInputProperties));
+  const { model, messages, grammarToolInputProperties, imageDetail, nativeAssistantItems } =
+    options;
   const compat = responsesCompatibility(model.compat);
-  const deferredToolsMode = responsesDeferredToolsMode(compat);
   const serializationOptions: NonNullable<Parameters<typeof convertResponsesMessages>[3]> = {
     includeSystemPrompt: false,
+    includeSystemUpdates: false,
+    supportsMidConvoSystemMessages: true,
+    supportsAdditionalTools:
+      options.anchorsToolAdditions !== false && (compat.supportsAdditionalTools ?? false),
+    supportsToolSearch:
+      options.anchorsToolAdditions !== false && (compat.supportsToolSearch ?? false),
     grammarToolInputProperties,
-    deferredTools: new Map(tools.map((tool) => [tool.name, tool])),
     toolOptions: {
       strict: false,
       supportsStrictMode: compat?.supportsStrictMode ?? true,
@@ -217,17 +191,11 @@ function encodeMessages(options: EncodeMessagesOptions): ResponsesInputItem[] {
     textContentItemToolResultNames: CODEX_TEXT_CONTENT_ITEM_TOOL_RESULT_NAMES,
     toolResultImageDetail: imageDetail,
   };
-  if (deferredToolsMode) serializationOptions.deferredToolsMode = deferredToolsMode;
   if (nativeAssistantItems) {
     serializationOptions.nativeAssistantItems = nativeAssistantItems;
   }
   return requireResponsesInputItems(
-    convertResponsesMessages(
-      model,
-      { messages, tools },
-      CODEX_TOOL_CALL_PROVIDERS,
-      serializationOptions,
-    ),
+    convertResponsesMessages(model, { messages }, CODEX_TOOL_CALL_PROVIDERS, serializationOptions),
   );
 }
 
@@ -243,11 +211,19 @@ export function encodeSessionEntries(options: EncodeSessionEntriesOptions): Resp
   const messages = entries.flatMap((entry) => sessionEntryToContextMessages(entry));
   const encodeOptions: EncodeMessagesOptions = {
     model,
-    messages: convertToLlm(messages),
+    // A partial tail can start with a system update. Seed its prior state so
+    // the serializer does not mistake that update for the leading declaration.
+    messages: [
+      options.initialSystemMessage ?? { role: "system", content: "", timestamp: 0 },
+      ...convertToLlm(messages),
+    ],
     allTools,
     grammarToolInputProperties,
     imageDetail,
   };
+  if (options.anchorsToolAdditions !== undefined) {
+    encodeOptions.anchorsToolAdditions = options.anchorsToolAdditions;
+  }
   if (nativeAssistantItems) encodeOptions.nativeAssistantItems = nativeAssistantItems;
   return encodeMessages(encodeOptions);
 }
@@ -371,6 +347,7 @@ export function providerHistory(options: {
   grammarToolInputProperties?: GrammarToolInputProperties;
   imageDetail?: ImageDetail;
   recoverLatestOverflowPrefix?: boolean;
+  anchorsToolAdditions?: boolean;
 }): ResponsesInputItem[] {
   const branch = [...options.branch];
   let recoveredPrefix: ResponsesInputItem[] = [];
@@ -407,6 +384,9 @@ export function providerHistory(options: {
         `The latest Codex compaction checkpoint belongs to ${checkpoint.data.modelId}, not ${options.wireModel.id}.`,
       );
     }
+    const checkpointEntry = branch[checkpoint.entryIndex];
+    const initialSystemMessage =
+      checkpointEntry?.type === "compaction" ? checkpointEntry.systemMessage : undefined;
     return [
       ...checkpoint.data.history.map((item) => structuredClone(item)),
       ...encodeSessionEntries({
@@ -416,6 +396,10 @@ export function providerHistory(options: {
         grammarToolInputProperties: options.grammarToolInputProperties ?? new Map(),
         imageDetail: options.imageDetail ?? "auto",
         nativeAssistantItems,
+        ...(initialSystemMessage ? { initialSystemMessage } : {}),
+        ...(options.anchorsToolAdditions === undefined
+          ? {}
+          : { anchorsToolAdditions: options.anchorsToolAdditions }),
       }),
       ...recoveredPrefix,
     ];
@@ -430,6 +414,9 @@ export function providerHistory(options: {
       grammarToolInputProperties: options.grammarToolInputProperties ?? new Map(),
       imageDetail: options.imageDetail ?? "auto",
       nativeAssistantItems,
+      ...(options.anchorsToolAdditions === undefined
+        ? {}
+        : { anchorsToolAdditions: options.anchorsToolAdditions }),
     }),
     ...recoveredPrefix,
   ];

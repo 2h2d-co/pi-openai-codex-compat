@@ -5,6 +5,10 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import {
   clampThinkingLevel,
   createAssistantMessageEventStream,
+  getCurrentSystemPrompt,
+  getDeclaredTools,
+  normalizeContext,
+  resolveTranscriptTools,
   type Api,
   type AssistantMessage,
   type AssistantMessageEventStream,
@@ -13,6 +17,7 @@ import {
   type OpenAICodexResponsesOptions,
   type Provider,
   type SimpleStreamOptions,
+  type TranscriptContext,
   type Usage,
   uuidv7,
 } from "@earendil-works/pi-ai";
@@ -26,7 +31,6 @@ import {
   providerHistory,
   remoteCompactionMarkerSummary,
   responsesCompatibility,
-  responsesDeferredToolsMode,
   searchCheckpoint,
   type CheckpointData,
   type CompactionDecision,
@@ -38,6 +42,7 @@ import {
   isObject,
   remoteCompactionPayload,
   requireResponsesInputItems,
+  toPiJsonObject,
   withoutConversationInput,
   type JsonRecord,
   type JsonValue,
@@ -115,7 +120,6 @@ function codexStreamOptions(value: unknown): OpenAICodexResponsesOptions | undef
 }
 import {
   nativeOverrideRequired,
-  splitDeferredTools,
   splitUnsampledUserInput,
   userEntryAfterLastSampled,
 } from "./codex-provider-history.ts";
@@ -156,7 +160,7 @@ type CodexCompactionResult = { checkpoint: CheckpointData; usage?: Usage };
 
 type BuildRequestBodyOptions = {
   model: Model<Api>;
-  context: Context;
+  context: TranscriptContext;
   requestOptions: OpenAICodexResponsesOptions;
   runtimeSessionId: string | undefined;
   cacheSessionId: string | undefined;
@@ -488,19 +492,22 @@ export class CodexProviderRuntime {
 
   private wireHistory(
     model: Model<Api>,
-    context: Context,
+    context: TranscriptContext,
     grammarToolInputProperties: GrammarToolInputProperties,
     sessionId: string | undefined,
+    anchorsToolAdditions: boolean,
   ): ResponsesInputItem[] {
     const scope = sessionId ? this.scopes.get(sessionId) : undefined;
+    const compat = responsesCompatibility(model.compat);
     if (!scope) {
-      const compat = responsesCompatibility(model.compat);
-      const deferredToolsMode = responsesDeferredToolsMode(compat);
       const nativeItems = new Map<string, ResponsesOutputItem[]>();
       const serializationOptions: NonNullable<Parameters<typeof convertResponsesMessages>[3]> = {
         includeSystemPrompt: false,
+        includeSystemUpdates: false,
+        supportsMidConvoSystemMessages: true,
+        supportsAdditionalTools: anchorsToolAdditions && (compat.supportsAdditionalTools ?? false),
+        supportsToolSearch: anchorsToolAdditions && (compat.supportsToolSearch ?? false),
         grammarToolInputProperties,
-        deferredTools: splitDeferredTools(context, deferredToolsMode !== undefined).deferred,
         toolOptions: {
           strict: false,
           supportsStrictMode: compat.supportsStrictMode ?? true,
@@ -511,7 +518,6 @@ export class CodexProviderRuntime {
         toolResultImageDetail: "auto",
         nativeAssistantItems: nativeItems,
       };
-      if (deferredToolsMode) serializationOptions.deferredToolsMode = deferredToolsMode;
       return requireResponsesInputItems(
         convertResponsesMessages(model, context, CODEX_TOOL_CALL_PROVIDERS, serializationOptions),
       );
@@ -522,6 +528,7 @@ export class CodexProviderRuntime {
       allTools: this.pi.getAllTools(),
       grammarToolInputProperties,
       imageDetail: scope.config.imageDetail,
+      anchorsToolAdditions,
     });
   }
 
@@ -536,14 +543,39 @@ export class CodexProviderRuntime {
       turnId,
     } = options;
     const compat = responsesCompatibility(model.compat);
-    const deferredToolsMode = responsesDeferredToolsMode(compat);
-    const toolPlacement = splitDeferredTools(context, deferredToolsMode !== undefined);
+    const scope = runtimeSessionId ? this.scopes.get(runtimeSessionId) : undefined;
+    const threshold = scope?.config.autoCompactAtPercent;
+    // Percentage compaction drops historical tool additions. Rebase declarations
+    // before serialization so both the compaction and its continuation stay valid.
+    const compactionPending =
+      threshold !== undefined &&
+      scope?.contextPercent !== null &&
+      scope?.contextPercent !== undefined &&
+      scope.contextPercent >= threshold;
+    const toolPlacement = resolveTranscriptTools(
+      context.messages,
+      !compactionPending &&
+        ((compat.supportsAdditionalTools ?? false) || (compat.supportsToolSearch ?? false)),
+    );
+    // A forced prompt can project all tools into a single leading system message.
+    // Do not replay additions from the stored branch after that projection.
+    const anchorsToolAdditions =
+      toolPlacement.anchorsAdditions &&
+      context.messages
+        .slice(1)
+        .some((message) => message.role === "system" && (message.toolsAdded?.length ?? 0) > 0);
     let body: JsonRecord = {
       model: model.id,
       store: false,
       stream: true,
-      instructions: context.systemPrompt || "You are a helpful assistant.",
-      input: this.wireHistory(model, context, grammarToolInputProperties, runtimeSessionId),
+      instructions: getCurrentSystemPrompt(context.messages) || "You are a helpful assistant.",
+      input: this.wireHistory(
+        model,
+        context,
+        grammarToolInputProperties,
+        runtimeSessionId,
+        anchorsToolAdditions,
+      ),
       text: { verbosity: requestOptions.textVerbosity ?? "low" },
       include: ["reasoning.encrypted_content"],
       tool_choice: requestOptions.toolChoice ?? "auto",
@@ -562,8 +594,8 @@ export class CodexProviderRuntime {
       ),
     });
     if (requestOptions.serviceTier !== undefined) body.service_tier = requestOptions.serviceTier;
-    if (toolPlacement.immediate.length > 0) {
-      body.tools = convertResponsesTools(toolPlacement.immediate, {
+    if (toolPlacement.requestTools.length > 0) {
+      body.tools = convertResponsesTools(toolPlacement.requestTools, {
         strict: false,
         supportsStrictMode: compat.supportsStrictMode ?? true,
         supportsOpenAIGrammarTools: compat.supportsOpenAIGrammarTools ?? false,
@@ -573,7 +605,9 @@ export class CodexProviderRuntime {
     if (requestOptions.reasoningEffort !== undefined) {
       const mapped =
         requestOptions.reasoningEffort === "none"
-          ? (model.thinkingLevelMap?.off ?? "none")
+          ? model.thinkingLevelMap?.off === undefined
+            ? "none"
+            : model.thinkingLevelMap.off
           : (model.thinkingLevelMap?.[requestOptions.reasoningEffort] ??
             requestOptions.reasoningEffort);
       if (mapped !== null) {
@@ -582,6 +616,8 @@ export class CodexProviderRuntime {
           summary: requestOptions.reasoningSummary ?? "auto",
         };
       }
+    } else if (model.reasoning && model.thinkingLevelMap?.off !== null) {
+      body["reasoning"] = { effort: model.thinkingLevelMap?.off ?? "none" };
     }
     return body;
   }
@@ -682,7 +718,7 @@ export class CodexProviderRuntime {
 
   private async maybeCompactPercentage(
     model: Model<Api>,
-    context: Context,
+    context: TranscriptContext,
     options: OpenAICodexResponsesOptions,
     body: JsonRecord,
     grammarToolInputProperties: GrammarToolInputProperties,
@@ -742,7 +778,7 @@ export class CodexProviderRuntime {
       template: withoutConversationInput(body),
       instructions: isString(body.instructions)
         ? body.instructions
-        : context.systemPrompt || "You are a helpful assistant.",
+        : getCurrentSystemPrompt(context.messages) || "You are a helpful assistant.",
       grammarToolInputProperties,
       priority: scope.config.fastMode,
       compactionMetadata: responsesCompactionV2Metadata("auto", "context_limit", "pre_turn"),
@@ -781,9 +817,10 @@ export class CodexProviderRuntime {
 
   stream(
     model: Model<Api>,
-    context: Context,
+    input: Context,
     options?: OpenAICodexResponsesOptions,
   ): AssistantMessageEventStream {
+    const context = normalizeContext(input);
     const stream = createAssistantMessageEventStream();
     const requestOptions = transportOptions(options);
     const output: AssistantMessage = {
@@ -828,7 +865,7 @@ export class CodexProviderRuntime {
         );
       }
       const grammarToolInputProperties = createGrammarToolInputProperties(
-        context.tools,
+        getDeclaredTools(context.messages),
         responsesCompatibility(model.compat).supportsOpenAIGrammarTools ?? false,
       );
       let body = this.buildRequestBody({
@@ -903,7 +940,12 @@ export class CodexProviderRuntime {
         turnState: agentTurn.turnState,
         cacheDiagnostics,
       });
-      if (prewarmDiagnostics.length > 0) output.diagnostics = prewarmDiagnostics;
+      if (prewarmDiagnostics.length > 0) {
+        output.diagnostics = prewarmDiagnostics.map((diagnostic) => ({
+          ...diagnostic,
+          details: toPiJsonObject(diagnostic.details),
+        }));
+      }
       let continuationHandle: CodexContinuationHandle | undefined;
       let webSocketResponseHandle: CodexWebSocketResponseHandle | undefined;
       let startEmitted = false;
@@ -926,7 +968,10 @@ export class CodexProviderRuntime {
         },
         onTransportStart: emitStart,
         onTransportDiagnostic(diagnostic: CodexTransportDiagnostic) {
-          output.diagnostics = [...(output.diagnostics ?? []), diagnostic];
+          output.diagnostics = [
+            ...(output.diagnostics ?? []),
+            { ...diagnostic, details: toPiJsonObject(diagnostic.details) },
+          ];
         },
       };
       let responseRequests = 0;
@@ -1153,12 +1198,9 @@ export class CodexProviderRuntime {
       const canonicalContext: Context = {
         messages: [output],
       };
-      if (context.tools) canonicalContext.tools = context.tools;
-      const deferredToolsMode = responsesDeferredToolsMode(compat);
       const serializationOptions: NonNullable<Parameters<typeof convertResponsesMessages>[3]> = {
         includeSystemPrompt: false,
         grammarToolInputProperties,
-        deferredTools: splitDeferredTools(context, deferredToolsMode !== undefined).deferred,
         toolOptions: {
           strict: false,
           supportsStrictMode: compat.supportsStrictMode ?? true,
@@ -1170,7 +1212,6 @@ export class CodexProviderRuntime {
           (runtimeSessionId ? this.scopes.get(runtimeSessionId)?.config.imageDetail : undefined) ??
           "auto",
       };
-      if (deferredToolsMode) serializationOptions.deferredToolsMode = deferredToolsMode;
       const canonicalItems = convertResponsesMessages(
         model,
         canonicalContext,

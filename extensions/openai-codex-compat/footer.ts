@@ -158,7 +158,10 @@ function aggregateFooterEntries(entries: readonly SessionEntry[]): SessionEntry[
       entry.message.usage
     ) {
       addUsage(precedingUsage, entry.message.usage);
-    } else if ((entry.type === "branch_summary" || entry.type === "compaction") && entry.usage) {
+    } else if (
+      (entry.type === "usage" || entry.type === "branch_summary" || entry.type === "compaction") &&
+      entry.usage
+    ) {
       addUsage(precedingUsage, entry.usage);
     }
   }

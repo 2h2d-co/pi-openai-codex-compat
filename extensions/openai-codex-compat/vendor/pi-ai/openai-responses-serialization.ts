@@ -19,10 +19,17 @@ import type {
   ToolCall,
   ToolResultMessage,
 } from "@earendil-works/pi-ai";
+import {
+  getSystemMessageText,
+  normalizeContext,
+  renderSystemMessageUpdate,
+  resolveTranscript,
+  resolveTranscriptTools,
+} from "@earendil-works/pi-ai";
 
 /**
  * Focused copies of the methods used to serialize Pi messages for OpenAI's
- * Responses API. Adapted from @earendil-works/pi-ai@0.84.3:
+ * Responses API. Adapted from @earendil-works/pi-ai@0.86.0:
  *
  * - src/api/openai-responses-shared.ts
  * - src/api/transform-messages.ts
@@ -36,7 +43,6 @@ import type {
  */
 
 export type ResponsesItem = JsonRecord;
-export type DeferredToolsMode = "additional-tools" | "tool-search";
 export type ToolResultImageDetail = "auto" | "low" | "high" | "original";
 type ToolResultOutput =
   | string
@@ -47,9 +53,12 @@ type ToolResultOutput =
 
 type ConvertResponsesMessagesOptions = {
   includeSystemPrompt?: boolean;
+  /** Compat sends the complete current prompt outside replay history. */
+  includeSystemUpdates?: boolean;
   grammarToolInputProperties?: ReadonlyMap<string, string>;
-  deferredTools?: ReadonlyMap<string, Tool>;
-  deferredToolsMode?: DeferredToolsMode;
+  supportsMidConvoSystemMessages?: boolean;
+  supportsAdditionalTools?: boolean;
+  supportsToolSearch?: boolean;
   toolOptions?: ConvertResponsesToolsOptions;
   nativeAssistantItems?: ReadonlyMap<string, readonly ResponsesItem[]>;
   namespacedToolNames?: ReadonlySet<string>;
@@ -333,7 +342,7 @@ function transformMessages(
   const imageAwareMessages = downgradeUnsupportedImages(normalizedMessages, model);
 
   const transformed = imageAwareMessages.map((message) => {
-    if (message.role === "user") return message;
+    if (message.role === "user" || message.role === "system") return message;
     if (message.role === "toolResult") {
       const normalizedId = toolCallIdMap.get(message.toolCallId);
       return normalizedId && normalizedId !== message.toolCallId
@@ -484,8 +493,11 @@ export function convertResponsesMessages(
   allowedToolCallProviders: ReadonlySet<string>,
   options?: ConvertResponsesMessagesOptions,
 ): ResponsesItem[] {
+  const transcript = resolveTranscript(
+    normalizeContext(context),
+    options?.supportsMidConvoSystemMessages,
+  );
   const messages: ResponsesItem[] = [];
-  const loadedToolNames = new Set<string>();
   const normalizeIdPart = (part: string): string => {
     const sanitized = part.replace(/[^a-zA-Z0-9_-]/g, "_");
     const normalized = sanitized.length > 64 ? sanitized.slice(0, 64) : sanitized;
@@ -517,20 +529,62 @@ export function convertResponsesMessages(
     return `${normalizedCallId}|${normalizedItemId}`;
   };
 
-  const transformedMessages = transformMessages(context.messages, model, normalizeToolCallId);
+  const transformedMessages = transformMessages(transcript.messages, model, normalizeToolCallId);
+  const transcriptTools = resolveTranscriptTools(
+    transcript.messages,
+    (options?.supportsAdditionalTools ?? false) || (options?.supportsToolSearch ?? false),
+  );
   const includeSystemPrompt = options?.includeSystemPrompt ?? true;
-  if (includeSystemPrompt && context.systemPrompt) {
-    const supportsDeveloperRole =
-      !isObject(model.compat) || model.compat["supportsDeveloperRole"] !== false;
-    messages.push({
-      role: model.reasoning && supportsDeveloperRole ? "developer" : "system",
-      content: sanitizeSurrogates(context.systemPrompt),
-    });
-  }
+  const supportsDeveloperRole =
+    !isObject(model.compat) || model.compat["supportsDeveloperRole"] !== false;
+  const instructionRole = model.reasoning && supportsDeveloperRole ? "developer" : "system";
 
   let messageIndex = 0;
+  let sourceIndex = 0;
   for (const message of transformedMessages) {
-    if (message.role === "user") {
+    const isLeadingSystemMessage = sourceIndex++ === 0 && message.role === "system";
+    if (message.role === "system") {
+      const addedTools =
+        !isLeadingSystemMessage && transcriptTools.anchorsAdditions
+          ? (message.toolsAdded ?? [])
+          : [];
+      const toolOptions = { ...options?.toolOptions };
+      if (options?.namespacedToolNames) {
+        toolOptions.namespacedToolNames = options.namespacedToolNames;
+      }
+      if (addedTools.length > 0 && options?.supportsAdditionalTools) {
+        messages.push({
+          type: "additional_tools",
+          role: "developer",
+          tools: convertResponsesTools(addedTools, toolOptions),
+        });
+      } else if (addedTools.length > 0 && options?.supportsToolSearch) {
+        const names = addedTools.map((tool) => tool.name);
+        const callId = `pi_tool_load_${shortHash(`system:${messageIndex}:${names.join(",")}`)}`;
+        messages.push({
+          type: "tool_search_call",
+          call_id: callId,
+          execution: "client",
+          status: "completed",
+          arguments: { query: names.join(" "), limit: names.length },
+        });
+        messages.push({
+          type: "tool_search_output",
+          call_id: callId,
+          execution: "client",
+          status: "completed",
+          tools: convertResponsesTools(addedTools, { ...toolOptions, deferLoading: true }),
+        });
+      }
+      if (isLeadingSystemMessage ? includeSystemPrompt : options?.includeSystemUpdates !== false) {
+        const text = isLeadingSystemMessage
+          ? getSystemMessageText(message)
+          : renderSystemMessageUpdate(message);
+        if (text.length > 0) {
+          messages.push({ role: instructionRole, content: sanitizeSurrogates(text) });
+        }
+      }
+    } else if (message.role === "user") {
       if (isString(message.content)) {
         messages.push({
           role: "user",
@@ -650,55 +704,8 @@ export function convertResponsesMessages(
         call_id: callId,
         output,
       });
-
-      const deferredTools: Tool[] = [];
-      for (const name of message.addedToolNames ?? []) {
-        const tool = options?.deferredTools?.get(name);
-        if (!tool || loadedToolNames.has(name)) continue;
-        loadedToolNames.add(name);
-        deferredTools.push(tool);
-      }
-      if (deferredTools.length > 0 && options?.deferredToolsMode === "additional-tools") {
-        const additionalToolOptions: ConvertResponsesToolsOptions = {
-          ...options.toolOptions,
-        };
-        if (options.namespacedToolNames) {
-          additionalToolOptions.namespacedToolNames = options.namespacedToolNames;
-        }
-        messages.push({
-          type: "additional_tools",
-          role: "developer",
-          tools: convertResponsesTools(deferredTools, additionalToolOptions),
-        });
-      } else if (deferredTools.length > 0 && options?.deferredToolsMode === "tool-search") {
-        const names = deferredTools.map((tool) => tool.name);
-        const searchCallId = `pi_tool_load_${shortHash(
-          `${message.toolCallId}:${names.join(",")}`,
-        )}`;
-        messages.push({
-          type: "tool_search_call",
-          call_id: searchCallId,
-          execution: "client",
-          status: "completed",
-          arguments: { query: names.join(" "), limit: names.length },
-        });
-        const deferredToolOptions: ConvertResponsesToolsOptions = {
-          ...options?.toolOptions,
-          deferLoading: true,
-        };
-        if (options?.namespacedToolNames) {
-          deferredToolOptions.namespacedToolNames = options.namespacedToolNames;
-        }
-        messages.push({
-          type: "tool_search_output",
-          call_id: searchCallId,
-          execution: "client",
-          status: "completed",
-          tools: convertResponsesTools(deferredTools, deferredToolOptions),
-        });
-      }
     }
-    messageIndex++;
+    if (!isLeadingSystemMessage) messageIndex++;
   }
   return messages;
 }

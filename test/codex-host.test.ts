@@ -26,6 +26,7 @@ import {
 import { Type } from "typebox";
 import { CONFIG_FILE } from "../extensions/openai-codex-compat/config.ts";
 import type { JsonRecord } from "../extensions/openai-codex-compat/codex-protocol.ts";
+import { compactionEvents } from "./codex-provider/codex-provider-harness.ts";
 
 const rootDir = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const extensionPath = resolve(rootDir, "extensions/index.ts");
@@ -53,7 +54,10 @@ function assistantMessages(branch: ReturnType<SessionManager["getBranch"]>): Ass
   );
 }
 
-test("Pi executes only done calls from mixed partial Codex batches", async (t) => {
+test("Pi executes done calls and preserves current instructions across reload and native compaction", async (t) => {
+  t.mock.method(globalThis, "WebSocket", function () {
+    throw new Error("The mocked SSE host test must not open a WebSocket.");
+  });
   const tempRoot = await mkdtemp(join(tmpdir(), "pi-codex-host-"));
   const cwd = join(tempRoot, "cwd");
   const agentDir = join(tempRoot, "agent");
@@ -93,7 +97,11 @@ test("Pi executes only done calls from mixed partial Codex batches", async (t) =
           : new TextDecoder().decode(requestBody)
         : undefined;
     if (!requestText) throw new Error("Codex request body was not JSON text");
-    requests.push(requireJsonRecord(JSON.parse(requestText)));
+    const request = requireJsonRecord(JSON.parse(requestText));
+    requests.push(request);
+    if (requireJsonRecords(request.input).some((item) => item.type === "compaction_trigger")) {
+      return sseResponse(compactionEvents());
+    }
     if (requests.length === 1) {
       const completeCall = {
         type: "function_call",
@@ -187,7 +195,7 @@ test("Pi executes only done calls from mixed partial Codex batches", async (t) =
   const settingsManager = SettingsManager.inMemory({
     transport: "sse",
     retry: { enabled: false, provider: { timeoutMs: 30_000, maxRetries: 0 } },
-    compaction: { enabled: false },
+    compaction: { enabled: false, keepRecentTokens: 1 },
   });
   const reports: string[] = [];
   const report = defineTool({
@@ -203,12 +211,13 @@ test("Pi executes only done calls from mixed partial Codex batches", async (t) =
       };
     },
   });
+  let systemPrompt = "Use the report tool.";
   const resourceLoader = new DefaultResourceLoader({
     cwd,
     agentDir,
     settingsManager,
     additionalExtensionPaths: [extensionPath],
-    systemPromptOverride: () => "Use the report tool.",
+    systemPromptOverride: () => systemPrompt,
     appendSystemPromptOverride: () => [],
     noSkills: true,
     noPromptTemplates: true,
@@ -228,7 +237,13 @@ test("Pi executes only done calls from mixed partial Codex batches", async (t) =
     noTools: "builtin",
     customTools: [report],
   });
-  await created.session.bindExtensions({});
+  const extensionErrors: string[] = [];
+  // A bound listener keeps the headless SDK's reload lifecycle active.
+  await created.session.bindExtensions({
+    onError(error) {
+      extensionErrors.push(error.error);
+    },
+  });
   t.after(() => created.session.dispose());
 
   await created.session.prompt("Inspect both values.", { expandPromptTemplates: false });
@@ -246,4 +261,36 @@ test("Pi executes only done calls from mixed partial Codex batches", async (t) =
     ["toolUse", "stop"],
   );
   assert.equal(assistants[0]?.content.filter((block) => block.type === "toolCall").length, 1);
+
+  systemPrompt = "Use the reloaded instructions.";
+  const currentPrompt = `${systemPrompt}\n\n<cwd>\n${cwd}\n</cwd>`;
+  await created.session.reload();
+  created.session.setActiveToolsByName([]);
+  await created.session.prompt("Continue after reload.", { expandPromptTemplates: false });
+  const reloadedRequest = requests.at(-1);
+  assert.equal(reloadedRequest?.instructions, currentPrompt);
+  assert.deepEqual(reloadedRequest?.tools, []);
+  assert.doesNotMatch(
+    JSON.stringify(reloadedRequest?.input),
+    /Use the report tool|Use the reloaded instructions|additional_tools/,
+  );
+
+  await created.session.compact();
+  const compactedRequest = requests.at(-1);
+  assert.equal(compactedRequest?.instructions, currentPrompt);
+  assert.deepEqual(compactedRequest?.tools, []);
+  assert.ok(
+    requireJsonRecords(compactedRequest?.input).some((item) => item.type === "compaction_trigger"),
+  );
+
+  await created.session.prompt("Continue after compaction.", { expandPromptTemplates: false });
+  const continuedRequest = requests.at(-1);
+  assert.equal(continuedRequest?.instructions, currentPrompt);
+  assert.deepEqual(continuedRequest?.tools, []);
+  assert.match(JSON.stringify(continuedRequest?.input), /opaque-state/);
+  assert.doesNotMatch(
+    JSON.stringify(continuedRequest?.input),
+    /Use the report tool|Use the reloaded instructions|remote compaction checkpoint/,
+  );
+  assert.deepEqual(extensionErrors, []);
 });

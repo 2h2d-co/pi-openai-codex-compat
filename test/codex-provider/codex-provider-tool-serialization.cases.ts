@@ -262,10 +262,10 @@ test("selects the model-compatible deferred tool representation", async () => {
         content: [{ type: "text", text: "loaded" }],
         isError: false,
         timestamp: 2,
-        addedToolNames: [deferred.name],
       },
+      { role: "system", content: "", toolsAdded: [deferred], timestamp: 3 },
     ],
-    tools: [loader, deferred],
+    tools: [loader],
   } satisfies Context;
   const cases = [
     {

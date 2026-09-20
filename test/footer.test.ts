@@ -128,7 +128,7 @@ test("caches footer history and refreshes session names when the leaf changes", 
       total: cost,
     },
   });
-  const entries = [
+  const entries: SessionEntry[] = [
     {
       type: "message",
       id: "assistant-1",
@@ -250,6 +250,22 @@ test("caches footer history and refreshes session names when the leaf changes", 
   assert.equal(entryReads, 2);
   assert.equal(nameReads, 2);
   assert.equal(contextUsageReads, 2);
+
+  entries.push({
+    type: "usage",
+    id: "usage-1",
+    parentId: "assistant-2",
+    timestamp: "",
+    kind: "cache_warm",
+    provider: "openai-codex",
+    model: model.id,
+    usage: usage(30, 0, 20, 0, 0.03),
+  });
+  leafId = "usage-1";
+  const withUsage = footer.render(120);
+  assert.match(withUsage[1] ?? "", /↑190 ↓20 R130 CH60\.0% \$0\.190/u);
+  assert.strictEqual(footer.render(120), withUsage);
+  assert.equal(entryReads, 3);
 
   footer.dispose?.();
 });

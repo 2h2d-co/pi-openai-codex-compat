@@ -9,7 +9,11 @@ import {
 import { isString, requireString } from "../extensions/openai-codex-compat/value-contracts.ts";
 import assert from "node:assert/strict";
 import test from "node:test";
-import type { SessionEntry, ToolInfo } from "@earendil-works/pi-coding-agent";
+import {
+  createSyntheticSourceInfo,
+  type SessionEntry,
+  type ToolInfo,
+} from "@earendil-works/pi-coding-agent";
 import type { Api, Model, ProviderHeaders } from "@earendil-works/pi-ai";
 import {
   CHECKPOINT_ENTRY_TYPE,
@@ -32,6 +36,7 @@ import registerRemoteCompaction, {
   type RemoteCompactionLifecycleHandler,
 } from "../extensions/openai-codex-compat/remote-compaction.ts";
 import type { ResponsesOutputMessageItem } from "../extensions/openai-codex-compat/responses-item-schema.ts";
+import { REPORT_TOOL } from "./codex-provider/codex-provider-harness.ts";
 
 interface TestCompactionResult {
   compaction: {
@@ -261,6 +266,42 @@ test("routes manual compaction through the custom provider runtime", async () =>
     "opaque-state",
   );
   assert.ok(result.compaction.usage);
+});
+
+test("refreshes cached tool declarations before native compaction", async () => {
+  const user = userEntry("user-1", "Remember this.");
+  const harness = createHarness([user]);
+  const tool = {
+    ...REPORT_TOOL,
+    sourceInfo: createSyntheticSourceInfo("test-tool", { source: "compaction test" }),
+  };
+  harness.hooks.getAllTools = () => [tool];
+  harness.hooks.getActiveTools = () => [tool.name];
+  const cached = {
+    modelId: "gpt-test",
+    payload: { tools: [{ type: "function", name: "obsolete" }] },
+    grammarToolInputProperties: new Map<string, string>(),
+    requestOptions: { transport: "sse" as const },
+  };
+  harness.runtime.latestTemplate = () => cached;
+  const handler = harness.hooks.sessionBeforeCompact;
+  assert.ok(handler);
+  const event = {
+    branchEntries: [user],
+    preparation: { firstKeptEntryId: "user-1", tokensBefore: 50_000 },
+    reason: "manual" as const,
+    willRetry: false,
+    signal: new AbortController().signal,
+  };
+  requireCompactionResult(await handler(event, harness.context));
+  assert.deepEqual(
+    requireJsonRecords(harness.requests[0]?.tools).map((declaration) => declaration.name),
+    [tool.name],
+  );
+  harness.hooks.getActiveTools = () => [];
+  requireCompactionResult(await handler(event, harness.context));
+  assert.deepEqual(harness.requests[1]?.tools, []);
+  assert.deepEqual(cached.payload.tools, [{ type: "function", name: "obsolete" }]);
 });
 
 test("classifies every Pi compaction lifecycle in official Codex metadata", async (t) => {

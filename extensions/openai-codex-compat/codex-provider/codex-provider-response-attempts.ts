@@ -4,6 +4,7 @@ import type {
   AssistantMessage,
   AssistantMessageDiagnostic,
   Context,
+  JsonObject,
   Model,
   OpenAICodexResponsesOptions,
   Usage,
@@ -57,7 +58,7 @@ export function assessAttemptToolCalls(
 }
 
 export interface OutputItemTypeCounts {
-  [type: string]: number | undefined;
+  [type: string]: number;
 }
 
 export function outputItemTypeCounts(items: readonly ResponsesOutputItem[]): OutputItemTypeCounts {
@@ -91,7 +92,7 @@ export function responseDecisionDiagnostic(options: {
     options.capture.streamedToolCallIndexes.size > 0;
   if (!nontrivial) return undefined;
 
-  const details: JsonRecord = {
+  const details: JsonObject = {
     attempt: options.attempt,
     terminalType: options.failureReason ?? options.terminalState?.type ?? "missing",
     outputItemTypes: outputItemTypeCounts(options.attemptItems),

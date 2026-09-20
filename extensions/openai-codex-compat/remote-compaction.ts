@@ -249,17 +249,13 @@ export default function registerRemoteCompaction(
         grammarToolInputProperties,
         imageDetail: config.imageDetail,
         recoverLatestOverflowPrefix: event.reason === "overflow" && event.willRetry,
+        anchorsToolAdditions: false,
       });
-      let template = matching?.payload;
-      if (!template) {
-        template = {};
-        const tools = activeResponsesTools(
-          allTools,
-          pi.getActiveTools(),
-          grammarToolInputProperties,
-        );
-        if (tools) template.tools = tools;
-      }
+      // A cached turn template can contain only the initial declarations.
+      // Compaction rebases history, so use the complete current tool set.
+      const template: JsonRecord = { ...matching?.payload };
+      template.tools =
+        activeResponsesTools(allTools, pi.getActiveTools(), grammarToolInputProperties) ?? [];
       const requestOptions: OpenAICodexResponsesOptions = {
         ...matching?.requestOptions,
         apiKey: authentication.apiKey,

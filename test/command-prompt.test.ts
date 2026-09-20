@@ -20,7 +20,9 @@ type PromptTool = Pick<
 function registeredCommandTools(catalog: CommandShellCatalog): Map<string, PromptTool> {
   const tools = new Map<string, PromptTool>();
   const pi: CommandToolsApi = {
-    on() {},
+    on() {
+      return () => {};
+    },
     registerCommand() {},
     registerTool(tool) {
       tools.set(tool.name, tool);
@@ -140,10 +142,10 @@ test("renders registered unified tools in Pi's default system prompt", () => {
 
   assert.match(
     prompt,
-    /Available tools:\n- exec_command: Run commands using zsh, with optional persistent PTY sessions\n- write_stdin: Write to or poll a long-running exec_command session/u,
+    /<tools>\n- exec_command: Run commands using zsh, with optional persistent PTY sessions\n- write_stdin: Write to or poll a long-running exec_command session/u,
   );
   assert.match(
     prompt,
-    /Guidelines:\n- Use `exec_command` to execute commands using zsh; always set `workdir` to the directory in which the command should run\. Use `write_stdin` to poll or interact with a session ID returned from `exec_command`\.\n- Use `write_stdin` only with a session ID returned from `exec_command`; omit `chars` to wait for more output or for the process to exit\./u,
+    /<rules>\n- Use `exec_command` to execute commands using zsh; always set `workdir` to the directory in which the command should run\. Use `write_stdin` to poll or interact with a session ID returned from `exec_command`\.\n- Use `write_stdin` only with a session ID returned from `exec_command`; omit `chars` to wait for more output or for the process to exit\./u,
   );
 });

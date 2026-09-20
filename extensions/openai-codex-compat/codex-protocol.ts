@@ -2,6 +2,8 @@ import { isBoolean, isNonNullObject, isNumber, isString } from "./value-contract
 import {
   calculateCost,
   type Api,
+  type JsonObject as PiJsonObject,
+  type JsonValue as PiJsonValue,
   type Model,
   type ProviderHeaders,
   type Usage,
@@ -69,7 +71,6 @@ export interface JsonRecord {
   name?: JsonValue;
   arguments?: JsonValue;
   toolCallId?: JsonValue;
-  addedToolNames?: JsonValue;
   kind?: JsonValue;
   version?: JsonValue;
   modelId?: JsonValue;
@@ -103,6 +104,20 @@ export function isObject(value: unknown): value is JsonRecord {
 export function requireJsonRecord(value: unknown, label = "value"): JsonRecord {
   if (!isObject(value)) throw new Error(`${label} must be a JSON object.`);
   return value;
+}
+
+/** Omit optional wire fields before persisting diagnostics in Pi's strict JSON data. */
+export function toPiJsonObject(value: JsonRecord): PiJsonObject {
+  const result: PiJsonObject = {};
+  for (const [key, entry] of Object.entries(value)) {
+    if (entry !== undefined) result[key] = toPiJsonValue(entry);
+  }
+  return result;
+}
+
+function toPiJsonValue(value: JsonValue): PiJsonValue {
+  if (Array.isArray(value)) return value.map(toPiJsonValue);
+  return isObject(value) ? toPiJsonObject(value) : value;
 }
 
 export function optionalJsonRecord(value: unknown, label = "value"): JsonRecord | undefined {

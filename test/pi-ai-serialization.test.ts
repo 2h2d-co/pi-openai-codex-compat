@@ -10,7 +10,15 @@ import {
   type SessionEntry,
   type ToolInfo,
 } from "@earendil-works/pi-coding-agent";
-import type { Api, AssistantMessage, Context, Model, Tool } from "@earendil-works/pi-ai";
+import {
+  normalizeContext,
+  type Api,
+  type AssistantMessage,
+  type Context,
+  type Model,
+  type SystemMessage,
+  type Tool,
+} from "@earendil-works/pi-ai";
 import { convertResponsesMessages as referenceConvertResponsesMessages } from "@earendil-works/pi-ai/api/openai-responses-shared";
 import {
   activeResponsesTools,
@@ -134,18 +142,18 @@ const context: Context = {
       ],
       isError: false,
       timestamp: 2,
-      addedToolNames: ["deferred"],
     },
+    { role: "system", content: "", toolsAdded: [deferredTool], timestamp: 3 },
   ],
-  tools: [applyPatchTool, deferredTool],
+  tools: [applyPatchTool],
 };
 
 const allowedProviders = new Set(["openai", "openai-codex", "opencode"]);
 const options = {
   includeSystemPrompt: false,
   grammarToolInputProperties: new Map([["apply_patch", "patch"]]),
-  deferredTools: new Map([["deferred", deferredTool]]),
-  deferredToolsMode: "tool-search" as const,
+  supportsMidConvoSystemMessages: true,
+  supportsToolSearch: true,
   toolOptions: {
     strict: null,
     supportsStrictMode: true,
@@ -154,16 +162,76 @@ const options = {
 };
 
 test("copied Pi AI Responses serialization matches the dependency", () => {
-  const reference = referenceConvertResponsesMessages(model, context, allowedProviders, options);
+  const reference = referenceConvertResponsesMessages(
+    model,
+    normalizeContext(context),
+    allowedProviders,
+    options,
+  );
   const copied = copiedConvertResponsesMessages(model, context, allowedProviders, options);
   assert.deepEqual(copied, reference);
 });
 
-test("requires an explicit deferred tool mode and supports additional_tools", () => {
+test("matches Pi 0.86 system sections and tool state without mutating the transcript", () => {
+  const updates: SystemMessage[] = [
+    { role: "system", content: "", sections: { rules: "new rules", cwd: null }, timestamp: 4 },
+    { role: "system", content: "", toolsRemoved: [{ name: "deferred" }], timestamp: 5 },
+    {
+      role: "system",
+      content: "",
+      toolsAdded: [{ ...applyPatchTool, description: "Updated patch" }],
+      timestamp: 6,
+    },
+  ];
+  for (const update of updates) {
+    for (const supportsMidConvoSystemMessages of [false, true]) {
+      for (const supportsAdditionalTools of [false, true]) {
+        const transcript = normalizeContext({
+          messages: [
+            {
+              role: "system",
+              content: "initial",
+              sections: { rules: "old rules", cwd: "/old" },
+              toolsAdded: [applyPatchTool],
+              timestamp: 0,
+            },
+            ...context.messages,
+            update,
+            { ...assistantMessage, content: [{ type: "text", text: "reply without signature" }] },
+          ],
+        });
+        const original = structuredClone(transcript);
+        const serializationOptions = {
+          ...options,
+          includeSystemPrompt: true,
+          supportsMidConvoSystemMessages,
+          supportsAdditionalTools,
+        };
+        // Pi's serializer retains undefined optional keys. Compare the wire JSON.
+        assert.deepEqual(
+          copiedConvertResponsesMessages(model, transcript, allowedProviders, serializationOptions),
+          JSON.parse(
+            JSON.stringify(
+              referenceConvertResponsesMessages(
+                model,
+                transcript,
+                allowedProviders,
+                serializationOptions,
+              ),
+            ),
+          ),
+        );
+        assert.deepEqual(transcript, original);
+      }
+    }
+  }
+});
+
+test("requires an explicit tool addition capability and supports additional_tools", () => {
   const withoutModeOptions = {
     includeSystemPrompt: options.includeSystemPrompt,
     grammarToolInputProperties: options.grammarToolInputProperties,
-    deferredTools: options.deferredTools,
+    supportsMidConvoSystemMessages: true,
     toolOptions: options.toolOptions,
   };
   const withoutMode = copiedConvertResponsesMessages(
@@ -174,7 +242,12 @@ test("requires an explicit deferred tool mode and supports additional_tools", ()
   );
   assert.deepEqual(
     withoutMode,
-    referenceConvertResponsesMessages(model, context, allowedProviders, withoutModeOptions),
+    referenceConvertResponsesMessages(
+      model,
+      normalizeContext(context),
+      allowedProviders,
+      withoutModeOptions,
+    ),
   );
   assert.equal(
     withoutMode.some(
@@ -185,7 +258,7 @@ test("requires an explicit deferred tool mode and supports additional_tools", ()
 
   const additionalToolsOptions = {
     ...options,
-    deferredToolsMode: "additional-tools" as const,
+    supportsAdditionalTools: true,
     toolOptions: {
       ...options.toolOptions,
       strict: false,
@@ -199,7 +272,12 @@ test("requires an explicit deferred tool mode and supports additional_tools", ()
   );
   assert.deepEqual(
     additionalToolsHistory,
-    referenceConvertResponsesMessages(model, context, allowedProviders, additionalToolsOptions),
+    referenceConvertResponsesMessages(
+      model,
+      normalizeContext(context),
+      allowedProviders,
+      additionalToolsOptions,
+    ),
   );
   const additionalTools = additionalToolsHistory.find(
     (item) => item["type"] === "additional_tools",
@@ -379,16 +457,16 @@ test("round-trips namespaced calls and deferred namespaced definitions", () => {
         content: [{ type: "text", text: "result" }],
         isError: false,
         timestamp: 2,
-        addedToolNames: [IMAGE_GENERATION_TOOL_NAME],
       },
+      { role: "system", content: "", toolsAdded: [imageGenerationTool], timestamp: 3 },
     ],
-    tools: [webRunTool, imageGenerationTool],
+    tools: [webRunTool],
   };
 
   const converted = copiedConvertResponsesMessages(model, namespacedContext, allowedProviders, {
     includeSystemPrompt: false,
-    deferredTools: new Map([[IMAGE_GENERATION_TOOL_NAME, imageGenerationTool]]),
-    deferredToolsMode: "tool-search",
+    supportsMidConvoSystemMessages: true,
+    supportsToolSearch: true,
     namespacedToolNames: CODEX_NAMESPACED_TOOL_NAMES,
     textContentItemToolResultNames: CODEX_TEXT_CONTENT_ITEM_TOOL_RESULT_NAMES,
     toolOptions: {
@@ -446,6 +524,13 @@ test("round-trips namespaced calls and deferred namespaced definitions", () => {
       parentId: "assistant-web",
       timestamp: new Date(2).toISOString(),
       message: namespacedResult,
+    },
+    {
+      type: "message",
+      id: "tools-update",
+      parentId: "result-web",
+      timestamp: new Date(3).toISOString(),
+      message: { role: "system", content: "", toolsAdded: [imageGenerationTool], timestamp: 3 },
     },
   ] satisfies SessionEntry[];
   const checkpointTools = [

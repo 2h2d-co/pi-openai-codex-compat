@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.0.10 - 2026-09-20
+
 ### Added
 
 - Add the `pi-apply-patch parse` command-line entry point, which parses a
@@ -24,6 +26,11 @@
 
 ### Fixed
 
+- Preserve current instructions, dynamic tools, native compaction, and resumed
+  history with Pi 0.86's system-message transcript. Refresh tool declarations
+  when compaction replaces history and keep forced prompts authoritative.
+- Match Pi 0.86's reasoning Off mapping and persist transport diagnostics as
+  strict JSON. Include standalone usage entries in footer totals.
 - Show effective unified-exec yield durations beside accent-colored command
   tool titles, include explicit working directories, emphasize commands on
   their own separated rows, separate `apply_patch` results, and mute command
@@ -86,7 +93,7 @@
 
 ### Changed
 
-- Support Pi 0.85.x and update the development baseline to Pi 0.85.1.
+- Require Pi `>=0.86.0 <0.87.0` and use Pi 0.86.0 as the development baseline.
 - Describe `shell_command`, `exec_command`, and `write_stdin` in Pi's tool list,
   guidelines, and detailed tool contracts using the actual resolved default
   shell. Document command working-directory and `PI_*` context behavior,
@@ -112,9 +119,10 @@
   stderr while retaining Pi's complete-output files.
 - Replace the multi-line startup configuration dump with a concise package and
   settings-command notice, and simplify the fallback settings-save error.
-- Align deferred tool loading with Pi 0.84.3, preferring message-anchored
-  additional tools on capable Codex models while retaining tool-search and
-  top-level fallbacks.
+- Read dynamic tool declarations from Pi 0.86 system messages, preferring
+  message-anchored additional tools on capable Codex models. Use tool-search
+  pairs on other capable models and the complete top-level tool set when
+  additions are unsupported or tools are removed or redefined.
 - Simplify `apply_patch` for its queued single-writer operating model: retain
   Pi's mutation queue, remove the extension-local alias queue and
   preflight-to-execution drift machinery, use direct writes for in-place text

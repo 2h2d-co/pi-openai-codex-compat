@@ -75,11 +75,11 @@ export function cachedRequestBody(entry: CachedWebSocket, body: JsonRecord): Cac
       index: mismatchIndex,
       baselineInputItems: baseline.length,
       currentInputItems: currentInput.length,
-      baselineItem: structuredClone(baseline[mismatchIndex]),
     };
-    if (mismatchIndex < currentInput.length) {
-      historyMismatch.currentItem = structuredClone(currentInput[mismatchIndex]);
-    }
+    const baselineItem = baseline[mismatchIndex];
+    const currentItem = currentInput[mismatchIndex];
+    if (baselineItem !== undefined) historyMismatch.baselineItem = structuredClone(baselineItem);
+    if (currentItem !== undefined) historyMismatch.currentItem = structuredClone(currentItem);
     return {
       body,
       contextMode: "full",

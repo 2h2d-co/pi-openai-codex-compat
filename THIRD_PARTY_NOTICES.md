@@ -12,7 +12,7 @@ Source: <https://github.com/openai/codex>
 
 ## Pi AI
 
-Selected OpenAI Codex transport, Responses stream processing, and history serialization methods are adapted from `@earendil-works/pi-ai`.
+Selected OpenAI Codex transport, Responses stream processing, and history serialization methods are adapted from `@earendil-works/pi-ai`. History serialization follows the Pi 0.86.0 transcript contract.
 
 Pi AI, Copyright (c) 2025 Mario Zechner
 
