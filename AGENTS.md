@@ -14,4 +14,5 @@
 - Keep changelog entries under `Unreleased` for prereleases and move them into a release section only for stable releases.
 - Use `npm run release -- <version>` to build the release locally, record its SHA-256 in an SSH-signed `release: v<version>` commit, prove a clean rebuild is reproducible, and create the matching lightweight tag.
 - Push release commits and tags atomically; do not create annotated or signed tag objects.
+- The tag workflow creates the immutable GitHub release from the verified archive and the version's changelog section. Never create GitHub releases by hand.
 - Run `npm run check` and `npm test` before committing meaningful code changes.

@@ -606,7 +606,9 @@ search, and compaction continuation.
 2. The command builds the exact package locally and runs live CLI tests against that archive. It also runs the existing live SDK tests against checkout source. Both suites must pass before it records the archive's SHA-256 in an SSH-signed release commit, proves a clean rebuild is reproducible, and creates a lightweight tag. Missing credentials or failing live tests stop the release.
 3. Inspect the result, then push atomically with `git push --atomic origin main vX.Y.Z`.
 4. A read-only GitHub Actions job validates and packs the package. After approval in the tag-restricted `npm-publish` environment, a separate GitHub-owned job verifies the signature and signed digest before attesting and staging that exact archive through npm trusted publishing.
-5. Approve the staged package on npmjs.com, or with `npm stage approve <stage-id>`.
+5. A final job creates the immutable GitHub release for the tag from the same verified archive, its
+   checksum, and the version's `CHANGELOG.md` section (`Unreleased` for prereleases).
+6. Approve the staged package on npmjs.com, or with `npm stage approve <stage-id>`.
 
 Stable releases use `latest`; prereleases derive their npm dist-tag from the first prerelease identifier.
 
