@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
+import { existsSync } from "node:fs";
 import { mkdir, mkdtemp, readFile, realpath, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
@@ -17,6 +18,34 @@ const fixture = join(root, "test/support/codex-cli-extension.ts");
 const instruction = (marker: string) =>
   `The current system marker is ${marker}. Call verify_release exactly once with that marker ` +
   "and the value from the latest user message. Do not respond with text.";
+
+/**
+ * Give the extracted package the dependency layout `pi install` produces: only its
+ * production dependency closure is present. The `@earendil-works/*` packages stay
+ * absent so every such import must resolve through Pi's extension aliases, which
+ * exclude subpaths like `pi-ai/api/*`. Linking the whole repository `node_modules`
+ * would hide that class of failure.
+ */
+async function linkProductionDependencies(packageRoot: string): Promise<void> {
+  const modules = join(packageRoot, "node_modules");
+  await mkdir(modules);
+  const closure = execFileSync("npm", ["ls", "--omit=dev", "--all", "--parseable"], {
+    cwd: root,
+    encoding: "utf8",
+  })
+    .trim()
+    .split("\n")
+    .filter((path) => path.startsWith(`${root}/node_modules/`))
+    .map((path) => path.slice(`${root}/node_modules/`.length))
+    .filter((name) => !name.includes("/node_modules/"));
+  assert.ok(closure.length > 0, "The package declares production dependencies.");
+  for (const name of new Set(closure)) {
+    assert.doesNotMatch(name, /^@earendil-works\//, `${name} must resolve through Pi's aliases.`);
+    if (name.includes("/")) await mkdir(join(modules, dirname(name)), { recursive: true });
+    await symlink(join(root, "node_modules", name), join(modules, name), "dir");
+  }
+  assert.equal(existsSync(join(modules, "@earendil-works")), false);
+}
 
 export async function verifyPackagedCli(
   t: TestContext,
@@ -65,7 +94,7 @@ export async function verifyPackagedCli(
   assert.equal(packaged["name"], "pi-openai-codex-compat");
   const packageVersion = packaged["version"];
   assert.ok(typeof packageVersion === "string");
-  await symlink(join(root, "node_modules"), join(packageRoot, "node_modules"), "dir");
+  await linkProductionDependencies(packageRoot);
 
   const cli = await realpath(
     process.env["PI_CODEX_CLI_PATH"] ??
