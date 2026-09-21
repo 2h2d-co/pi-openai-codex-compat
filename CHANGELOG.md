@@ -10,6 +10,11 @@
   in-memory transcript, so the checkpoint history carried no tool
   declarations and the model reported that it had no callable tools.
 
+### Changed
+
+- Use Pi 0.86.1 as the development and packaged-CLI integration baseline. The
+  supported range stays `>=0.86.0 <0.87.0`.
+
 ## 0.0.12 - 2026-09-20
 
 ### Fixed
