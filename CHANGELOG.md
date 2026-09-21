@@ -20,6 +20,10 @@
 - Send the branch's leading system message as compaction `instructions`
   instead of Pi's fully replayed prompt, so Pi-driven compaction shares the
   turn requests' prompt prefix.
+- Reuse the last turn's exact tool declarations for `/compact` and threshold
+  compaction while they still describe the active tools. Rebuilding them from
+  the tool registry lost Pi's strict schemas for built-in tools, so every
+  Pi-driven compaction request missed the turn requests' prompt-cache prefix.
 
 ## 0.0.13 - 2026-09-21
 

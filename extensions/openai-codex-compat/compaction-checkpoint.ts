@@ -178,6 +178,43 @@ export function activeResponsesTools(
     : undefined;
 }
 
+/**
+ * Whether a serialized Responses `tools` list declares exactly the active tools,
+ * by name and description. Namespace members count as `namespace.member`.
+ *
+ * A cached turn template carries the exact declarations the turn requests sent,
+ * including strict schema conversion that `ToolInfo` cannot reproduce. Reusing
+ * it keeps the compaction request on the turn requests' prompt-cache prefix.
+ */
+export function declaresActiveTools(
+  serialized: readonly JsonRecord[],
+  allTools: readonly ToolInfo[],
+  activeNames: readonly string[],
+): boolean {
+  const declared = new Map<string, string | undefined>();
+  for (const item of serialized) {
+    if (item.type === "namespace" && isString(item.name) && Array.isArray(item.tools)) {
+      for (const member of item.tools) {
+        if (!isObject(member) || !isString(member.name)) return false;
+        declared.set(
+          `${item.name}.${member.name}`,
+          isString(member["description"]) ? member["description"] : undefined,
+        );
+      }
+    } else if ((item.type === "function" || item.type === "custom") && isString(item.name)) {
+      declared.set(item.name, isString(item["description"]) ? item["description"] : undefined);
+    } else {
+      return false;
+    }
+  }
+  const enabled = new Set(activeNames);
+  const active = allTools.filter((tool) => enabled.has(tool.name));
+  return (
+    declared.size === active.length &&
+    active.every((tool) => declared.has(tool.name) && declared.get(tool.name) === tool.description)
+  );
+}
+
 export function remoteCompactionMarkerSummary(): string {
   return `OpenAI Codex remote compaction checkpoint (${randomUUID()}).`;
 }

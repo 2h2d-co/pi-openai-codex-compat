@@ -19,6 +19,7 @@ import { CODEX_API, CODEX_PROVIDER } from "./codex-identifiers.ts";
 import {
   activeResponsesTools,
   branchInstructions,
+  declaresActiveTools,
   providerHistory,
   remoteCompactionMarkerSummary,
   responsesCompatibility,
@@ -250,10 +251,19 @@ export default function registerRemoteCompaction(
         imageDetail: config.imageDetail,
         recoverLatestOverflowPrefix: event.reason === "overflow" && event.willRetry,
       });
-      // Compaction rebases history, so use the complete current tool set.
+      // Reuse the last turn's exact declarations when they still describe the
+      // active tools, so the compaction request shares the turn requests'
+      // prompt-cache prefix. Rebuild from the registry only when the active
+      // set changed since that turn or no turn template exists.
       const template: JsonRecord = { ...matching?.payload };
+      const activeNames = pi.getActiveTools();
+      const cachedTools = Array.isArray(matching?.payload.tools)
+        ? matching.payload.tools.filter(isObject)
+        : undefined;
       template.tools =
-        activeResponsesTools(allTools, pi.getActiveTools(), grammarToolInputProperties) ?? [];
+        cachedTools && declaresActiveTools(cachedTools, allTools, activeNames)
+          ? cachedTools
+          : (activeResponsesTools(allTools, activeNames, grammarToolInputProperties) ?? []);
       const requestOptions: OpenAICodexResponsesOptions = {
         ...matching?.requestOptions,
         apiKey: authentication.apiKey,

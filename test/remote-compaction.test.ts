@@ -10,6 +10,7 @@ import { isString, requireString } from "../extensions/openai-codex-compat/value
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  createReadTool,
   createSyntheticSourceInfo,
   type SessionEntry,
   type ToolInfo,
@@ -19,6 +20,7 @@ import {
   CHECKPOINT_ENTRY_TYPE,
   parseCheckpoint,
 } from "../extensions/openai-codex-compat/compaction-checkpoint.ts";
+import { convertResponsesTools } from "../extensions/openai-codex-compat/vendor/pi-ai/openai-responses-serialization.ts";
 import { CodexProviderRuntime } from "../extensions/openai-codex-compat/codex-provider.ts";
 import type { CodexProviderRuntimeApi } from "../extensions/openai-codex-compat/codex-provider/codex-provider-runtime.ts";
 import { DEFAULT_CONFIG } from "../extensions/openai-codex-compat/config.ts";
@@ -335,11 +337,24 @@ test("refreshes cached tool declarations before native compaction", async () => 
     ...REPORT_TOOL,
     sourceInfo: createSyntheticSourceInfo("test-tool", { source: "compaction test" }),
   };
-  harness.hooks.getAllTools = () => [tool];
-  harness.hooks.getActiveTools = () => [tool.name];
+  const read = createReadTool(process.cwd());
+  const readInfo = {
+    name: read.name,
+    description: read.description,
+    parameters: read.parameters,
+    sourceInfo: createSyntheticSourceInfo("builtin", { source: "compaction test" }),
+  };
+  harness.hooks.getAllTools = () => [tool, readInfo];
+  harness.hooks.getActiveTools = () => [tool.name, read.name];
+  // The last turn declared the same active tools, including Pi's strict schema
+  // for `read`, which the registry's ToolInfo cannot reproduce.
+  const turnTools = convertResponsesTools([REPORT_TOOL, read], {
+    strict: false,
+    supportsStrictMode: true,
+  });
   const cached = {
     modelId: "gpt-test",
-    payload: { tools: [{ type: "function", name: "obsolete" }] },
+    payload: { tools: structuredClone(turnTools) },
     grammarToolInputProperties: new Map<string, string>(),
     requestOptions: { transport: "sse" as const },
   };
@@ -354,14 +369,36 @@ test("refreshes cached tool declarations before native compaction", async () => 
     signal: new AbortController().signal,
   };
   requireCompactionResult(await handler(event, harness.context));
+  assert.deepEqual(harness.requests[0]?.tools, turnTools);
+  assert.equal(
+    requireJsonRecords(harness.requests[0]?.tools).find((item) => item.name === read.name)?.[
+      "strict"
+    ],
+    true,
+  );
+
+  // A tool removed since that turn invalidates the cached declarations.
+  harness.hooks.getActiveTools = () => [tool.name];
+  requireCompactionResult(await handler(event, harness.context));
   assert.deepEqual(
-    requireJsonRecords(harness.requests[0]?.tools).map((declaration) => declaration.name),
+    requireJsonRecords(harness.requests[1]?.tools).map((declaration) => declaration.name),
     [tool.name],
+  );
+
+  // So does a redefinition under the same name, and an empty active set.
+  harness.hooks.getAllTools = () => [{ ...tool, description: "Redefined report" }, readInfo];
+  harness.hooks.getActiveTools = () => [tool.name, read.name];
+  requireCompactionResult(await handler(event, harness.context));
+  assert.equal(
+    requireJsonRecords(harness.requests[2]?.tools).find((item) => item.name === tool.name)?.[
+      "description"
+    ],
+    "Redefined report",
   );
   harness.hooks.getActiveTools = () => [];
   requireCompactionResult(await handler(event, harness.context));
-  assert.deepEqual(harness.requests[1]?.tools, []);
-  assert.deepEqual(cached.payload.tools, [{ type: "function", name: "obsolete" }]);
+  assert.deepEqual(harness.requests[3]?.tools, []);
+  assert.deepEqual(cached.payload.tools, turnTools);
 });
 
 test("classifies every Pi compaction lifecycle in official Codex metadata", async (t) => {
