@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.0.13 - 2026-09-21
+
 ### Fixed
 
 - Declare the complete current tool set in the top-level `tools` field on
