@@ -123,19 +123,26 @@ export async function verifyPackagedCli(
       transport: "sse",
       retry: { enabled: false, provider: { timeoutMs: 60_000, maxRetries: 0 } },
       compaction: { enabled: false, keepRecentTokens: 1 },
+      // Pi's built-in read tool joins later in the lifecycle: its strict JSON-schema
+      // sampling must serialize into the strict subset Codex accepts, and its
+      // mid-session addition must survive a provider-boundary checkpoint.
+      defaultTools: ["verify_release"],
     }),
   );
-  await writeFile(
-    join(agent, "openai-codex-compat.json"),
-    JSON.stringify({
-      responsesLite: options.lite,
-      fastMode: false,
-      applyPatch: false,
-      imageGeneration: false,
-      webRun: false,
-      webSearch: "disabled",
-    }),
-  );
+  const writeCompatConfig = async (overrides: Record<string, unknown> = {}) =>
+    writeFile(
+      join(agent, "openai-codex-compat.json"),
+      JSON.stringify({
+        responsesLite: options.lite,
+        fastMode: false,
+        applyPatch: false,
+        imageGeneration: false,
+        webRun: false,
+        webSearch: "disabled",
+        ...overrides,
+      }),
+    );
+  await writeCompatConfig();
   await writeFile(join(agent, "SYSTEM.md"), instruction("FIRST"));
   const sessionFile = join(temporary, "session.jsonl");
   const clientOptions = {
@@ -158,10 +165,6 @@ export async function verifyPackagedCli(
       "--no-skills",
       "--no-prompt-templates",
       "--no-context-files",
-      // Keep Pi's built-in read tool declared: its strict JSON-schema sampling must
-      // serialize into the strict subset Codex accepts on every request.
-      "--tools",
-      "read,verify_release",
       "--thinking",
       "medium",
       "--session",
@@ -184,7 +187,11 @@ export async function verifyPackagedCli(
   await client.start();
   assert.ok((await client.getCommands()).some((command) => command.name === "codex-settings"));
 
-  async function turn(marker: string, value: string): Promise<void> {
+  async function turn(
+    marker: string,
+    value: string,
+    expectedTools: readonly string[] = ["read", "verify_release"],
+  ): Promise<void> {
     const events = await client.promptAndWait(`user value: ${value}`, undefined, 90_000);
     assert.deepEqual(
       events.filter((event: { type: string }) => event.type === "extension_error"),
@@ -213,20 +220,47 @@ export async function verifyPackagedCli(
     assert.ok(observation?.type === "custom");
     const data = requireJsonRecord(observation.data);
     assert.equal(data["marker"], marker);
+    const tools = data["tools"];
+    assert.ok(Array.isArray(tools));
+    const byName = (left: unknown, right: unknown) => String(left).localeCompare(String(right));
+    assert.deepEqual([...tools].sort(byName), [...expectedTools].sort(byName));
     assert.doesNotMatch(client.getStderr(), /Failed to load extension|not a function/);
   }
 
-  await turn("FIRST", "alpha");
+  await turn("FIRST", "alpha", ["verify_release"]);
   await writeFile(join(agent, "SYSTEM.md"), instruction("SECOND"));
   await client.prompt("/release-test-reload");
-  await turn("SECOND", "bravo");
+  await turn("SECOND", "bravo", ["verify_release"]);
   const compacted = await client.compact();
   assert.match(compacted.summary, /OpenAI Codex remote compaction checkpoint/);
-  await turn("SECOND", "charlie");
+  await turn("SECOND", "charlie", ["verify_release"]);
+  // Add a tool after the manual checkpoint, then let a percentage-triggered
+  // checkpoint replace the history that declared it. The runtime appends that
+  // checkpoint itself, so Pi keeps its pre-checkpoint transcript in memory for
+  // the following turns and the addition must still reach every request.
+  await writeCompatConfig({ autoCompactAtPercent: 0.01 });
+  await client.prompt("/release-test-reload");
+  await client.prompt("/release-test-enable-read");
+  await turn("SECOND", "echo");
+  const boundary = (await client.getEntries()).entries.findLast(
+    (entry) => entry.type === "compaction",
+  );
+  assert.ok(boundary?.type === "compaction");
+  assert.deepEqual(requireJsonRecord(boundary.details)["compactionDecision"], {
+    reason: "provider-boundary",
+    willRetry: true,
+  });
+  await writeCompatConfig();
+  await client.prompt("/release-test-reload");
+  await client.prompt("/release-test-enable-read");
+  await turn("SECOND", "foxtrot");
   await client.stop();
   client = new RpcClient(clientOptions);
   await client.start();
-  await turn("SECOND", "delta");
+  // Resume rebuilds Pi's transcript from the checkpoint but restores the
+  // configured default loadout, so declare read again before prompting.
+  await client.prompt("/release-test-enable-read");
+  await turn("SECOND", "golf");
   const { entries } = await client.getEntries();
   const requests = entries.flatMap((entry) =>
     entry.type === "custom" && entry.customType === "release-test-request"
@@ -237,6 +271,7 @@ export async function verifyPackagedCli(
   await client.stop();
   t.diagnostic(
     `Pi ${String(piManifest["version"])} packaged ${packageVersion}: ` +
-      `${options.lite ? "Lite" : "Responses"}, tools, reload, native compaction, and resume passed`,
+      `${options.lite ? "Lite" : "Responses"}, tools, reload, native compaction, ` +
+      "percentage checkpoint, and resume passed",
   );
 }

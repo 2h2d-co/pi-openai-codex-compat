@@ -77,6 +77,15 @@ export default function (pi: ExtensionAPI): void {
       await ctx.reload();
     },
   });
+  pi.registerCommand("release-test-enable-read", {
+    handler: async () => {
+      pi.setActiveTools(["read", "verify_release"]);
+    },
+  });
+  // Record each request after its turn: appending a session entry between the
+  // context event and the provider stream would move the leaf that percentage
+  // compaction verifies.
+  const observations: Record<string, unknown>[] = [];
   pi.on("before_provider_request", (event) => {
     const payload = requireJsonRecord(event.payload);
     const input = requireJsonRecords(payload["input"]);
@@ -85,9 +94,15 @@ export default function (pi: ExtensionAPI): void {
         ? payload["instructions"]
         : JSON.stringify(input.filter((item) => item["role"] === "developer"));
     assert.match(instructions, /FIRST|SECOND/);
-    pi.appendEntry("release-test-request", {
+    observations.push({
       marker: instructions.includes("SECOND") ? "SECOND" : "FIRST",
       checkpoint: input.some((item) => item["type"] === "compaction"),
+      tools: requireJsonRecords(payload["tools"] ?? []).map((tool) => tool["name"]),
     });
+  });
+  pi.on("turn_end", () => {
+    for (const observation of observations.splice(0)) {
+      pi.appendEntry("release-test-request", observation);
+    }
   });
 }
