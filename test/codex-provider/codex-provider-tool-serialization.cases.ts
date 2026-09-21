@@ -215,7 +215,7 @@ test("transports dotted Pi tools as native Responses namespaces", async () => {
   assert.equal(harness.customEntries.length, 0);
 });
 
-test("selects the model-compatible deferred tool representation", async () => {
+test("declares later-added tools at the top level for every compatibility profile", async () => {
   const user = userEntry("user-1", "load more tools");
   const loader: Tool = {
     name: "loader",
@@ -267,28 +267,18 @@ test("selects the model-compatible deferred tool representation", async () => {
     ],
     tools: [loader],
   } satisfies Context;
-  const cases = [
+  // The Codex backend mishandled tools replayed inside the input, so every
+  // compatibility profile declares the complete current set at the top level.
+  const profiles = [
     {
       name: "additional-tools",
       compat: { supportsAdditionalTools: true, supportsToolSearch: true },
-      expectedInputType: "additional_tools",
-      expectedDeferredFlag: undefined,
     },
-    {
-      name: "tool-search",
-      compat: { supportsToolSearch: true },
-      expectedInputType: "tool_search_output",
-      expectedDeferredFlag: true,
-    },
-    {
-      name: "top-level",
-      compat: {},
-      expectedInputType: undefined,
-      expectedDeferredFlag: undefined,
-    },
+    { name: "tool-search", compat: { supportsToolSearch: true } },
+    { name: "top-level", compat: {} },
   ] as const;
 
-  for (const testCase of cases) {
+  for (const profile of profiles) {
     const harness = createHarness([user]);
     let request: JsonRecord | undefined;
     harness.runtime.transport.request = async function* (_model, body) {
@@ -300,7 +290,7 @@ test("selects the model-compatible deferred tool representation", async () => {
       ...baseModel,
       compat: {
         ...baseModel.compat,
-        ...testCase.compat,
+        ...profile.compat,
       },
     };
 
@@ -311,35 +301,24 @@ test("selects the model-compatible deferred tool representation", async () => {
       })
       .result();
 
-    assert.ok(request, testCase.name);
+    assert.ok(request, profile.name);
     const topLevelTools = requireJsonRecords(request.tools);
     assert.deepEqual(
       topLevelTools.map((tool) => tool["name"]),
-      testCase.name === "top-level" ? [loader.name, deferred.name] : [loader.name],
-      testCase.name,
+      [loader.name, deferred.name],
+      profile.name,
     );
+    assert.equal(topLevelTools[1]?.["defer_loading"], undefined, profile.name);
     const input = requireJsonRecords(request.input);
-    const deferredItem = input.find((item) => item["type"] === testCase.expectedInputType);
-    if (testCase.expectedInputType === undefined) {
-      assert.equal(
-        input.some(
-          (item) =>
-            item["type"] === "additional_tools" ||
-            item["type"] === "tool_search_call" ||
-            item["type"] === "tool_search_output",
-        ),
-        false,
-        testCase.name,
-      );
-      continue;
-    }
-    assert.ok(deferredItem, testCase.name);
-    const deferredDefinition = requireJsonRecords(deferredItem["tools"])[0];
-    assert.equal(deferredDefinition?.["name"], deferred.name, testCase.name);
     assert.equal(
-      deferredDefinition?.["defer_loading"],
-      testCase.expectedDeferredFlag,
-      testCase.name,
+      input.some(
+        (item) =>
+          item["type"] === "additional_tools" ||
+          item["type"] === "tool_search_call" ||
+          item["type"] === "tool_search_output",
+      ),
+      false,
+      profile.name,
     );
   }
 });

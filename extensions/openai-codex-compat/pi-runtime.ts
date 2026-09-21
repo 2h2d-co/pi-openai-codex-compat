@@ -1,9 +1,9 @@
 const TRANSCRIPT_APIS = [
   "normalizeContext",
   "getCurrentSystemPrompt",
+  "getCurrentTools",
   "getDeclaredTools",
   "getInitialSystemMessage",
-  "resolveTranscriptTools",
 ] as const;
 
 /** Check the loaded host, not package metadata that PI_PACKAGE_DIR can override. */

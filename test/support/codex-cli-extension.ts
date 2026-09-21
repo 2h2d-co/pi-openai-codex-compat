@@ -77,9 +77,9 @@ export default function (pi: ExtensionAPI): void {
       await ctx.reload();
     },
   });
-  pi.registerCommand("release-test-enable-read", {
-    handler: async () => {
-      pi.setActiveTools(["read", "verify_release"]);
+  pi.registerCommand("release-test-tools", {
+    handler: async (args) => {
+      pi.setActiveTools(args.split(","));
     },
   });
   // Record each request after its turn: appending a session entry between the
@@ -98,6 +98,9 @@ export default function (pi: ExtensionAPI): void {
       marker: instructions.includes("SECOND") ? "SECOND" : "FIRST",
       checkpoint: input.some((item) => item["type"] === "compaction"),
       tools: requireJsonRecords(payload["tools"] ?? []).map((tool) => tool["name"]),
+      inlineTools: input
+        .filter((item) => item["type"] === "additional_tools")
+        .flatMap((item) => requireJsonRecords(item["tools"]).map((tool) => tool["name"])),
     });
   });
   pi.on("turn_end", () => {

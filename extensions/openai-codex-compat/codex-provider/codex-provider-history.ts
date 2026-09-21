@@ -59,7 +59,6 @@ export function splitUnsampledUserInput(options: {
     allTools: options.allTools,
     grammarToolInputProperties: options.grammarToolInputProperties,
     imageDetail: options.imageDetail,
-    anchorsToolAdditions: false,
   });
   if (encoded.length === 0 || encoded.length > options.history.length) return { kind: "unsafe" };
 

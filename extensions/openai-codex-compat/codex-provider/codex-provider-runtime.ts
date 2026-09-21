@@ -6,9 +6,9 @@ import {
   clampThinkingLevel,
   createAssistantMessageEventStream,
   getCurrentSystemPrompt,
+  getCurrentTools,
   getDeclaredTools,
   normalizeContext,
-  resolveTranscriptTools,
   type Api,
   type AssistantMessage,
   type AssistantMessageEventStream,
@@ -495,7 +495,6 @@ export class CodexProviderRuntime {
     context: TranscriptContext,
     grammarToolInputProperties: GrammarToolInputProperties,
     sessionId: string | undefined,
-    anchorsToolAdditions: boolean,
   ): ResponsesInputItem[] {
     const scope = sessionId ? this.scopes.get(sessionId) : undefined;
     const compat = responsesCompatibility(model.compat);
@@ -505,8 +504,8 @@ export class CodexProviderRuntime {
         includeSystemPrompt: false,
         includeSystemUpdates: false,
         supportsMidConvoSystemMessages: true,
-        supportsAdditionalTools: anchorsToolAdditions && (compat.supportsAdditionalTools ?? false),
-        supportsToolSearch: anchorsToolAdditions && (compat.supportsToolSearch ?? false),
+        supportsAdditionalTools: false,
+        supportsToolSearch: false,
         grammarToolInputProperties,
         toolOptions: {
           strict: false,
@@ -528,7 +527,6 @@ export class CodexProviderRuntime {
       allTools: this.pi.getAllTools(),
       grammarToolInputProperties,
       imageDetail: scope.config.imageDetail,
-      anchorsToolAdditions,
     });
   }
 
@@ -543,45 +541,18 @@ export class CodexProviderRuntime {
       turnId,
     } = options;
     const compat = responsesCompatibility(model.compat);
-    const scope = runtimeSessionId ? this.scopes.get(runtimeSessionId) : undefined;
-    const threshold = scope?.config.autoCompactAtPercent;
-    // Percentage compaction drops historical tool additions. Rebase declarations
-    // before serialization so both the compaction and its continuation stay valid.
-    const compactionPending =
-      threshold !== undefined &&
-      scope?.contextPercent !== null &&
-      scope?.contextPercent !== undefined &&
-      scope.contextPercent >= threshold;
-    // A native checkpoint replaces the history that carried Pi's tool additions,
-    // and Pi's in-memory transcript can still predate a provider-boundary
-    // checkpoint. Declare the complete current tool set instead of anchoring.
-    const checkpointReplacesHistory =
-      scope !== undefined && searchCheckpoint(scope.manager.getBranch()).kind !== "absent";
-    const toolPlacement = resolveTranscriptTools(
-      context.messages,
-      !compactionPending &&
-        !checkpointReplacesHistory &&
-        ((compat.supportsAdditionalTools ?? false) || (compat.supportsToolSearch ?? false)),
-    );
-    // A forced prompt can project all tools into a single leading system message.
-    // Do not replay additions from the stored branch after that projection.
-    const anchorsToolAdditions =
-      toolPlacement.anchorsAdditions &&
-      context.messages
-        .slice(1)
-        .some((message) => message.role === "system" && (message.toolsAdded?.length ?? 0) > 0);
+    // Every request declares the complete current tool set at the top level,
+    // as the official Codex client does. Replaying additions inside the input
+    // made the Codex backend unreliable about which tools exist, and a native
+    // checkpoint drops such history anyway. A mid-session tool change costs one
+    // cache miss.
+    const requestTools = getCurrentTools(context.messages);
     let body: JsonRecord = {
       model: model.id,
       store: false,
       stream: true,
       instructions: getCurrentSystemPrompt(context.messages) || "You are a helpful assistant.",
-      input: this.wireHistory(
-        model,
-        context,
-        grammarToolInputProperties,
-        runtimeSessionId,
-        anchorsToolAdditions,
-      ),
+      input: this.wireHistory(model, context, grammarToolInputProperties, runtimeSessionId),
       text: { verbosity: requestOptions.textVerbosity ?? "low" },
       include: ["reasoning.encrypted_content"],
       tool_choice: requestOptions.toolChoice ?? "auto",
@@ -600,8 +571,8 @@ export class CodexProviderRuntime {
       ),
     });
     if (requestOptions.serviceTier !== undefined) body.service_tier = requestOptions.serviceTier;
-    if (toolPlacement.requestTools.length > 0) {
-      body.tools = convertResponsesTools(toolPlacement.requestTools, {
+    if (requestTools.length > 0) {
+      body.tools = convertResponsesTools(requestTools, {
         strict: false,
         supportsStrictMode: compat.supportsStrictMode ?? true,
         supportsOpenAIGrammarTools: compat.supportsOpenAIGrammarTools ?? false,

@@ -153,7 +153,6 @@ type EncodeMessagesOptions = {
   allTools: readonly ToolInfo[];
   grammarToolInputProperties: GrammarToolInputProperties;
   imageDetail: ImageDetail;
-  anchorsToolAdditions?: boolean;
   nativeAssistantItems?: ReadonlyMap<string, readonly ResponsesOutputItem[]>;
 };
 
@@ -165,10 +164,16 @@ export type EncodeSessionEntriesOptions = {
   imageDetail?: ImageDetail;
   nativeAssistantItems?: ReadonlyMap<string, readonly ResponsesOutputItem[]>;
   initialSystemMessage?: SystemMessage;
-  anchorsToolAdditions?: boolean;
 };
 
-/** Encode Pi's canonical messages using Pi AI's OpenAI Responses serializer. */
+/**
+ * Encode Pi's canonical messages using Pi AI's OpenAI Responses serializer.
+ *
+ * Tool declarations never enter the input: every request carries the complete
+ * current tool set at the top level, as the official Codex client does. Inline
+ * `additional_tools` items and synthetic tool-search pairs made the Codex
+ * backend unreliable about which tools exist, so neither is emitted.
+ */
 function encodeMessages(options: EncodeMessagesOptions): ResponsesInputItem[] {
   const { model, messages, grammarToolInputProperties, imageDetail, nativeAssistantItems } =
     options;
@@ -177,10 +182,8 @@ function encodeMessages(options: EncodeMessagesOptions): ResponsesInputItem[] {
     includeSystemPrompt: false,
     includeSystemUpdates: false,
     supportsMidConvoSystemMessages: true,
-    supportsAdditionalTools:
-      options.anchorsToolAdditions !== false && (compat.supportsAdditionalTools ?? false),
-    supportsToolSearch:
-      options.anchorsToolAdditions !== false && (compat.supportsToolSearch ?? false),
+    supportsAdditionalTools: false,
+    supportsToolSearch: false,
     grammarToolInputProperties,
     toolOptions: {
       strict: false,
@@ -221,9 +224,6 @@ export function encodeSessionEntries(options: EncodeSessionEntriesOptions): Resp
     grammarToolInputProperties,
     imageDetail,
   };
-  if (options.anchorsToolAdditions !== undefined) {
-    encodeOptions.anchorsToolAdditions = options.anchorsToolAdditions;
-  }
   if (nativeAssistantItems) encodeOptions.nativeAssistantItems = nativeAssistantItems;
   return encodeMessages(encodeOptions);
 }
@@ -347,7 +347,6 @@ export function providerHistory(options: {
   grammarToolInputProperties?: GrammarToolInputProperties;
   imageDetail?: ImageDetail;
   recoverLatestOverflowPrefix?: boolean;
-  anchorsToolAdditions?: boolean;
 }): ResponsesInputItem[] {
   const branch = [...options.branch];
   let recoveredPrefix: ResponsesInputItem[] = [];
@@ -397,9 +396,6 @@ export function providerHistory(options: {
         imageDetail: options.imageDetail ?? "auto",
         nativeAssistantItems,
         ...(initialSystemMessage ? { initialSystemMessage } : {}),
-        ...(options.anchorsToolAdditions === undefined
-          ? {}
-          : { anchorsToolAdditions: options.anchorsToolAdditions }),
       }),
       ...recoveredPrefix,
     ];
@@ -414,9 +410,6 @@ export function providerHistory(options: {
       grammarToolInputProperties: options.grammarToolInputProperties ?? new Map(),
       imageDetail: options.imageDetail ?? "auto",
       nativeAssistantItems,
-      ...(options.anchorsToolAdditions === undefined
-        ? {}
-        : { anchorsToolAdditions: options.anchorsToolAdditions }),
     }),
     ...recoveredPrefix,
   ];

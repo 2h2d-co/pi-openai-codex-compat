@@ -191,6 +191,7 @@ export async function verifyPackagedCli(
     marker: string,
     value: string,
     expectedTools: readonly string[] = ["read", "verify_release"],
+    expectedInlineTools: readonly string[] = [],
   ): Promise<void> {
     const events = await client.promptAndWait(`user value: ${value}`, undefined, 90_000);
     assert.deepEqual(
@@ -200,7 +201,11 @@ export async function verifyPackagedCli(
     const messages = await client.getMessages();
     const assistant = messages.filter((message) => message.role === "assistant").at(-1);
     assert.ok(assistant);
-    assert.equal(assistant.stopReason, "toolUse", assistant.errorMessage);
+    assert.equal(
+      assistant.stopReason,
+      "toolUse",
+      assistant.errorMessage ?? JSON.stringify(assistant.content),
+    );
     const call = assistant.content.find((block) => block.type === "toolCall");
     assert.ok(call);
     assert.equal(call.name, "verify_release");
@@ -224,6 +229,9 @@ export async function verifyPackagedCli(
     assert.ok(Array.isArray(tools));
     const byName = (left: unknown, right: unknown) => String(left).localeCompare(String(right));
     assert.deepEqual([...tools].sort(byName), [...expectedTools].sort(byName));
+    const inlineTools = data["inlineTools"];
+    assert.ok(Array.isArray(inlineTools));
+    assert.deepEqual([...inlineTools].sort(byName), [...expectedInlineTools].sort(byName));
     assert.doesNotMatch(client.getStderr(), /Failed to load extension|not a function/);
   }
 
@@ -237,10 +245,11 @@ export async function verifyPackagedCli(
   // Add a tool after the manual checkpoint, then let a percentage-triggered
   // checkpoint replace the history that declared it. The runtime appends that
   // checkpoint itself, so Pi keeps its pre-checkpoint transcript in memory for
-  // the following turns and the addition must still reach every request.
+  // the following turns. Every request must still declare the complete current
+  // set at the top level, including a tool added after the checkpoint.
   await writeCompatConfig({ autoCompactAtPercent: 0.01 });
   await client.prompt("/release-test-reload");
-  await client.prompt("/release-test-enable-read");
+  await client.prompt("/release-test-tools read,verify_release");
   await turn("SECOND", "echo");
   const boundary = (await client.getEntries()).entries.findLast(
     (entry) => entry.type === "compaction",
@@ -252,15 +261,15 @@ export async function verifyPackagedCli(
   });
   await writeCompatConfig();
   await client.prompt("/release-test-reload");
-  await client.prompt("/release-test-enable-read");
-  await turn("SECOND", "foxtrot");
+  await client.prompt("/release-test-tools read,verify_release,write");
+  await turn("SECOND", "foxtrot", ["read", "verify_release", "write"]);
   await client.stop();
   client = new RpcClient(clientOptions);
   await client.start();
   // Resume rebuilds Pi's transcript from the checkpoint but restores the
-  // configured default loadout, so declare read again before prompting.
-  await client.prompt("/release-test-enable-read");
-  await turn("SECOND", "golf");
+  // configured default loadout, so declare the same tools again before prompting.
+  await client.prompt("/release-test-tools read,verify_release,write");
+  await turn("SECOND", "golf", ["read", "verify_release", "write"]);
   const { entries } = await client.getEntries();
   const requests = entries.flatMap((entry) =>
     entry.type === "custom" && entry.customType === "release-test-request"

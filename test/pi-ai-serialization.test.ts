@@ -548,65 +548,29 @@ test("round-trips namespaced calls and deferred namespaced definitions", () => {
       sourceInfo: TEST_TOOL_SOURCE,
     } satisfies ToolInfo,
   ];
-  const checkpointHistory = encodeSessionEntries({
-    model,
-    entries,
-    allTools: checkpointTools,
-    grammarToolInputProperties: new Map(),
-  });
-  assert.deepEqual(checkpointHistory[1], {
-    type: "function_call_output",
-    call_id: "call_web",
-    output: [{ type: "input_text", text: "result" }],
-  });
-  assert.equal(checkpointHistory[2]?.["type"], "tool_search_call");
-  assert.deepEqual(checkpointHistory[3]?.["tools"], [
-    {
-      type: "namespace",
-      name: "image_gen",
-      description: "Tools in the image_gen namespace.",
-      tools: [
-        {
-          type: "function",
-          name: "imagegen",
-          description: imageGenerationTool.description,
-          parameters: IMAGE_GENERATION_PARAMETERS,
-          defer_loading: true,
-          strict: false,
-        },
-      ],
-    },
-  ]);
-
-  const additionalToolsCheckpoint = encodeSessionEntries({
-    model: {
-      ...model,
-      compat: { ...model.compat, supportsAdditionalTools: true },
-    },
-    entries,
-    allTools: checkpointTools,
-    grammarToolInputProperties: new Map(),
-  });
-  assert.deepEqual(additionalToolsCheckpoint[2], {
-    type: "additional_tools",
-    role: "developer",
-    tools: [
-      {
-        type: "namespace",
-        name: "image_gen",
-        description: "Tools in the image_gen namespace.",
-        tools: [
-          {
-            type: "function",
-            name: "imagegen",
-            description: imageGenerationTool.description,
-            parameters: IMAGE_GENERATION_PARAMETERS,
-            strict: false,
-          },
-        ],
-      },
-    ],
-  });
+  // Checkpoint history never carries tool declarations: the extension declares
+  // every tool at the top level regardless of the model's compatibility flags.
+  for (const compat of [
+    model.compat ?? {},
+    { ...model.compat, supportsToolSearch: true },
+    { ...model.compat, supportsAdditionalTools: true },
+  ]) {
+    const checkpointHistory = encodeSessionEntries({
+      model: { ...model, compat },
+      entries,
+      allTools: checkpointTools,
+      grammarToolInputProperties: new Map(),
+    });
+    assert.deepEqual(
+      checkpointHistory.map((item) => item["type"]),
+      ["function_call", "function_call_output"],
+    );
+    assert.deepEqual(checkpointHistory[1], {
+      type: "function_call_output",
+      call_id: "call_web",
+      output: [{ type: "input_text", text: "result" }],
+    });
+  }
 });
 
 test("serializes active compaction tools with the same namespace contract", () => {

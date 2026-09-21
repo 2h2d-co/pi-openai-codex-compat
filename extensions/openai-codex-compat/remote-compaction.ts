@@ -249,9 +249,7 @@ export default function registerRemoteCompaction(
         grammarToolInputProperties,
         imageDetail: config.imageDetail,
         recoverLatestOverflowPrefix: event.reason === "overflow" && event.willRetry,
-        anchorsToolAdditions: false,
       });
-      // A cached turn template can contain only the initial declarations.
       // Compaction rebases history, so use the complete current tool set.
       const template: JsonRecord = { ...matching?.payload };
       template.tools =

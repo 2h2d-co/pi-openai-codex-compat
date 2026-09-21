@@ -4,11 +4,13 @@
 
 ### Fixed
 
-- Declare the complete current tool set on every request once a native Codex
-  checkpoint replaces history. After a percentage-triggered compaction, later
-  requests in the same Pi process anchored tool additions to Pi's stale
-  in-memory transcript, so the checkpoint history carried no tool
-  declarations and the model reported that it had no callable tools.
+- Declare the complete current tool set in the top-level `tools` field on
+  every request and never inside `input`, as the official Codex client does.
+  Tools added mid-session were replayed as inline `additional_tools` items;
+  the Codex backend then often treated other tools as unavailable, and after a
+  percentage-triggered compaction the inline declarations were gone entirely,
+  so the model reported that it had no callable tools. A mid-session tool
+  change now costs one prompt-cache miss instead.
 
 ### Changed
 
