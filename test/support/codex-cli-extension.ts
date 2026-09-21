@@ -7,6 +7,32 @@ import {
   requireJsonRecords,
 } from "../../extensions/openai-codex-compat/codex-protocol.ts";
 
+type Marker = "FIRST" | "SECOND";
+
+/**
+ * The markers the model sees, in prompt order: the leading prompt travels as
+ * `instructions` (or as the Lite developer prefix) and each later prompt
+ * change is an inline developer update. `leading` is the first mention and
+ * `current` the newest one.
+ */
+function promptMarkers(payload: Record<string, unknown>): { leading: Marker; current: Marker } {
+  const input = requireJsonRecords(payload["input"]);
+  const promptTexts = [
+    typeof payload["instructions"] === "string" ? payload["instructions"] : "",
+    ...input
+      .filter(
+        (item) =>
+          (item["type"] === undefined || item["type"] === "message") &&
+          item["role"] === "developer",
+      )
+      .map((item) => JSON.stringify(item["content"])),
+  ];
+  const markers = promptTexts.flatMap((text) => text.match(/FIRST|SECOND/g) ?? []);
+  const asMarker = (value: string | undefined): Marker => (value === "SECOND" ? "SECOND" : "FIRST");
+  assert.ok(markers.length > 0, "The request carries a system marker.");
+  return { leading: asMarker(markers[0]), current: asMarker(markers.at(-1)) };
+}
+
 export default function (pi: ExtensionAPI): void {
   if (process.env["PI_CODEX_CLI_MOCK"] === "1") {
     let count = 0;
@@ -27,14 +53,10 @@ export default function (pi: ExtensionAPI): void {
       const request = requireJsonRecord(JSON.parse(text));
       const input = requireJsonRecords(request["input"]);
       const compact = input.some((item) => item["type"] === "compaction_trigger");
-      const instructions =
-        typeof request["instructions"] === "string"
-          ? request["instructions"]
-          : JSON.stringify(input.filter((item) => item["role"] === "developer"));
       const value = /user value: ([a-z]+)/.exec(
         JSON.stringify(input.filter((item) => item["role"] === "user").at(-1)),
       )?.[1];
-      const marker = instructions.includes("SECOND") ? "SECOND" : "FIRST";
+      const marker = promptMarkers(request).current;
       count += 1;
       const item = compact
         ? { type: "compaction", id: `cmp_${count}`, encrypted_content: "mock-checkpoint" }
@@ -89,13 +111,10 @@ export default function (pi: ExtensionAPI): void {
   pi.on("before_provider_request", (event) => {
     const payload = requireJsonRecord(event.payload);
     const input = requireJsonRecords(payload["input"]);
-    const instructions =
-      typeof payload["instructions"] === "string"
-        ? payload["instructions"]
-        : JSON.stringify(input.filter((item) => item["role"] === "developer"));
-    assert.match(instructions, /FIRST|SECOND/);
+    const markers = promptMarkers(payload);
     observations.push({
-      marker: instructions.includes("SECOND") ? "SECOND" : "FIRST",
+      marker: markers.current,
+      leadingMarker: markers.leading,
       checkpoint: input.some((item) => item["type"] === "compaction"),
       tools: requireJsonRecords(payload["tools"] ?? []).map((tool) => tool["name"]),
       inlineTools: input

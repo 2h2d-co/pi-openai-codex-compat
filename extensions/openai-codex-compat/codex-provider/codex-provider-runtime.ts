@@ -5,10 +5,8 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import {
   clampThinkingLevel,
   createAssistantMessageEventStream,
-  getCurrentSystemPrompt,
   getCurrentTools,
   getDeclaredTools,
-  normalizeContext,
   type Api,
   type AssistantMessage,
   type AssistantMessageEventStream,
@@ -30,6 +28,8 @@ import {
   checkpointData,
   providerHistory,
   remoteCompactionMarkerSummary,
+  requestInstructions,
+  resolveRequestTranscript,
   responsesCompatibility,
   searchCheckpoint,
   type CheckpointData,
@@ -502,8 +502,7 @@ export class CodexProviderRuntime {
       const nativeItems = new Map<string, ResponsesOutputItem[]>();
       const serializationOptions: NonNullable<Parameters<typeof convertResponsesMessages>[3]> = {
         includeSystemPrompt: false,
-        includeSystemUpdates: false,
-        supportsMidConvoSystemMessages: true,
+        supportsMidConvoSystemMessages: compat.supportsMidConvoSystemMessages ?? false,
         supportsAdditionalTools: false,
         supportsToolSearch: false,
         grammarToolInputProperties,
@@ -524,7 +523,6 @@ export class CodexProviderRuntime {
     return providerHistory({
       branch: scope.manager.getBranch(),
       wireModel: model,
-      allTools: this.pi.getAllTools(),
       grammarToolInputProperties,
       imageDetail: scope.config.imageDetail,
     });
@@ -547,11 +545,14 @@ export class CodexProviderRuntime {
     // checkpoint drops such history anyway. A mid-session tool change costs one
     // cache miss.
     const requestTools = getCurrentTools(context.messages);
+    // The leading system message is the prompt; later system messages travel
+    // inline in `input` (or collapsed into the leading message by
+    // resolveRequestTranscript), as Pi AI's Codex adapter does.
     let body: JsonRecord = {
       model: model.id,
       store: false,
       stream: true,
-      instructions: getCurrentSystemPrompt(context.messages) || "You are a helpful assistant.",
+      instructions: requestInstructions(context) || "You are a helpful assistant.",
       input: this.wireHistory(model, context, grammarToolInputProperties, runtimeSessionId),
       text: { verbosity: requestOptions.textVerbosity ?? "low" },
       include: ["reasoning.encrypted_content"],
@@ -735,7 +736,6 @@ export class CodexProviderRuntime {
       branch,
       history,
       model,
-      allTools: this.pi.getAllTools(),
       grammarToolInputProperties,
       imageDetail: scope.config.imageDetail,
     });
@@ -755,7 +755,7 @@ export class CodexProviderRuntime {
       template: withoutConversationInput(body),
       instructions: isString(body.instructions)
         ? body.instructions
-        : getCurrentSystemPrompt(context.messages) || "You are a helpful assistant.",
+        : requestInstructions(context) || "You are a helpful assistant.",
       grammarToolInputProperties,
       priority: scope.config.fastMode,
       compactionMetadata: responsesCompactionV2Metadata("auto", "context_limit", "pre_turn"),
@@ -797,7 +797,7 @@ export class CodexProviderRuntime {
     input: Context,
     options?: OpenAICodexResponsesOptions,
   ): AssistantMessageEventStream {
-    const context = normalizeContext(input);
+    const context = resolveRequestTranscript(model, input);
     const stream = createAssistantMessageEventStream();
     const requestOptions = transportOptions(options);
     const output: AssistantMessage = {

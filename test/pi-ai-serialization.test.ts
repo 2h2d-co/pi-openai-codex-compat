@@ -234,6 +234,60 @@ test("matches Pi 0.86 system sections and tool state without mutating the transc
   }
 });
 
+test("holds a system message between a tool call and its results like Pi AI", () => {
+  const [userMessage, toolCallMessage, toolResultMessage] = context.messages;
+  assert.ok(userMessage && toolCallMessage && toolResultMessage);
+  const held: SystemMessage = {
+    role: "system",
+    content: "",
+    sections: { rules: "held rules" },
+    timestamp: 2,
+  };
+  for (const answered of [true, false]) {
+    const transcript = normalizeContext({
+      messages: [
+        { role: "system", content: "initial", toolsAdded: [applyPatchTool], timestamp: 0 },
+        userMessage,
+        toolCallMessage,
+        held,
+        ...(answered ? [toolResultMessage] : []),
+        { role: "user", content: "next", timestamp: 4 },
+      ],
+    });
+    const serializationOptions = { ...options, supportsMidConvoSystemMessages: true };
+    const copied = copiedConvertResponsesMessages(
+      model,
+      transcript,
+      allowedProviders,
+      serializationOptions,
+    );
+    assert.deepEqual(
+      copied,
+      JSON.parse(
+        JSON.stringify(
+          referenceConvertResponsesMessages(
+            model,
+            transcript,
+            allowedProviders,
+            serializationOptions,
+          ),
+        ),
+      ),
+    );
+    // The update follows the (real or synthetic) tool result rather than
+    // separating the call from its result.
+    const types = copied.map((item) => item["type"] ?? item["role"]);
+    const resultIndex = types.indexOf("custom_tool_call_output");
+    assert.ok(resultIndex >= 0, JSON.stringify(types));
+    assert.equal(types[resultIndex + 1], "developer");
+    assert.equal(
+      copied.filter((item) => item["role"] === "developer").length,
+      1,
+      JSON.stringify(copied),
+    );
+  }
+});
+
 test("requires an explicit tool addition capability and supports additional_tools", () => {
   const withoutModeOptions = {
     includeSystemPrompt: options.includeSystemPrompt,
@@ -366,7 +420,6 @@ test("configures image detail for image tool-result history", () => {
   const checkpointHistory = encodeSessionEntries({
     model: imageModel,
     entries,
-    allTools: [],
     grammarToolInputProperties: new Map(),
     imageDetail: "low",
   });
@@ -540,25 +593,18 @@ test("round-trips namespaced calls and deferred namespaced definitions", () => {
       message: { role: "system", content: "", toolsAdded: [imageGenerationTool], timestamp: 3 },
     },
   ] satisfies SessionEntry[];
-  const checkpointTools = [
-    {
-      name: IMAGE_GENERATION_TOOL_NAME,
-      description: imageGenerationTool.description,
-      parameters: imageGenerationTool.parameters,
-      sourceInfo: TEST_TOOL_SOURCE,
-    } satisfies ToolInfo,
-  ];
   // Checkpoint history never carries tool declarations: the extension declares
   // every tool at the top level regardless of the model's compatibility flags.
+  // A tool-only system update renders no inline text either.
   for (const compat of [
     model.compat ?? {},
     { ...model.compat, supportsToolSearch: true },
     { ...model.compat, supportsAdditionalTools: true },
+    { ...model.compat, supportsMidConvoSystemMessages: true },
   ]) {
     const checkpointHistory = encodeSessionEntries({
       model: { ...model, compat },
       entries,
-      allTools: checkpointTools,
       grammarToolInputProperties: new Map(),
     });
     assert.deepEqual(

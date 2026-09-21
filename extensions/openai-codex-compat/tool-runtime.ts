@@ -1,4 +1,4 @@
-import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import type { Api, Model, ProviderHeaders } from "@earendil-works/pi-ai";
 import { providerHistory } from "./compaction-checkpoint.ts";
 import type { ImageDetail } from "./config.ts";
@@ -12,7 +12,6 @@ export interface CodexToolAuthentication {
 export type ToolAuthenticationContext = {
   modelRegistry: Pick<ExtensionContext["modelRegistry"], "getApiKeyAndHeaders">;
 };
-export type ToolHistoryApi = Pick<ExtensionAPI, "getAllTools">;
 export type ToolHistoryContext = {
   sessionManager: Pick<ExtensionContext["sessionManager"], "getBranch">;
 };
@@ -32,7 +31,6 @@ export async function codexToolAuthentication(
 }
 
 export function codexToolHistory(
-  pi: ToolHistoryApi,
   ctx: ToolHistoryContext,
   model: Model<Api>,
   imageDetail: ImageDetail = "auto",
@@ -40,7 +38,6 @@ export function codexToolHistory(
   return providerHistory({
     branch: ctx.sessionManager.getBranch(),
     wireModel: model,
-    allTools: pi.getAllTools(),
     imageDetail,
   });
 }

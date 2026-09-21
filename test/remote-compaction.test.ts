@@ -268,6 +268,66 @@ test("routes manual compaction through the custom provider runtime", async () =>
   assert.ok(result.compaction.usage);
 });
 
+test("sends the branch's leading system message as compaction instructions", async () => {
+  const leading: SessionEntry = {
+    type: "message",
+    id: "system-0",
+    parentId: null,
+    timestamp: new Date(0).toISOString(),
+    message: {
+      role: "system",
+      content: "",
+      sections: { rules: "leading rules" },
+      timestamp: 0,
+    },
+  };
+  const user = userEntry("user-1", "Remember BLUE-42.", leading.id);
+  const update: SessionEntry = {
+    type: "message",
+    id: "system-1",
+    parentId: user.id,
+    timestamp: new Date(2).toISOString(),
+    message: { role: "system", content: "", sections: { rules: "updated rules" }, timestamp: 2 },
+  };
+  for (const [branch, expected] of [
+    [[leading, user, update], "leading rules"],
+    // A branch without a leading system message (a pre-0.86 session) falls
+    // back to Pi's current prompt.
+    [[user], "system prompt"],
+  ] as const) {
+    const harness = createHarness([...branch]);
+    const handler = harness.hooks.sessionBeforeCompact;
+    assert.ok(handler);
+    const context = {
+      ...harness.context,
+      model: {
+        ...harness.context.model,
+        compat: { ...harness.context.model.compat, supportsMidConvoSystemMessages: true },
+      },
+    };
+    requireCompactionResult(
+      await handler(
+        {
+          branchEntries: [...branch],
+          preparation: { firstKeptEntryId: "user-1", tokensBefore: 50_000 },
+          reason: "manual",
+          willRetry: false,
+          signal: new AbortController().signal,
+        },
+        context,
+      ),
+    );
+    const request = harness.requests[0];
+    assert.ok(request);
+    assert.equal(request.instructions, expected);
+    const input = requireJsonRecords(request.input);
+    assert.deepEqual(
+      input.filter((item) => item.role === "developer").map((item) => item.content),
+      branch.length > 1 ? ['Updated system prompt section "rules":\n\nupdated rules'] : [],
+    );
+  }
+});
+
 test("refreshes cached tool declarations before native compaction", async () => {
   const user = userEntry("user-1", "Remember this.");
   const harness = createHarness([user]);

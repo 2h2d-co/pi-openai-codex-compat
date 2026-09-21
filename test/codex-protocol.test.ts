@@ -304,6 +304,40 @@ test("counts and retains context with Codex's four-byte approximation", () => {
   assert.deepEqual(boundary[1], user("ijklmnop"));
 });
 
+test("retains every developer and system message outside the budget and in place", () => {
+  const developer = (text: string) =>
+    ({ type: "message", role: "developer", content: text }) satisfies ResponsesInputItem;
+  const system = (text: string) =>
+    ({ type: "message", role: "system", content: text }) satisfies ResponsesInputItem;
+  const history = [
+    developer("d".repeat(400)),
+    user("a".repeat(12)),
+    system("s".repeat(400)),
+    {
+      type: "message",
+      role: "assistant",
+      content: [{ type: "output_text", text: "not retained" }],
+    },
+    user("b".repeat(12)),
+    developer("e".repeat(400)),
+    user("c".repeat(12)),
+  ] satisfies ResponsesInputItem[];
+  // The budget covers only the two newest user messages; prompt messages are
+  // never charged, truncated, or dropped, and keep their chronological order.
+  assert.deepEqual(selectRetainedContext(history, 6), [
+    developer("d".repeat(400)),
+    system("s".repeat(400)),
+    user("b".repeat(12)),
+    developer("e".repeat(400)),
+    user("c".repeat(12)),
+  ]);
+  assert.deepEqual(selectRetainedContext(history, 0), [
+    developer("d".repeat(400)),
+    system("s".repeat(400)),
+    developer("e".repeat(400)),
+  ]);
+});
+
 test("matches Codex middle truncation markers and UTF-8 boundaries", () => {
   assert.equal(truncateMiddleWithTokenBudget("short output", 100), "short output");
   assert.equal(truncateMiddleWithTokenBudget("abcdef", 0), "…2 tokens truncated…");

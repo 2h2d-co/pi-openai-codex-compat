@@ -262,35 +262,53 @@ test("Pi executes done calls and preserves current instructions across reload an
   );
   assert.equal(assistants[0]?.content.filter((block) => block.type === "toolCall").length, 1);
 
+  const originalPrompt = `${systemPrompt}\n\n<cwd>\n${cwd}\n</cwd>`;
+  assert.equal(requests[0]?.instructions, originalPrompt);
   systemPrompt = "Use the reloaded instructions.";
   const currentPrompt = `${systemPrompt}\n\n<cwd>\n${cwd}\n</cwd>`;
+  const promptUpdate = (request: JsonRecord | undefined) =>
+    requireJsonRecords(request?.input).filter(
+      (item) =>
+        item.role === "developer" &&
+        JSON.stringify(item.content).includes(
+          'Updated system prompt section \\"preamble\\":\\n\\nUse the reloaded instructions.',
+        ),
+    );
   await created.session.reload();
   created.session.setActiveToolsByName([]);
   await created.session.prompt("Continue after reload.", { expandPromptTemplates: false });
+  // The leading system message stays in `instructions`; the reload becomes an
+  // inline developer update, as Pi AI's Codex adapter sends it.
   const reloadedRequest = requests.at(-1);
-  assert.equal(reloadedRequest?.instructions, currentPrompt);
+  assert.equal(reloadedRequest?.instructions, originalPrompt);
   assert.deepEqual(reloadedRequest?.tools, []);
+  assert.equal(promptUpdate(reloadedRequest).length, 1);
   assert.doesNotMatch(
     JSON.stringify(reloadedRequest?.input),
-    /Use the report tool|Use the reloaded instructions|additional_tools/,
+    /Use the report tool|additional_tools/,
   );
 
   await created.session.compact();
   const compactedRequest = requests.at(-1);
-  assert.equal(compactedRequest?.instructions, currentPrompt);
+  assert.equal(compactedRequest?.instructions, originalPrompt);
   assert.deepEqual(compactedRequest?.tools, []);
+  assert.equal(promptUpdate(compactedRequest).length, 1);
   assert.ok(
     requireJsonRecords(compactedRequest?.input).some((item) => item.type === "compaction_trigger"),
   );
 
+  // Pi rebuilds its transcript from the compaction snapshot, so the leading
+  // system message now carries the reloaded prompt. The checkpoint history
+  // keeps the inline developer update outside the retained-context budget.
   await created.session.prompt("Continue after compaction.", { expandPromptTemplates: false });
   const continuedRequest = requests.at(-1);
   assert.equal(continuedRequest?.instructions, currentPrompt);
   assert.deepEqual(continuedRequest?.tools, []);
   assert.match(JSON.stringify(continuedRequest?.input), /opaque-state/);
+  assert.equal(promptUpdate(continuedRequest).length, 1);
   assert.doesNotMatch(
     JSON.stringify(continuedRequest?.input),
-    /Use the report tool|Use the reloaded instructions|remote compaction checkpoint/,
+    /Use the report tool|remote compaction checkpoint/,
   );
   assert.deepEqual(extensionErrors, []);
 });

@@ -8,14 +8,15 @@ Pi AI's transcript helpers replay system sections and tool declarations.
 `supportsAdditionalTools` and `supportsToolSearch` select the dynamic tool
 history representation for additive `toolsAdded` system messages:
 message-anchored `additional_tools` or a `tool_search_call`/`tool_search_output`
-pair. Tool removal, redefinition, or a model without either capability requires
-the complete current top-level tool list.
+pair. The copy keeps both options so the wire-equivalence tests hold, but Compat
+always passes `false`: it declares every tool at the top level.
 
-Compat uses the extension-owned `includeSystemUpdates: false` option alongside
-`includeSystemPrompt: false`. It sends the complete current prompt separately
-and preserves only supported tool additions in system-message positions.
-This keeps old prompt text from overriding current instructions after
-compaction, forced-prompt projection, reload, or resume.
+System messages follow Pi AI exactly. Compat passes `includeSystemPrompt: false`
+because the leading system message travels as `instructions`, and forwards the
+model's `supportsMidConvoSystemMessages` flag so later system messages render
+inline through `renderSystemMessageUpdate` or collapse into the leading message.
+A system message that lands between a tool call and its results is held until
+after those results, as upstream `transformMessages` does.
 
 The optional `namespacedToolNames`, `textContentItemToolResultNames`, and `toolResultImageDetail` paths are extension-owned additions. Without those options, serialization must continue to match Pi AI. `namespacedToolNames` groups only the fixed Codex allowlist into native Responses namespaces and replays namespace/member call identities. `textContentItemToolResultNames` preserves Codex tools such as `web.run` whose successful text output is transported as an `input_text` content-item array instead of Pi's usual plain string. `toolResultImageDetail` overrides the otherwise canonical `auto` detail used for image tool-result content.
 

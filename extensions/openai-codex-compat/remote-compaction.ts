@@ -18,6 +18,7 @@ import { addRemoteCompactionFeature, isObject, type JsonRecord } from "./codex-p
 import { CODEX_API, CODEX_PROVIDER } from "./codex-identifiers.ts";
 import {
   activeResponsesTools,
+  branchInstructions,
   providerHistory,
   remoteCompactionMarkerSummary,
   responsesCompatibility,
@@ -245,7 +246,6 @@ export default function registerRemoteCompaction(
       const history = providerHistory({
         branch: event.branchEntries,
         wireModel: ctx.model,
-        allTools,
         grammarToolInputProperties,
         imageDetail: config.imageDetail,
         recoverLatestOverflowPrefix: event.reason === "overflow" && event.willRetry,
@@ -265,7 +265,14 @@ export default function registerRemoteCompaction(
         model: ctx.model,
         requestOptions,
         history,
-        instructions: instructionsForCompaction(ctx.getSystemPrompt(), event.customInstructions),
+        // Turn requests send the branch's leading system message as `instructions`
+        // and carry later system messages inline in the history. A branch without
+        // a leading system message (a pre-0.86 session) falls back to Pi's
+        // current prompt so the compaction still sees instructions.
+        instructions: instructionsForCompaction(
+          branchInstructions(ctx.model, event.branchEntries) || ctx.getSystemPrompt(),
+          event.customInstructions,
+        ),
         grammarToolInputProperties:
           matching?.grammarToolInputProperties ??
           requestGrammarToolInputProperties(template, allTools),

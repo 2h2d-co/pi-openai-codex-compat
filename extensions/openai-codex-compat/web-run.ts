@@ -176,7 +176,7 @@ export default function registerWebRun(
       }
       const authentication = await codexToolAuthentication(ctx, model);
       const config = resolveConfig(ctx);
-      const history = codexToolHistory(pi, ctx, model, config.imageDetail);
+      const history = codexToolHistory(ctx, model, config.imageDetail);
       const input = recentSearchInput(history);
       const body: JsonRecord = {
         id: ctx.sessionManager.getSessionId(),

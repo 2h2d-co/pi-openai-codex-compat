@@ -191,7 +191,7 @@ export async function verifyPackagedCli(
     marker: string,
     value: string,
     expectedTools: readonly string[] = ["read", "verify_release"],
-    expectedInlineTools: readonly string[] = [],
+    leadingMarker: string = marker,
   ): Promise<void> {
     const events = await client.promptAndWait(`user value: ${value}`, undefined, 90_000);
     assert.deepEqual(
@@ -225,22 +225,26 @@ export async function verifyPackagedCli(
     assert.ok(observation?.type === "custom");
     const data = requireJsonRecord(observation.data);
     assert.equal(data["marker"], marker);
+    assert.equal(data["leadingMarker"], leadingMarker);
     const tools = data["tools"];
     assert.ok(Array.isArray(tools));
     const byName = (left: unknown, right: unknown) => String(left).localeCompare(String(right));
     assert.deepEqual([...tools].sort(byName), [...expectedTools].sort(byName));
-    const inlineTools = data["inlineTools"];
-    assert.ok(Array.isArray(inlineTools));
-    assert.deepEqual([...inlineTools].sort(byName), [...expectedInlineTools].sort(byName));
+    // Tool declarations never travel inside `input`.
+    assert.deepEqual(data["inlineTools"], []);
     assert.doesNotMatch(client.getStderr(), /Failed to load extension|not a function/);
   }
 
   await turn("FIRST", "alpha", ["verify_release"]);
   await writeFile(join(agent, "SYSTEM.md"), instruction("SECOND"));
   await client.prompt("/release-test-reload");
-  await turn("SECOND", "bravo", ["verify_release"]);
+  // The leading prompt stays in `instructions`; the reload arrives as an
+  // inline developer update, so the model must follow the newest marker.
+  await turn("SECOND", "bravo", ["verify_release"], "FIRST");
   const compacted = await client.compact();
   assert.match(compacted.summary, /OpenAI Codex remote compaction checkpoint/);
+  // Pi rebuilds its transcript from the checkpoint snapshot, which now leads
+  // with the reloaded prompt.
   await turn("SECOND", "charlie", ["verify_release"]);
   // Add a tool after the manual checkpoint, then let a percentage-triggered
   // checkpoint replace the history that declared it. The runtime appends that

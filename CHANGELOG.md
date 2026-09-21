@@ -2,6 +2,25 @@
 
 ## Unreleased
 
+### Changed
+
+- Send Pi's leading system message as the prompt and later system messages as
+  inline developer items, exactly as Pi AI's Codex adapter does. Previously
+  every system message was replayed into one `instructions` string, so any
+  prompt-section change rewrote the stable prefix. Models without
+  mid-conversation system-message support still receive one collapsed prompt.
+- Keep every developer and system message in the native compaction checkpoint,
+  in place and outside the 64k retained-context budget, so prompt updates
+  survive compaction. Only user messages are charged to the budget.
+
+### Fixed
+
+- Hold a system message that lands between a tool call and its results until
+  after those results in replayed history, matching Pi AI.
+- Send the branch's leading system message as compaction `instructions`
+  instead of Pi's fully replayed prompt, so Pi-driven compaction shares the
+  turn requests' prompt prefix.
+
 ## 0.0.13 - 2026-09-21
 
 ### Fixed

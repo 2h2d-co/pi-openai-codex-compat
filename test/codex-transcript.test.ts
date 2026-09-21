@@ -6,7 +6,10 @@ import test from "node:test";
 import {
   getCurrentSystemPrompt,
   getCurrentTools,
+  getInitialSystemMessage,
+  getSystemMessageText,
   normalizeContext,
+  renderSystemMessageUpdate,
   type Message,
   type SystemMessage,
 } from "@earendil-works/pi-ai";
@@ -58,100 +61,132 @@ function entries(messages: Message[]): SessionEntry[] {
   }));
 }
 
-test("derives complete instructions and tool placement from normalized Pi transcripts", async () => {
+test("derives instructions, inline prompt updates, and tool placement from Pi transcripts", async () => {
   for (const modelId of ["gpt-test", "gpt-5.6-sol"]) {
-    for (const change of ["addition", "removal", "redefinition", "forced"] as const) {
-      const messages: Message[] = [
-        initial,
-        { role: "user", content: "first request", timestamp: 1 },
-        assistantEntry("assistant", "user", "first reply").message,
-        update,
-        { role: "user", content: "next request", timestamp: 4 },
-      ];
-      if (change === "removal") {
-        messages.push({
-          role: "system",
-          content: "",
-          toolsRemoved: [{ name: REPORT_TOOL.name }],
-          timestamp: 5,
+    for (const supportsMidConvoSystemMessages of [false, true]) {
+      for (const change of ["addition", "removal", "redefinition", "forced"] as const) {
+        const messages: Message[] = [
+          initial,
+          { role: "user", content: "first request", timestamp: 1 },
+          assistantEntry("assistant", "user", "first reply").message,
+          update,
+          { role: "user", content: "next request", timestamp: 4 },
+        ];
+        if (change === "removal") {
+          messages.push({
+            role: "system",
+            content: "",
+            toolsRemoved: [{ name: REPORT_TOOL.name }],
+            timestamp: 5,
+          });
+        } else if (change === "redefinition") {
+          messages.push({
+            role: "system",
+            content: "",
+            toolsAdded: [{ ...REPORT_TOOL, description: "New report" }],
+            timestamp: 5,
+          });
+        }
+        const context = normalizeContext({
+          messages:
+            change === "forced"
+              ? [
+                  {
+                    role: "system",
+                    content: "forced current prompt",
+                    toolsAdded: getCurrentTools(messages),
+                    timestamp: 0,
+                  },
+                  ...messages.filter((message) => message.role !== "system"),
+                ]
+              : messages,
         });
-      } else if (change === "redefinition") {
-        messages.push({
-          role: "system",
-          content: "",
-          toolsAdded: [{ ...REPORT_TOOL, description: "New report" }],
-          timestamp: 5,
+        const original = structuredClone(context);
+        const harness = createHarness(entries(messages), {
+          ...DEFAULT_CONFIG,
+          responsesLite: true,
         });
-      }
-      const context = normalizeContext({
-        messages:
-          change === "forced"
-            ? [
-                {
-                  role: "system",
-                  content: "forced current prompt",
-                  toolsAdded: getCurrentTools(messages),
-                  timestamp: 0,
-                },
-                ...messages.filter((message) => message.role !== "system"),
-              ]
-            : messages,
-      });
-      const original = structuredClone(context);
-      const harness = createHarness(entries(messages), { ...DEFAULT_CONFIG, responsesLite: true });
-      const model = {
-        ...codexModel(modelId),
-        compat: { supportsAdditionalTools: true, supportsOpenAIGrammarTools: true },
-      };
-      let ordinary: JsonRecord | undefined;
-      let wire: JsonRecord | undefined;
-      harness.runtime.transport.request = async function* (_model, body) {
-        wire = structuredClone(requireJsonRecord(body));
-        yield* textEvents("done");
-      };
-      const result = await harness.runtime
-        .streamSimple(model, context, {
-          apiKey: accessToken(),
-          sessionId: "session-1",
-          transport: "sse",
-          onPayload(body) {
-            ordinary = structuredClone(requireJsonRecord(body));
+        const model = {
+          ...codexModel(modelId),
+          compat: {
+            supportsAdditionalTools: true,
+            supportsOpenAIGrammarTools: true,
+            supportsMidConvoSystemMessages,
           },
-        })
-        .result();
-      assert.equal(result.stopReason, "stop", result.errorMessage);
-      assert.ok(ordinary);
-      assert.ok(wire);
-      assert.equal(ordinary.instructions, getCurrentSystemPrompt(context.messages));
-      assert.doesNotMatch(
-        JSON.stringify(ordinary.input),
-        /old rules|current rules|\/old|forced current prompt/,
-      );
-      const declarations = requireJsonRecords(ordinary.tools);
-      const history = requireJsonRecords(ordinary.input);
-      assert.equal(
-        history.some(
-          (item) =>
-            item.type === "additional_tools" ||
-            item.type === "tool_search_call" ||
-            item.type === "tool_search_output",
-        ),
-        false,
-      );
-      assert.deepEqual(
-        declarations.map((tool) => tool.name),
-        getCurrentTools(context.messages).map((tool) => tool.name),
-      );
-      if (change === "redefinition") assert.equal(declarations[0]?.["description"], "New report");
-      if (modelId === "gpt-5.6-sol") {
-        assert.equal(wire.instructions, undefined);
-        assert.deepEqual(requireJsonRecords(wire.input)[1]?.content, [
-          { type: "input_text", text: ordinary.instructions },
-        ]);
-      } else {
-        assert.equal(wire.instructions, ordinary.instructions);
+        };
+        let ordinary: JsonRecord | undefined;
+        let wire: JsonRecord | undefined;
+        harness.runtime.transport.request = async function* (_model, body) {
+          wire = structuredClone(requireJsonRecord(body));
+          yield* textEvents("done");
+        };
+        const result = await harness.runtime
+          .streamSimple(model, context, {
+            apiKey: accessToken(),
+            sessionId: "session-1",
+            transport: "sse",
+            onPayload(body) {
+              ordinary = structuredClone(requireJsonRecord(body));
+            },
+          })
+          .result();
+        assert.equal(result.stopReason, "stop", result.errorMessage);
+        assert.ok(ordinary);
+        assert.ok(wire);
+        const history = requireJsonRecords(ordinary.input);
+        const inlineUpdates = history.filter((item) => item.role === "developer");
+        const leading = getInitialSystemMessage(context.messages);
+        assert.ok(leading);
+        if (supportsMidConvoSystemMessages) {
+          // The leading system message is the prompt (a forced prompt projects
+          // it whole); later system messages on the branch become inline
+          // developer items exactly as Pi AI renders them.
+          assert.equal(
+            ordinary.instructions,
+            change === "forced" ? "forced current prompt" : getSystemMessageText(leading),
+          );
+          assert.deepEqual(
+            inlineUpdates.map((item) => item.content),
+            messages
+              .slice(1)
+              .filter((message) => message.role === "system")
+              .map((message) => renderSystemMessageUpdate(message))
+              .filter((text) => text.length > 0),
+          );
+          assert.match(JSON.stringify(inlineUpdates), /current rules/);
+          assert.doesNotMatch(JSON.stringify(inlineUpdates), /old rules|\/old/);
+        } else {
+          // Without mid-conversation support every system message collapses
+          // into the leading prompt.
+          assert.equal(ordinary.instructions, getCurrentSystemPrompt(context.messages));
+          assert.deepEqual(inlineUpdates, []);
+        }
+        assert.doesNotMatch(JSON.stringify(history), /forced current prompt/);
+        const declarations = requireJsonRecords(ordinary.tools);
+        assert.equal(
+          history.some(
+            (item) =>
+              item.type === "additional_tools" ||
+              item.type === "tool_search_call" ||
+              item.type === "tool_search_output",
+          ),
+          false,
+        );
+        assert.deepEqual(
+          declarations.map((tool) => tool.name),
+          getCurrentTools(context.messages).map((tool) => tool.name),
+        );
+        if (change === "redefinition") assert.equal(declarations[0]?.["description"], "New report");
+        if (modelId === "gpt-5.6-sol") {
+          assert.equal(wire.instructions, undefined);
+          assert.deepEqual(requireJsonRecords(wire.input)[1]?.content, [
+            { type: "input_text", text: ordinary.instructions },
+          ]);
+        } else {
+          assert.equal(wire.instructions, ordinary.instructions);
+        }
+        assert.deepEqual(context, original);
       }
-      assert.deepEqual(context, original);
     }
   }
 });
@@ -190,51 +225,71 @@ test("matches Pi 0.86 reasoning Off defaults and null mappings", async () => {
   }
 });
 
-test("rebases tools before percentage compaction and retains the unsampled user input", async () => {
-  const messages: Message[] = [
-    initial,
-    { role: "user", content: "old request", timestamp: 1 },
-    assistantEntry("assistant", "user", "old reply").message,
-    update,
-    { role: "user", content: "unsampled request", timestamp: 4 },
-  ];
-  const harness = createHarness(entries(messages), { ...DEFAULT_CONFIG, autoCompactAtPercent: 80 });
-  const requests: JsonRecord[] = [];
-  harness.runtime.transport.request = async function* (_model, body) {
-    requests.push(structuredClone(requireJsonRecord(body)));
-    if (requests.length === 1) yield* compactionEvents();
-    else yield* textEvents("continued");
-  };
-  const result = await harness.runtime
-    .streamSimple(
-      {
-        ...codexModel(),
-        compat: { supportsAdditionalTools: true, supportsOpenAIGrammarTools: true },
-      },
-      normalizeContext({ messages }),
-      {
-        apiKey: accessToken(),
-        sessionId: "session-1",
-        transport: "sse",
-      },
-    )
-    .result();
-  assert.equal(result.stopReason, "stop", result.errorMessage);
-  assert.equal(requests.length, 2);
-  for (const request of requests) {
-    assert.equal(request.instructions, "current rules");
-    assert.deepEqual(
-      requireJsonRecords(request.tools).map((tool) => tool.name),
-      [REPORT_TOOL.name, SAMPLE_GRAMMAR_TOOL.name],
-    );
-    assert.equal(
-      requireJsonRecords(request.input).some((item) => item.type === "additional_tools"),
-      false,
-    );
+test("declares current tools before percentage compaction and retains prompt updates with the unsampled user input", async () => {
+  for (const supportsMidConvoSystemMessages of [false, true]) {
+    const messages: Message[] = [
+      initial,
+      { role: "user", content: "old request", timestamp: 1 },
+      assistantEntry("assistant", "user", "old reply").message,
+      update,
+      { role: "user", content: "unsampled request", timestamp: 4 },
+    ];
+    const harness = createHarness(entries(messages), {
+      ...DEFAULT_CONFIG,
+      autoCompactAtPercent: 80,
+    });
+    const requests: JsonRecord[] = [];
+    harness.runtime.transport.request = async function* (_model, body) {
+      requests.push(structuredClone(requireJsonRecord(body)));
+      if (requests.length === 1) yield* compactionEvents();
+      else yield* textEvents("continued");
+    };
+    const result = await harness.runtime
+      .streamSimple(
+        {
+          ...codexModel(),
+          compat: {
+            supportsAdditionalTools: true,
+            supportsOpenAIGrammarTools: true,
+            supportsMidConvoSystemMessages,
+          },
+        },
+        normalizeContext({ messages }),
+        {
+          apiKey: accessToken(),
+          sessionId: "session-1",
+          transport: "sse",
+        },
+      )
+      .result();
+    assert.equal(result.stopReason, "stop", result.errorMessage);
+    assert.equal(requests.length, 2);
+    const promptUpdate = renderSystemMessageUpdate(update);
+    for (const request of requests) {
+      assert.equal(
+        request.instructions,
+        supportsMidConvoSystemMessages ? "old rules\n\n/old" : "current rules",
+      );
+      assert.deepEqual(
+        requireJsonRecords(request.tools).map((tool) => tool.name),
+        [REPORT_TOOL.name, SAMPLE_GRAMMAR_TOOL.name],
+      );
+      const input = requireJsonRecords(request.input);
+      assert.equal(
+        input.some((item) => item.type === "additional_tools"),
+        false,
+      );
+      // The prompt update precedes the compaction trigger and survives the
+      // checkpoint's retained-context selection.
+      assert.deepEqual(
+        input.filter((item) => item.role === "developer").map((item) => item.content),
+        supportsMidConvoSystemMessages ? [promptUpdate] : [],
+      );
+    }
+    assert.doesNotMatch(JSON.stringify(requests[0]?.input), /unsampled request/);
+    assert.match(JSON.stringify(requests[1]?.input), /unsampled request/);
+    assert.match(JSON.stringify(requests[1]?.input), /opaque-state/);
   }
-  assert.doesNotMatch(JSON.stringify(requests[0]?.input), /unsampled request/);
-  assert.match(JSON.stringify(requests[1]?.input), /unsampled request/);
-  assert.match(JSON.stringify(requests[1]?.input), /opaque-state/);
 });
 
 test("declares the complete current tool set on every request after a checkpoint in the same process", async () => {
@@ -350,7 +405,6 @@ test("restores checkpoint system snapshots and post-checkpoint tool changes afte
     providerHistory({
       branch: manager.getBranch(),
       wireModel: model,
-      allTools: [],
     }),
     { type: "compaction", encrypted_content: "saved-state" },
   );
@@ -386,7 +440,6 @@ test("restores checkpoint system snapshots and post-checkpoint tool changes afte
       },
     ],
     wireModel: model,
-    allTools: [],
   });
   assert.equal(
     addition.some((item) => item.type === "additional_tools"),
@@ -405,7 +458,6 @@ test("restores checkpoint system snapshots and post-checkpoint tool changes afte
       },
     ],
     wireModel: model,
-    allTools: [],
   });
   assert.equal(
     redeclaration.some((item) => item.type === "additional_tools"),
@@ -445,25 +497,40 @@ test("restores checkpoint system snapshots and post-checkpoint tool changes afte
     request = requireJsonRecord(body);
     yield* textEvents("done");
   };
-  const result = await runtime
-    .streamSimple(
-      model,
-      normalizeContext({
-        messages: convertToLlm(resumed.buildSessionContext().messages),
-      }),
-      { apiKey: accessToken(), sessionId: resumed.getSessionId(), transport: "sse" },
-    )
-    .result();
-  assert.equal(result.stopReason, "stop", result.errorMessage);
-  assert.ok(request);
-  assert.equal(request.instructions, "resumed rules");
-  assert.deepEqual(
-    requireJsonRecords(request.tools).map((tool) => tool.name),
-    [SAMPLE_GRAMMAR_TOOL.name],
-  );
-  assert.match(JSON.stringify(request.input), /saved-state|after compaction/);
-  assert.doesNotMatch(
-    JSON.stringify(request.input),
-    /old rules|current rules|resumed rules|hidden marker|additional_tools/,
-  );
+  for (const supportsMidConvoSystemMessages of [false, true]) {
+    const result = await runtime
+      .streamSimple(
+        { ...model, compat: { ...model.compat, supportsMidConvoSystemMessages } },
+        normalizeContext({
+          messages: convertToLlm(resumed.buildSessionContext().messages),
+        }),
+        { apiKey: accessToken(), sessionId: resumed.getSessionId(), transport: "sse" },
+      )
+      .result();
+    assert.equal(result.stopReason, "stop", result.errorMessage);
+    assert.ok(request);
+    // Pi's rebuilt transcript leads with the checkpoint snapshot. A model that
+    // accepts mid-conversation system messages receives the post-checkpoint
+    // update inline; any other model receives it collapsed into `instructions`.
+    assert.equal(
+      request.instructions,
+      supportsMidConvoSystemMessages ? "current rules" : "resumed rules",
+    );
+    assert.deepEqual(
+      requireJsonRecords(request.tools).map((tool) => tool.name),
+      [SAMPLE_GRAMMAR_TOOL.name],
+    );
+    const input = requireJsonRecords(request.input);
+    assert.match(JSON.stringify(input), /saved-state|after compaction/);
+    assert.deepEqual(
+      input.filter((item) => item.role === "developer").map((item) => item.content),
+      supportsMidConvoSystemMessages
+        ? ['Updated system prompt section "rules":\n\nresumed rules']
+        : [],
+    );
+    assert.doesNotMatch(
+      JSON.stringify(input),
+      /old rules|current rules|hidden marker|additional_tools/,
+    );
+  }
 });

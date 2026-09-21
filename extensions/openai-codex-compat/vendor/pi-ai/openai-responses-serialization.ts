@@ -53,8 +53,6 @@ type ToolResultOutput =
 
 type ConvertResponsesMessagesOptions = {
   includeSystemPrompt?: boolean;
-  /** Compat sends the complete current prompt outside replay history. */
-  includeSystemUpdates?: boolean;
   grammarToolInputProperties?: ReadonlyMap<string, string>;
   supportsMidConvoSystemMessages?: boolean;
   supportsAdditionalTools?: boolean;
@@ -551,25 +549,33 @@ function transformMessages(
   const result: Message[] = [];
   let pendingToolCalls: ToolCall[] = [];
   let existingToolResultIds = new Set<string>();
-  const insertSyntheticToolResults = () => {
-    for (const toolCall of pendingToolCalls) {
-      if (existingToolResultIds.has(toolCall.id)) continue;
-      result.push({
-        role: "toolResult",
-        toolCallId: toolCall.id,
-        toolName: toolCall.name,
-        content: [{ type: "text", text: "No result provided" }],
-        isError: true,
-        timestamp: Date.now(),
-      } satisfies ToolResultMessage);
+  // System messages are transparent to tool-call accounting: one that lands between a
+  // tool call and its results is held back and emitted after the results (synthetic
+  // ones included), so it never causes a duplicate result for a call answered later.
+  const heldSystemMessages: Message[] = [];
+  const closePendingToolCalls = () => {
+    if (pendingToolCalls.length > 0) {
+      for (const toolCall of pendingToolCalls) {
+        if (existingToolResultIds.has(toolCall.id)) continue;
+        result.push({
+          role: "toolResult",
+          toolCallId: toolCall.id,
+          toolName: toolCall.name,
+          content: [{ type: "text", text: "No result provided" }],
+          isError: true,
+          timestamp: Date.now(),
+        } satisfies ToolResultMessage);
+      }
+      pendingToolCalls = [];
+      existingToolResultIds = new Set();
     }
-    pendingToolCalls = [];
-    existingToolResultIds = new Set();
+    result.push(...heldSystemMessages);
+    heldSystemMessages.length = 0;
   };
 
   for (const message of transformed) {
     if (message.role === "assistant") {
-      insertSyntheticToolResults();
+      closePendingToolCalls();
       const assistantMessage = message;
       if (assistantMessage.stopReason === "error" || assistantMessage.stopReason === "aborted") {
         continue;
@@ -585,14 +591,17 @@ function transformMessages(
     } else if (message.role === "toolResult") {
       existingToolResultIds.add(message.toolCallId);
       result.push(message);
+    } else if (message.role === "system") {
+      if (pendingToolCalls.length > 0) heldSystemMessages.push(message);
+      else result.push(message);
     } else if (message.role === "user") {
-      insertSyntheticToolResults();
+      closePendingToolCalls();
       result.push(message);
     } else {
       result.push(message);
     }
   }
-  insertSyntheticToolResults();
+  closePendingToolCalls();
   return result;
 }
 
@@ -737,7 +746,7 @@ export function convertResponsesMessages(
           tools: convertResponsesTools(addedTools, { ...toolOptions, deferLoading: true }),
         });
       }
-      if (isLeadingSystemMessage ? includeSystemPrompt : options?.includeSystemUpdates !== false) {
+      if (!isLeadingSystemMessage || includeSystemPrompt) {
         const text = isLeadingSystemMessage
           ? getSystemMessageText(message)
           : renderSystemMessageUpdate(message);

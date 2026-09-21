@@ -1,9 +1,20 @@
-const TRANSCRIPT_APIS = [
-  "normalizeContext",
-  "getCurrentSystemPrompt",
+/**
+ * Every Pi 0.86 transcript API this extension imports as a value from
+ * `@earendil-works/pi-ai`. Pi's extension loader turns a missing named import
+ * into `undefined` rather than a load error, so an older host fails at first use
+ * unless the surface is checked up front. Keep this list equal to the value
+ * imports in `codex-provider/codex-provider-runtime.ts`, `compaction-checkpoint.ts`,
+ * and `vendor/pi-ai/openai-responses-serialization.ts`.
+ */
+export const TRANSCRIPT_APIS = [
   "getCurrentTools",
   "getDeclaredTools",
   "getInitialSystemMessage",
+  "getSystemMessageText",
+  "normalizeContext",
+  "renderSystemMessageUpdate",
+  "resolveTranscript",
+  "resolveTranscriptTools",
 ] as const;
 
 /** Check the loaded host, not package metadata that PI_PACKAGE_DIR can override. */

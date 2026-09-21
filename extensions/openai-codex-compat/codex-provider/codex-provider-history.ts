@@ -1,4 +1,4 @@
-import type { SessionEntry, ToolInfo } from "@earendil-works/pi-coding-agent";
+import type { SessionEntry } from "@earendil-works/pi-coding-agent";
 import type { Api, Model } from "@earendil-works/pi-ai";
 import { providerHistory, type GrammarToolInputProperties } from "../compaction-checkpoint.ts";
 import type { ImageDetail } from "../config.ts";
@@ -37,7 +37,6 @@ export function splitUnsampledUserInput(options: {
   branch: readonly SessionEntry[];
   history: readonly ResponsesInputItem[];
   model: Model<Api>;
-  allTools: readonly ToolInfo[];
   grammarToolInputProperties: GrammarToolInputProperties;
   imageDetail: ImageDetail;
 }):
@@ -56,7 +55,6 @@ export function splitUnsampledUserInput(options: {
   const encoded = providerHistory({
     branch: options.branch.slice(unsampledIndex),
     wireModel: options.model,
-    allTools: options.allTools,
     grammarToolInputProperties: options.grammarToolInputProperties,
     imageDetail: options.imageDetail,
   });

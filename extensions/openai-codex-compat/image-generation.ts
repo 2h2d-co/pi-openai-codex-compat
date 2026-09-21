@@ -306,7 +306,7 @@ export default function registerImageGeneration(
         },
       });
       const config = resolveConfig(ctx);
-      const history = codexToolHistory(pi, ctx, model, config.imageDetail);
+      const history = codexToolHistory(ctx, model, config.imageDetail);
       const request = await imageRequest(params, history);
       const authentication = await codexToolAuthentication(ctx, model);
       const callId = toolCallId.split("|")[0] || toolCallId;

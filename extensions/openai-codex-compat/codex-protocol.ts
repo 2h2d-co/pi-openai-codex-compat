@@ -276,17 +276,23 @@ function shortenMessage(
     : undefined;
 }
 
-function retainedRole(item: ResponsesInputItem): boolean {
-  return (
-    Value.Check(RESPONSES_MESSAGE_ITEM_SCHEMA, item) &&
-    (item.role === "user" || item.role === "developer" || item.role === "system")
-  );
+function messageRole(item: ResponsesInputItem): string | undefined {
+  return Value.Check(RESPONSES_MESSAGE_ITEM_SCHEMA, item) ? item.role : undefined;
+}
+
+/** Developer and system messages carry prompt state, not conversation history. */
+function isInstructionMessage(item: ResponsesInputItem): boolean {
+  const role = messageRole(item);
+  return role === "developer" || role === "system";
 }
 
 /**
- * Reproduce Codex remote-compaction-v2 history installation: select recent
- * user/developer/system messages from newest to oldest, then restore their
- * chronological order. The oldest selected message may be truncated.
+ * Reproduce Codex remote-compaction-v2 history installation for user messages:
+ * select recent user messages from newest to oldest under the budget, then
+ * restore chronological order. The oldest selected user message may be
+ * truncated. Developer and system messages are prompt updates rather than
+ * conversation history: every one of them is retained in place, outside the
+ * budget, and never truncated.
  */
 export function selectRetainedContext(
   history: readonly ResponsesInputItem[],
@@ -295,10 +301,14 @@ export function selectRetainedContext(
   let remaining = budget;
   const newestFirst: ResponsesInputItem[] = [];
 
-  for (let index = history.length - 1; index >= 0 && remaining > 0; index--) {
+  for (let index = history.length - 1; index >= 0; index--) {
     const item = history[index];
     if (item === undefined) continue;
-    if (!retainedRole(item)) continue;
+    if (isInstructionMessage(item)) {
+      newestFirst.push(structuredClone(item));
+      continue;
+    }
+    if (remaining <= 0 || messageRole(item) !== "user") continue;
 
     const tokens = Math.max(1, messageTextTokens(item));
     if (tokens <= remaining) {

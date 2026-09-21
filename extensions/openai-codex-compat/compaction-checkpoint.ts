@@ -7,7 +7,18 @@ import {
   type SessionEntry,
   type ToolInfo,
 } from "@earendil-works/pi-coding-agent";
-import type { Api, Message, Model, SystemMessage } from "@earendil-works/pi-ai";
+import {
+  getInitialSystemMessage,
+  getSystemMessageText,
+  normalizeContext,
+  resolveTranscript,
+  type Api,
+  type Context,
+  type Message,
+  type Model,
+  type SystemMessage,
+  type TranscriptContext,
+} from "@earendil-works/pi-ai";
 import { Value } from "typebox/value";
 import { APPLY_PATCH_LARK_GRAMMAR, APPLY_PATCH_TOOL_NAME } from "./apply-patch.ts";
 import { CODEX_TOOL_CALL_PROVIDERS } from "./codex-identifiers.ts";
@@ -58,17 +69,16 @@ export type CheckpointSearch =
 export type GrammarToolInputProperties = ReadonlyMap<string, string>;
 
 export interface ResponsesCompatibility {
-  supportsAdditionalTools?: boolean;
+  supportsMidConvoSystemMessages?: boolean;
   supportsOpenAIGrammarTools?: boolean;
   supportsStrictMode?: boolean;
-  supportsToolSearch?: boolean;
 }
 
 export function responsesCompatibility(value: unknown): ResponsesCompatibility {
   const compatibility: ResponsesCompatibility = {};
   if (!isObject(value)) return compatibility;
-  if (isBoolean(value["supportsAdditionalTools"])) {
-    compatibility.supportsAdditionalTools = value["supportsAdditionalTools"];
+  if (isBoolean(value["supportsMidConvoSystemMessages"])) {
+    compatibility.supportsMidConvoSystemMessages = value["supportsMidConvoSystemMessages"];
   }
   if (isBoolean(value["supportsOpenAIGrammarTools"])) {
     compatibility.supportsOpenAIGrammarTools = value["supportsOpenAIGrammarTools"];
@@ -76,10 +86,35 @@ export function responsesCompatibility(value: unknown): ResponsesCompatibility {
   if (isBoolean(value["supportsStrictMode"])) {
     compatibility.supportsStrictMode = value["supportsStrictMode"];
   }
-  if (isBoolean(value["supportsToolSearch"])) {
-    compatibility.supportsToolSearch = value["supportsToolSearch"];
-  }
   return compatibility;
+}
+
+/**
+ * Resolve Pi's transcript the way Pi AI's Codex adapter does before building a
+ * request: models that accept mid-conversation system messages keep later
+ * system messages in place, and every other model collapses them into the
+ * leading system message.
+ */
+export function resolveRequestTranscript(model: Model<Api>, context: Context): TranscriptContext {
+  return resolveTranscript(
+    normalizeContext(context),
+    responsesCompatibility(model.compat).supportsMidConvoSystemMessages ?? false,
+  );
+}
+
+/** The leading system message of a resolved transcript, rendered as Responses `instructions`. */
+export function requestInstructions(context: TranscriptContext): string {
+  const initial = getInitialSystemMessage(context.messages);
+  return initial ? getSystemMessageText(initial) : "";
+}
+
+/** `instructions` for a request built from a session branch rather than Pi's live transcript. */
+export function branchInstructions(model: Model<Api>, branch: readonly SessionEntry[]): string {
+  return requestInstructions(
+    resolveRequestTranscript(model, {
+      messages: convertToLlm(buildSessionContext([...branch]).messages),
+    }),
+  );
 }
 
 function responsesToolParameters(tool: ToolInfo): JsonRecord {
@@ -150,7 +185,6 @@ export function remoteCompactionMarkerSummary(): string {
 type EncodeMessagesOptions = {
   model: Model<Api>;
   messages: Message[];
-  allTools: readonly ToolInfo[];
   grammarToolInputProperties: GrammarToolInputProperties;
   imageDetail: ImageDetail;
   nativeAssistantItems?: ReadonlyMap<string, readonly ResponsesOutputItem[]>;
@@ -159,7 +193,6 @@ type EncodeMessagesOptions = {
 export type EncodeSessionEntriesOptions = {
   model: Model<Api>;
   entries: readonly SessionEntry[];
-  allTools: readonly ToolInfo[];
   grammarToolInputProperties?: GrammarToolInputProperties;
   imageDetail?: ImageDetail;
   nativeAssistantItems?: ReadonlyMap<string, readonly ResponsesOutputItem[]>;
@@ -168,6 +201,11 @@ export type EncodeSessionEntriesOptions = {
 
 /**
  * Encode Pi's canonical messages using Pi AI's OpenAI Responses serializer.
+ *
+ * The leading system message travels as `instructions`, so it is excluded here.
+ * Later system messages become inline developer items on models that accept
+ * mid-conversation system messages and collapse into the leading message
+ * otherwise, exactly as Pi AI's Codex adapter does.
  *
  * Tool declarations never enter the input: every request carries the complete
  * current tool set at the top level, as the official Codex client does. Inline
@@ -180,8 +218,7 @@ function encodeMessages(options: EncodeMessagesOptions): ResponsesInputItem[] {
   const compat = responsesCompatibility(model.compat);
   const serializationOptions: NonNullable<Parameters<typeof convertResponsesMessages>[3]> = {
     includeSystemPrompt: false,
-    includeSystemUpdates: false,
-    supportsMidConvoSystemMessages: true,
+    supportsMidConvoSystemMessages: compat.supportsMidConvoSystemMessages ?? false,
     supportsAdditionalTools: false,
     supportsToolSearch: false,
     grammarToolInputProperties,
@@ -206,7 +243,6 @@ export function encodeSessionEntries(options: EncodeSessionEntriesOptions): Resp
   const {
     model,
     entries,
-    allTools,
     grammarToolInputProperties = new Map(),
     imageDetail = "auto",
     nativeAssistantItems,
@@ -215,12 +251,12 @@ export function encodeSessionEntries(options: EncodeSessionEntriesOptions): Resp
   const encodeOptions: EncodeMessagesOptions = {
     model,
     // A partial tail can start with a system update. Seed its prior state so
-    // the serializer does not mistake that update for the leading declaration.
+    // the serializer renders that update inline instead of dropping it as the
+    // leading system message that `instructions` already carries.
     messages: [
       options.initialSystemMessage ?? { role: "system", content: "", timestamp: 0 },
       ...convertToLlm(messages),
     ],
-    allTools,
     grammarToolInputProperties,
     imageDetail,
   };
@@ -343,7 +379,6 @@ export function checkpointData(
 export function providerHistory(options: {
   branch: readonly SessionEntry[];
   wireModel: Model<Api>;
-  allTools: readonly ToolInfo[];
   grammarToolInputProperties?: GrammarToolInputProperties;
   imageDetail?: ImageDetail;
   recoverLatestOverflowPrefix?: boolean;
@@ -391,7 +426,6 @@ export function providerHistory(options: {
       ...encodeSessionEntries({
         model: options.wireModel,
         entries: branch.slice(checkpoint.entryIndex + 1),
-        allTools: options.allTools,
         grammarToolInputProperties: options.grammarToolInputProperties ?? new Map(),
         imageDetail: options.imageDetail ?? "auto",
         nativeAssistantItems,
@@ -406,7 +440,6 @@ export function providerHistory(options: {
     ...encodeMessages({
       model: options.wireModel,
       messages: convertToLlm(context.messages),
-      allTools: options.allTools,
       grammarToolInputProperties: options.grammarToolInputProperties ?? new Map(),
       imageDetail: options.imageDetail ?? "auto",
       nativeAssistantItems,
