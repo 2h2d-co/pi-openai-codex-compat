@@ -1,15 +1,21 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import test from "node:test";
-import type { ExtensionAPI, ExtensionContext, SessionEntry } from "@earendil-works/pi-coding-agent";
-import type {
-  Api,
-  AssistantMessage,
-  Context,
-  JsonObject,
-  Model,
-  Tool,
-  Usage,
+import {
+  buildSessionContext,
+  type ExtensionAPI,
+  type ExtensionContext,
+  type SessionEntry,
+} from "@earendil-works/pi-coding-agent";
+import {
+  getCurrentSystemMessage,
+  type Api,
+  type AssistantMessage,
+  type Context,
+  type JsonObject,
+  type Model,
+  type Tool,
+  type Usage,
 } from "@earendil-works/pi-ai";
 import { Type } from "typebox";
 import { CodexProviderRuntime } from "../../extensions/openai-codex-compat/codex-provider.ts";
@@ -235,11 +241,14 @@ export function createHarness(
       usage: Usage | undefined,
     ) {
       const id = `compact-${branch.length}`;
+      const timestamp = new Date().toISOString();
+      // Pi 0.86 snapshots the replayed system message onto every compaction entry.
+      const systemMessage = getCurrentSystemMessage(buildSessionContext(branch).messages);
       const entry: Extract<SessionEntry, { type: "compaction" }> = {
         type: "compaction",
         id,
         parentId: branch.at(-1)?.id ?? null,
-        timestamp: new Date().toISOString(),
+        timestamp,
         summary,
         firstKeptEntryId,
         tokensBefore,
@@ -247,6 +256,9 @@ export function createHarness(
         fromHook,
       };
       if (usage !== undefined) entry.usage = usage;
+      if (systemMessage) {
+        entry.systemMessage = { ...systemMessage, timestamp: new Date(timestamp).getTime() };
+      }
       branch.push(entry);
       compactions.push({ details, usage });
       return id;

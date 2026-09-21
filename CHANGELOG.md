@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+### Fixed
+
+- Declare the complete current tool set on every request once a native Codex
+  checkpoint replaces history. After a percentage-triggered compaction, later
+  requests in the same Pi process anchored tool additions to Pi's stale
+  in-memory transcript, so the checkpoint history carried no tool
+  declarations and the model reported that it had no callable tools.
+
 ## 0.0.12 - 2026-09-20
 
 ### Fixed

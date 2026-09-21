@@ -234,6 +234,89 @@ test("rebases tools before percentage compaction and retains the unsampled user 
   assert.match(JSON.stringify(requests[1]?.input), /opaque-state/);
 });
 
+test("declares the complete current tool set once a checkpoint replaces history in the same process", async () => {
+  for (const leadingDeclaration of [true, false]) {
+    const messages: Message[] = [
+      ...(leadingDeclaration ? [initial] : []),
+      { role: "user", content: "old request", timestamp: 1 },
+      assistantEntry("assistant", "user", "old reply").message,
+      update,
+      { role: "user", content: "compacted request", timestamp: 4 },
+    ];
+    const harness = createHarness(entries(messages), {
+      ...DEFAULT_CONFIG,
+      autoCompactAtPercent: 80,
+    });
+    const model = {
+      ...codexModel(),
+      compat: {
+        supportsAdditionalTools: true,
+        supportsToolSearch: true,
+        supportsOpenAIGrammarTools: true,
+      },
+    };
+    const requests: JsonRecord[] = [];
+    harness.runtime.transport.request = async function* (_model, body) {
+      requests.push(structuredClone(requireJsonRecord(body)));
+      if (requests.length === 1) yield* compactionEvents();
+      else yield* textEvents("done");
+    };
+    const options = { apiKey: accessToken(), sessionId: "session-1", transport: "sse" as const };
+    const reply = await harness.runtime
+      .streamSimple(model, normalizeContext({ messages }), options)
+      .result();
+    assert.equal(reply.stopReason, "stop", reply.errorMessage);
+    assert.equal(requests.length, 2);
+
+    // Pi persists the reply and the next prompt, but a provider-boundary
+    // checkpoint does not rebuild its in-memory transcript.
+    const next: Message = { role: "user", content: "next request", timestamp: 6 };
+    const branch = harness.branch();
+    branch.push(
+      {
+        type: "message",
+        id: "reply",
+        parentId: branch.at(-1)?.id ?? null,
+        timestamp: new Date(5).toISOString(),
+        message: reply,
+      },
+      {
+        type: "message",
+        id: "next",
+        parentId: "reply",
+        timestamp: new Date(6).toISOString(),
+        message: next,
+      },
+    );
+    harness.runtime.captureScope({
+      ...harness.extensionContext,
+      getContextUsage: () => ({ tokens: 10_000, contextWindow: 100_000, percent: 10 }),
+    });
+    const stale = normalizeContext({ messages: [...messages, reply, next] });
+    const result = await harness.runtime.streamSimple(model, stale, options).result();
+    assert.equal(result.stopReason, "stop", result.errorMessage);
+    assert.equal(requests.length, 3);
+    const request = requests[2];
+    assert.ok(request);
+    assert.deepEqual(
+      requireJsonRecords(request.tools).map((tool) => tool.name),
+      [REPORT_TOOL.name, SAMPLE_GRAMMAR_TOOL.name].slice(leadingDeclaration ? 0 : 1),
+    );
+    assert.deepEqual(
+      requireJsonRecords(request.tools).map((tool) => tool.name),
+      getCurrentTools(stale.messages).map((tool) => tool.name),
+    );
+    const input = requireJsonRecords(request.input);
+    assert.equal(
+      input.some((item) => item.type === "additional_tools"),
+      false,
+    );
+    assert.match(JSON.stringify(input), /opaque-state/);
+    assert.match(JSON.stringify(input), /next request/);
+    assert.doesNotMatch(JSON.stringify(input), /old reply/);
+  }
+});
+
 test("restores checkpoint system snapshots and post-checkpoint tool changes after resume", async (t) => {
   const directory = await mkdtemp(join(tmpdir(), "codex-transcript-"));
   t.after(() => rm(directory, { recursive: true, force: true }));

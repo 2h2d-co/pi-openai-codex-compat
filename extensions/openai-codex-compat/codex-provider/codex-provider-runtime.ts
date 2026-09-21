@@ -552,9 +552,15 @@ export class CodexProviderRuntime {
       scope?.contextPercent !== null &&
       scope?.contextPercent !== undefined &&
       scope.contextPercent >= threshold;
+    // A native checkpoint replaces the history that carried Pi's tool additions,
+    // and Pi's in-memory transcript can still predate a provider-boundary
+    // checkpoint. Declare the complete current tool set instead of anchoring.
+    const checkpointReplacesHistory =
+      scope !== undefined && searchCheckpoint(scope.manager.getBranch()).kind !== "absent";
     const toolPlacement = resolveTranscriptTools(
       context.messages,
       !compactionPending &&
+        !checkpointReplacesHistory &&
         ((compat.supportsAdditionalTools ?? false) || (compat.supportsToolSearch ?? false)),
     );
     // A forced prompt can project all tools into a single leading system message.
