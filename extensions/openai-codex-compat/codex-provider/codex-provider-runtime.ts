@@ -746,6 +746,10 @@ export class CodexProviderRuntime {
       );
       return body;
     }
+    // Pi 0.87 estimates the prompt and tool declarations before any response
+    // usage exists, so a low threshold can be reached before anything was
+    // sampled. There is nothing to compact until the first response.
+    if (split.history.length === 0) return body;
 
     const compacted = await this.performCompaction({
       model,

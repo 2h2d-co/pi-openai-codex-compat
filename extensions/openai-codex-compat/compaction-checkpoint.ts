@@ -2,6 +2,7 @@ import { isBoolean, isString } from "./value-contracts.ts";
 import { randomUUID } from "node:crypto";
 import {
   buildSessionContext,
+  buildSessionProjection,
   convertToLlm,
   sessionEntryToContextMessages,
   type SessionEntry,
@@ -44,6 +45,8 @@ import {
 } from "./responses-item-schema.ts";
 import type { ResponsesToolDefinition } from "./responses-tool-schema.ts";
 import { convertResponsesMessages } from "./vendor/pi-ai/openai-responses-serialization.ts";
+
+type AgentMessages = ReturnType<typeof sessionEntryToContextMessages>;
 
 export const CHECKPOINT_ENTRY_TYPE = "openai-codex-compat-remote-compaction";
 export const CHECKPOINT_FORMAT_VERSION = 1;
@@ -234,6 +237,8 @@ export type EncodeSessionEntriesOptions = {
   imageDetail?: ImageDetail;
   nativeAssistantItems?: ReadonlyMap<string, readonly ResponsesOutputItem[]>;
   initialSystemMessage?: SystemMessage;
+  /** Model-visible messages per entry. Defaults to the entry's raw messages. */
+  entryMessages?: (entry: SessionEntry) => AgentMessages;
 };
 
 /**
@@ -283,8 +288,9 @@ export function encodeSessionEntries(options: EncodeSessionEntriesOptions): Resp
     grammarToolInputProperties = new Map(),
     imageDetail = "auto",
     nativeAssistantItems,
+    entryMessages = sessionEntryToContextMessages,
   } = options;
-  const messages = entries.flatMap((entry) => sessionEntryToContextMessages(entry));
+  const messages = entries.flatMap((entry) => entryMessages(entry));
   const encodeOptions: EncodeMessagesOptions = {
     model,
     // A partial tail can start with a system update. Seed its prior state so
@@ -412,6 +418,15 @@ export function checkpointData(
 /**
  * Materialize provider history for the active branch. Checkpoint history
  * replaces everything before its entry; later branch entries form the tail.
+ *
+ * Ordinary requests read the session projection, so `context_edit` omissions
+ * and replacements apply exactly as they do for Pi's own adapters. Recovery
+ * compaction reads the raw entries instead: Pi 0.87 omits the failed or
+ * truncated attempt through a `context_edit` child of that entry before it
+ * runs `session_before_compact`. The serializer already skips error and
+ * aborted assistants, and a truncated boundary is committed progress that the
+ * checkpoint must keep. Entries are never removed from the branch copy because
+ * the omission entry's parent chain would break and the history would vanish.
  */
 export function providerHistory(options: {
   branch: readonly SessionEntry[];
@@ -423,26 +438,31 @@ export function providerHistory(options: {
   const branch = [...options.branch];
   let recoveredPrefix: ResponsesInputItem[] = [];
   if (options.recoverLatestOverflowPrefix) {
-    const index = branch.findLastIndex(
-      (entry) => entry.type === "message" && entry.message.role === "assistant",
+    const entry = branch.findLast(
+      (candidate) => candidate.type === "message" && candidate.message.role === "assistant",
     );
-    const entry = index >= 0 ? branch[index] : undefined;
     if (
       entry?.type === "message" &&
       entry.message.role === "assistant" &&
-      (entry.message.stopReason === "error" || entry.message.stopReason === "aborted")
+      entry.message.stopReason === "error" &&
+      entry.message.responseId
     ) {
-      if (entry.message.stopReason === "error" && entry.message.responseId) {
-        recoveredPrefix =
-          nativeCommittedPrefixBeforeOverflow(
-            branch,
-            options.wireModel.id,
-            entry.message.responseId,
-          ) ?? [];
-      }
-      branch.splice(index, 1);
+      recoveredPrefix =
+        nativeCommittedPrefixBeforeOverflow(
+          branch,
+          options.wireModel.id,
+          entry.message.responseId,
+        ) ?? [];
     }
   }
+
+  const projection = buildSessionProjection(branch);
+  const projected = new Map<string, AgentMessages>();
+  for (const entry of projection.entries) projected.set(entry.sourceEntry.id, entry.messages);
+  const entryMessages = (entry: SessionEntry): AgentMessages =>
+    options.recoverLatestOverflowPrefix
+      ? sessionEntryToContextMessages(entry)
+      : (projected.get(entry.id) ?? []);
 
   const checkpoint = searchCheckpoint(branch);
   const nativeAssistantItems = nativeResponseOverrides(branch, options.wireModel.id);
@@ -466,17 +486,19 @@ export function providerHistory(options: {
         grammarToolInputProperties: options.grammarToolInputProperties ?? new Map(),
         imageDetail: options.imageDetail ?? "auto",
         nativeAssistantItems,
+        entryMessages,
         ...(initialSystemMessage ? { initialSystemMessage } : {}),
       }),
       ...recoveredPrefix,
     ];
   }
 
-  const context = buildSessionContext(branch);
   return [
     ...encodeMessages({
       model: options.wireModel,
-      messages: convertToLlm(context.messages),
+      messages: convertToLlm(
+        projection.entries.flatMap((entry) => entryMessages(entry.sourceEntry)),
+      ),
       grammarToolInputProperties: options.grammarToolInputProperties ?? new Map(),
       imageDetail: options.imageDetail ?? "auto",
       nativeAssistantItems,

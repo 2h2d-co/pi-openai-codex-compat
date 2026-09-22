@@ -534,3 +534,50 @@ test("restores checkpoint system snapshots and post-checkpoint tool changes afte
     );
   }
 });
+
+test("honours Pi 0.87 context edits for ordinary requests and keeps recovery history intact", () => {
+  const model = codexModel();
+  const manager = SessionManager.inMemory("/tmp");
+  manager.appendMessage(initial);
+  const firstUser = manager.appendMessage({ role: "user", content: "first task", timestamp: 1 });
+  const firstReply = manager.appendMessage(
+    assistantEntry("first-reply", firstUser, "first reply").message,
+  );
+  const secondUser = manager.appendMessage({ role: "user", content: "second task", timestamp: 2 });
+  const truncated = manager.appendMessage({
+    ...assistantEntry("truncated", secondUser, "committed progress").message,
+    stopReason: "length",
+  });
+  const failed = manager.appendMessage({
+    ...assistantEntry("failed", truncated, "").message,
+    content: [],
+    stopReason: "error",
+    errorMessage: "context_length_exceeded",
+  });
+  // Pi's recovery omits the selected attempts with entries whose parent is the attempt.
+  manager.appendContextEdit(failed, null);
+  manager.appendContextEdit(truncated, null);
+  manager.appendContextEdit(firstReply, { content: "edited first reply" });
+
+  const ordinary = JSON.stringify(
+    providerHistory({ branch: manager.getBranch(), wireModel: model }),
+  );
+  assert.match(ordinary, /first task/);
+  assert.match(ordinary, /edited first reply/);
+  assert.doesNotMatch(ordinary, /"text":"first reply"/);
+  assert.match(ordinary, /second task/);
+  assert.doesNotMatch(ordinary, /committed progress/);
+
+  const recovery = JSON.stringify(
+    providerHistory({
+      branch: manager.getBranch(),
+      wireModel: model,
+      recoverLatestOverflowPrefix: true,
+    }),
+  );
+  assert.match(recovery, /first task/);
+  assert.match(recovery, /first reply/);
+  assert.match(recovery, /second task/);
+  assert.match(recovery, /committed progress/);
+  assert.doesNotMatch(recovery, /context_length_exceeded/);
+});

@@ -4,6 +4,19 @@
 
 ### Changed
 
+- Require Pi `>=0.87.0 <0.88.0` and use Pi 0.87.0 as the development and
+  packaged-CLI integration baseline. The load-time host check now also
+  requires Pi 0.87's session projection API.
+- Honour Pi 0.87 `context_edit` entries when building request history from
+  the branch, so omitted or replaced messages match what Pi's own adapters
+  send.
+- Filter the compaction summary through Pi 0.87's `context_with_system` event.
+  A changed `context` result now folds every later system message into the
+  leading one, which would move prompt-section updates into `instructions`
+  while the inline developer items still replayed them.
+- Skip percentage compaction when nothing has been sampled yet. Pi 0.87
+  estimates the prompt and tool declarations before the first response, so a
+  low threshold could trigger an empty compaction request.
 - Send Pi's leading system message as the prompt and later system messages as
   inline developer items, exactly as Pi AI's Codex adapter does. Previously
   every system message was replayed into one `instructions` string, so any
@@ -15,6 +28,10 @@
 
 ### Fixed
 
+- Keep the conversation in overflow-recovery compaction on Pi 0.87. Pi now
+  records the failed attempt's omission as a session entry whose parent is
+  that attempt; removing the attempt from the branch copy broke the entry
+  chain and the compaction request contained only the recovered prefix.
 - Hold a system message that lands between a tool call and its results until
   after those results in replayed history, matching Pi AI.
 - Send the branch's leading system message as compaction `instructions`

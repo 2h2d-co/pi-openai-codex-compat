@@ -63,7 +63,10 @@ test("registers the combined Codex compatibility extension", () => {
     "message_end",
     "before_provider_request",
     "model_select",
+    "context_with_system",
   ]) {
     assert.ok(recording.events.includes(event), `missing ${event} registration`);
   }
+  // A changed `context` result would fold later system messages into the leading one.
+  assert.equal(recording.events.includes("context"), false);
 });

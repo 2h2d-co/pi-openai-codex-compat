@@ -22,7 +22,7 @@ Pi provides the Codex OAuth flow and model catalog. At session start, this packa
 ## Requirements
 
 - Node.js 22.19 or newer
-- Pi `>=0.86.0 <0.87.0`
+- Pi `>=0.87.0 <0.88.0`
 - An OpenAI Codex login in Pi
 
 Restart Pi after upgrading its runtime. `/reload` reloads extensions but cannot
@@ -588,7 +588,7 @@ mise run test:live:codex
 The task obtains the local Codex bearer token and runs the tests with
 `gpt-5.6-luna` at medium reasoning effort.
 It also packs the extension and loads that archive through the shipped Pi
-0.86.1 CLI. Ordinary Responses and Responses Lite tests exercise tool calls,
+0.87.0 CLI. Ordinary Responses and Responses Lite tests exercise tool calls,
 prompt reload, native compaction, and persisted-session resume against Codex.
 Test credentials stay in memory and child-process environments. Test sessions
 and configuration are isolated from the user's agent directory.

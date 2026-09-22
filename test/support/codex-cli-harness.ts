@@ -102,7 +102,7 @@ export async function verifyPackagedCli(
   );
   const piRoot = resolve(dirname(cli), "../..");
   const piManifest = parseJsonRecord(await readFile(join(piRoot, "package.json"), "utf8"));
-  assert.equal(piManifest["version"], "0.86.1");
+  assert.equal(piManifest["version"], "0.87.0");
   const token = options.live
     ? process.env["PI_CODEX_LIVE_API_KEY"]
     : `test.${Buffer.from(
@@ -180,7 +180,7 @@ export async function verifyPackagedCli(
       env: { ...process.env, ...clientOptions.env },
       encoding: "utf8",
     }).trim(),
-    "0.86.1",
+    "0.87.0",
   );
   let client = new RpcClient(clientOptions);
   t.after(async () => client.stop());

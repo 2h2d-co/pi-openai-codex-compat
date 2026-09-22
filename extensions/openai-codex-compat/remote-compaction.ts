@@ -2,7 +2,7 @@ import { isString } from "./value-contracts.ts";
 import type {
   BeforeProviderHeadersEvent,
   CompactionResult,
-  ContextEvent,
+  ContextWithSystemEvent,
   ExtensionAPI,
   ExtensionContext,
   SessionBeforeCompactEvent,
@@ -52,9 +52,9 @@ export type RemoteCompactionLifecycleHandler = (
 ) => void;
 
 export type RemoteCompactionContextHandler = (
-  event: Pick<ContextEvent, "messages">,
+  event: Pick<ContextWithSystemEvent, "messages">,
   ctx: RemoteCompactionContext,
-) => { messages: ContextEvent["messages"] } | undefined;
+) => { messages: ContextWithSystemEvent["messages"] } | undefined;
 
 export type RemoteCompactionHeadersHandler = (
   event: Pick<BeforeProviderHeadersEvent, "headers">,
@@ -116,7 +116,12 @@ export function remoteCompactionApi(pi: ExtensionAPI): RemoteCompactionApi {
     getAllTools: () => pi.getAllTools(),
     onBeforeProviderHeaders: (handler) =>
       pi.on("before_provider_headers", (event, ctx) => handler(event, context(ctx))),
-    onContext: (handler) => pi.on("context", (event, ctx) => handler(event, context(ctx))),
+    // The full-transcript event returns messages verbatim. A changed `context`
+    // result would fold every later system message into the leading one, so
+    // `instructions` would no longer be the branch's leading prompt and the
+    // inline developer items in `input` would repeat the folded updates.
+    onContext: (handler) =>
+      pi.on("context_with_system", (event, ctx) => handler(event, context(ctx))),
     onSessionBeforeCompact: (handler) =>
       pi.on("session_before_compact", (event, ctx) => handler(event, context(ctx))),
     onSessionShutdown: (handler) =>
