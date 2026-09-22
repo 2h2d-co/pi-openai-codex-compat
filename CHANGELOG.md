@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.0.14 - 2026-09-22
+
 ### Changed
 
 - Require Pi `>=0.87.0 <0.88.0` and use Pi 0.87.0 as the development and
@@ -10,10 +12,7 @@
 - Honour Pi 0.87 `context_edit` entries when building request history from
   the branch, so omitted or replaced messages match what Pi's own adapters
   send.
-- Filter the compaction summary through Pi 0.87's `context_with_system` event.
-  A changed `context` result now folds every later system message into the
-  leading one, which would move prompt-section updates into `instructions`
-  while the inline developer items still replayed them.
+- Preserve mid-conversation prompt updates when filtering compaction summaries.
 - Skip percentage compaction when nothing has been sampled yet. Pi 0.87
   estimates the prompt and tool declarations before the first response, so a
   low threshold could trigger an empty compaction request.
