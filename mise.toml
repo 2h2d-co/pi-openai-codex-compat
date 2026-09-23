@@ -19,14 +19,23 @@ _.path = ["{{config_root}}/node_modules/.bin"]
 "pi:local" = "pi --no-extensions -e {{config_root}}"
 "pi:npm" = "pi --no-extensions -e npm:pi-openai-codex-compat"
 
+# In-process tests load Pi's runtime from node_modules. Bind PI_PACKAGE_DIR per
+# task so an inherited global value cannot select another Pi installation's
+# metadata; ordinary `pi` launches outside these tasks are not affected.
 [tasks.check]
 description = "Run all non-writing quality checks and tests"
+env = { PI_PACKAGE_DIR = "{{config_root}}/node_modules/@earendil-works/pi-coding-agent" }
 run = ["npm run check", "npm test"]
+
+[tasks.test]
+description = "Run the offline test suite against the repository's Pi dependency"
+env = { PI_PACKAGE_DIR = "{{config_root}}/node_modules/@earendil-works/pi-coding-agent" }
+run = "npm test"
 
 [tasks."test:live:codex"]
 description = "Verify packaged Pi CLI and SDK workflows against live Codex"
+env = { PI_PACKAGE_DIR = "{{config_root}}/node_modules/@earendil-works/pi-coding-agent" }
 run = '''
-export PI_PACKAGE_DIR="$PWD/node_modules/@earendil-works/pi-coding-agent"
 PI_CODEX_LIVE_API_KEY="$(./node_modules/.bin/pi auth print-bearer-token --provider openai-codex --model gpt-5.6-luna)" \
   npm run test:live:codex
 '''

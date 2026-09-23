@@ -17,4 +17,4 @@
 - Use `npm run release -- <version>` to build the release locally, record its SHA-256 in an SSH-signed `release: v<version>` commit, prove a clean rebuild is reproducible, and create the matching lightweight tag.
 - Push release commits and tags atomically; do not create annotated or signed tag objects.
 - The tag workflow creates the immutable GitHub release from the verified archive and the version's changelog section. Never create GitHub releases by hand.
-- Run `npm run check` and `npm test` before committing meaningful code changes.
+- Run `mise run check` before committing meaningful code changes. The Mise tasks bind `PI_PACKAGE_DIR` to the repository's Pi dependency; a bare `npm test` inherits any global `PI_PACKAGE_DIR` and can load another Pi installation's metadata.

@@ -10,8 +10,8 @@ import { RpcClient } from "../../node_modules/@earendil-works/pi-coding-agent/di
 import {
   parseJsonRecord,
   requireJsonRecord,
-  requireJsonRecords,
 } from "../../extensions/openai-codex-compat/codex-protocol.ts";
+import { packageArchive } from "./package-archive.ts";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 const fixture = join(root, "test/support/codex-cli-extension.ts");
@@ -55,33 +55,13 @@ export async function verifyPackagedCli(
   t.after(() => rm(temporary, { recursive: true, force: true }));
   const agent = join(temporary, "agent");
   await mkdir(agent);
-  let archive = process.env["PI_CODEX_PACKAGE_ARCHIVE"];
-  if (!archive) {
-    const packed = requireJsonRecords(
-      JSON.parse(
-        execFileSync(
-          "npm",
-          [
-            "pack",
-            "--json",
-            "--ignore-scripts",
-            "--allow-directory=all",
-            "--pack-destination",
-            temporary,
-          ],
-          { cwd: root, encoding: "utf8" },
-        ),
-      ),
-    );
-    assert.equal(packed.length, 1);
-    const filename = packed[0]?.["filename"];
-    assert.ok(typeof filename === "string");
-    archive = join(temporary, filename);
-  }
-  const files = execFileSync("tar", ["-tzf", archive], { encoding: "utf8" })
-    .trim()
-    .split("\n")
-    .sort();
+  // A supplied candidate is the exact release archive; it never falls back to
+  // packing the worktree.
+  const { path: archive, files } = await packageArchive(
+    root,
+    temporary,
+    process.env["PI_CODEX_PACKAGE_ARCHIVE"],
+  );
   const expected = (await readFile(join(root, ".github/npm-package-files"), "utf8"))
     .trim()
     .split("\n")

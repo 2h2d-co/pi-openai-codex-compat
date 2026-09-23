@@ -1,8 +1,19 @@
 import assert from "node:assert/strict";
+import { realpath } from "node:fs/promises";
 import test from "node:test";
+import { fileURLToPath } from "node:url";
 import * as piAi from "@earendil-works/pi-ai";
 import * as piCodingAgent from "@earendil-works/pi-coding-agent";
 import { requirePiTranscriptRuntime } from "../extensions/openai-codex-compat/pi-runtime.ts";
+
+test("in-process Pi uses the repository dependency's package resources", async () => {
+  assert.equal(
+    await realpath(piCodingAgent.getPackageDir()),
+    await realpath(
+      fileURLToPath(new URL("../node_modules/@earendil-works/pi-coding-agent", import.meta.url)),
+    ),
+  );
+});
 
 test("accepts the Pi 0.87 transcript and session runtime", () => {
   assert.doesNotThrow(() => requirePiTranscriptRuntime(piAi, piCodingAgent));

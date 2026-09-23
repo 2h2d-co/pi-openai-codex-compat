@@ -143,7 +143,11 @@ jobs:
       - name: Set up npm publishing client
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: "26.6.0" # Bundles the project-pinned npm 11.18.0 client.
+          # Node 26.6.0 bundles npm 11.18.0, which this job uses as the publishing
+          # client. That intentionally differs from the Mise-pinned project npm
+          # 11.19.0 used by the build and release jobs; the version check below
+          # pins the bundled client.
+          node-version: "26.6.0"
           package-manager-cache: false
 
       - name: Verify npm publishing client

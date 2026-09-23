@@ -328,8 +328,20 @@ The extension handles native compaction for `openai-codex`. It follows the Codex
 1. Send normal Responses history followed by `{ "type": "compaction_trigger" }`.
 2. Validate the returned opaque `compaction` item.
 3. Retain approximately 64,000 tokens of recent user messages, plus every developer and
-   system message outside that budget.
+   system message outside that budget. Repeated prompt updates (for example several
+   `/reload` runs or prompt-section changes) each remain in place as their own inline
+   developer item; they accumulate across checkpoints and are never dropped, merged, or
+   deduplicated, because each one is a distinct instruction the model already saw.
 4. Persist the opaque checkpoint in the Pi session and replay it on later requests.
+
+Overflow and length recovery follow Pi 0.87's `context_edit` semantics. Every request
+reads Pi's session projection, so earlier omissions and replacements (an elided tool
+output, an omitted reply) apply exactly as they do for Pi's own adapters. Before an
+overflow-recovery compaction, Pi omits the latest failed or truncated attempt and its tool
+results; the checkpoint request projects only those entries as they were before that
+omission, so a truncated response and its tool results survive as committed progress while
+every unrelated earlier edit stays in force. A failed attempt contributes only the native
+output committed before the overflowing subrequest.
 
 Ordinary responses and compaction use the same extension-managed SSE/WebSocket transport. Before the first WebSocket turn for a session and model, the provider performs a best-effort v2 `generate: false` prewarm of the static instruction/tool prefix, then generates the dynamic conversation input from its continuation. With `responsesLite: false`, supported models use the ordinary Responses envelope and receive their own ordinary-prefix prewarm.
 
@@ -576,6 +588,15 @@ mise run check
 npm run pack:dry
 ```
 
+`mise run check` runs the linters, formatters, type checks, and the offline
+test suite; `mise run test` runs only the offline suite. Both tasks bind
+`PI_PACKAGE_DIR` to `node_modules/@earendil-works/pi-coding-agent`, so tests
+that load Pi in-process read this repository's Pi 0.87.0 resources even when a
+global `PI_PACKAGE_DIR` points at another installation. Ordinary `pi` launches
+outside these tasks are unaffected. Offline tests also exercise
+`scripts/release.ts` with every child process mocked: they never run Git, npm,
+Mise, or provider calls.
+
 Run the credentialed Pi/Codex integration tests separately. They load the real
 extension into headless Pi sessions, use the real WebSocket service, and ask
 the model to report all prior history markers after each text and tool
@@ -593,6 +614,21 @@ prompt reload, native compaction, and persisted-session resume against Codex.
 Test credentials stay in memory and child-process environments. Test sessions
 and configuration are isolated from the user's agent directory.
 
+The packaged-CLI test selects its archive and executable as follows:
+
+- Without `PI_CODEX_PACKAGE_ARCHIVE`, it packs the current worktree into a
+  temporary directory. With `PI_CODEX_PACKAGE_ARCHIVE`, it loads exactly that
+  archive: the value resolves against the working directory, must be an
+  existing regular file that `tar` can list, and an empty, missing, directory,
+  or invalid value fails the test instead of falling back to a fresh pack.
+- `PI_CODEX_CLI_PATH` selects another Pi `cli.js`; the default is this
+  repository's Pi 0.87.0 dependency. The test asserts that the selected
+  executable reports version 0.87.0, the only Pi version the packaged CLI test
+  is run against. The supported range is `>=0.87.0 <0.88.0`.
+- Each Pi child process receives `PI_PACKAGE_DIR` bound to the selected
+  executable's package directory, so the runtime under test reads its own
+  metadata.
+
 The public package entrypoint is `extensions/index.ts`; implementation modules remain under
 `extensions/openai-codex-compat/`. The focused Pi AI serializer copy lives under
 `extensions/openai-codex-compat/vendor/pi-ai/`. The custom Codex provider transport and stream
@@ -606,10 +642,74 @@ search, and compaction continuation.
 1. Run `npm run release -- X.Y.Z` from a clean, synchronized `main`.
 2. The command builds the exact package locally and runs live CLI tests against that archive. It also runs the existing live SDK tests against checkout source. Both suites must pass before it records the archive's SHA-256 in an SSH-signed release commit, proves a clean rebuild is reproducible, and creates a lightweight tag. Missing credentials or failing live tests stop the release.
 3. Inspect the result, then push atomically with `git push --atomic origin main vX.Y.Z`.
-4. A read-only GitHub Actions job validates and packs the package. After approval in the tag-restricted `npm-publish` environment, a separate GitHub-owned job verifies the signature and signed digest before attesting and staging that exact archive through npm trusted publishing.
-5. A final job creates the immutable GitHub release for the tag from the same verified archive, its
-   checksum, and the version's `CHANGELOG.md` section (`Unreleased` for prereleases).
-6. Approve the staged package on npmjs.com, or with `npm stage approve <stage-id>`.
+4. A read-only GitHub Actions job validates and packs the package. After approval
+   in the tag-restricted `npm-publish` environment, a separate GitHub-owned job
+   verifies the signature and signed digest before attesting and staging that
+   exact archive through npm trusted publishing.
+5. A final job creates the immutable GitHub release from the verified archive,
+   its checksum, and the version's changelog section (`Unreleased` for prereleases).
+6. Approve the staged package on npmjs.com or with `npm stage approve <stage-id>`.
+
+The release command runs these steps in order:
+
+1. Refuse to start unless the branch is `main`, `git status --porcelain` is
+   empty, `CHANGELOG.md` has a section for the version, `HEAD` equals
+   `origin/main` after a fetch, and tag `vX.Y.Z` does not exist. Nothing has
+   changed when one of these checks fails.
+2. Write the version into `package.json` and `package-lock.json` and stage
+   only those two files.
+3. Check out the staged index into a temporary directory, run
+   `npm ci --ignore-scripts` and `npm pack` there, validate the package
+   identity, file list, and manifest, then run `mise run test:live:codex` in
+   the repository with `PI_CODEX_PACKAGE_ARCHIVE` set to that archive. This is
+   the exact archive release gate: the live CLI tests load that archive and
+   nothing else. A live process that cannot start, a nonzero exit, or a failed
+   package validation stops the release here.
+4. Create the SSH-signed `release: vX.Y.Z` commit with the archive's SHA-256
+   as its `Npm-Artifact-SHA256` trailer and verify the signature and trailer.
+5. Rebuild the package from the committed tree without repeating the live
+   tests and require the same digest.
+6. Create the lightweight tag and verify that it points at the release commit.
+
+### Recovering from a failed release command
+
+Do not run any blanket `git restore`, `git reset`, `git checkout --`, or
+`git clean`. Inspect first, then undo only what the failed command produced.
+
+If the command fails during the version update, version changes can remain
+in the worktree. Once the update and `git add` succeed, package, live-test,
+and signing failures leave those changes staged. No release commit or tag
+was created by that attempt. Inspect the state:
+
+```sh
+git status --short
+git diff -- package.json package-lock.json
+git diff --cached -- package.json package-lock.json
+```
+
+Undo only this attempt's version edits in the worktree and index. Preserve
+concurrent changes, including edits in those same files. Do not stage whole
+files containing unrelated edits. Fix the cause and confirm that `main` is
+clean and synchronized before rerunning the release command.
+
+If the command fails after the release commit (steps 4 to 6), a local signed
+`release: vX.Y.Z` commit exists on `main`, and a local tag may exist. Do not rerun
+the release command: it would refuse the unsynchronized `HEAD`, and a second
+run on top of the existing commit would produce a duplicate release commit.
+Do not push the commit or tag until signature verification, the reproducibility
+check, and tag verification are complete. Inspect the commit and the digest:
+
+```sh
+git log -1 --format='%H%n%s%n%(trailers:key=Npm-Artifact-SHA256,valueonly)' HEAD
+git diff origin/main..HEAD -- package.json package-lock.json
+git tag --list 'vX.Y.Z'
+```
+
+Removing the local release commit or tag changes local refs. Confirm that
+they were never pushed, record their hashes and a recovery path, and obtain
+explicit approval before changing them. Never replace a published tag.
+Fix the underlying cause before starting a new release from clean,
+synchronized `main`.
 
 Stable releases use `latest`; prereleases derive their npm dist-tag from the first prerelease identifier.
 
