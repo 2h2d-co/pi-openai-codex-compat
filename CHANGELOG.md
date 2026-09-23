@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+### Fixed
+
+- Preserve earlier message omissions and replacements during overflow-recovery
+  compaction. Recover only the latest attempt Pi omitted for recovery, keeping
+  its committed progress without reviving unrelated content. Stored native
+  responses no longer override later assistant-message replacements.
+- Rebuild the compaction request's tool declarations when a tool's parameter
+  schema changes under an unchanged name and description, instead of reusing a
+  stale schema from the previous turn.
+
 ## 0.0.14 - 2026-09-22
 
 ### Changed

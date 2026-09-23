@@ -1,10 +1,11 @@
 import { isBoolean, isString } from "./value-contracts.ts";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import {
   buildSessionContext,
   buildSessionProjection,
   convertToLlm,
   sessionEntryToContextMessages,
+  type ContextEditEntry,
   type SessionEntry,
   type ToolInfo,
 } from "@earendil-works/pi-coding-agent";
@@ -31,6 +32,7 @@ import {
   type JsonRecord,
 } from "./codex-protocol.ts";
 import { nativeCommittedPrefixBeforeOverflow, nativeResponseOverrides } from "./native-history.ts";
+import { stableResponsesJson } from "./responses-replay.ts";
 import {
   CODEX_NAMESPACED_TOOL_NAMES,
   CODEX_TEXT_CONTENT_ITEM_TOOL_RESULT_NAMES,
@@ -181,9 +183,45 @@ export function activeResponsesTools(
     : undefined;
 }
 
+/** The raw tool definition fields that both Pi AI's `Tool` and Pi's `ToolInfo` carry. */
+export type ToolDeclarationSource = Pick<ToolInfo, "name" | "description" | "parameters">;
+
 /**
- * Whether a serialized Responses `tools` list declares exactly the active tools,
- * by name and description. Namespace members count as `namespace.member`.
+ * Fingerprint raw tool definitions by name, description, and parameter schema,
+ * independent of declaration order. Both the transcript tools a turn request
+ * declared and the registry's active `ToolInfo` list produce the same value for
+ * the same definitions, so a cached turn template can be compared with the
+ * current tools without reversing the strict schema conversion applied on the
+ * wire.
+ */
+export function toolDefinitionFingerprint(tools: readonly ToolDeclarationSource[]): string {
+  const declarations = tools
+    .map((tool) => {
+      // The JSON round-trip drops typebox symbol keys and undefined fields, as
+      // Pi AI's own declaration comparison does.
+      const parameters: unknown = JSON.parse(JSON.stringify(tool.parameters));
+      return { name: tool.name, description: tool.description, parameters };
+    })
+    .sort((left, right) => left.name.localeCompare(right.name));
+  return createHash("sha256").update(stableResponsesJson(declarations)).digest("hex");
+}
+
+/** Fingerprint of the registry tools that are currently active. */
+export function activeToolFingerprint(
+  allTools: readonly ToolInfo[],
+  activeNames: readonly string[],
+): string {
+  const enabled = new Set(activeNames);
+  return toolDefinitionFingerprint(allTools.filter((tool) => enabled.has(tool.name)));
+}
+
+/**
+ * Whether a cached turn template still declares exactly the active tools.
+ *
+ * The serialized `tools` list must name the active set (namespace members
+ * count as `namespace.member`), and the raw definitions that produced it must
+ * fingerprint identically to the active registry tools. Comparing names and
+ * descriptions alone missed parameter-schema changes under an unchanged name.
  *
  * A cached turn template carries the exact declarations the turn requests sent,
  * including strict schema conversion that `ToolInfo` cannot reproduce. Reusing
@@ -191,9 +229,11 @@ export function activeResponsesTools(
  */
 export function declaresActiveTools(
   serialized: readonly JsonRecord[],
+  cachedToolFingerprint: string,
   allTools: readonly ToolInfo[],
   activeNames: readonly string[],
 ): boolean {
+  if (cachedToolFingerprint !== activeToolFingerprint(allTools, activeNames)) return false;
   const declared = new Map<string, string | undefined>();
   for (const item of serialized) {
     if (item.type === "namespace" && isString(item.name) && Array.isArray(item.tools)) {
@@ -416,17 +456,68 @@ export function checkpointData(
 }
 
 /**
+ * The entries Pi 0.87 omits for overflow or length recovery: the latest
+ * assistant attempt and the tool results of that turn, each targeted by a
+ * `context_edit` omission appended after the attempt. `leafId` is the parent of
+ * the first such omission, so a projection built up to it reflects every edit
+ * that existed before Pi omitted the attempt.
+ *
+ * Pi only selects a recovery attempt while it is still projected, so an
+ * omission of the latest assistant found here is Pi's recovery omission and
+ * not an unrelated edit.
+ */
+function recoveryOmissions(
+  branch: readonly SessionEntry[],
+): { entryIds: ReadonlySet<string>; leafId: string } | undefined {
+  const attemptIndex = branch.findLastIndex(
+    (entry) => entry.type === "message" && entry.message.role === "assistant",
+  );
+  const attempt = branch[attemptIndex];
+  if (attempt?.type !== "message" || attempt.message.role !== "assistant") return undefined;
+
+  const toolCallIds = new Set(
+    attempt.message.content.flatMap((block) => (block.type === "toolCall" ? [block.id] : [])),
+  );
+  const candidates = new Set([attempt.id]);
+  for (const entry of branch.slice(attemptIndex + 1)) {
+    if (entry.type !== "message") continue;
+    if (entry.message.role !== "toolResult" || !toolCallIds.has(entry.message.toolCallId)) break;
+    candidates.add(entry.id);
+  }
+
+  const latestEdits = new Map<string, ContextEditEntry>();
+  for (const entry of branch.slice(attemptIndex + 1)) {
+    if (entry.type === "context_edit" && candidates.has(entry.targetId)) {
+      latestEdits.set(entry.targetId, entry);
+    }
+  }
+  if (latestEdits.get(attempt.id)?.replacement !== null) return undefined;
+  const omissions = new Set(
+    [...latestEdits.values()].filter((entry) => entry.replacement === null),
+  );
+  const first = branch.find((entry) => entry.type === "context_edit" && omissions.has(entry));
+  if (first?.type !== "context_edit" || first.parentId === null) return undefined;
+  return {
+    entryIds: new Set([...omissions].map((entry) => entry.targetId)),
+    leafId: first.parentId,
+  };
+}
+
+/**
  * Materialize provider history for the active branch. Checkpoint history
  * replaces everything before its entry; later branch entries form the tail.
  *
- * Ordinary requests read the session projection, so `context_edit` omissions
- * and replacements apply exactly as they do for Pi's own adapters. Recovery
- * compaction reads the raw entries instead: Pi 0.87 omits the failed or
- * truncated attempt through a `context_edit` child of that entry before it
- * runs `session_before_compact`. The serializer already skips error and
- * aborted assistants, and a truncated boundary is committed progress that the
- * checkpoint must keep. Entries are never removed from the branch copy because
- * the omission entry's parent chain would break and the history would vanish.
+ * Every request reads the session projection, so `context_edit` omissions and
+ * replacements apply exactly as they do for Pi's own adapters. Recovery
+ * compaction differs only for the latest attempt: Pi 0.87 omits the failed or
+ * truncated assistant and its tool results through `context_edit` entries
+ * before it runs `session_before_compact`. Those entries are projected as they
+ * were before Pi's omission, so a truncated boundary stays as committed
+ * progress while every earlier omission or replacement remains in force. The
+ * serializer skips error and aborted assistants; a failed attempt contributes
+ * only the native prefix committed before the overflowing subrequest. Entries
+ * are never removed from the branch copy because the omission entry's parent
+ * chain would break and the history would vanish.
  */
 export function providerHistory(options: {
   branch: readonly SessionEntry[];
@@ -459,13 +550,30 @@ export function providerHistory(options: {
   const projection = buildSessionProjection(branch);
   const projected = new Map<string, AgentMessages>();
   for (const entry of projection.entries) projected.set(entry.sourceEntry.id, entry.messages);
-  const entryMessages = (entry: SessionEntry): AgentMessages =>
-    options.recoverLatestOverflowPrefix
-      ? sessionEntryToContextMessages(entry)
-      : (projected.get(entry.id) ?? []);
+  const recovery = options.recoverLatestOverflowPrefix ? recoveryOmissions(branch) : undefined;
+  if (recovery) {
+    for (const entry of buildSessionProjection(branch, recovery.leafId).entries) {
+      if (recovery.entryIds.has(entry.sourceEntry.id)) {
+        projected.set(entry.sourceEntry.id, entry.messages);
+      }
+    }
+  }
+  const entryMessages = (entry: SessionEntry): AgentMessages => projected.get(entry.id) ?? [];
 
   const checkpoint = searchCheckpoint(branch);
-  const nativeAssistantItems = nativeResponseOverrides(branch, options.wireModel.id);
+  const nativeAssistantItems = new Map(nativeResponseOverrides(branch, options.wireModel.id));
+  for (const entry of branch) {
+    if (
+      entry.type === "message" &&
+      entry.message.role === "assistant" &&
+      entry.message.responseId &&
+      entryMessages(entry).some((message) => message !== entry.message)
+    ) {
+      // A replacement keeps the response ID but changes the model-visible content.
+      // Its original native output must not override the canonical replacement.
+      nativeAssistantItems.delete(entry.message.responseId);
+    }
+  }
   if (checkpoint.kind === "corrupt") {
     throw new Error("The latest Codex compaction checkpoint is corrupt.");
   }

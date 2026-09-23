@@ -47,6 +47,8 @@ export type RuntimeScope = {
 export type RequestTemplate = {
   modelId: string;
   payload: JsonRecord;
+  /** Fingerprint of the raw tool definitions that produced `payload.tools`. */
+  toolFingerprint: string;
   grammarToolInputProperties: GrammarToolInputProperties;
   requestOptions: OpenAICodexResponsesOptions;
 };

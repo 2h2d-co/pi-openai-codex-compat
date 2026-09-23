@@ -19,7 +19,9 @@ import type { Api, Model, ProviderHeaders } from "@earendil-works/pi-ai";
 import {
   CHECKPOINT_ENTRY_TYPE,
   parseCheckpoint,
+  toolDefinitionFingerprint,
 } from "../extensions/openai-codex-compat/compaction-checkpoint.ts";
+import { Type } from "typebox";
 import { convertResponsesTools } from "../extensions/openai-codex-compat/vendor/pi-ai/openai-responses-serialization.ts";
 import { CodexProviderRuntime } from "../extensions/openai-codex-compat/codex-provider.ts";
 import type { CodexProviderRuntimeApi } from "../extensions/openai-codex-compat/codex-provider/codex-provider-runtime.ts";
@@ -355,6 +357,7 @@ test("refreshes cached tool declarations before native compaction", async () => 
   const cached = {
     modelId: "gpt-test",
     payload: { tools: structuredClone(turnTools) },
+    toolFingerprint: toolDefinitionFingerprint([REPORT_TOOL, read]),
     grammarToolInputProperties: new Map<string, string>(),
     requestOptions: { transport: "sse" as const },
   };
@@ -399,6 +402,56 @@ test("refreshes cached tool declarations before native compaction", async () => 
   requireCompactionResult(await handler(event, harness.context));
   assert.deepEqual(harness.requests[3]?.tools, []);
   assert.deepEqual(cached.payload.tools, turnTools);
+
+  // A parameter-schema change under an unchanged name and description also
+  // invalidates the cached declarations; the wire schema cannot be reversed
+  // into the registry's definition, so the raw definitions are fingerprinted.
+  const reshaped = {
+    ...tool,
+    parameters: Type.Object({ value: Type.String(), unit: Type.String() }),
+  };
+  harness.hooks.getAllTools = () => [reshaped, readInfo];
+  harness.hooks.getActiveTools = () => [tool.name, read.name];
+  requireCompactionResult(await handler(event, harness.context));
+  const rebuilt = requireJsonRecords(harness.requests[4]?.tools).find(
+    (item) => item.name === tool.name,
+  );
+  assert.deepEqual(
+    Object.keys(requireJsonRecord(requireJsonRecord(rebuilt?.["parameters"])["properties"])),
+    ["value", "unit"],
+  );
+  assert.deepEqual(cached.payload.tools, turnTools);
+
+  // Equivalent definitions keep the cached declarations: fresh copies of the
+  // same schemas, and the same active set in a different registry order.
+  harness.hooks.getAllTools = () => [structuredClone(readInfo), structuredClone(tool)];
+  harness.hooks.getActiveTools = () => [read.name, tool.name];
+  requireCompactionResult(await handler(event, harness.context));
+  assert.deepEqual(harness.requests[5]?.tools, turnTools);
+});
+
+test("fingerprints raw tool definitions independent of order and executable fields", () => {
+  const read = createReadTool(process.cwd());
+  const readInfo = {
+    name: read.name,
+    description: read.description,
+    parameters: read.parameters,
+    sourceInfo: createSyntheticSourceInfo("builtin", { source: "fingerprint test" }),
+  };
+  const baseline = toolDefinitionFingerprint([REPORT_TOOL, read]);
+  assert.equal(toolDefinitionFingerprint([readInfo, structuredClone(REPORT_TOOL)]), baseline);
+  assert.notEqual(
+    toolDefinitionFingerprint([{ ...REPORT_TOOL, description: "Redefined report" }, read]),
+    baseline,
+  );
+  assert.notEqual(
+    toolDefinitionFingerprint([
+      { ...REPORT_TOOL, parameters: Type.Object({ value: Type.Number() }) },
+      read,
+    ]),
+    baseline,
+  );
+  assert.notEqual(toolDefinitionFingerprint([REPORT_TOOL]), baseline);
 });
 
 test("classifies every Pi compaction lifecycle in official Codex metadata", async (t) => {

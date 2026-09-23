@@ -24,6 +24,11 @@ import {
   requireJsonRecords,
 } from "../extensions/openai-codex-compat/codex-protocol.ts";
 import {
+  NATIVE_RESPONSE_ENTRY_TYPE,
+  nativeResponseData,
+} from "../extensions/openai-codex-compat/native-history.ts";
+import type { ResponsesOutputMessageItem } from "../extensions/openai-codex-compat/responses-item-schema.ts";
+import {
   accessToken,
   assistantEntry,
   codexModel,
@@ -535,49 +540,239 @@ test("restores checkpoint system snapshots and post-checkpoint tool changes afte
   }
 });
 
-test("honours Pi 0.87 context edits for ordinary requests and keeps recovery history intact", () => {
-  const model = codexModel();
+/**
+ * Build the branch Pi 0.87 leaves behind when it selects the latest attempt for
+ * overflow or length recovery. Earlier edits model unrelated context work: a
+ * large tool output replaced by a placeholder, an omitted first reply, and a
+ * chained edit whose latest replacement wins. Pi then omits the selected
+ * attempt and its tool results through `context_edit` entries before it runs
+ * `session_before_compact`.
+ */
+function recoveryBranch(attempt: "length" | "error"): {
+  branch: SessionEntry[];
+  failedResponseId: string;
+} {
   const manager = SessionManager.inMemory("/tmp");
   manager.appendMessage(initial);
   const firstUser = manager.appendMessage({ role: "user", content: "first task", timestamp: 1 });
   const firstReply = manager.appendMessage(
     assistantEntry("first-reply", firstUser, "first reply").message,
   );
-  const secondUser = manager.appendMessage({ role: "user", content: "second task", timestamp: 2 });
+  const toolUser = manager.appendMessage({ role: "user", content: "tool task", timestamp: 2 });
+  manager.appendMessage({
+    ...assistantEntry("tool-reply", toolUser, "calling").message,
+    content: [
+      { type: "text", text: "calling" },
+      { type: "toolCall", id: "call-1", name: REPORT_TOOL.name, arguments: { value: "one" } },
+    ],
+    stopReason: "toolUse",
+  });
+  const largeOutput = manager.appendMessage({
+    role: "toolResult",
+    toolCallId: "call-1",
+    toolName: REPORT_TOOL.name,
+    content: [{ type: "text", text: "LARGE-OUTPUT-ONE" }],
+    isError: false,
+    timestamp: 3,
+  });
+  // Unrelated earlier edits: the first reply is omitted entirely and the large
+  // output shrinks twice (the latest replacement wins).
+  manager.appendContextEdit(firstReply, null);
+  manager.appendContextEdit(largeOutput, { content: "first placeholder" });
+  manager.appendContextEdit(largeOutput, { content: "[output elided]" });
+  const secondUser = manager.appendMessage({ role: "user", content: "second task", timestamp: 4 });
   const truncated = manager.appendMessage({
     ...assistantEntry("truncated", secondUser, "committed progress").message,
+    content: [
+      { type: "text", text: "committed progress" },
+      { type: "toolCall", id: "call-2", name: REPORT_TOOL.name, arguments: { value: "two" } },
+    ],
     stopReason: "length",
   });
-  const failed = manager.appendMessage({
-    ...assistantEntry("failed", truncated, "").message,
-    content: [],
-    stopReason: "error",
-    errorMessage: "context_length_exceeded",
+  const partialResult = manager.appendMessage({
+    role: "toolResult",
+    toolCallId: "call-2",
+    toolName: REPORT_TOOL.name,
+    content: [{ type: "text", text: "partial result" }],
+    isError: false,
+    timestamp: 5,
   });
-  // Pi's recovery omits the selected attempts with entries whose parent is the attempt.
-  manager.appendContextEdit(failed, null);
-  manager.appendContextEdit(truncated, null);
-  manager.appendContextEdit(firstReply, { content: "edited first reply" });
+  let failedResponseId = "";
+  if (attempt === "length") {
+    manager.appendContextEdit(truncated, null);
+    manager.appendContextEdit(partialResult, null);
+  } else {
+    const failed = manager.appendMessage({
+      ...assistantEntry("failed", partialResult, "").message,
+      content: [],
+      stopReason: "error",
+      errorMessage: "context_length_exceeded",
+    });
+    failedResponseId = "resp_failed";
+    manager.appendContextEdit(failed, null);
+  }
+  return { branch: manager.getBranch(), failedResponseId };
+}
 
-  const ordinary = JSON.stringify(
-    providerHistory({ branch: manager.getBranch(), wireModel: model }),
-  );
+test("honours Pi 0.87 context edits and recovers only the omitted latest attempt", () => {
+  const model = codexModel();
+  const { branch } = recoveryBranch("length");
+
+  const ordinary = JSON.stringify(providerHistory({ branch, wireModel: model }));
   assert.match(ordinary, /first task/);
-  assert.match(ordinary, /edited first reply/);
-  assert.doesNotMatch(ordinary, /"text":"first reply"/);
+  assert.match(ordinary, /\[output elided\]/);
+  assert.doesNotMatch(ordinary, /LARGE-OUTPUT-ONE|first placeholder|"text":"first reply"/);
   assert.match(ordinary, /second task/);
-  assert.doesNotMatch(ordinary, /committed progress/);
+  assert.doesNotMatch(ordinary, /committed progress|partial result/);
+
+  const recovery = providerHistory({ branch, wireModel: model, recoverLatestOverflowPrefix: true });
+  const serialized = JSON.stringify(recovery);
+  // Unrelated earlier omissions and replacements stay in force.
+  assert.match(serialized, /first task/);
+  assert.match(serialized, /\[output elided\]/);
+  assert.doesNotMatch(serialized, /LARGE-OUTPUT-ONE|first placeholder|"text":"first reply"/);
+  // The truncated boundary and its tool results are committed progress.
+  assert.match(serialized, /second task/);
+  assert.match(serialized, /committed progress/);
+  assert.match(serialized, /partial result/);
+  assert.deepEqual(
+    recovery.map((item) => ("role" in item ? item.role : item.type)),
+    [
+      "user",
+      "user",
+      "assistant",
+      "function_call",
+      "function_call_output",
+      "user",
+      "assistant",
+      "function_call",
+      "function_call_output",
+    ],
+  );
+});
+
+test("recovers only the native prefix of a failed attempt and keeps earlier edits", () => {
+  const model = codexModel();
+  const { branch, failedResponseId } = recoveryBranch("error");
+  const committed: ResponsesOutputMessageItem = {
+    type: "message",
+    id: "msg_committed",
+    role: "assistant",
+    content: [{ type: "output_text", text: "native committed prefix" }],
+  };
+  branch.push({
+    type: "custom",
+    id: "native-failed",
+    parentId: branch.at(-1)?.id ?? null,
+    timestamp: new Date().toISOString(),
+    customType: NATIVE_RESPONSE_ENTRY_TYPE,
+    data: nativeResponseData(
+      model.id,
+      failedResponseId,
+      [committed],
+      [
+        { itemCount: 1, terminalType: "response.incomplete", terminalReason: "max_output_tokens" },
+        {
+          itemCount: 0,
+          terminalType: "response.failed",
+          terminalReason: "context_length_exceeded",
+        },
+      ],
+    ),
+  });
+
+  const recovery = providerHistory({ branch, wireModel: model, recoverLatestOverflowPrefix: true });
+  const serialized = JSON.stringify(recovery);
+  assert.match(serialized, /\[output elided\]/);
+  assert.doesNotMatch(serialized, /LARGE-OUTPUT-ONE|"text":"first reply"|context_length_exceeded/);
+  // The truncated attempt before the failed retry was never omitted, so it stays.
+  assert.match(serialized, /committed progress/);
+  assert.match(serialized, /partial result/);
+  assert.deepEqual(recovery.at(-1), committed);
+});
+
+test("applies edits in a checkpoint tail and recovers only the omitted attempt after it", () => {
+  const model = codexModel();
+  const manager = SessionManager.inMemory("/tmp");
+  manager.appendMessage(initial);
+  const before = manager.appendMessage({
+    role: "user",
+    content: "before checkpoint",
+    timestamp: 1,
+  });
+  manager.appendMessage(assistantEntry("before-reply", before, "old reply").message);
+  const checkpoint = checkpointData(
+    model.id,
+    [{ type: "message", role: "user", content: [{ type: "input_text", text: "saved-state" }] }],
+    { type: "compaction", id: "cmp_1", encrypted_content: "opaque-state" },
+  );
+  manager.appendCompaction("checkpoint", before, 1, checkpoint, true);
+  const tailUser = manager.appendMessage({ role: "user", content: "tail task", timestamp: 2 });
+  const tailReply = manager.appendMessage(
+    assistantEntry("tail-reply", tailUser, "tail reply").message,
+  );
+  manager.appendContextEdit(tailReply, { content: "edited tail reply" });
+  const nextUser = manager.appendMessage({ role: "user", content: "next task", timestamp: 3 });
+  const truncated = manager.appendMessage({
+    ...assistantEntry("tail-truncated", nextUser, "tail progress").message,
+    stopReason: "length",
+  });
+  manager.appendContextEdit(truncated, null);
+  const branch = manager.getBranch();
+
+  const ordinary = JSON.stringify(providerHistory({ branch, wireModel: model }));
+  assert.match(ordinary, /saved-state/);
+  assert.match(ordinary, /edited tail reply/);
+  assert.doesNotMatch(ordinary, /old reply|"text":"tail reply"|tail progress/);
 
   const recovery = JSON.stringify(
-    providerHistory({
-      branch: manager.getBranch(),
-      wireModel: model,
-      recoverLatestOverflowPrefix: true,
-    }),
+    providerHistory({ branch, wireModel: model, recoverLatestOverflowPrefix: true }),
   );
-  assert.match(recovery, /first task/);
-  assert.match(recovery, /first reply/);
-  assert.match(recovery, /second task/);
-  assert.match(recovery, /committed progress/);
-  assert.doesNotMatch(recovery, /context_length_exceeded/);
+  assert.match(recovery, /saved-state/);
+  assert.match(recovery, /edited tail reply/);
+  assert.match(recovery, /tail progress/);
+  assert.doesNotMatch(recovery, /old reply|"text":"tail reply"/);
+});
+
+test("recovery without a Pi omission of the latest attempt changes nothing", () => {
+  const model = codexModel();
+  const manager = SessionManager.inMemory("/tmp");
+  manager.appendMessage(initial);
+  const user = manager.appendMessage({ role: "user", content: "only task", timestamp: 1 });
+  const reply = manager.appendMessage(assistantEntry("reply", user, "only reply").message);
+  manager.appendContextEdit(reply, { content: "replaced reply" });
+  const branch = manager.getBranch();
+  assert.deepEqual(
+    providerHistory({ branch, wireModel: model, recoverLatestOverflowPrefix: true }),
+    providerHistory({ branch, wireModel: model }),
+  );
+  assert.match(JSON.stringify(providerHistory({ branch, wireModel: model })), /replaced reply/);
+});
+
+test("a tool-result omission alone does not identify an omitted recovery attempt", () => {
+  const manager = SessionManager.inMemory("/tmp");
+  const model = codexModel();
+  manager.appendMessage(initial);
+  const user = manager.appendMessage({ role: "user", content: "tool task", timestamp: 1 });
+  manager.appendMessage({
+    ...assistantEntry("tool-reply", user, "").message,
+    content: [
+      { type: "toolCall", id: "call-only", name: REPORT_TOOL.name, arguments: { value: "one" } },
+    ],
+    stopReason: "toolUse",
+  });
+  const result = manager.appendMessage({
+    role: "toolResult",
+    toolCallId: "call-only",
+    toolName: REPORT_TOOL.name,
+    content: [{ type: "text", text: "OMITTED_TOOL_RESULT" }],
+    isError: false,
+    timestamp: 2,
+  });
+  manager.appendContextEdit(result, null);
+  const branch = manager.getBranch();
+  const ordinary = providerHistory({ branch, wireModel: model });
+  const recovery = providerHistory({ branch, wireModel: model, recoverLatestOverflowPrefix: true });
+  assert.deepEqual(recovery, ordinary);
+  assert.doesNotMatch(JSON.stringify(recovery), /OMITTED_TOOL_RESULT/);
 });

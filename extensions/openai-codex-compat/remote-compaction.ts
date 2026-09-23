@@ -258,15 +258,18 @@ export default function registerRemoteCompaction(
       });
       // Reuse the last turn's exact declarations when they still describe the
       // active tools, so the compaction request shares the turn requests'
-      // prompt-cache prefix. Rebuild from the registry only when the active
-      // set changed since that turn or no turn template exists.
+      // prompt-cache prefix. Rebuild from the registry when the active set or
+      // any definition (including a parameter schema under an unchanged name)
+      // changed since that turn, or when no turn template exists.
       const template: JsonRecord = { ...matching?.payload };
       const activeNames = pi.getActiveTools();
       const cachedTools = Array.isArray(matching?.payload.tools)
         ? matching.payload.tools.filter(isObject)
         : undefined;
       template.tools =
-        cachedTools && declaresActiveTools(cachedTools, allTools, activeNames)
+        cachedTools &&
+        matching &&
+        declaresActiveTools(cachedTools, matching.toolFingerprint, allTools, activeNames)
           ? cachedTools
           : (activeResponsesTools(allTools, activeNames, grammarToolInputProperties) ?? []);
       const requestOptions: OpenAICodexResponsesOptions = {

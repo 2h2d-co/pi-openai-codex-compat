@@ -32,6 +32,7 @@ import {
   resolveRequestTranscript,
   responsesCompatibility,
   searchCheckpoint,
+  toolDefinitionFingerprint,
   type CheckpointData,
   type CompactionDecision,
   type GrammarToolInputProperties,
@@ -871,6 +872,7 @@ export class CodexProviderRuntime {
         this.templates.set(runtimeSessionId, {
           modelId: model.id,
           payload: replacementValues ? {} : withoutConversationInput(body),
+          toolFingerprint: toolDefinitionFingerprint(getCurrentTools(context.messages)),
           grammarToolInputProperties,
           requestOptions: { ...requestOptions },
         });
