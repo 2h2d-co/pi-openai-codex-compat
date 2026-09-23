@@ -261,7 +261,15 @@ for (const modelId of ["gpt-5.6-sol", "gpt-6-astra"]) {
   });
 }
 
-for (const modelId of ["gpt-5.5", "gpt-6", "gpt-6-astra-preview"]) {
+for (const modelId of [
+  "gpt-5.5",
+  "gpt-6",
+  "gpt-6-astra-preview",
+  "gpt-6-sol",
+  "gpt-6-luna",
+  "gpt-6-sol-preview",
+  "gpt-6-luna-preview",
+]) {
   test(`omits configured pro reasoning mode for unsupported ${modelId}`, () => {
     const result = applyCodexRequestOptions(
       { reasoning: { effort: "high", mode: "pro" } },

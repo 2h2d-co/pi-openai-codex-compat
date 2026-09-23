@@ -322,7 +322,7 @@ test("modifies requests on the canonical OpenAI Codex provider", async (t) => {
   assert.equal(messages.length, 1);
   assert.equal(messages[0]?.provider, CODEX_PROVIDER);
   assert.equal(messages[0]?.api, "openai-codex-responses");
-  assert.equal(messages[0]?.usage.cost.total, 0.0004);
+  assert.equal(messages[0]?.usage.cost.total, 0.00028);
   const requestDiagnostic = messages[0]?.diagnostics?.find(
     (diagnostic) => diagnostic.type === "codex_transport_request",
   );

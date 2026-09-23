@@ -113,6 +113,7 @@ export default function (pi: ExtensionAPI): void {
     const input = requireJsonRecords(payload["input"]);
     const markers = promptMarkers(payload);
     observations.push({
+      reasoningMode: requireJsonRecord(payload["reasoning"])["mode"] ?? null,
       marker: markers.current,
       leadingMarker: markers.leading,
       checkpoint: input.some((item) => item["type"] === "compaction"),

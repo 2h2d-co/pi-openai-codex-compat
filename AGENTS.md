@@ -18,3 +18,4 @@
 - Push release commits and tags atomically; do not create annotated or signed tag objects.
 - The tag workflow creates the immutable GitHub release from the verified archive and the version's changelog section. Never create GitHub releases by hand.
 - Run `mise run check` before committing meaningful code changes. The Mise tasks bind `PI_PACKAGE_DIR` to the repository's Pi dependency; a bare `npm test` inherits any global `PI_PACKAGE_DIR` and can load another Pi installation's metadata.
+- Gate new model capabilities on the actual Codex endpoint, not public Responses API documentation. Keep Responses Lite eligibility separate from pro reasoning eligibility. Extend the packaged CLI and WebSocket live matrices when adding supported models, and retain exact tool-argument assertions with explicit extraction instructions.

@@ -135,6 +135,9 @@ function latestAssistant(session: AgentSession): AssistantMessage {
   const message = assistantMessages(session).at(-1);
   assert.ok(message, "Pi did not persist an assistant message");
   assert.equal(message.errorMessage, undefined);
+  assert.equal(message.model, session.model?.id);
+  assert.equal(cacheObservation(message).selectedTransport, "websocket");
+  assert.equal(requireJsonRecord(cacheObservation(message).cache)["envelope"], "responses_lite");
   assert.ok(isString(message.responseId));
   return message;
 }
@@ -204,6 +207,7 @@ function observeRealWebSocketTraffic(t: TestContext): ObservedWebSocketTraffic {
       assert.ok(isString(data), "Codex WebSocket requests must be JSON strings");
       const parsed: unknown = JSON.parse(data);
       assert.ok(isObject(parsed), "Codex WebSocket request must be a JSON object");
+      assert.equal(requireJsonRecord(parsed["reasoning"])["mode"], undefined);
       traffic.frames.push(structuredClone(parsed));
       super.send(data);
     }
@@ -249,6 +253,7 @@ function assertCurrentMarkerOnly(
 async function createLivePiHost(
   t: TestContext,
   mode: HistoryMode,
+  modelId: string,
   customTools: ToolDefinition[] = [],
   options: { builtinTools?: string[] } = {},
 ): Promise<AgentSession> {
@@ -299,7 +304,6 @@ async function createLivePiHost(
     modelsPath: null,
     allowModelNetwork: false,
   });
-  const modelId = process.env["PI_CODEX_LIVE_MODEL"] || "gpt-5.6-luna";
   const model = modelRuntime.getModel(CODEX_PROVIDER, modelId);
   assert.ok(model, `Pi does not provide ${CODEX_PROVIDER}/${modelId}`);
 
@@ -346,201 +350,203 @@ async function createLivePiHost(
   return result.session;
 }
 
-test(
-  "live Pi host preserves text conversation history through Codex",
-  { skip: !LIVE_TEST_ENABLED, timeout: LIVE_TEST_TIMEOUT_MS },
-  async (t) => {
-    const traffic = observeRealWebSocketTraffic(t);
-    const session = await createLivePiHost(t, "text");
-    const values = ["text-alpha", "text-bravo", "text-charlie"];
-    const cache: CacheObservation[] = [];
-    let previousResponseId: string | undefined;
+for (const modelId of ["gpt-5.6-luna", "gpt-6-sol", "gpt-6-luna"]) {
+  test(
+    `live Pi host ${modelId} preserves text conversation history through Codex`,
+    { skip: !LIVE_TEST_ENABLED, timeout: LIVE_TEST_TIMEOUT_MS },
+    async (t) => {
+      const traffic = observeRealWebSocketTraffic(t);
+      const session = await createLivePiHost(t, "text", modelId);
+      const values = ["text-alpha", "text-bravo", "text-charlie"];
+      const cache: CacheObservation[] = [];
+      let previousResponseId: string | undefined;
 
-    for (let index = 0; index < values.length; index++) {
-      const frameStart = traffic.frames.length;
-      await session.prompt(`<history-item>${values[index]}</history-item>`, {
-        expandPromptTemplates: false,
-      });
-      const promptFrames = traffic.frames.slice(frameStart);
-
-      const assistant = latestAssistant(session);
-      cache.push(cacheObservation(assistant));
-      assert.equal(assistant.stopReason, "stop");
-      assert.deepEqual(responseLines(assistantText(assistant)), values.slice(0, index + 1));
-      if (index === 0) {
-        const prewarm = promptFrames.find((frame) => frame["generate"] === false);
-        assert.ok(prewarm, "Missing WebSocket prewarm frame");
-        assert.equal(
-          frameInput(prewarm, 2).some((item) => item.role === "user"),
-          false,
-        );
-      }
-      const frame = promptFrames.at(-1);
-      assert.ok(frame, `Missing WebSocket frame for text turn ${String(index + 1)}`);
-      if (previousResponseId) {
-        if (frame.previous_response_id === previousResponseId) {
-          assertCurrentMarkerOnly(frameInput(frame, 1), values, index);
-        } else {
-          assert.equal(frame.previous_response_id, undefined);
-          const serialized = JSON.stringify(frameInput(frame));
-          for (const value of values.slice(0, index + 1)) {
-            assert.match(serialized, new RegExp(value));
-          }
-        }
-      } else {
-        assert.ok(isString(frame.previous_response_id));
-        assertCurrentMarkerOnly(frameInput(frame, 1), values, index);
-      }
-      previousResponseId = assistant.responseId;
-    }
-    assert.ok(traffic.frames.length >= values.length + 1);
-    assert.ok(traffic.connections >= 1);
-    t.diagnostic(`text cache observations: ${JSON.stringify(cache)}`);
-  },
-);
-
-test(
-  "live Pi host preserves tool conversation history through Codex",
-  { skip: !LIVE_TEST_ENABLED, timeout: LIVE_TEST_TIMEOUT_MS },
-  async (t) => {
-    const traffic = observeRealWebSocketTraffic(t);
-    const reports: string[][] = [];
-    const reportHistory = defineTool({
-      name: "report_history",
-      label: "Report History",
-      description: "Report every user-provided history item in chronological order.",
-      parameters: Type.Object({
-        items: Type.Array(Type.String()),
-      }),
-      async execute(_toolCallId, params) {
-        reports.push([...params.items]);
-        return {
-          content: [{ type: "text", text: "History report accepted." }],
-          details: {},
-          terminate: true,
-        };
-      },
-    });
-    const session = await createLivePiHost(t, "tool", [reportHistory]);
-    assert.deepEqual(session.getActiveToolNames(), ["report_history"]);
-    const values = ["tool-alpha", "tool-bravo", "tool-charlie"];
-    const cache: CacheObservation[] = [];
-    let previousResponseId: string | undefined;
-
-    for (let index = 0; index < values.length; index++) {
-      const frameStart = traffic.frames.length;
-      await session.prompt(
-        [
-          `<history-item>${values[index]}</history-item>`,
-          "Call report_history exactly once now. Do not respond with text.",
-        ].join("\n"),
-        {
+      for (let index = 0; index < values.length; index++) {
+        const frameStart = traffic.frames.length;
+        await session.prompt(`<history-item>${values[index]}</history-item>`, {
           expandPromptTemplates: false,
-        },
-      );
-      const promptFrames = traffic.frames.slice(frameStart);
+        });
+        const promptFrames = traffic.frames.slice(frameStart);
 
-      const assistant = latestAssistant(session);
+        const assistant = latestAssistant(session);
+        cache.push(cacheObservation(assistant));
+        assert.equal(assistant.stopReason, "stop");
+        assert.deepEqual(responseLines(assistantText(assistant)), values.slice(0, index + 1));
+        if (index === 0) {
+          const prewarm = promptFrames.find((frame) => frame["generate"] === false);
+          assert.ok(prewarm, "Missing WebSocket prewarm frame");
+          assert.equal(
+            frameInput(prewarm, 2).some((item) => item.role === "user"),
+            false,
+          );
+        }
+        const frame = promptFrames.at(-1);
+        assert.ok(frame, `Missing WebSocket frame for text turn ${String(index + 1)}`);
+        if (previousResponseId) {
+          if (frame.previous_response_id === previousResponseId) {
+            assertCurrentMarkerOnly(frameInput(frame, 1), values, index);
+          } else {
+            assert.equal(frame.previous_response_id, undefined);
+            const serialized = JSON.stringify(frameInput(frame));
+            for (const value of values.slice(0, index + 1)) {
+              assert.match(serialized, new RegExp(value));
+            }
+          }
+        } else {
+          assert.ok(isString(frame.previous_response_id));
+          assertCurrentMarkerOnly(frameInput(frame, 1), values, index);
+        }
+        previousResponseId = assistant.responseId;
+      }
+      assert.ok(traffic.frames.length >= values.length + 1);
+      assert.ok(traffic.connections >= 1);
+      t.diagnostic(`text cache observations: ${JSON.stringify(cache)}`);
+    },
+  );
+
+  test(
+    `live Pi host ${modelId} preserves tool conversation history through Codex`,
+    { skip: !LIVE_TEST_ENABLED, timeout: LIVE_TEST_TIMEOUT_MS },
+    async (t) => {
+      const traffic = observeRealWebSocketTraffic(t);
+      const reports: string[][] = [];
+      const reportHistory = defineTool({
+        name: "report_history",
+        label: "Report History",
+        description: "Report every user-provided history item in chronological order.",
+        parameters: Type.Object({
+          items: Type.Array(Type.String()),
+        }),
+        async execute(_toolCallId, params) {
+          reports.push([...params.items]);
+          return {
+            content: [{ type: "text", text: "History report accepted." }],
+            details: {},
+            terminate: true,
+          };
+        },
+      });
+      const session = await createLivePiHost(t, "tool", modelId, [reportHistory]);
+      assert.deepEqual(session.getActiveToolNames(), ["report_history"]);
+      const values = ["tool-alpha", "tool-bravo", "tool-charlie"];
+      const cache: CacheObservation[] = [];
+      let previousResponseId: string | undefined;
+
+      for (let index = 0; index < values.length; index++) {
+        const frameStart = traffic.frames.length;
+        await session.prompt(
+          [
+            `<history-item>${values[index]}</history-item>`,
+            "Call report_history exactly once now. Do not respond with text.",
+          ].join("\n"),
+          {
+            expandPromptTemplates: false,
+          },
+        );
+        const promptFrames = traffic.frames.slice(frameStart);
+
+        const assistant = latestAssistant(session);
+        assert.equal(
+          assistant.stopReason,
+          "toolUse",
+          JSON.stringify(
+            assistant.content.map((block) => ({
+              type: block.type,
+              text: block.type === "text" ? block.text : undefined,
+              thinking: block.type === "thinking" ? block.thinking : undefined,
+            })),
+          ),
+        );
+        assert.deepEqual(reports[index], values.slice(0, index + 1));
+        cache.push(cacheObservation(assistant));
+        assert.equal(
+          assistant.content.some(
+            (block) => block.type === "toolCall" && block.name === "report_history",
+          ),
+          true,
+        );
+        if (index === 0) {
+          const prewarm = promptFrames.find((frame) => frame["generate"] === false);
+          assert.ok(prewarm, "Missing WebSocket prewarm frame");
+          assert.equal(
+            frameInput(prewarm, 2).some((item) => item.role === "user"),
+            false,
+          );
+        }
+        const frame = promptFrames.at(-1);
+        assert.ok(frame, `Missing WebSocket frame for tool turn ${String(index + 1)}`);
+        let input: JsonRecord[];
+        if (previousResponseId) {
+          if (frame.previous_response_id === previousResponseId) {
+            input = frameInput(frame, 2);
+            assert.equal(input[0]?.type, "function_call_output");
+            assert.equal(input[1]?.role, "user");
+            assertCurrentMarkerOnly(input, values, index);
+          } else {
+            assert.equal(frame.previous_response_id, undefined);
+            input = frameInput(frame);
+            const serialized = JSON.stringify(input);
+            for (const value of values.slice(0, index + 1)) {
+              assert.match(serialized, new RegExp(value));
+            }
+          }
+        } else {
+          assert.ok(isString(frame.previous_response_id));
+          input = frameInput(frame, 1);
+          assertCurrentMarkerOnly(input, values, index);
+        }
+        previousResponseId = assistant.responseId;
+      }
+      assert.ok(traffic.frames.length >= values.length + 1);
+      assert.ok(traffic.connections >= 1);
       assert.equal(
-        assistant.stopReason,
-        "toolUse",
-        JSON.stringify(
-          assistant.content.map((block) => ({
-            type: block.type,
-            text: block.type === "text" ? block.text : undefined,
-            thinking: block.type === "thinking" ? block.thinking : undefined,
-          })),
-        ),
-      );
-      assert.deepEqual(reports[index], values.slice(0, index + 1));
-      cache.push(cacheObservation(assistant));
-      assert.equal(
-        assistant.content.some(
-          (block) => block.type === "toolCall" && block.name === "report_history",
-        ),
+        session.sessionManager
+          .getBranch()
+          .some(
+            (entry) => entry.type === "custom" && entry.customType === NATIVE_RESPONSE_ENTRY_TYPE,
+          ),
         true,
       );
-      if (index === 0) {
-        const prewarm = promptFrames.find((frame) => frame["generate"] === false);
-        assert.ok(prewarm, "Missing WebSocket prewarm frame");
-        assert.equal(
-          frameInput(prewarm, 2).some((item) => item.role === "user"),
-          false,
-        );
-      }
-      const frame = promptFrames.at(-1);
-      assert.ok(frame, `Missing WebSocket frame for tool turn ${String(index + 1)}`);
-      let input: JsonRecord[];
-      if (previousResponseId) {
-        if (frame.previous_response_id === previousResponseId) {
-          input = frameInput(frame, 2);
-          assert.equal(input[0]?.type, "function_call_output");
-          assert.equal(input[1]?.role, "user");
-          assertCurrentMarkerOnly(input, values, index);
-        } else {
-          assert.equal(frame.previous_response_id, undefined);
-          input = frameInput(frame);
-          const serialized = JSON.stringify(input);
-          for (const value of values.slice(0, index + 1)) {
-            assert.match(serialized, new RegExp(value));
-          }
-        }
-      } else {
-        assert.ok(isString(frame.previous_response_id));
-        input = frameInput(frame, 1);
-        assertCurrentMarkerOnly(input, values, index);
-      }
-      previousResponseId = assistant.responseId;
-    }
-    assert.ok(traffic.frames.length >= values.length + 1);
-    assert.ok(traffic.connections >= 1);
-    assert.equal(
-      session.sessionManager
-        .getBranch()
-        .some(
-          (entry) => entry.type === "custom" && entry.customType === NATIVE_RESPONSE_ENTRY_TYPE,
-        ),
-      true,
-    );
-    t.diagnostic(`tool cache observations: ${JSON.stringify(cache)}`);
-  },
-);
+      t.diagnostic(`tool cache observations: ${JSON.stringify(cache)}`);
+    },
+  );
 
-test(
-  "live Pi host sends Pi's strict built-in tool schemas and reads a file through Codex",
-  { skip: !LIVE_TEST_ENABLED, timeout: LIVE_TEST_TIMEOUT_MS },
-  async (t) => {
-    // Pi's built-in tools request JSON-schema constrained sampling. Codex rejects
-    // `strict: true` unless the schema is the strict subset, so a real request with the
-    // built-in `read` tool is the only proof that serialization matches upstream.
-    const traffic = observeRealWebSocketTraffic(t);
-    const session = await createLivePiHost(t, "read", [], { builtinTools: ["read"] });
-    assert.deepEqual(session.getActiveToolNames(), ["read"]);
-    const marker = `strict-read-${Date.now().toString(36)}`;
-    await writeFile(join(session.sessionManager.getCwd(), "marker.txt"), `${marker}\n`);
-    await session.prompt("Read the file marker.txt in the working directory.", {
-      expandPromptTemplates: false,
-    });
-    // Tool declarations travel either in the top-level tools list or anchored to
-    // system messages as additional_tools; search every declaration in every frame.
-    const readTool = traffic.frames
-      .flatMap(functionDeclarations)
-      .find((tool) => tool["name"] === "read");
-    assert.ok(readTool, "The request declared the built-in read tool.");
-    assert.equal(readTool["strict"], true);
-    assert.equal(requireJsonRecord(readTool["parameters"])["additionalProperties"], false);
-    const messages = assistantMessages(session);
-    assert.ok(
-      messages.some((message) =>
-        message.content.some((block) => block.type === "toolCall" && block.name === "read"),
-      ),
-      "Codex called the read tool.",
-    );
-    const final = latestAssistant(session);
-    assert.equal(final.stopReason, "stop", final.errorMessage);
-    assert.match(
-      final.content.flatMap((block) => (block.type === "text" ? [block.text] : [])).join(""),
-      new RegExp(marker),
-    );
-  },
-);
+  test(
+    `live Pi host ${modelId} sends Pi's strict built-in tool schemas and reads a file through Codex`,
+    { skip: !LIVE_TEST_ENABLED, timeout: LIVE_TEST_TIMEOUT_MS },
+    async (t) => {
+      // Pi's built-in tools request JSON-schema constrained sampling. Codex rejects
+      // `strict: true` unless the schema is the strict subset, so a real request with the
+      // built-in `read` tool is the only proof that serialization matches upstream.
+      const traffic = observeRealWebSocketTraffic(t);
+      const session = await createLivePiHost(t, "read", modelId, [], { builtinTools: ["read"] });
+      assert.deepEqual(session.getActiveToolNames(), ["read"]);
+      const marker = `strict-read-${Date.now().toString(36)}`;
+      await writeFile(join(session.sessionManager.getCwd(), "marker.txt"), `${marker}\n`);
+      await session.prompt("Read the file marker.txt in the working directory.", {
+        expandPromptTemplates: false,
+      });
+      // Tool declarations travel either in the top-level tools list or anchored to
+      // system messages as additional_tools; search every declaration in every frame.
+      const readTool = traffic.frames
+        .flatMap(functionDeclarations)
+        .find((tool) => tool["name"] === "read");
+      assert.ok(readTool, "The request declared the built-in read tool.");
+      assert.equal(readTool["strict"], true);
+      assert.equal(requireJsonRecord(readTool["parameters"])["additionalProperties"], false);
+      const messages = assistantMessages(session);
+      assert.ok(
+        messages.some((message) =>
+          message.content.some((block) => block.type === "toolCall" && block.name === "read"),
+        ),
+        "Codex called the read tool.",
+      );
+      const final = latestAssistant(session);
+      assert.equal(final.stopReason, "stop", final.errorMessage);
+      assert.match(
+        final.content.flatMap((block) => (block.type === "text" ? [block.text] : [])).join(""),
+        new RegExp(marker),
+      );
+    },
+  );
+}

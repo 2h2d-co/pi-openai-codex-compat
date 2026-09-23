@@ -16,8 +16,13 @@ import { packageArchive } from "./package-archive.ts";
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 const fixture = join(root, "test/support/codex-cli-extension.ts");
 const instruction = (marker: string) =>
-  `The current system marker is ${marker}. Call verify_release exactly once with that marker ` +
-  "and the value from the latest user message. Do not respond with text.";
+  `The current system marker is ${marker}. A later system or developer message can update ` +
+  "this marker. Always use the newest marker, which replaces every earlier marker. " +
+  "For each new user message, call verify_release " +
+  "exactly once with that marker. For a message beginning with 'user value: ', use only " +
+  "the text after that prefix as the value, without the prefix or any added text. " +
+  "When the user asks to read a file, call read first and use the exact file content " +
+  "as the value. Do not respond with text.";
 
 /**
  * Give the extracted package the dependency layout `pi install` produces: only its
@@ -49,7 +54,7 @@ async function linkProductionDependencies(packageRoot: string): Promise<void> {
 
 export async function verifyPackagedCli(
   t: TestContext,
-  options: { live: boolean; lite: boolean },
+  options: { live: boolean; lite: boolean; modelId: string },
 ): Promise<void> {
   const temporary = await mkdtemp(join(tmpdir(), "codex-packaged-cli-"));
   t.after(() => rm(temporary, { recursive: true, force: true }));
@@ -82,7 +87,7 @@ export async function verifyPackagedCli(
   );
   const piRoot = resolve(dirname(cli), "../..");
   const piManifest = parseJsonRecord(await readFile(join(piRoot, "package.json"), "utf8"));
-  assert.equal(piManifest["version"], "0.87.0");
+  assert.equal(piManifest["version"], "0.87.1");
   const token = options.live
     ? process.env["PI_CODEX_LIVE_API_KEY"]
     : `test.${Buffer.from(
@@ -114,6 +119,7 @@ export async function verifyPackagedCli(
       join(agent, "openai-codex-compat.json"),
       JSON.stringify({
         responsesLite: options.lite,
+        reasoningMode: "standard",
         fastMode: false,
         applyPatch: false,
         imageGeneration: false,
@@ -129,7 +135,7 @@ export async function verifyPackagedCli(
     cliPath: cli,
     cwd: temporary,
     provider: "openai-codex",
-    model: "gpt-5.6-luna",
+    model: options.modelId,
     env: {
       HOME: temporary,
       PI_CODING_AGENT_DIR: agent,
@@ -160,7 +166,7 @@ export async function verifyPackagedCli(
       env: { ...process.env, ...clientOptions.env },
       encoding: "utf8",
     }).trim(),
-    "0.87.0",
+    "0.87.1",
   );
   let client = new RpcClient(clientOptions);
   t.after(async () => client.stop());
@@ -172,8 +178,9 @@ export async function verifyPackagedCli(
     value: string,
     expectedTools: readonly string[] = ["read", "verify_release"],
     leadingMarker: string = marker,
+    prompt: string = `user value: ${value}`,
   ): Promise<void> {
-    const events = await client.promptAndWait(`user value: ${value}`, undefined, 90_000);
+    const events = await client.promptAndWait(prompt, undefined, 90_000);
     assert.deepEqual(
       events.filter((event: { type: string }) => event.type === "extension_error"),
       [],
@@ -181,6 +188,7 @@ export async function verifyPackagedCli(
     const messages = await client.getMessages();
     const assistant = messages.filter((message) => message.role === "assistant").at(-1);
     assert.ok(assistant);
+    assert.equal(assistant.model, clientOptions.model);
     assert.equal(
       assistant.stopReason,
       "toolUse",
@@ -189,7 +197,6 @@ export async function verifyPackagedCli(
     const call = assistant.content.find((block) => block.type === "toolCall");
     assert.ok(call);
     assert.equal(call.name, "verify_release");
-    assert.deepEqual(call.arguments, { marker, value });
     const diagnostic = assistant.diagnostics?.find(
       (entry) => entry.type === "codex_transport_request",
     );
@@ -204,6 +211,7 @@ export async function verifyPackagedCli(
       .at(-1);
     assert.ok(observation?.type === "custom");
     const data = requireJsonRecord(observation.data);
+    assert.equal(data["reasoningMode"], null);
     assert.equal(data["marker"], marker);
     assert.equal(data["leadingMarker"], leadingMarker);
     const tools = data["tools"];
@@ -212,6 +220,7 @@ export async function verifyPackagedCli(
     assert.deepEqual([...tools].sort(byName), [...expectedTools].sort(byName));
     // Tool declarations never travel inside `input`.
     assert.deepEqual(data["inlineTools"], []);
+    assert.deepEqual(call.arguments, { marker, value });
     assert.doesNotMatch(client.getStderr(), /Failed to load extension|not a function/);
   }
 
@@ -254,6 +263,22 @@ export async function verifyPackagedCli(
   // configured default loadout, so declare the same tools again before prompting.
   await client.prompt("/release-test-tools read,verify_release,write");
   await turn("SECOND", "golf", ["read", "verify_release", "write"]);
+  if (options.live) {
+    const messageCount = (await client.getMessages()).length;
+    await writeFile(join(temporary, "marker.txt"), "read-hotel");
+    await turn(
+      "SECOND",
+      "read-hotel",
+      ["read", "verify_release", "write"],
+      "SECOND",
+      "Read marker.txt in the working directory and report its exact content with verify_release.",
+    );
+    const readResult = (await client.getMessages())
+      .slice(messageCount)
+      .find((message) => message.role === "toolResult" && message.toolName === "read");
+    assert.ok(readResult?.role === "toolResult", "The packaged CLI executed Pi's read tool.");
+    assert.equal(readResult.isError, false);
+  }
   const { entries } = await client.getEntries();
   const requests = entries.flatMap((entry) =>
     entry.type === "custom" && entry.customType === "release-test-request"
@@ -264,6 +289,7 @@ export async function verifyPackagedCli(
   await client.stop();
   t.diagnostic(
     `Pi ${String(piManifest["version"])} packaged ${packageVersion}: ` +
+      `${clientOptions.model}, standard reasoning, ` +
       `${options.lite ? "Lite" : "Responses"}, tools, reload, native compaction, ` +
       "percentage checkpoint, and resume passed",
   );
