@@ -2,16 +2,16 @@
 
 ## Unreleased
 
+## 0.0.17 - 2026-09-25
+
 ### Fixed
 
-- Restore session settings across extension reloads, restarts, and resumes.
-  Session preferences no longer disappear when the Pi process ends.
 - Separate menu sections with blank rows, using compact spacing on short terminals.
 - Align setting names on the left and values in a stable column on the right.
   Render the search placeholder in muted gray instead of ordinary input text.
   Keep Save and Discard hints visible in narrow terminals.
 - Align settings with the Anthropic menu: Enter changes values, Ctrl+S saves and
-  applies drafts, and Escape discards unsaved edits without changing active tools.
+  applies drafts, and Escape discards unapplied drafts without changing active tools.
 - Save only changed overrides, preserve inheritance and external edits, and
   report conflicting saves without overwriting them.
 - Block command-tool switches while persistent command sessions remain instead
@@ -20,7 +20,8 @@
 ### Added
 
 - Apply to session without changing configuration files. Reopening settings shows
-  active session values. Ctrl+S can save session-only changes later.
+  active session values, including after reload, restart, or resume.
+  Ctrl+S can save session-only changes later.
 - Custom percentage editing, configuration-source and model-applicability labels,
   inherited-value resets, and consistent keyboard, focus, and mouse support.
 
