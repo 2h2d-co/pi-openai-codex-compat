@@ -8,6 +8,7 @@ import { fileURLToPath } from "node:url";
 import { stripVTControlCharacters } from "node:util";
 import { setTimeout } from "node:timers/promises";
 import { spawn } from "node-pty";
+import { SessionManager } from "@earendil-works/pi-coding-agent";
 import { packageArchive } from "./support/package-archive.ts";
 import { linkProductionDependencies } from "./support/codex-cli-harness.ts";
 
@@ -41,27 +42,53 @@ for (const mode of ["regular", "fullscreen"]) {
       "0.87.1",
     );
     // No credentials or provider requests. Keep normal extension loading enabled.
-    const terminal = spawn(process.execPath, [cli, "-e", join(temporary, "package")], {
-      cwd: temporary,
-      cols: 120,
-      rows: 35,
-      name: "xterm-256color",
-      env: {
-        PATH: process.env["PATH"],
-        HOME: temporary,
-        TERM: "xterm-256color",
-        PI_CODING_AGENT_DIR: agent,
-        PI_PACKAGE_DIR: piPackage,
+    const manager = SessionManager.create(temporary, join(temporary, "sessions"));
+    // Pi defers creation of a session file until its first assistant message.
+    manager.appendMessage({
+      role: "assistant",
+      content: [],
+      api: "anthropic-messages",
+      provider: "test",
+      model: "test",
+      usage: {
+        input: 0,
+        output: 0,
+        cacheRead: 0,
+        cacheWrite: 0,
+        totalTokens: 0,
+        cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
       },
+      stopReason: "stop",
+      timestamp: Date.now(),
     });
+    const sessionFile = manager.getSessionFile();
+    assert.ok(sessionFile);
+    const launch = () =>
+      spawn(process.execPath, [cli, "--session", sessionFile, "-e", join(temporary, "package")], {
+        cwd: temporary,
+        cols: 120,
+        rows: 35,
+        name: "xterm-256color",
+        env: {
+          PATH: process.env["PATH"],
+          HOME: temporary,
+          TERM: "xterm-256color",
+          PI_CODING_AGENT_DIR: agent,
+          PI_PACKAGE_DIR: piPackage,
+        },
+      });
+    let terminal = launch();
     let output = "";
     let exited = false;
-    terminal.onData((data) => {
-      output = (output + data).slice(-50_000);
-    });
-    terminal.onExit(() => {
-      exited = true;
-    });
+    const observe = () => {
+      terminal.onData((data) => {
+        output = (output + data).slice(-50_000);
+      });
+      terminal.onExit(() => {
+        exited = true;
+      });
+    };
+    observe();
     t.after(async () => {
       if (!exited) terminal.kill();
       for (let attempt = 0; attempt < 100 && !exited; attempt++) await setTimeout(10);
@@ -90,6 +117,28 @@ for (const mode of ["regular", "fullscreen"]) {
     terminal.write("/codex-settings\r");
     await wait("Session settings shown");
     assert.match(stripVTControlCharacters(output), /Fast mode\s+on ~/);
+    terminal.write("\u001b");
+    await setTimeout(150);
+    terminal.write("/reload\r");
+    await setTimeout(500);
+    output = "";
+    terminal.write("/codex-settings\r");
+    await wait("Session settings shown");
+    assert.match(stripVTControlCharacters(output), /Fast mode\s+on ~/);
+    terminal.write("\u001b");
+    await setTimeout(150);
+    terminal.write("\u0004");
+    for (let attempt = 0; attempt < 100 && !exited; attempt++) await setTimeout(20);
+    assert.ok(exited);
+    output = "";
+    exited = false;
+    terminal = launch();
+    observe();
+    await wait("No models available");
+    terminal.write("/codex-settings\r");
+    await wait("Session settings shown");
+    assert.match(stripVTControlCharacters(output), /Fast mode\s+on ~/);
+    await assert.rejects(readFile(file), { code: "ENOENT" });
     terminal.write("\u0013");
     await wait("Saved and applied");
     assert.deepEqual(JSON.parse(await readFile(file, "utf8")), { fastMode: true });

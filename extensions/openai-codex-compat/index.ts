@@ -12,7 +12,7 @@ import registerOutputLimitContinuation, {
 } from "./output-limit-continuation.ts";
 import registerRemoteCompaction, { remoteCompactionApi } from "./remote-compaction.ts";
 import registerCodexRequestOptions from "./request-options.ts";
-import registerCodexSettings from "./settings-pane.ts";
+import registerCodexSettings, { loadSessionConfig } from "./settings-pane.ts";
 import registerCodexThreadLineage, { codexThreadLineageApi } from "./codex-thread-lineage.ts";
 import registerCodexTools, { syncCodexTools } from "./tools.ts";
 
@@ -26,8 +26,11 @@ export {
 export default function registerOpenAICodexCompat(pi: ExtensionAPI): void {
   requirePiTranscriptRuntime(piAi, piCodingAgent);
   let activeConfig: CodexCompatConfig | undefined;
+  let sessionContext: Parameters<typeof loadSessionConfig>[0] | undefined;
   const resolveConfig = (ctx: ConfigContext): CodexCompatConfig => {
-    activeConfig ??= loadConfig(ctx.cwd, ctx.isProjectTrusted());
+    activeConfig ??= sessionContext
+      ? loadSessionConfig(sessionContext)
+      : loadConfig(ctx.cwd, ctx.isProjectTrusted());
     return activeConfig;
   };
   const resolveToolBackground = () => activeConfig?.toolBackground ?? DEFAULT_CONFIG.toolBackground;
@@ -37,7 +40,9 @@ export default function registerOpenAICodexCompat(pi: ExtensionAPI): void {
     activeConfig?.applyPatchDiagnostics ?? DEFAULT_CONFIG.applyPatchDiagnostics;
 
   pi.on("session_start", (event, ctx) => {
-    activeConfig = loadConfig(ctx.cwd, ctx.isProjectTrusted());
+    sessionContext = ctx;
+    activeConfig = undefined;
+    activeConfig = resolveConfig(ctx);
     installCodexFooter(ctx, resolveConfig);
     if (event.reason !== "reload" && ctx.mode === "tui") {
       ctx.ui.notify("pi-openai-codex-compat loaded · /codex-settings", "info");

@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import { getKeybindings, type Component } from "@earendil-works/pi-tui";
-import { initTheme } from "@earendil-works/pi-coding-agent";
+import { initTheme, SessionManager } from "@earendil-works/pi-coding-agent";
 import type { Api, Model } from "@earendil-works/pi-ai";
 import {
   CONFIG_ENVIRONMENT_VARIABLES,
@@ -13,6 +13,7 @@ import {
 } from "../extensions/openai-codex-compat/config.ts";
 import registerCodexSettings, {
   settingFields,
+  loadSessionConfig,
   type CodexSettingsContext,
   type CodexSettingsHandler,
 } from "../extensions/openai-codex-compat/settings-pane.ts";
@@ -38,13 +39,13 @@ test("Codex settings stage edits, block command-session loss, and persist only c
   let current = { ...DEFAULT_CONFIG };
   let command: CodexSettingsHandler | undefined;
   let component: Component | undefined;
-  let startSession: () => void = () => {};
+  const manager = SessionManager.inMemory(root);
   let processes = true;
   let report: (text: string) => void = () => {};
   registerCodexSettings(
     {
-      on: (_event, listener) => {
-        startSession = listener;
+      appendEntry: (type, data) => {
+        manager.appendCustomEntry(type, data);
       },
       registerCommand: (_name, entry) => {
         command = entry.handler;
@@ -67,7 +68,7 @@ test("Codex settings stage edits, block command-session loss, and persist only c
     mode: "tui",
     model: undefined,
     modelRegistry: { find: () => undefined },
-    sessionManager: { getSessionId: () => "synthetic" },
+    sessionManager: manager,
     isProjectTrusted: () => false,
     isIdle: () => true,
     waitForIdle: async () => {},
@@ -129,6 +130,17 @@ test("Codex settings stage edits, block command-session loss, and persist only c
   await assert.rejects(readFile(join(root, "agent", CONFIG_FILE)), { code: "ENOENT" });
   component.handleInput?.("\u001b");
   await pending;
+  current = loadSessionConfig(ctx);
+  assert.equal(current.shellTool, "shell_command");
+  const variable = CONFIG_ENVIRONMENT_VARIABLES.shellTool;
+  const originalOverride = process.env[variable];
+  try {
+    process.env[variable] = "unified_exec";
+    assert.equal(loadSessionConfig(ctx).shellTool, "unified_exec");
+  } finally {
+    if (originalOverride === undefined) delete process.env[variable];
+    else process.env[variable] = originalOverride;
+  }
   const reopened = new Promise<void>((resolve) => {
     opened = resolve;
   });
@@ -148,15 +160,16 @@ test("Codex settings stage edits, block command-session loss, and persist only c
   assert.deepEqual(data, { shellTool: "shell_command" });
   component.handleInput?.("\u001b");
   await pendingReopen;
-  current = { ...DEFAULT_CONFIG };
-  startSession();
+  manager.newSession();
+  current = loadSessionConfig(ctx);
   const restarted = new Promise<void>((resolve) => {
     opened = resolve;
   });
   const pendingRestart = command("", ctx);
   await restarted;
   component.handleInput?.("Command tool");
-  assert.match(component.render(160).join("\n"), /Command tool\s+unified_exec ~/);
+  assert.match(component.render(160).join("\n"), /Command tool\s+shell_command/);
+  assert.doesNotMatch(component.render(160).join("\n"), /shell_command ~/);
   component.handleInput?.("\u0013");
   assert.deepEqual(JSON.parse(await readFile(join(root, "agent", CONFIG_FILE), "utf8")), {
     shellTool: "shell_command",

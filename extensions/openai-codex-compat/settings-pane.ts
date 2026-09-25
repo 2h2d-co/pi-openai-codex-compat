@@ -6,7 +6,12 @@ import {
   type SettingsField,
   type SettingsMenuFactory,
 } from "../settings-menu.ts";
-import { SettingsStore, type SettingsSessionState } from "../settings-store.ts";
+import { SettingsStore } from "../settings-store.ts";
+import {
+  readSessionSettings,
+  sessionSettingsEntry,
+  type SettingsSessionContext,
+} from "../settings-session.ts";
 import {
   CONFIG_ENVIRONMENT_VARIABLES,
   CODEX_TOOL_BACKGROUND_SCHEMA,
@@ -21,6 +26,8 @@ import {
   parseEnvironmentConfig,
   parseConfig,
   resolveConfig,
+  loadConfig,
+  configLayer,
   type CodexCompatConfig,
 } from "./config.ts";
 import type { ConfigContext } from "./config-context.ts";
@@ -132,9 +139,9 @@ export type SettingsCallbacks = {
   hasPersistentSessions?: () => boolean;
 };
 export type CodexSettingsContext = ConfigContext &
+  SettingsSessionContext &
   Pick<ExtensionCommandContext, "mode" | "model" | "isIdle" | "waitForIdle"> & {
     modelRegistry: Pick<ExtensionCommandContext["modelRegistry"], "find">;
-    sessionManager: Pick<ExtensionCommandContext["sessionManager"], "getSessionId">;
     ui: {
       custom: <T>(factory: SettingsMenuFactory<T>) => Promise<T>;
       notify: ExtensionCommandContext["ui"]["notify"];
@@ -142,21 +149,27 @@ export type CodexSettingsContext = ConfigContext &
   };
 export type CodexSettingsHandler = (args: string, ctx: CodexSettingsContext) => Promise<void>;
 export type CodexSettingsApi = {
-  on: (event: "session_start", handler: () => void) => void;
+  appendEntry: (customType: string, data: unknown) => void;
   registerCommand: (
     name: string,
     options: { description: string; handler: CodexSettingsHandler },
   ) => void;
 };
+export const SESSION_SETTINGS_TYPE = "pi-openai-codex-compat:settings";
+
+export function loadSessionConfig(ctx: ConfigContext & SettingsSessionContext): CodexCompatConfig {
+  const saved = readSessionSettings(ctx, SESSION_SETTINGS_TYPE, settingFields);
+  return resolveConfig(
+    configLayer(loadConfig(ctx.cwd, ctx.isProjectTrusted())),
+    parseConfig(saved.values),
+    parseEnvironmentConfig(),
+  );
+}
 
 export default function registerCodexSettings(
   pi: CodexSettingsApi,
   callbacks: SettingsCallbacks,
 ): void {
-  let sessionState: SettingsSessionState = { changes: {} };
-  pi.on("session_start", () => {
-    sessionState = { changes: {} };
-  });
   pi.registerCommand("codex-settings", {
     description: "Configure OpenAI Codex compatibility",
     handler: async (_args, ctx) => {
@@ -186,6 +199,8 @@ export default function registerCodexSettings(
         const snapshot = await store.load();
         const selection = ctx.model;
         const current = callbacks.getConfig(ctx);
+        const sessionState = readSessionSettings(ctx, SESSION_SETTINGS_TYPE, settingFields).session;
+        for (const id of Object.keys(locked)) delete sessionState.changes[id];
         let appliedShell = current.shellTool;
         const model = selectedRegistryModel(ctx);
         const fields = settingFields.map((field) => {
@@ -228,8 +243,12 @@ export default function registerCodexSettings(
                 );
               }
             },
-            apply: (values) => {
+            apply: (values, nextSession) => {
               const config = resolveConfig(parseConfig(values), {}, environment);
+              pi.appendEntry(
+                SESSION_SETTINGS_TYPE,
+                sessionSettingsEntry(sessionId, values, nextSession, locked),
+              );
               callbacks.onChange(config, { model: selectedRegistryModel(ctx), sessionId });
               appliedShell = config.shellTool;
             },

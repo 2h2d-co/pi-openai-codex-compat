@@ -1,6 +1,6 @@
 import { mkdir, open, readFile, rename, stat, unlink } from "node:fs/promises";
 import { dirname } from "node:path";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { setTimeout } from "node:timers/promises";
 
 // Keep this provider-independent contract aligned with pi-anthropic-compat.
@@ -19,32 +19,39 @@ export type SettingsSnapshot = {
   sources: Record<string, string>;
   global: FileState;
   project: FileState;
+  observed?: Record<string, [string, string]>;
 };
 export type SettingsSessionState = {
   changes: SettingChanges;
   baseline?: SettingsSnapshot;
 };
+export function observedSetting(snapshot: SettingsSnapshot, id: string): [string, string] {
+  return (
+    snapshot.observed?.[id] ?? [
+      createHash("sha256")
+        .update(JSON.stringify(snapshot.global.data[id]) ?? "undefined")
+        .digest("hex"),
+      createHash("sha256")
+        .update(JSON.stringify(snapshot.project.data[id]) ?? "undefined")
+        .digest("hex"),
+    ]
+  );
+}
 
 /** Retain conflict evidence for session overrides across menu reopenings. */
 export function sessionBaseline(
   snapshot: SettingsSnapshot,
   session: SettingsSessionState,
 ): SettingsSnapshot {
-  if (!session.baseline) return snapshot;
-  const result = {
+  const baseline = session.baseline;
+  if (!baseline) return snapshot;
+  return {
     ...snapshot,
-    file: session.baseline.file,
-    global: { ...snapshot.global, data: { ...snapshot.global.data } },
-    project: { ...snapshot.project, data: { ...snapshot.project.data } },
+    file: baseline.file,
+    observed: Object.fromEntries(
+      Object.keys(session.changes).map((id) => [id, observedSetting(baseline, id)]),
+    ),
   };
-  for (const id of Object.keys(session.changes)) {
-    for (const layer of ["global", "project"] as const) {
-      const original = session.baseline[layer].data;
-      if (Object.hasOwn(original, id)) result[layer].data[id] = original[id];
-      else delete result[layer].data[id];
-    }
-  }
-  return result;
 }
 
 async function read(file: string): Promise<FileState> {
@@ -124,6 +131,9 @@ export class SettingsStore {
   ): Promise<SettingsSnapshot> {
     const keys = Object.keys(changes);
     if (keys.length === 0) return baseline;
+    if (baseline.file !== this.globalFile && baseline.file !== this.projectFile) {
+      throw new Error("The settings scope changed. Review the configuration before saving.");
+    }
     if (keys.some((id) => this.locked[id])) throw new Error("Environment settings are locked.");
     await mkdir(dirname(baseline.file), { recursive: true });
     const lockPath = `${baseline.file}.settings-lock`;
@@ -152,8 +162,8 @@ export class SettingsStore {
       }
       for (const id of keys) {
         if (
-          JSON.stringify(current.global.data[id]) !== JSON.stringify(baseline.global.data[id]) ||
-          JSON.stringify(current.project.data[id]) !== JSON.stringify(baseline.project.data[id])
+          JSON.stringify(observedSetting(current, id)) !==
+          JSON.stringify(observedSetting(baseline, id))
         ) {
           throw new Error(`Setting ${id} changed on disk. Reopen the menu to review it.`);
         }

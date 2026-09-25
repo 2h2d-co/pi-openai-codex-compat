@@ -52,7 +52,7 @@ export type SettingsMenuOptions = {
   status: (values: SettingValues) => string;
   prepare: (signal: AbortSignal) => Promise<void>;
   guard: (values: SettingValues) => void;
-  apply: (values: SettingValues) => void;
+  apply: (values: SettingValues, session: SettingsSessionState) => void;
 };
 export type SettingsMenuFactory<T> = (
   tui: Pick<TUI, "requestRender"> & { terminal?: { rows: number } },
@@ -68,7 +68,7 @@ export function settingsMenu(options: SettingsMenuOptions): SettingsMenuFactory<
     let draft = { ...active };
     let changes: SettingChanges = { ...options.session.changes };
     let notice = Object.keys(changes).length
-      ? "Session settings shown. Changes are not saved to disk."
+      ? "Session settings shown. Not saved to configuration files."
       : "Draft changes apply only when applied or saved.";
     let failed = false;
     let pendingApply = false;
@@ -172,7 +172,7 @@ export function settingsMenu(options: SettingsMenuOptions): SettingsMenuFactory<
       notice = dirty()
         ? `${dirty()} draft change(s). Not applied.`
         : Object.keys(changes).length
-          ? "No draft changes. Session settings are not saved to disk."
+          ? "No draft changes. Session settings are not saved to configuration files."
           : "No unsaved changes.";
       child = undefined;
       updateFocus();
@@ -240,7 +240,13 @@ export function settingsMenu(options: SettingsMenuOptions): SettingsMenuFactory<
         }
         signal.throwIfAborted();
         options.guard(draft);
-        options.apply({ ...draft });
+        options.apply(
+          { ...draft },
+          {
+            changes: { ...changes },
+            ...(Object.keys(changes).length ? { baseline } : {}),
+          },
+        );
         active = { ...draft };
         options.session.changes = { ...changes };
         if (Object.keys(changes).length) options.session.baseline = baseline;

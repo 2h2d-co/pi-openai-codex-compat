@@ -4,6 +4,8 @@
 
 ### Fixed
 
+- Restore session settings across extension reloads, restarts, and resumes.
+  Session preferences no longer disappear when the Pi process ends.
 - Separate menu sections with blank rows, using compact spacing on short terminals.
 - Align setting names on the left and values in a stable column on the right.
   Render the search placeholder in muted gray instead of ordinary input text.
