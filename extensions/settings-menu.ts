@@ -349,7 +349,6 @@ export function settingsMenu(options: SettingsMenuOptions): SettingsMenuFactory<
           if (editor) zone(editor, "results");
           text(`${keyName("tui.select.confirm")} select · ${keyName("tui.select.cancel")} back`);
         } else {
-          zone(search, "search");
           const hint = `${keyName("tui.select.confirm")} ${focus === "actions" ? "select" : "change"} · Space ${focus === "search" ? "search" : "select"} · ${keyName("tui.input.tab")} focus · Ctrl+S save · ${keyName("tui.select.cancel")} discard · F1 details`;
           const hints = busy
             ? [`${keyName("tui.select.cancel", true)} cancel save`]
@@ -361,6 +360,14 @@ export function settingsMenu(options: SettingsMenuOptions): SettingsMenuFactory<
                     `Ctrl+S save · ${keyName("tui.select.cancel", true)} discard`,
                   ]
                 : ["Ctrl+S save", `${keyName("tui.select.cancel", true)} discard`];
+          const footerRows = 3 + hints.length;
+          // Reserve search, up to three settings, a scroll indicator, and two
+          // detail rows before spending the remaining height on five section gaps.
+          const minimumContentRows = 1 + Math.min(3, options.fields.length) + 1 + 2;
+          const gap = height - lines.length - footerRows - minimumContentRows >= 5 ? 1 : 0;
+          if (gap) lines.push("");
+          zone(search, "search");
+          if (gap) lines.push("");
           const query = search.getValue().toLocaleLowerCase().trim().split(/\s+/);
           const fields = options.fields.filter((field) => {
             const content = `${field.label} ${field.id} ${field.description}`.toLocaleLowerCase();
@@ -396,7 +403,7 @@ export function settingsMenu(options: SettingsMenuOptions): SettingsMenuFactory<
             };
           });
           const activeId = list.getSelectedItem()?.value ?? selectedId;
-          const visible = Math.max(1, height - lines.length - 5 - hints.length);
+          const visible = Math.max(1, height - lines.length - footerRows - 2 - 3 * gap);
           const signature = JSON.stringify([items, visible]);
           if (signature !== listSignature) {
             listSignature = signature;
@@ -419,8 +426,9 @@ export function settingsMenu(options: SettingsMenuOptions): SettingsMenuFactory<
             selectedId = item.value;
           };
           zone(list, "results");
+          if (gap) lines.push("");
           const field = selectedField();
-          if (height - lines.length > 3 + hints.length) {
+          if (height - lines.length > footerRows + 2 * gap) {
             text(
               field
                 ? `${baseline.sources[field.id]} · ${field.description}`
@@ -428,8 +436,10 @@ export function settingsMenu(options: SettingsMenuOptions): SettingsMenuFactory<
               "muted",
             );
           }
-          if (height - lines.length > 3 + hints.length) text(options.status(draft), "muted");
+          if (height - lines.length > footerRows + 2 * gap) text(options.status(draft), "muted");
+          if (gap) lines.push("");
           zone(actions, "actions");
+          if (gap) lines.push("");
           for (const line of hints) text(line);
         }
         return lines.map((line) => truncateToWidth(line, width));

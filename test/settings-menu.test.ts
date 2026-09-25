@@ -247,6 +247,55 @@ test("search placeholder uses muted theme styling and entered text does not", as
   f.press("\u001b");
 });
 
+test("section gaps separate controls without adding space between setting rows", async (t) => {
+  const f = await fixture(t);
+  const lines = f.component.render(120);
+  const starts = [
+    lines.findIndex((line) => line.startsWith("> ")),
+    lines.findIndex((line) => line.includes("Native feature")),
+    lines.findIndex((line) => line.includes("A searchable boolean switch.")),
+    lines.findIndex((line) => line.includes("Save and close")),
+    lines.findIndex((line) => line.includes("Ctrl+S save")),
+  ];
+  for (const index of starts) {
+    assert.ok(index > 0);
+    assert.equal(lines[index - 1], "");
+  }
+  assert.equal(lines.filter((line) => line === "").length, 5);
+  const rows = ["Native feature", "Budget tokens", "Threshold", "Mode"].map((label) =>
+    lines.findIndex((line) => line.includes(label)),
+  );
+  assert.deepEqual(
+    rows,
+    rows.map((_row, index) => (rows[0] ?? 0) + index),
+  );
+  f.press("no matches");
+  assert.match(f.output(), /No matching settings/);
+  assert.equal(
+    f
+      .output()
+      .split("\n")
+      .filter((line) => line === "").length,
+    5,
+  );
+  f.press("\u001b");
+});
+
+test("short terminals drop section gaps and restore them after growing", async (t) => {
+  const f = await fixture(t);
+  f.terminal.rows = 14;
+  f.terminal.columns = 50;
+  const compact = f.component.render(50);
+  assert.ok(compact.length <= 11);
+  assert.equal(compact.filter((line) => line === "").length, 0);
+  assert.match(compact.join("\n"), /Save and close/);
+  assert.match(compact.join("\n"), /Ctrl\+S save · escape discard/);
+  f.terminal.rows = 30;
+  f.terminal.columns = 120;
+  assert.equal(f.component.render(120).filter((line) => line === "").length, 5);
+  f.press("\u001b");
+});
+
 test("numeric editors validate full ranges, keep errors open, and cancel locally", async (t) => {
   const f = await fixture(t);
   f.press("budget", "\r", "\u001b[B", "\u001b[B", "\r", "\u0015", "201", "\r");
