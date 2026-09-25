@@ -34,6 +34,7 @@ async function fixture(t: TestContext, locked: Record<string, string> = {}) {
   let waiting: (() => Promise<void>) | undefined;
   let version = "";
   let output: string[] = [];
+  const styles: { color: string; text: string }[] = [];
   const terminal = { rows: 30, columns: 120 };
   const keys = getKeybindings();
   const originalBindings = keys.getUserBindings();
@@ -81,7 +82,13 @@ async function fixture(t: TestContext, locked: Record<string, string> = {}) {
         output = component.render(terminal.columns);
       },
     },
-    { fg: (_color, text) => `${version}${text}`, bold: (text) => text },
+    {
+      fg: (color, text) => {
+        styles.push({ color, text });
+        return `${version}${text}`;
+      },
+      bold: (text) => text,
+    },
     keys,
     () => {
       closed++;
@@ -110,6 +117,7 @@ async function fixture(t: TestContext, locked: Record<string, string> = {}) {
     until,
     keys,
     terminal,
+    styles,
     output: () => output.join("\n"),
     applied: () => applied,
     closed: () => closed,
@@ -172,8 +180,70 @@ test("encoded Space, remapped confirm, search spaces, focus, and themes", async 
       const lines = f.component.render(width);
       assert.ok(lines.every((line) => visibleWidth(line) <= width));
       assert.ok(lines.length <= rows, `${rows}: ${lines.length}`);
+      assert.match(lines.join("\n"), /Ctrl\+S save/);
+      assert.match(lines.join("\n"), /escape(?:\/ctrl\+c)? discard/);
     }
   }
+  f.press("\u001b");
+});
+
+test("labels precede aligned values and filtering or draft markers do not move the column", async (t) => {
+  const f = await fixture(t);
+  for (const width of [20, 40, 80, 120]) {
+    f.terminal.columns = width;
+    const lines = f.component.render(width);
+    const columns = [
+      ["Native feature", "off"],
+      ["Budget tokens", "8"],
+      ["Threshold", "null"],
+      ["Mode", "a"],
+    ].map(([label, value]) => {
+      assert.ok(label && value);
+      const row = lines.find((line) => line.includes(label.slice(0, 5)) && line.endsWith(value));
+      assert.ok(row);
+      return visibleWidth(row.slice(0, -value.length));
+    });
+    assert.ok(columns.every((column) => column === columns[0]));
+    f.press("native");
+    const filtered = f
+      .output()
+      .split("\n")
+      .find((line) => line.includes("Nativ"));
+    assert.ok(filtered);
+    assert.ok(filtered.endsWith("off"));
+    assert.equal(visibleWidth(filtered.slice(0, -3)), columns[0]);
+    f.press("\r");
+    const dirty = f
+      .output()
+      .split("\n")
+      .find((line) => line.includes("Nativ"));
+    assert.ok(dirty);
+    assert.ok(dirty.endsWith("on *"));
+    assert.equal(visibleWidth(dirty.slice(0, -4)), columns[0]);
+    f.press("\r", "\u0015");
+  }
+  f.press("\u001b");
+});
+
+test("search placeholder uses muted theme styling and entered text does not", async (t) => {
+  const f = await fixture(t);
+  f.styles.length = 0;
+  f.component.render(120);
+  assert.equal(
+    f.styles
+      .filter(({ color }) => color === "muted")
+      .map(({ text }) => text)
+      .join("")
+      .includes("Search settings"),
+    true,
+  );
+  f.styles.length = 0;
+  f.press("native");
+  assert.equal(
+    f.styles.some(({ text }) => text.includes("Search settings") || text === "native"),
+    false,
+  );
+  assert.match(f.output(), /> native/);
   f.press("\u001b");
 });
 

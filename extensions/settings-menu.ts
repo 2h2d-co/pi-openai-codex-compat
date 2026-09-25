@@ -8,6 +8,7 @@ import {
   ScrollView,
   Text,
   truncateToWidth,
+  visibleWidth,
   type Component,
   type Focusable,
   type SelectItem,
@@ -79,7 +80,10 @@ export function settingsMenu(options: SettingsMenuOptions): SettingsMenuFactory<
           visible?: number;
         }
       | undefined;
-    const search = new Input({ placeholder: "Search settings" });
+    const search = new Input({
+      placeholder: "Search settings",
+      placeholderStyle: (text) => theme.fg("muted", text),
+    });
     const listTheme = {
       selectedPrefix: (text: string) => theme.fg("accent", text),
       selectedText: (text: string) => theme.fg("accent", text),
@@ -111,8 +115,10 @@ export function settingsMenu(options: SettingsMenuOptions): SettingsMenuFactory<
         ? ""
         : (field.format?.(value) ??
           (typeof value === "boolean" ? (value ? "on" : "off") : String(value)));
-    const keyName = (id: Parameters<typeof keys.getKeys>[0]) =>
-      keys.getKeys(id).join("/") || "unbound";
+    const keyName = (id: Parameters<typeof keys.getKeys>[0], compact = false) => {
+      const bindings = keys.getKeys(id);
+      return (compact ? bindings[0] : bindings.join("/")) || "unbound";
+    };
     const updateFocus = () => {
       search.focused = focused && focus === "search" && !child && !details;
       if (child?.input) child.input.focused = focused;
@@ -344,17 +350,53 @@ export function settingsMenu(options: SettingsMenuOptions): SettingsMenuFactory<
           text(`${keyName("tui.select.confirm")} select · ${keyName("tui.select.cancel")} back`);
         } else {
           zone(search, "search");
+          const hint = `${keyName("tui.select.confirm")} ${focus === "actions" ? "select" : "change"} · Space ${focus === "search" ? "search" : "select"} · ${keyName("tui.input.tab")} focus · Ctrl+S save · ${keyName("tui.select.cancel")} discard · F1 details`;
+          const hints = busy
+            ? [`${keyName("tui.select.cancel", true)} cancel save`]
+            : visibleWidth(hint) <= width
+              ? [hint]
+              : width >= 40
+                ? [
+                    `${keyName("tui.select.confirm", true)} ${focus === "actions" ? "select" : "change"} · ${keyName("tui.input.tab", true)} focus`,
+                    `Ctrl+S save · ${keyName("tui.select.cancel", true)} discard`,
+                  ]
+                : ["Ctrl+S save", `${keyName("tui.select.cancel", true)} discard`];
           const query = search.getValue().toLocaleLowerCase().trim().split(/\s+/);
           const fields = options.fields.filter((field) => {
             const content = `${field.label} ${field.id} ${field.description}`.toLocaleLowerCase();
             return query.every((word) => content.includes(word));
           });
-          const items = fields.map((field) => ({
-            value: field.id,
-            label: `${fieldValue(field, draft[field.id])}${Object.hasOwn(changes, field.id) ? " *" : ""}  ${field.label}${options.store.locked[field.id] ? " (env)" : ""}`,
-          }));
+          // SelectList reserves two columns for its cursor and two for its right margin.
+          // Measure every field, not only matches, so filtering cannot move the value column.
+          const contentWidth = Math.max(1, width - 4);
+          const widestLabel = Math.max(...options.fields.map((field) => visibleWidth(field.label)));
+          const widestValue = Math.max(
+            ...options.fields.map((field) => {
+              const values = [
+                ...field.choices,
+                baseline.values[field.id] ?? null,
+                ...(field.number ? [field.number.min, field.number.max] : []),
+              ];
+              return (
+                Math.max(...values.map((value) => visibleWidth(fieldValue(field, value)))) +
+                (options.store.locked[field.id] ? 6 : 2)
+              );
+            }),
+          );
+          const labelWidth = Math.min(
+            widestLabel,
+            Math.max(1, contentWidth - 2 - Math.min(widestValue, Math.floor(contentWidth / 2))),
+          );
+          const items = fields.map((field) => {
+            const label = truncateToWidth(field.label, labelWidth);
+            const value = `${fieldValue(field, draft[field.id])}${Object.hasOwn(changes, field.id) ? " *" : ""}${options.store.locked[field.id] ? " (env)" : ""}`;
+            return {
+              value: field.id,
+              label: `${label}${" ".repeat(labelWidth - visibleWidth(label) + 2)}${truncateToWidth(value, Math.max(1, contentWidth - labelWidth - 2))}`,
+            };
+          });
           const activeId = list.getSelectedItem()?.value ?? selectedId;
-          const visible = Math.max(1, height - lines.length - 6);
+          const visible = Math.max(1, height - lines.length - 5 - hints.length);
           const signature = JSON.stringify([items, visible]);
           if (signature !== listSignature) {
             listSignature = signature;
@@ -378,7 +420,7 @@ export function settingsMenu(options: SettingsMenuOptions): SettingsMenuFactory<
           };
           zone(list, "results");
           const field = selectedField();
-          if (height - lines.length > 4) {
+          if (height - lines.length > 3 + hints.length) {
             text(
               field
                 ? `${baseline.sources[field.id]} · ${field.description}`
@@ -386,13 +428,9 @@ export function settingsMenu(options: SettingsMenuOptions): SettingsMenuFactory<
               "muted",
             );
           }
-          if (height - lines.length > 5) text(options.status(draft), "muted");
+          if (height - lines.length > 3 + hints.length) text(options.status(draft), "muted");
           zone(actions, "actions");
-          text(
-            busy
-              ? `${keyName("tui.select.cancel")} cancel save`
-              : `${keyName("tui.select.confirm")} ${focus === "actions" ? "select" : "change"} · Space ${focus === "search" ? "search" : "select"} · ${keyName("tui.input.tab")} focus · Ctrl+S save · ${keyName("tui.select.cancel")} discard · F1 details`,
-          );
+          for (const line of hints) text(line);
         }
         return lines.map((line) => truncateToWidth(line, width));
       },

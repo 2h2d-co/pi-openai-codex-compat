@@ -4,6 +4,9 @@
 
 ### Fixed
 
+- Align setting names on the left and values in a stable column on the right.
+  Render the search placeholder in muted gray instead of ordinary input text.
+  Keep Save and Discard hints visible in narrow terminals.
 - Align settings with the Anthropic menu: Enter changes values, Ctrl+S saves and
   applies drafts, and Escape discards unsaved edits without changing active tools.
 - Save only changed overrides, preserve inheritance and external edits, and
