@@ -6,7 +6,7 @@ import {
   type SettingsField,
   type SettingsMenuFactory,
 } from "../settings-menu.ts";
-import { SettingsStore } from "../settings-store.ts";
+import { SettingsStore, type SettingsSessionState } from "../settings-store.ts";
 import {
   CONFIG_ENVIRONMENT_VARIABLES,
   CODEX_TOOL_BACKGROUND_SCHEMA,
@@ -127,8 +127,8 @@ export const settingFields: SettingsField[] = [
 ];
 export type SettingsChangeContext = { model: Model<Api> | undefined; sessionId: string };
 export type SettingsCallbacks = {
-  getConfig?: (ctx: ConfigContext) => CodexCompatConfig;
-  onChange?: (config: CodexCompatConfig, ctx: SettingsChangeContext) => void;
+  getConfig: (ctx: ConfigContext) => CodexCompatConfig;
+  onChange: (config: CodexCompatConfig, ctx: SettingsChangeContext) => void;
   hasPersistentSessions?: () => boolean;
 };
 export type CodexSettingsContext = ConfigContext &
@@ -142,6 +142,7 @@ export type CodexSettingsContext = ConfigContext &
   };
 export type CodexSettingsHandler = (args: string, ctx: CodexSettingsContext) => Promise<void>;
 export type CodexSettingsApi = {
+  on: (event: "session_start", handler: () => void) => void;
   registerCommand: (
     name: string,
     options: { description: string; handler: CodexSettingsHandler },
@@ -150,8 +151,12 @@ export type CodexSettingsApi = {
 
 export default function registerCodexSettings(
   pi: CodexSettingsApi,
-  callbacks: SettingsCallbacks = {},
+  callbacks: SettingsCallbacks,
 ): void {
+  let sessionState: SettingsSessionState = { changes: {} };
+  pi.on("session_start", () => {
+    sessionState = { changes: {} };
+  });
   pi.registerCommand("codex-settings", {
     description: "Configure OpenAI Codex compatibility",
     handler: async (_args, ctx) => {
@@ -180,7 +185,8 @@ export default function registerCodexSettings(
         );
         const snapshot = await store.load();
         const selection = ctx.model;
-        let appliedShell = callbacks.getConfig?.(ctx).shellTool ?? snapshot.values["shellTool"];
+        const current = callbacks.getConfig(ctx);
+        let appliedShell = current.shellTool;
         const model = selectedRegistryModel(ctx);
         const fields = settingFields.map((field) => {
           const inactive =
@@ -197,10 +203,12 @@ export default function registerCodexSettings(
             title: "Codex Settings",
             store,
             snapshot,
+            current: { ...current, autoCompactAtPercent: current.autoCompactAtPercent ?? null },
+            session: sessionState,
             fields,
             status: () =>
               isCodexModel(model)
-                ? "Codex settings apply after saving."
+                ? "Codex settings apply when applied to session or saved."
                 : "Configured preferences are inactive on this provider.",
             prepare: (signal) => waitForSettingsIdle(() => ctx.waitForIdle(), signal),
             guard: (values) => {
@@ -213,7 +221,7 @@ export default function registerCodexSettings(
               ) {
                 throw new Error("The session or project trust changed. Reopen settings.");
               }
-              if (!ctx.isIdle()) throw new Error("Pi is busy. Retry saving when idle.");
+              if (!ctx.isIdle()) throw new Error("Pi is busy. Retry when idle.");
               if (values["shellTool"] !== appliedShell && callbacks.hasPersistentSessions?.()) {
                 throw new Error(
                   "Collect pending output with write_stdin or stop running sessions with /ps before changing Command tool.",
@@ -222,7 +230,7 @@ export default function registerCodexSettings(
             },
             apply: (values) => {
               const config = resolveConfig(parseConfig(values), {}, environment);
-              callbacks.onChange?.(config, { model: selectedRegistryModel(ctx), sessionId });
+              callbacks.onChange(config, { model: selectedRegistryModel(ctx), sessionId });
               appliedShell = config.shellTool;
             },
           }),

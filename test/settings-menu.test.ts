@@ -6,7 +6,11 @@ import { join } from "node:path";
 import { setTimeout } from "node:timers/promises";
 import { getKeybindings, visibleWidth, CURSOR_MARKER } from "@earendil-works/pi-tui";
 import { settingsMenu, waitForSettingsIdle } from "../extensions/settings-menu.ts";
-import { SettingsStore, type SettingValues } from "../extensions/settings-store.ts";
+import {
+  SettingsStore,
+  type SettingsSessionState,
+  type SettingValues,
+} from "../extensions/settings-store.ts";
 
 async function fixture(t: TestContext, locked: Record<string, string> = {}) {
   const root = await mkdtemp(join(tmpdir(), "settings-contract-"));
@@ -26,7 +30,8 @@ async function fixture(t: TestContext, locked: Record<string, string> = {}) {
     };
   };
   const store = new SettingsStore(file, project, resolve, locked);
-  const snapshot = await store.load();
+  let snapshot = await store.load();
+  const session: SettingsSessionState = { changes: {} };
   let applied: SettingValues | undefined;
   let closed = 0;
   let allowed = true;
@@ -39,61 +44,65 @@ async function fixture(t: TestContext, locked: Record<string, string> = {}) {
   const keys = getKeybindings();
   const originalBindings = keys.getUserBindings();
   t.after(() => keys.setUserBindings(originalBindings));
-  const component = settingsMenu({
-    title: "Provider Settings",
-    store,
-    snapshot,
-    fields: [
+  const create = () =>
+    settingsMenu({
+      title: "Provider Settings",
+      store,
+      snapshot,
+      current: applied ?? snapshot.values,
+      session,
+      fields: [
+        {
+          id: "enabled",
+          label: "Native feature",
+          description: "A searchable boolean switch.",
+          choices: [false, true],
+        },
+        {
+          id: "budget",
+          label: "Budget tokens",
+          description: "Whole token budget.",
+          choices: [8, 16],
+          number: { min: 1, max: 200, integer: true, unit: "tokens" },
+        },
+        {
+          id: "percent",
+          label: "Threshold",
+          description: "Fractional percentage.",
+          choices: [null, 75],
+          number: { min: 0, max: 100, exclusiveMin: true, unit: "%" },
+        },
+        { id: "mode", label: "Mode", description: "An enum.", choices: ["a", "b"] },
+      ],
+      status: () => "Provider applicability",
+      prepare: (signal) => waitForSettingsIdle(waiting ?? (async () => {}), signal),
+      guard: () => {
+        if (!allowed) throw new Error("Runtime is busy.");
+      },
+      apply: (values) => {
+        if (failApply) throw new Error("Apply failed");
+        applied = values;
+      },
+    })(
       {
-        id: "enabled",
-        label: "Native feature",
-        description: "A searchable boolean switch.",
-        choices: [false, true],
+        terminal,
+        requestRender: () => {
+          output = component.render(terminal.columns);
+        },
       },
       {
-        id: "budget",
-        label: "Budget tokens",
-        description: "Whole token budget.",
-        choices: [8, 16],
-        number: { min: 1, max: 200, integer: true, unit: "tokens" },
+        fg: (color, text) => {
+          styles.push({ color, text });
+          return `${version}${text}`;
+        },
+        bold: (text) => text,
       },
-      {
-        id: "percent",
-        label: "Threshold",
-        description: "Fractional percentage.",
-        choices: [null, 75],
-        number: { min: 0, max: 100, exclusiveMin: true, unit: "%" },
+      keys,
+      () => {
+        closed++;
       },
-      { id: "mode", label: "Mode", description: "An enum.", choices: ["a", "b"] },
-    ],
-    status: () => "Provider applicability",
-    prepare: (signal) => waitForSettingsIdle(waiting ?? (async () => {}), signal),
-    guard: () => {
-      if (!allowed) throw new Error("Runtime is busy.");
-    },
-    apply: (values) => {
-      if (failApply) throw new Error("Apply failed");
-      applied = values;
-    },
-  })(
-    {
-      terminal,
-      requestRender: () => {
-        output = component.render(terminal.columns);
-      },
-    },
-    {
-      fg: (color, text) => {
-        styles.push({ color, text });
-        return `${version}${text}`;
-      },
-      bold: (text) => text,
-    },
-    keys,
-    () => {
-      closed++;
-    },
-  );
+    );
+  let component = create();
   output = component.render(terminal.columns);
   const press = (...inputs: string[]) => {
     for (const input of inputs) {
@@ -112,7 +121,15 @@ async function fixture(t: TestContext, locked: Record<string, string> = {}) {
     project,
     store,
     snapshot,
-    component,
+    get component() {
+      return component;
+    },
+    reopen: async () => {
+      component.dispose?.();
+      snapshot = await store.load();
+      component = create();
+      output = component.render(terminal.columns);
+    },
     press,
     until,
     keys,
@@ -155,8 +172,130 @@ test("no-op save and close creates no files; toggling back clears dirty state", 
   const f = await fixture(t);
   f.press("\r", "\r");
   assert.match(f.output(), /No unsaved/);
-  f.press("\u0013", "\t", "\r");
+  f.press("\u0013", "\t", "\u001b[B", "\r");
   assert.equal(f.closed(), 1);
+  assert.deepEqual(await readdir(f.root), []);
+});
+
+test("Apply stays open, preserves active values on reopen, and saves session edits later", async (t) => {
+  const f = await fixture(t);
+  f.press("\r", "\t", "\r");
+  await f.until("Applied to session");
+  assert.equal(f.closed(), 0);
+  assert.equal(f.applied()?.["enabled"], true);
+  assert.match(f.output(), /on ~/);
+  assert.deepEqual(await readdir(f.root), []);
+  // Escape discards a later draft, not the applied session value.
+  f.press("\u001b[Z", "\r", "\u001b");
+  await f.reopen();
+  assert.match(f.output(), /on ~/);
+  assert.doesNotMatch(f.output(), /on \*/);
+  f.press("\t", "\r");
+  assert.match(f.output(), /No draft changes to apply/);
+  assert.deepEqual(await readdir(f.root), []);
+  f.press("\u0013");
+  await f.until("Saved and applied");
+  assert.deepEqual(JSON.parse(await readFile(f.file, "utf8")), { enabled: true });
+  await f.reopen();
+  assert.match(f.output(), /Native feature\s+on\n/);
+  assert.doesNotMatch(f.output(), /on ~/);
+});
+
+test("reopen shows live values while saving merges unrelated external file edits", async (t) => {
+  const f = await fixture(t);
+  f.press("\r", "\t", "\r");
+  await f.until("Applied to session");
+  await writeFile(f.file, JSON.stringify({ budget: 99, future: "preserve" }));
+  await f.reopen();
+  assert.match(f.output(), /Budget tokens\s+8 ~/);
+  f.press("\u0013");
+  await f.until("Saved and applied");
+  assert.equal(f.applied()?.["budget"], 99);
+  assert.deepEqual(JSON.parse(await readFile(f.file, "utf8")), {
+    enabled: true,
+    budget: 99,
+    future: "preserve",
+  });
+});
+
+test("session edits retain conflict evidence across reopenings", async (t) => {
+  const f = await fixture(t);
+  f.press("\r", "\t", "\r");
+  await f.until("Applied to session");
+  await writeFile(f.file, JSON.stringify({ enabled: false }));
+  await f.reopen();
+  f.press("\u0013");
+  await f.until("changed on disk");
+  assert.deepEqual(JSON.parse(await readFile(f.file, "utf8")), { enabled: false });
+  assert.equal(f.applied()?.["enabled"], true);
+});
+
+test("session edits do not silently move to a newly created project target", async (t) => {
+  const f = await fixture(t);
+  f.press("\r", "\t", "\r");
+  await f.until("Applied to session");
+  await writeFile(f.project, "{}");
+  await f.reopen();
+  f.press("\u0013");
+  await f.until("scope changed");
+  assert.equal(await readFile(f.project, "utf8"), "{}");
+  await assert.rejects(readFile(f.file), { code: "ENOENT" });
+});
+
+test("inherited values can apply to session before removing a saved override", async (t) => {
+  const f = await fixture(t);
+  await writeFile(f.file, JSON.stringify({ enabled: true }));
+  await writeFile(f.project, JSON.stringify({ enabled: false, future: "preserve" }));
+  await f.reopen();
+  f.press("\t", "\u001b[B", "\u001b[B", "\r", "\u001b[A", "\u001b[A", "\r");
+  await f.until("Applied to session");
+  assert.equal(f.applied()?.["enabled"], true);
+  assert.deepEqual(JSON.parse(await readFile(f.project, "utf8")), {
+    enabled: false,
+    future: "preserve",
+  });
+  await f.reopen();
+  assert.match(f.output(), /on ~/);
+  f.press("\u0013");
+  await f.until("Saved and applied");
+  assert.deepEqual(JSON.parse(await readFile(f.project, "utf8")), { future: "preserve" });
+  assert.equal(f.applied()?.["enabled"], true);
+});
+
+test("Apply guards and failures retain the draft without writing files", async (t) => {
+  const f = await fixture(t);
+  f.allow(false);
+  f.press("\r", "\t", "\r");
+  await f.until("Runtime is busy");
+  assert.equal(f.applied(), undefined);
+  f.allow(true);
+  f.failApply(true);
+  f.press("\r");
+  await f.until("Apply failed");
+  assert.match(f.output(), /on \*/);
+  f.failApply(false);
+  f.press("\r");
+  await f.until("Applied to session");
+  assert.deepEqual(await readdir(f.root), []);
+});
+
+test("Apply can be cancelled or disposed while waiting without changing the session", async (t) => {
+  const f = await fixture(t);
+  let release: () => void = () => {};
+  f.wait(
+    () =>
+      new Promise<void>((resolve) => {
+        release = resolve;
+      }),
+  );
+  f.press("\r", "\t", "\r", "\u001b");
+  await f.until("Application cancelled");
+  release();
+  f.press("\r");
+  f.component.dispose?.();
+  release();
+  await setTimeout(20);
+  assert.equal(f.applied(), undefined);
   assert.deepEqual(await readdir(f.root), []);
 });
 
@@ -254,7 +393,7 @@ test("section gaps separate controls without adding space between setting rows",
     lines.findIndex((line) => line.startsWith("> ")),
     lines.findIndex((line) => line.includes("Native feature")),
     lines.findIndex((line) => line.includes("A searchable boolean switch.")),
-    lines.findIndex((line) => line.includes("Save and close")),
+    lines.findIndex((line) => line.includes("Apply to session")),
     lines.findIndex((line) => line.includes("Ctrl+S save")),
   ];
   for (const index of starts) {

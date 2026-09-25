@@ -20,6 +20,32 @@ export type SettingsSnapshot = {
   global: FileState;
   project: FileState;
 };
+export type SettingsSessionState = {
+  changes: SettingChanges;
+  baseline?: SettingsSnapshot;
+};
+
+/** Retain conflict evidence for session overrides across menu reopenings. */
+export function sessionBaseline(
+  snapshot: SettingsSnapshot,
+  session: SettingsSessionState,
+): SettingsSnapshot {
+  if (!session.baseline) return snapshot;
+  const result = {
+    ...snapshot,
+    file: session.baseline.file,
+    global: { ...snapshot.global, data: { ...snapshot.global.data } },
+    project: { ...snapshot.project, data: { ...snapshot.project.data } },
+  };
+  for (const id of Object.keys(session.changes)) {
+    for (const layer of ["global", "project"] as const) {
+      const original = session.baseline[layer].data;
+      if (Object.hasOwn(original, id)) result[layer].data[id] = original[id];
+      else delete result[layer].data[id];
+    }
+  }
+  return result;
+}
 
 async function read(file: string): Promise<FileState> {
   let text: string;

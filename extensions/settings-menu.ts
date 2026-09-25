@@ -16,6 +16,8 @@ import {
 } from "@earendil-works/pi-tui";
 import {
   SettingsStore,
+  sessionBaseline,
+  type SettingsSessionState,
   type SettingChanges,
   type SettingsSnapshot,
   type SettingValue,
@@ -44,6 +46,8 @@ export type SettingsMenuOptions = {
   title: string;
   store: SettingsStore;
   snapshot: SettingsSnapshot;
+  current: SettingValues;
+  session: SettingsSessionState;
   fields: SettingsField[];
   status: (values: SettingValues) => string;
   prepare: (signal: AbortSignal) => Promise<void>;
@@ -59,14 +63,18 @@ export type SettingsMenuFactory<T> = (
 
 export function settingsMenu(options: SettingsMenuOptions): SettingsMenuFactory<undefined> {
   return (tui, theme, keys, done) => {
-    let baseline = options.snapshot;
-    let draft = { ...baseline.values };
-    let changes: SettingChanges = {};
-    let notice = "Draft changes apply only when saved.";
+    let baseline = sessionBaseline(options.snapshot, options.session);
+    let active = { ...options.current };
+    let draft = { ...active };
+    let changes: SettingChanges = { ...options.session.changes };
+    let notice = Object.keys(changes).length
+      ? "Session settings shown. Changes are not saved to disk."
+      : "Draft changes apply only when applied or saved.";
     let failed = false;
     let pendingApply = false;
     let disposed = false;
     let busy = false;
+    let operation: "apply" | "save" = "save";
     let saveAbort: AbortController | undefined;
     let focused = false;
     let focus: MenuFocus = "results";
@@ -101,15 +109,28 @@ export function settingsMenu(options: SettingsMenuOptions): SettingsMenuFactory<
     let details: ScrollView | undefined;
     const actions = new SelectList(
       [
+        { value: "apply", label: "Apply to session" },
         { value: "save", label: "Save and close" },
         { value: "inherit", label: "Use inherited value for selected setting" },
         { value: "details", label: "Details, errors, and save target" },
       ],
-      3,
+      4,
       focusTheme("actions"),
     );
     let zones: { component: Component; top: number; height: number; focus: MenuFocus }[] = [];
-    const dirty = () => Object.keys(changes).length;
+    const draftChanged = (id: string) =>
+      draft[id] !== active[id] ||
+      Object.hasOwn(changes, id) !== Object.hasOwn(options.session.changes, id) ||
+      changes[id] !== options.session.changes[id];
+    const dirty = () => options.fields.filter((field) => draftChanged(field.id)).length;
+    const source = (id: string) =>
+      options.store.locked[id]
+        ? baseline.sources[id]
+        : draftChanged(id)
+          ? "draft"
+          : Object.hasOwn(options.session.changes, id) || draft[id] !== baseline.values[id]
+            ? "session"
+            : baseline.sources[id];
     const fieldValue = (field: SettingsField, value: SettingValue | undefined): string =>
       value === undefined
         ? ""
@@ -140,11 +161,19 @@ export function settingsMenu(options: SettingsMenuOptions): SettingsMenuFactory<
         if (inherited !== undefined) draft[field.id] = inherited;
       } else {
         draft[field.id] = value;
-        if (value === baseline.values[field.id]) delete changes[field.id];
+        if (value === active[field.id]) {
+          if (Object.hasOwn(options.session.changes, field.id))
+            changes[field.id] = options.session.changes[field.id];
+          else delete changes[field.id];
+        } else if (value === baseline.values[field.id]) delete changes[field.id];
         else changes[field.id] = value;
       }
       failed = false;
-      notice = dirty() ? `${dirty()} unsaved change(s). Not applied.` : "No unsaved changes.";
+      notice = dirty()
+        ? `${dirty()} draft change(s). Not applied.`
+        : Object.keys(changes).length
+          ? "No draft changes. Session settings are not saved to disk."
+          : "No unsaved changes.";
       child = undefined;
       updateFocus();
     };
@@ -185,41 +214,52 @@ export function settingsMenu(options: SettingsMenuOptions): SettingsMenuFactory<
       notice = "Choose a value. Changes remain a draft.";
       updateFocus();
     };
-    const save = async (closeAfter: boolean) => {
+    const commit = async (mode: "apply" | "save", closeAfter = false) => {
       if (busy || disposed) return;
-      if (!dirty() && !pendingApply) {
-        notice = "No unsaved changes.";
+      if (!dirty() && !pendingApply && (mode === "apply" || !Object.keys(changes).length)) {
+        notice = mode === "apply" ? "No draft changes to apply." : "No changes to save.";
         if (closeAfter) close();
         return;
       }
       busy = true;
+      operation = mode;
       failed = false;
       saveAbort = new AbortController();
       const { signal } = saveAbort;
-      notice = "Waiting for idle, then saving…";
+      notice =
+        mode === "save" ? "Waiting for idle, then saving…" : "Waiting for idle, then applying…";
       tui.requestRender();
       try {
         await options.prepare(signal);
         signal.throwIfAborted();
-        baseline = await options.store.save(baseline, changes, signal, options.guard);
-        draft = { ...baseline.values };
-        changes = {};
-        pendingApply = true;
+        if (mode === "save") {
+          baseline = await options.store.save(baseline, changes, signal, options.guard);
+          draft = { ...baseline.values };
+          changes = {};
+          pendingApply = true;
+        }
         signal.throwIfAborted();
         options.guard(draft);
         options.apply({ ...draft });
+        active = { ...draft };
+        options.session.changes = { ...changes };
+        if (Object.keys(changes).length) options.session.baseline = baseline;
+        else delete options.session.baseline;
         pendingApply = false;
-        notice = "Saved and applied.";
+        notice =
+          mode === "save"
+            ? "Saved and applied."
+            : "Applied to session. Configuration files unchanged.";
         if (closeAfter) close();
       } catch (error) {
         failed = true;
         notice = pendingApply
           ? "Saved to disk; session application failed. Ctrl+S retries; reopen to review."
           : signal.aborted
-            ? "Save cancelled. Draft retained."
+            ? `${mode === "save" ? "Save" : "Application"} cancelled. Draft retained.`
             : error instanceof Error
               ? error.message
-              : "Could not save settings.";
+              : "Could not update settings.";
       } finally {
         busy = false;
         if (!disposed) tui.requestRender();
@@ -240,7 +280,10 @@ export function settingsMenu(options: SettingsMenuOptions): SettingsMenuFactory<
         ...(field
           ? [
               `${field.label}: ${fieldValue(field, draft[field.id])}`,
-              `Source: ${baseline.sources[field.id]}`,
+              `Source: ${source(field.id)}`,
+              ...(draft[field.id] !== baseline.values[field.id]
+                ? [`Saved value: ${fieldValue(field, baseline.values[field.id])}`]
+                : []),
               field.description,
             ]
           : []),
@@ -249,7 +292,8 @@ export function settingsMenu(options: SettingsMenuOptions): SettingsMenuFactory<
       search.focused = false;
     };
     actions.onSelect = (item) => {
-      if (item.value === "save") save(true).catch(saveFailed);
+      if (item.value === "apply") commit("apply").catch(saveFailed);
+      else if (item.value === "save") commit("save", true).catch(saveFailed);
       else if (item.value === "details") showDetails();
       else {
         const field = options.fields.find((entry) => entry.id === selectedId);
@@ -319,7 +363,7 @@ export function settingsMenu(options: SettingsMenuOptions): SettingsMenuFactory<
           );
           return lines.map((line) => truncateToWidth(line, width));
         }
-        if (height > 10) text(`Save to: ${baseline.file}`);
+        if (height > 11) text(`Save to: ${baseline.file}`);
         const statusLines = new Text(notice, 0, 0).render(width);
         const statusBudget = Math.max(1, Math.min(statusLines.length, height - 9));
         for (const line of statusLines.slice(0, statusBudget)) text(line, failed ? "error" : "dim");
@@ -351,7 +395,7 @@ export function settingsMenu(options: SettingsMenuOptions): SettingsMenuFactory<
         } else {
           const hint = `${keyName("tui.select.confirm")} ${focus === "actions" ? "select" : "change"} · Space ${focus === "search" ? "search" : "select"} · ${keyName("tui.input.tab")} focus · Ctrl+S save · ${keyName("tui.select.cancel")} discard · F1 details`;
           const hints = busy
-            ? [`${keyName("tui.select.cancel", true)} cancel save`]
+            ? [`${keyName("tui.select.cancel", true)} cancel ${operation}`]
             : visibleWidth(hint) <= width
               ? [hint]
               : width >= 40
@@ -360,7 +404,7 @@ export function settingsMenu(options: SettingsMenuOptions): SettingsMenuFactory<
                     `Ctrl+S save · ${keyName("tui.select.cancel", true)} discard`,
                   ]
                 : ["Ctrl+S save", `${keyName("tui.select.cancel", true)} discard`];
-          const footerRows = 3 + hints.length;
+          const footerRows = 4 + hints.length;
           // Reserve search, up to three settings, a scroll indicator, and two
           // detail rows before spending the remaining height on five section gaps.
           const minimumContentRows = 1 + Math.min(3, options.fields.length) + 1 + 2;
@@ -381,7 +425,7 @@ export function settingsMenu(options: SettingsMenuOptions): SettingsMenuFactory<
             ...options.fields.map((field) => {
               const values = [
                 ...field.choices,
-                baseline.values[field.id] ?? null,
+                draft[field.id] ?? null,
                 ...(field.number ? [field.number.min, field.number.max] : []),
               ];
               return (
@@ -396,7 +440,7 @@ export function settingsMenu(options: SettingsMenuOptions): SettingsMenuFactory<
           );
           const items = fields.map((field) => {
             const label = truncateToWidth(field.label, labelWidth);
-            const value = `${fieldValue(field, draft[field.id])}${Object.hasOwn(changes, field.id) ? " *" : ""}${options.store.locked[field.id] ? " (env)" : ""}`;
+            const value = `${fieldValue(field, draft[field.id])}${draftChanged(field.id) ? " *" : source(field.id) === "session" ? " ~" : ""}${options.store.locked[field.id] ? " (env)" : ""}`;
             return {
               value: field.id,
               label: `${label}${" ".repeat(labelWidth - visibleWidth(label) + 2)}${truncateToWidth(value, Math.max(1, contentWidth - labelWidth - 2))}`,
@@ -430,9 +474,7 @@ export function settingsMenu(options: SettingsMenuOptions): SettingsMenuFactory<
           const field = selectedField();
           if (height - lines.length > footerRows + 2 * gap) {
             text(
-              field
-                ? `${baseline.sources[field.id]} · ${field.description}`
-                : "No matching settings.",
+              field ? `${source(field.id)} · ${field.description}` : "No matching settings.",
               "muted",
             );
           }
@@ -489,7 +531,7 @@ export function settingsMenu(options: SettingsMenuOptions): SettingsMenuFactory<
             if (item) child.list?.onSelect?.(item);
           } else child.list?.handleInput(data);
         } else if (matchesKey(data, Key.ctrl("s"))) {
-          save(false).catch(saveFailed);
+          commit("save").catch(saveFailed);
         } else if (keys.matches(data, "tui.input.tab") || matchesKey(data, Key.shift("tab"))) {
           const order = ["search", "results", "actions"] as const;
           focus =
@@ -560,7 +602,7 @@ export async function waitForSettingsIdle(
 ): Promise<void> {
   signal.throwIfAborted();
   await new Promise<void>((resolve, reject) => {
-    const abort = () => reject(new Error("Save cancelled."));
+    const abort = () => reject(new Error("Settings update cancelled."));
     signal.addEventListener("abort", abort, { once: true });
     void wait()
       .then(resolve, reject)

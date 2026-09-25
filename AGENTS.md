@@ -5,7 +5,9 @@
 - Keep `extensions/index.ts` as a thin public entrypoint; provider, compaction, request-option, and tool behavior belongs in focused modules under `extensions/openai-codex-compat/`.
 - Preserve canonical `openai-codex` assistant history when changing fast-mode request behavior.
 - Keep `/codex-settings` aligned with `/anthropic-settings`: Enter edits drafts,
-  Ctrl+S saves and applies them, and Escape discards unsaved drafts. Preserve
+  Apply to session changes the active session without file writes, Ctrl+S saves
+  and applies, and Escape discards only unapplied drafts. Reopening must show
+  active session values, not file values. Preserve
   changed-field persistence, inheritance, conflict detection, and the shared
   interaction tests in `test/settings-menu.test.ts`. Never terminate persistent
   command sessions while browsing or discarding settings.

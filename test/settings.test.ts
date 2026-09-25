@@ -38,10 +38,14 @@ test("Codex settings stage edits, block command-session loss, and persist only c
   let current = { ...DEFAULT_CONFIG };
   let command: CodexSettingsHandler | undefined;
   let component: Component | undefined;
+  let startSession: () => void = () => {};
   let processes = true;
   let report: (text: string) => void = () => {};
   registerCodexSettings(
     {
+      on: (_event, listener) => {
+        startSession = listener;
+      },
       registerCommand: (_name, entry) => {
         command = entry.handler;
       },
@@ -97,13 +101,41 @@ test("Codex settings stage edits, block command-session loss, and persist only c
   assert.equal(current.shellTool, "unified_exec");
   const blocked = new Promise<void>((resolve) => {
     report = (text) => {
-      if (text.includes("Collect pending output")) resolve();
+      if (text.includes("Collect pending output with write_stdin")) resolve();
+    };
+  });
+  component.handleInput?.("\t");
+  component.handleInput?.("\t");
+  component.handleInput?.("\r");
+  await blocked;
+  assert.equal(current.shellTool, "unified_exec");
+  await assert.rejects(readFile(join(root, "agent", CONFIG_FILE)), { code: "ENOENT" });
+  const blockedSave = new Promise<void>((resolve) => {
+    report = (text) => {
+      if (text.includes("Collect pending output with write_stdin")) resolve();
     };
   });
   component.handleInput?.("\u0013");
-  await blocked;
-  assert.equal(current.shellTool, "unified_exec");
+  await blockedSave;
   processes = false;
+  const applied = new Promise<void>((resolve) => {
+    report = (text) => {
+      if (text.includes("Applied to session")) resolve();
+    };
+  });
+  component.handleInput?.("\r");
+  await applied;
+  assert.equal(current.shellTool, "shell_command");
+  await assert.rejects(readFile(join(root, "agent", CONFIG_FILE)), { code: "ENOENT" });
+  component.handleInput?.("\u001b");
+  await pending;
+  const reopened = new Promise<void>((resolve) => {
+    opened = resolve;
+  });
+  const pendingReopen = command("", ctx);
+  await reopened;
+  component.handleInput?.("Command tool");
+  assert.match(component.render(160).join("\n"), /Command tool\s+shell_command ~/);
   const saved = new Promise<void>((resolve) => {
     report = (text) => {
       if (text.includes("Saved and applied")) resolve();
@@ -115,7 +147,22 @@ test("Codex settings stage edits, block command-session loss, and persist only c
   const data: unknown = JSON.parse(await readFile(join(root, "agent", CONFIG_FILE), "utf8"));
   assert.deepEqual(data, { shellTool: "shell_command" });
   component.handleInput?.("\u001b");
-  await pending;
+  await pendingReopen;
+  current = { ...DEFAULT_CONFIG };
+  startSession();
+  const restarted = new Promise<void>((resolve) => {
+    opened = resolve;
+  });
+  const pendingRestart = command("", ctx);
+  await restarted;
+  component.handleInput?.("Command tool");
+  assert.match(component.render(160).join("\n"), /Command tool\s+unified_exec ~/);
+  component.handleInput?.("\u0013");
+  assert.deepEqual(JSON.parse(await readFile(join(root, "agent", CONFIG_FILE), "utf8")), {
+    shellTool: "shell_command",
+  });
+  component.handleInput?.("\u001b");
+  await pendingRestart;
 });
 
 test("every configuration key has an editor without stale model lists", () => {

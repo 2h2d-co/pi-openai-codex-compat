@@ -14,7 +14,7 @@ OpenAI Codex compatibility for [Pi](https://github.com/earendil-works/pi-mono), 
 - **Dedicated Codex tool UI**: renders command tools, `apply_patch`, `image_gen.imagegen`, and `web.run` on a shared configurable surface with compact summaries and `Ctrl+O` expansion.
 - **Hosted web-search fallback**: injects native `web_search` only when `web.run` is inactive, with cached, indexed, or live modes.
 - **Native request controls**: configures Responses API text verbosity, reasoning summaries, and standard/pro reasoning mode on supported models.
-- **Draft settings pane**: `/codex-settings` edits compatibility settings without changing the running session until saved. Enter changes values, Ctrl+S saves and applies them, and Escape discards unsaved drafts.
+- **Draft settings pane**: `/codex-settings` stages edits before applying them. Apply to session uses them without file writes. Ctrl+S saves and applies them. Escape discards only unapplied drafts.
 - **Session-aware footer**: shows the current Pi session ID on the first line and appends non-default Codex request modes to the model side of Pi's normal second line.
 
 Pi provides the Codex OAuth flow and model catalog. At session start, this package overrides the built-in `openai-codex` runtime under the same provider id so ordinary responses and remote compaction share one transport, parser, native-history store, and sticky WebSocket session.
@@ -180,10 +180,12 @@ uses the same interaction contract as `/anthropic-settings`:
 - **Space** activates a result or inserts a space when search has focus.
 - **Tab / Shift+Tab** move between search, results, and action controls.
 - **F1** opens scrollable details, full errors, and the exact save target.
-- Edits remain drafts. They do not change the running session until saved.
+- Edits remain drafts until explicitly applied or saved.
+- **Apply to session** applies drafts without writing configuration files and stays open.
 - **Ctrl+S** saves and applies changes without closing.
 - **Save and close** saves and applies changes, then closes on success.
-- **Escape** cancels a field editor or discards unsaved drafts and closes the main menu.
+- **Escape** cancels a field editor or discards unapplied drafts and closes the main menu.
+  It does not undo settings already applied to the session.
 
 Search matches labels, configuration keys, and descriptions. The percentage
 editor supports presets and custom fractional values. **Use inherited value**
@@ -194,19 +196,28 @@ locks, and model applicability. Pi's remapped selection and cancel keys are resp
 The global file is the normal save target. An existing trusted project override
 is the target for that project. The target stays fixed while the menu is open.
 Saving changes only edited overrides, preserves unknown keys and inherited values,
-and preserves non-conflicting external edits. Conflicts require reopening the menu.
+and preserves non-conflicting external edits. Conflicting edits are rejected for review.
 Opening or closing without changes does not create a configuration file.
-The menu reads current file-backed values when opened.
+Reopening shows active session values, not freshly read file values. `*` marks
+an unapplied draft. `~` marks an active session override or a value that differs
+from the saved configuration. Details shows the saved value when it differs.
+Ctrl+S also persists changes previously applied only to the session.
+Session-only changes survive closing the menu and navigating the session tree.
+They reset when starting or switching sessions, reloading extensions, or restarting
+Pi. They are not stored in the session transcript.
 
-Saves wait for Pi to become idle. Collect pending output with `write_stdin` or
-stop running command sessions through `/ps` before saving a command-tool switch.
+Applying and saving wait for Pi to become idle. Collect pending output with `write_stdin` or
+stop running command sessions through `/ps` before applying or saving a command-tool switch.
 Browsing settings and discarding drafts
-never terminate those sessions. Escape cancels a pending save without discarding
-the draft. Save failures leave the menu open. If a save reaches disk but cannot
+never terminate those sessions. Escape cancels a pending operation without discarding
+the draft. Failures leave the menu open. If a save reaches disk but cannot
 be applied to the session, the menu reports that distinction and Ctrl+S retries
 application. Cooperating writers use a `.settings-lock` file. An interrupted
 writer can leave a lock that requires review; locks are not automatically
 deleted. External editors do not participate in that lock.
+Session overrides retain their original conflict checks across menu reopenings.
+If the same field or save scope changes externally, review the files and reload
+the extension before editing again. Reloading discards session-only overrides.
 
 The effective settings are printed once when a TUI session starts. The footer shows the current Pi session ID alongside the working directory and optional session name. It shows `fast` and `pro` only when enabled, and shows text verbosity or reasoning summary only when they differ from their defaults.
 

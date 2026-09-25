@@ -17,6 +17,8 @@
 
 ### Added
 
+- Apply to session without changing configuration files. Reopening settings shows
+  active session values. Ctrl+S can save session-only changes later.
 - Custom percentage editing, configuration-source and model-applicability labels,
   inherited-value resets, and consistent keyboard, focus, and mouse support.
 
