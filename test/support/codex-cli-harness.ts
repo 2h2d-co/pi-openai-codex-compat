@@ -31,7 +31,7 @@ const instruction = (marker: string) =>
  * exclude subpaths like `pi-ai/api/*`. Linking the whole repository `node_modules`
  * would hide that class of failure.
  */
-async function linkProductionDependencies(packageRoot: string): Promise<void> {
+export async function linkProductionDependencies(packageRoot: string): Promise<void> {
   const modules = join(packageRoot, "node_modules");
   await mkdir(modules);
   const closure = execFileSync("npm", ["ls", "--omit=dev", "--all", "--parseable"], {

@@ -59,6 +59,7 @@ export { formatBackgroundProcesses } from "./background-process-browser.ts";
 export type CommandToolsApi = Pick<ExtensionAPI, "on" | "registerCommand" | "registerTool">;
 
 export type CommandToolsController = {
+  hasPersistentSessions: () => boolean;
   terminateUnifiedExecSessions: () => void;
 };
 
@@ -352,6 +353,7 @@ export default function registerCommandTools(
   pi.on("session_shutdown", () => manager.terminateAll());
 
   return {
+    hasPersistentSessions: () => manager.activeSessionCount() > 0,
     terminateUnifiedExecSessions() {
       manager.terminateAll().catch((error: unknown) => {
         console.error("Could not terminate unified exec sessions.", error);

@@ -2,6 +2,20 @@
 
 ## Unreleased
 
+### Fixed
+
+- Align settings with the Anthropic menu: Enter changes values, Ctrl+S saves and
+  applies drafts, and Escape discards unsaved edits without changing active tools.
+- Save only changed overrides, preserve inheritance and external edits, and
+  report conflicting saves without overwriting them.
+- Block command-tool switches while persistent command sessions remain instead
+  of terminating them while browsing settings.
+
+### Added
+
+- Custom percentage editing, configuration-source and model-applicability labels,
+  inherited-value resets, and consistent keyboard, focus, and mouse support.
+
 ## 0.0.16 - 2026-09-23
 
 ### Added

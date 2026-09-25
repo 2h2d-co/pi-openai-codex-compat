@@ -1,12 +1,10 @@
 import { isBoolean, isNumber, nodeErrorCode } from "./value-contracts.ts";
-import { randomUUID } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
-import { mkdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
-import { basename, dirname, join } from "node:path";
+import { join } from "node:path";
 import { CONFIG_DIR_NAME, getAgentDir } from "@earendil-works/pi-coding-agent";
 import type { Static } from "typebox";
 import { Value } from "typebox/value";
-import { isObject, type JsonRecord } from "./codex-protocol.ts";
+import { isObject } from "./codex-protocol.ts";
 
 export const WEB_SEARCH_MODE_SCHEMA = {
   enum: ["disabled", "cached", "indexed", "live"],
@@ -464,56 +462,4 @@ export function withoutEnvironmentOverrides(
     Reflect.deleteProperty(result, key);
   }
   return result;
-}
-
-async function readWritableConfig(filePath: string): Promise<JsonRecord> {
-  try {
-    const value: unknown = JSON.parse(await readFile(filePath, "utf8"));
-    if (!isObject(value)) throw new Error("the root value must be a JSON object");
-    return value;
-  } catch (error) {
-    if (nodeErrorCode(error) === "ENOENT") return {};
-    const detail = error instanceof Error ? error.message : String(error);
-    throw new Error(`Cannot update ${filePath}: ${detail}`, { cause: error });
-  }
-}
-
-/**
- * Merge known setting changes into the dedicated extension file. Unknown keys
- * are retained, and an invalid existing file is never overwritten.
- */
-export async function saveConfig(
-  cwd: string,
-  projectTrusted: boolean,
-  patch: ConfigLayer,
-): Promise<string> {
-  const filePath = writableConfigPath(cwd, projectTrusted);
-  const current = await readWritableConfig(filePath);
-  const next = { ...current, ...patch };
-  const directory = dirname(filePath);
-  const temporaryPath = join(
-    directory,
-    `.${basename(filePath)}.${process.pid}.${randomUUID()}.tmp`,
-  );
-
-  await mkdir(directory, { recursive: true });
-  const existingMode = await stat(filePath)
-    .then((metadata) => metadata.mode & 0o777)
-    .catch((error: unknown) => {
-      if (nodeErrorCode(error) === "ENOENT") return 0o600;
-      throw error;
-    });
-
-  try {
-    await writeFile(temporaryPath, `${JSON.stringify(next, null, 2)}\n`, {
-      encoding: "utf8",
-      flag: "wx",
-      mode: existingMode,
-    });
-    await rename(temporaryPath, filePath);
-  } finally {
-    await rm(temporaryPath, { force: true });
-  }
-
-  return filePath;
 }

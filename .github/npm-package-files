@@ -104,4 +104,6 @@ extensions/openai-codex-compat/web-run-output.ts
 extensions/openai-codex-compat/web-run-render.ts
 extensions/openai-codex-compat/web-run-schema.ts
 extensions/openai-codex-compat/web-run.ts
+extensions/settings-menu.ts
+extensions/settings-store.ts
 package.json

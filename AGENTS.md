@@ -4,6 +4,11 @@
 - Pi extensions run with full system permissions; keep side effects explicit and documented.
 - Keep `extensions/index.ts` as a thin public entrypoint; provider, compaction, request-option, and tool behavior belongs in focused modules under `extensions/openai-codex-compat/`.
 - Preserve canonical `openai-codex` assistant history when changing fast-mode request behavior.
+- Keep `/codex-settings` aligned with `/anthropic-settings`: Enter edits drafts,
+  Ctrl+S saves and applies them, and Escape discards unsaved drafts. Preserve
+  changed-field persistence, inheritance, conflict detection, and the shared
+  interaction tests in `test/settings-menu.test.ts`. Never terminate persistent
+  command sessions while browsing or discarding settings.
 - Native Codex compaction must fail closed and must not intercept `/tree` branch summarization.
 - Follow Pi AI's Codex adapter for system messages: the leading system message is the prompt (`instructions`, or the Responses Lite developer prefix), and later system messages travel inline as developer items on models that accept mid-conversation system messages. Do not replay every system message into one current prompt. Native compaction must keep every developer and system message in place and outside the retained-context budget; only user messages are budgeted.
 - Declare the complete current tool set in the top-level `tools` field on every request and never inside `input`. Do not replay `toolsAdded` system messages as inline `additional_tools` items or synthetic tool-search pairs, even though the public Responses API documents them: the Codex backend then treated other tools as unavailable in about half of live attempts, and the official Codex CLI never emits them mid-conversation. A mid-session tool change costs one prompt-cache miss by design. Pi's in-memory transcript can predate a runtime-appended checkpoint, so derive history (`input`) from the branch and only replayed projections (current tools, leading prompt) from the transcript.

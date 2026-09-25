@@ -60,6 +60,7 @@ export default function registerOpenAICodexCompat(pi: ExtensionAPI): void {
   registerCodexModelPolicy(modelPolicy, resolveConfig, commandTools);
   registerCodexSettings(pi, {
     getConfig: resolveConfig,
+    hasPersistentSessions: commandTools.hasPersistentSessions,
     onChange(config, ctx) {
       activeConfig = config;
       codexProvider.updateSessionConfig(ctx.sessionId, config);

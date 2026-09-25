@@ -14,7 +14,7 @@ OpenAI Codex compatibility for [Pi](https://github.com/earendil-works/pi-mono), 
 - **Dedicated Codex tool UI**: renders command tools, `apply_patch`, `image_gen.imagegen`, and `web.run` on a shared configurable surface with compact summaries and `Ctrl+O` expansion.
 - **Hosted web-search fallback**: injects native `web_search` only when `web.run` is inactive, with cached, indexed, or live modes.
 - **Native request controls**: configures Responses API text verbosity, reasoning summaries, and standard/pro reasoning mode on supported models.
-- **Session-local settings pane**: `/codex-settings` changes every compatibility setting for the current session; `Enter` persists and closes, `Escape` discards unsaved changes and closes, and `Ctrl+S` persists without closing.
+- **Draft settings pane**: `/codex-settings` edits compatibility settings without changing the running session until saved. Enter changes values, Ctrl+S saves and applies them, and Escape discards unsaved drafts.
 - **Session-aware footer**: shows the current Pi session ID on the first line and appends non-default Codex request modes to the model side of Pi's normal second line.
 
 Pi provides the Codex OAuth flow and model catalog. At session start, this package overrides the built-in `openai-codex` runtime under the same provider id so ordinary responses and remote compaction share one transport, parser, native-history store, and sticky WebSocket session.
@@ -173,7 +173,40 @@ A trusted project can override it at:
 <project>/.pi/openai-codex-compat.json
 ```
 
-Each session inherits the effective file-backed settings. Open `/codex-settings` to make immediate session-local changes. Press `Enter` to persist and close, `Escape` to discard unsaved changes and close, or `Ctrl+S` to persist without closing. The global file is the normal save target, while an existing trusted project override remains the target for that project. After `Ctrl+S`, later unsaved changes can still be discarded back to the values from that save.
+Each session inherits the effective file-backed settings. `/codex-settings`
+uses the same interaction contract as `/anthropic-settings`:
+
+- **Enter** changes the selected value or opens its editor. It never implicitly saves.
+- **Space** activates a result or inserts a space when search has focus.
+- **Tab / Shift+Tab** move between search, results, and action controls.
+- **F1** opens scrollable details, full errors, and the exact save target.
+- Edits remain drafts. They do not change the running session until saved.
+- **Ctrl+S** saves and applies changes without closing.
+- **Save and close** saves and applies changes, then closes on success.
+- **Escape** cancels a field editor or discards unsaved drafts and closes the main menu.
+
+Search matches labels, configuration keys, and descriptions. The percentage
+editor supports presets and custom fractional values. **Use inherited value**
+removes an override. This differs from **Pi default**, which explicitly disables
+an inherited percentage trigger. Rows show configuration sources, environment
+locks, and model applicability. Pi's remapped selection and cancel keys are respected.
+
+The global file is the normal save target. An existing trusted project override
+is the target for that project. The target stays fixed while the menu is open.
+Saving changes only edited overrides, preserves unknown keys and inherited values,
+and preserves non-conflicting external edits. Conflicts require reopening the menu.
+Opening or closing without changes does not create a configuration file.
+The menu reads current file-backed values when opened.
+
+Saves wait for Pi to become idle. Collect pending output with `write_stdin` or
+stop running command sessions through `/ps` before saving a command-tool switch.
+Browsing settings and discarding drafts
+never terminate those sessions. Escape cancels a pending save without discarding
+the draft. Save failures leave the menu open. If a save reaches disk but cannot
+be applied to the session, the menu reports that distinction and Ctrl+S retries
+application. Cooperating writers use a `.settings-lock` file. An interrupted
+writer can leave a lock that requires review; locks are not automatically
+deleted. External editors do not participate in that lock.
 
 The effective settings are printed once when a TUI session starts. The footer shows the current Pi session ID alongside the working directory and optional session name. It shows `fast` and `pro` only when enabled, and shows text verbosity or reasoning summary only when they differ from their defaults.
 
@@ -225,7 +258,9 @@ Responses Lite supports exactly `gpt-5.6-sol`, `gpt-5.6-terra`, `gpt-5.6-luna`,
 standard reasoning mode even when `pro` is configured. Both controls remain
 opt-in. GPT-6 Sol and Luna require Pi 0.87.1's model catalog.
 
-Invalid JSON setting values are ignored and invalid JSON does not prevent Pi from starting. The settings pane never writes on ordinary changes, refuses to overwrite invalid JSON when `Enter` or `Ctrl+S` attempts to save, and retains unknown keys when saving. Project configuration is read only when the project is trusted.
+Invalid JSON setting values are ignored and invalid JSON does not prevent Pi from
+starting. The settings pane reports malformed JSON instead of overwriting it.
+Project configuration is read only when the project is trusted.
 
 Every setting can also be overridden for one Pi process with an environment variable:
 
@@ -533,7 +568,9 @@ The tool generates new images with `gpt-image-2` or edits up to five local/recen
 ~/.pi/agent/generated_images/<session-id>/<call-id>.png
 ```
 
-The active Pi agent directory replaces `~/.pi/agent` when configured differently. Turning `imageGeneration` off removes the tool immediately for the current session; `Enter` or `Ctrl+S` in `/codex-settings` persists the value.
+The active Pi agent directory replaces `~/.pi/agent` when configured differently.
+Saving `imageGeneration: false` through `/codex-settings` removes the tool from
+the current session.
 
 The tool registers the server-reserved schema directly with a model-facing absolute-path annotation that names the supported image formats. OpenAI rejects additional schema keywords for image-count bounds and selector exclusivity, so the executor enforces those constraints before filesystem or network access. Local paths are lexically normalized before reading. A one-line system-prompt snippet and four high-signal guidelines cover normal model use. Local images are inspected with Pi's `read` tool, and generated image content is displayed and saved automatically without Codex Code Mode wrappers.
 
