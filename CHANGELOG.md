@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+### Fixed
+
+- Refuse to load on Pi runtimes older than 0.99.1. The load-time check accepted
+  any runtime since Pi 0.87 and reported the requirement as Pi 0.99.x. It now
+  requires GPT-6.1 Sol in the host's built-in Codex catalog and names Pi 0.99.1
+  as the minimum.
+
 ### Added
 
 - Forward every parsed Codex stream event to Pi's `provider_stream_event` hook, so
