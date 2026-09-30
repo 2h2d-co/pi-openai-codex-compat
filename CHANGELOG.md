@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.0.18 - 2026-09-30
+
 ### Fixed
 
 - Keep Pi 0.99 running in the terminal UI. Pi 0.99's footer reads session
