@@ -38,7 +38,7 @@ Authenticate through Pi if needed:
 /login openai-codex
 ```
 
-The package's features check the selected model, not the model that answers a request. Pi's experimental virtual models, registered with `pi.registerVirtualModel()`, stay selected while Pi routes each request to a physical model. With a virtual model selected, the package deactivates its tools, omits fast mode and the other request controls, and leaves compaction and output-limit continuation to Pi. This holds even for a virtual model listed under `openai-codex` or one that routes every request to an `openai-codex` model. Routed `openai-codex` requests still use the package's transport. Select an `openai-codex` model directly to use the package's features.
+**Pi's virtual models are not supported.** The package's features check the selected model, not the model that answers a request. Pi's experimental virtual models, registered with `pi.registerVirtualModel()`, stay selected while Pi routes each request to a physical model. With a virtual model selected, the package deactivates its tools, omits fast mode and the other request controls, and leaves compaction and output-limit continuation to Pi. This holds even for a virtual model listed under `openai-codex` or one that routes every request to an `openai-codex` model. Routed `openai-codex` requests still use the package's transport. Select an `openai-codex` model directly to use the package's features.
 
 ## Compatibility baseline and differences
 
