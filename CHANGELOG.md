@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+### Removed
+
+- The `reasoningMode` setting, its `PI_OPENAI_CODEX_COMPAT_REASONING_MODE` override,
+  and the `pro` footer label. The Codex endpoint rejects `reasoning.mode`, so the
+  extension now always omits it. Stale `reasoningMode` values in configuration
+  files are ignored.
+
 ### Fixed
 
 - Refuse to load on Pi runtimes older than 0.99.1. The load-time check accepted

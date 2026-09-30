@@ -277,7 +277,6 @@ async function createLivePiHost(
       webSearch: "disabled",
       textVerbosity: "low",
       reasoningSummary: "auto",
-      reasoningMode: "standard",
     }),
   );
 

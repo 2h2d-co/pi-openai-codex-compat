@@ -19,10 +19,6 @@ export function isCodexModel(model: Model<Api> | undefined): model is Model<type
   return model !== undefined && model.provider === CODEX_PROVIDER && hasApi(model, CODEX_API);
 }
 
-export function supportsReasoningMode(modelId: string): boolean {
-  return modelId === "gpt-6-astra" || /^gpt-5\.6(?:-|$)/.test(modelId);
-}
-
 function isWebSearchTool(value: unknown): boolean {
   return isObject(value) && value.type === "web_search";
 }
@@ -72,11 +68,8 @@ export function applyCodexRequestOptions(
     } else {
       updatedReasoning["summary"] = config.reasoningSummary;
     }
-    if (supportsReasoningMode(options.modelId) && config.reasoningMode === "pro") {
-      updatedReasoning["mode"] = "pro";
-    } else {
-      Reflect.deleteProperty(updatedReasoning, "mode");
-    }
+    // The Codex endpoint rejects `reasoning.mode`.
+    Reflect.deleteProperty(updatedReasoning, "mode");
     result["reasoning"] = updatedReasoning;
   }
 

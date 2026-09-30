@@ -120,7 +120,6 @@ export async function verifyPackagedCli(
       join(agent, "openai-codex-compat.json"),
       JSON.stringify({
         responsesLite: options.lite,
-        reasoningMode: "standard",
         fastMode: false,
         applyPatch: false,
         imageGeneration: false,
@@ -305,7 +304,7 @@ export async function verifyPackagedCli(
   await client.stop();
   t.diagnostic(
     `Pi ${String(piManifest["version"])} packaged ${packageVersion}: ` +
-      `${clientOptions.model}, standard reasoning, ` +
+      `${clientOptions.model}, ` +
       `${options.lite ? "Lite" : "Responses"}, tools, reload, native compaction, ` +
       "percentage checkpoint, and resume passed",
   );

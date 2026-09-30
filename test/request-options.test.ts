@@ -40,6 +40,7 @@ test("validates and layers Codex compatibility configuration", () => {
       webSearch: "live",
       textVerbosity: "high",
       reasoningSummary: "detailed",
+      // Removed setting: stale values are ignored.
       reasoningMode: "pro",
     }),
     {
@@ -56,7 +57,6 @@ test("validates and layers Codex compatibility configuration", () => {
       webSearch: "live",
       textVerbosity: "high",
       reasoningSummary: "detailed",
-      reasoningMode: "pro",
     },
   );
   assert.deepEqual(
@@ -89,7 +89,6 @@ test("validates and layers Codex compatibility configuration", () => {
         autoCompactAtPercent: 80,
         webSearch: "live",
         textVerbosity: "high",
-        reasoningMode: "pro",
       },
       { autoCompactAtPercent: null, webSearch: "disabled", fastMode: false },
     ),
@@ -100,7 +99,6 @@ test("validates and layers Codex compatibility configuration", () => {
       applyPatchDiagnostics: true,
       webSearch: "disabled",
       textVerbosity: "high",
-      reasoningMode: "pro",
     },
   );
 });
@@ -123,7 +121,6 @@ test("parses environment overrides with highest precedence", () => {
     [CONFIG_ENVIRONMENT_VARIABLES.webSearch]: "live",
     [CONFIG_ENVIRONMENT_VARIABLES.textVerbosity]: "high",
     [CONFIG_ENVIRONMENT_VARIABLES.reasoningSummary]: "detailed",
-    [CONFIG_ENVIRONMENT_VARIABLES.reasoningMode]: "pro",
   });
 
   assert.deepEqual(environmentConfig, {
@@ -141,7 +138,6 @@ test("parses environment overrides with highest precedence", () => {
     webSearch: "live",
     textVerbosity: "high",
     reasoningSummary: "detailed",
-    reasoningMode: "pro",
   });
   assert.deepEqual(
     resolveConfig(
@@ -199,11 +195,11 @@ test("parses environment overrides with highest precedence", () => {
   assert.equal(persisted.webSearch, "cached");
 });
 
-test("applies priority, GPT-5.6 reasoning mode, and native request controls", () => {
+test("applies priority and native request controls", () => {
   const payload: JsonRecord = {
     model: "gpt-5.6-sol",
     text: { format: { type: "json_schema" }, verbosity: "medium" },
-    reasoning: { effort: "high", summary: "concise" },
+    reasoning: { effort: "high", summary: "concise", mode: "pro" },
     tools: [{ type: "function", name: "read" }, { type: "web_search" }],
   };
   const result = applyCodexRequestOptions(
@@ -211,7 +207,6 @@ test("applies priority, GPT-5.6 reasoning mode, and native request controls", ()
     {
       ...DEFAULT_CONFIG,
       fastMode: true,
-      reasoningMode: "pro",
       webSearch: "cached",
     },
     { modelId: "gpt-5.6-sol", supportsImageSearch: true },
@@ -223,7 +218,7 @@ test("applies priority, GPT-5.6 reasoning mode, and native request controls", ()
     format: { type: "json_schema" },
     verbosity: "low",
   });
-  assert.deepEqual(result["reasoning"], { effort: "high", summary: "auto", mode: "pro" });
+  assert.deepEqual(result["reasoning"], { effort: "high", summary: "auto" });
   assert.equal(tools.filter((tool) => tool.type === "web_search").length, 1);
   assert.deepEqual(tools.at(-1), {
     type: "web_search",
@@ -236,48 +231,15 @@ test("applies priority, GPT-5.6 reasoning mode, and native request controls", ()
   });
 });
 
-for (const modelId of ["gpt-5.6-sol", "gpt-6-astra"]) {
-  test(`sends pro reasoning mode only when requested for ${modelId}`, () => {
-    const payload = { reasoning: { effort: "high" } };
-    const result = applyCodexRequestOptions(
-      payload,
-      { ...DEFAULT_CONFIG, reasoningMode: "pro" },
-      { modelId, supportsImageSearch: false },
-    );
-    assert.deepEqual(result["reasoning"], { effort: "high", summary: "auto", mode: "pro" });
-    assert.deepEqual(payload.reasoning, { effort: "high" });
-  });
-
-  test(`omits the default reasoning mode for ${modelId}`, () => {
-    const result = applyCodexRequestOptions(
-      {
-        reasoning: { effort: "high", summary: "concise", mode: "pro" },
-      },
-      DEFAULT_CONFIG,
-      { modelId, supportsImageSearch: false },
-    );
-
+for (const modelId of ["gpt-5.5", "gpt-5.6-sol", "gpt-6-astra", "gpt-6-luna", "gpt-6.1-sol"]) {
+  test(`strips reasoning.mode, which the Codex endpoint rejects, for ${modelId}`, () => {
+    const payload = { reasoning: { effort: "high", summary: "concise", mode: "pro" } };
+    const result = applyCodexRequestOptions(payload, DEFAULT_CONFIG, {
+      modelId,
+      supportsImageSearch: false,
+    });
     assert.deepEqual(result["reasoning"], { effort: "high", summary: "auto" });
-  });
-}
-
-for (const modelId of [
-  "gpt-5.5",
-  "gpt-6",
-  "gpt-6-astra-preview",
-  "gpt-6-sol",
-  "gpt-6-luna",
-  "gpt-6.1-sol",
-  "gpt-6-sol-preview",
-  "gpt-6-luna-preview",
-]) {
-  test(`omits configured pro reasoning mode for unsupported ${modelId}`, () => {
-    const result = applyCodexRequestOptions(
-      { reasoning: { effort: "high", mode: "pro" } },
-      { ...DEFAULT_CONFIG, reasoningMode: "pro" },
-      { modelId, supportsImageSearch: false },
-    );
-    assert.deepEqual(result["reasoning"], { effort: "high", summary: "auto" });
+    assert.deepEqual(payload.reasoning, { effort: "high", summary: "concise", mode: "pro" });
   });
 }
 

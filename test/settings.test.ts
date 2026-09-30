@@ -191,11 +191,10 @@ test("every configuration key has an editor without stale model lists", () => {
     footerSettingLabels({
       ...DEFAULT_CONFIG,
       fastMode: true,
-      reasoningMode: "pro",
       textVerbosity: "high",
       reasoningSummary: "detailed",
     }),
-    ["fast", "pro", "verbosity high", "summary detailed"],
+    ["fast", "verbosity high", "summary detailed"],
   );
   assert.equal(footerModel(model, "high", DEFAULT_CONFIG)?.id, "gpt-test");
 });

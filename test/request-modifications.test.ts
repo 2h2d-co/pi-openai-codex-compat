@@ -221,6 +221,7 @@ test("modifies requests on the canonical OpenAI Codex provider", async (t) => {
       webSearch: "live",
       textVerbosity: "high",
       reasoningSummary: "detailed",
+      // Removed setting: a stale value must not reach the request.
       reasoningMode: "pro",
     }),
   );
@@ -300,7 +301,6 @@ test("modifies requests on the canonical OpenAI Codex provider", async (t) => {
   assert.deepEqual(request.body["reasoning"], {
     effort: "high",
     summary: "detailed",
-    mode: "pro",
     context: "all_turns",
   });
   assert.equal(request.body["instructions"], undefined);

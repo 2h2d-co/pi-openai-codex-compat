@@ -24,12 +24,6 @@ export const REASONING_SUMMARY_SCHEMA = {
 
 export type ReasoningSummary = Static<typeof REASONING_SUMMARY_SCHEMA>;
 
-export const REASONING_MODE_SCHEMA = {
-  enum: ["standard", "pro"],
-} as const;
-
-export type ReasoningMode = Static<typeof REASONING_MODE_SCHEMA>;
-
 export const IMAGE_DETAIL_SCHEMA = {
   enum: ["auto", "low", "high", "original"],
 } as const;
@@ -80,7 +74,6 @@ export interface CodexCompatConfig {
   webSearch: WebSearchMode;
   textVerbosity: TextVerbosity;
   reasoningSummary: ReasoningSummary;
-  reasoningMode: ReasoningMode;
 }
 
 export const CONFIG_ENVIRONMENT_VARIABLES = {
@@ -98,7 +91,6 @@ export const CONFIG_ENVIRONMENT_VARIABLES = {
   webSearch: `${ENV_PREFIX}WEB_SEARCH_MODE`,
   textVerbosity: `${ENV_PREFIX}TEXT_VERBOSITY`,
   reasoningSummary: `${ENV_PREFIX}REASONING_SUMMARY`,
-  reasoningMode: `${ENV_PREFIX}REASONING_MODE`,
 } as const satisfies Record<keyof CodexCompatConfig, string>;
 
 export type ConfigLayer = {
@@ -116,7 +108,6 @@ export type ConfigLayer = {
   webSearch?: WebSearchMode;
   textVerbosity?: TextVerbosity;
   reasoningSummary?: ReasoningSummary;
-  reasoningMode?: ReasoningMode;
 };
 
 export const CONFIG_FILE = "openai-codex-compat.json";
@@ -134,7 +125,6 @@ export const DEFAULT_CONFIG: CodexCompatConfig = {
   webSearch: "disabled",
   textVerbosity: "low",
   reasoningSummary: "auto",
-  reasoningMode: "standard",
 };
 
 type Environment = Readonly<Record<string, string | undefined>>;
@@ -277,13 +267,6 @@ export function parseEnvironmentConfig(environment: Environment = process.env): 
   );
   if (reasoningSummary !== undefined) layer.reasoningSummary = reasoningSummary;
 
-  const reasoningMode = environmentEnum(
-    environment,
-    CONFIG_ENVIRONMENT_VARIABLES.reasoningMode,
-    REASONING_MODE_SCHEMA,
-  );
-  if (reasoningMode !== undefined) layer.reasoningMode = reasoningMode;
-
   return layer;
 }
 
@@ -357,11 +340,6 @@ export function parseConfig(value: unknown): ConfigLayer {
     layer.reasoningSummary = reasoningSummary;
   }
 
-  const reasoningMode = value["reasoningMode"];
-  if (Value.Check(REASONING_MODE_SCHEMA, reasoningMode)) {
-    layer.reasoningMode = reasoningMode;
-  }
-
   return layer;
 }
 
@@ -404,7 +382,6 @@ export function resolveConfig(
   if (merged.webSearch) config.webSearch = merged.webSearch;
   if (merged.textVerbosity) config.textVerbosity = merged.textVerbosity;
   if (merged.reasoningSummary) config.reasoningSummary = merged.reasoningSummary;
-  if (merged.reasoningMode) config.reasoningMode = merged.reasoningMode;
   return config;
 }
 
@@ -448,7 +425,6 @@ export function configLayer(config: CodexCompatConfig): ConfigLayer {
     webSearch: config.webSearch,
     textVerbosity: config.textVerbosity,
     reasoningSummary: config.reasoningSummary,
-    reasoningMode: config.reasoningMode,
   };
 }
 

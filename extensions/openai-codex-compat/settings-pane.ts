@@ -17,7 +17,6 @@ import {
   CODEX_TOOL_BACKGROUND_SCHEMA,
   CODEX_SHELL_TOOL_SCHEMA,
   IMAGE_DETAIL_SCHEMA,
-  REASONING_MODE_SCHEMA,
   REASONING_SUMMARY_SCHEMA,
   TEXT_VERBOSITY_SCHEMA,
   WEB_SEARCH_MODE_SCHEMA,
@@ -32,7 +31,7 @@ import {
 } from "./config.ts";
 import type { ConfigContext } from "./config-context.ts";
 import { selectedRegistryModel } from "./model-context.ts";
-import { isCodexModel, supportsReasoningMode } from "./request-options.ts";
+import { isCodexModel } from "./request-options.ts";
 import { usesResponsesLite } from "./responses-lite.ts";
 
 export const settingFields: SettingsField[] = [
@@ -59,12 +58,6 @@ export const settingFields: SettingsField[] = [
     label: "Reasoning summary",
     description: "Choose reasoning summary detail, or omit summaries.",
     choices: [...REASONING_SUMMARY_SCHEMA.enum],
-  },
-  {
-    id: "reasoningMode",
-    label: "Reasoning mode",
-    description: "Standard or pro execution on supported models, independent of effort.",
-    choices: [...REASONING_MODE_SCHEMA.enum],
   },
   {
     id: "toolBackground",
@@ -205,9 +198,7 @@ export default function registerCodexSettings(
         const model = selectedRegistryModel(ctx);
         const fields = settingFields.map((field) => {
           const inactive =
-            !isCodexModel(model) ||
-            (field.id === "responsesLite" && !usesResponsesLite(model.id)) ||
-            (field.id === "reasoningMode" && !supportsReasoningMode(model.id));
+            !isCodexModel(model) || (field.id === "responsesLite" && !usesResponsesLite(model.id));
           return {
             ...field,
             description: `${inactive ? "Inactive on this model. " : ""}${field.description}`,

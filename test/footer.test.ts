@@ -66,7 +66,6 @@ test("shows the Pi session id and appends settings to the default footer", () =>
   const footer = createCodexFooter(footerData, context, () => ({
     ...DEFAULT_CONFIG,
     fastMode: true,
-    reasoningMode: "pro",
     textVerbosity: "high",
     reasoningSummary: "detailed",
   }));
@@ -80,10 +79,7 @@ test("shows the Pi session id and appends settings to the default footer", () =>
   );
   const settingsLine = lines[1];
   assert.ok(settingsLine);
-  assert.match(
-    settingsLine,
-    /gpt-5\.6-sol • xhigh • fast • pro • verbosity high • summary detailed/,
-  );
+  assert.match(settingsLine, /gpt-5\.6-sol • xhigh • fast • verbosity high • summary detailed/);
   assert.match(settingsLine, /\$0\.000 \(sub\)/);
   assert.doesNotMatch(settingsLine, /\(auto\)/);
   footer.dispose?.();

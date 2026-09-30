@@ -43,7 +43,6 @@ export type FooterContext = ConfigContext &
 export function footerSettingLabels(config: CodexCompatConfig): string[] {
   return [
     config.fastMode ? "fast" : undefined,
-    config.reasoningMode === "pro" ? "pro" : undefined,
     config.textVerbosity !== "low" ? `verbosity ${config.textVerbosity}` : undefined,
     config.reasoningSummary !== "auto" ? `summary ${config.reasoningSummary}` : undefined,
   ].filter((label): label is string => label !== undefined);
