@@ -99,6 +99,13 @@ for (const mode of ["regular", "fullscreen"]) {
         await setTimeout(20);
       assert.ok(output.includes(text), `Missing ${text}; terminal output:\n${output}`);
     };
+    // A heading can arrive before the rows below it, so poll for the row itself.
+    const waitMatch = async (pattern: RegExp) => {
+      const screen = () => stripVTControlCharacters(output);
+      for (let attempt = 0; attempt < 500 && !pattern.test(screen()) && !exited; attempt++)
+        await setTimeout(20);
+      assert.match(screen(), pattern);
+    };
     await wait("No models available");
     terminal.write("/codex-settings\r");
     await wait("Draft changes apply");
@@ -116,7 +123,7 @@ for (const mode of ["regular", "fullscreen"]) {
     output = "";
     terminal.write("/codex-settings\r");
     await wait("Session settings shown");
-    assert.match(stripVTControlCharacters(output), /Fast mode\s+on ~/);
+    await waitMatch(/Fast mode\s+on ~/);
     terminal.write("\u001b");
     await setTimeout(150);
     terminal.write("/reload\r");
@@ -124,7 +131,7 @@ for (const mode of ["regular", "fullscreen"]) {
     output = "";
     terminal.write("/codex-settings\r");
     await wait("Session settings shown");
-    assert.match(stripVTControlCharacters(output), /Fast mode\s+on ~/);
+    await waitMatch(/Fast mode\s+on ~/);
     terminal.write("\u001b");
     await setTimeout(150);
     terminal.write("\u0004");
@@ -137,7 +144,7 @@ for (const mode of ["regular", "fullscreen"]) {
     await wait("No models available");
     terminal.write("/codex-settings\r");
     await wait("Session settings shown");
-    assert.match(stripVTControlCharacters(output), /Fast mode\s+on ~/);
+    await waitMatch(/Fast mode\s+on ~/);
     await assert.rejects(readFile(file), { code: "ENOENT" });
     terminal.write("\u0013");
     await wait("Saved and applied");
