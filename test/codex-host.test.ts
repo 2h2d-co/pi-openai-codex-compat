@@ -2,7 +2,7 @@ import {
   requireJsonRecord,
   requireJsonRecords,
 } from "../extensions/openai-codex-compat/codex-protocol.ts";
-import { isString } from "../extensions/openai-codex-compat/value-contracts.ts";
+import { isString, requireString } from "../extensions/openai-codex-compat/value-contracts.ts";
 import assert from "node:assert/strict";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -17,6 +17,7 @@ import {
 } from "@earendil-works/pi-ai";
 import {
   createAgentSession,
+  createCodemodeExtension,
   DefaultResourceLoader,
   defineTool,
   ModelRuntime,
@@ -312,3 +313,187 @@ test("Pi executes done calls and preserves current instructions across reload an
   );
   assert.deepEqual(extensionErrors, []);
 });
+
+for (const mode of ["on", "only"] as const) {
+  test(`native compaction declares the tools turn requests declared under codemode ${mode} mode`, async (t) => {
+    t.mock.method(globalThis, "WebSocket", function () {
+      throw new Error("The mocked SSE host test must not open a WebSocket.");
+    });
+    const tempRoot = await mkdtemp(join(tmpdir(), "pi-codex-codemode-"));
+    const cwd = join(tempRoot, "cwd");
+    const agentDir = join(tempRoot, "agent");
+    await mkdir(cwd, { recursive: true });
+    await mkdir(agentDir, { recursive: true });
+    await writeFile(
+      join(agentDir, CONFIG_FILE),
+      JSON.stringify({
+        applyPatch: false,
+        fastMode: false,
+        imageGeneration: false,
+        responsesLite: false,
+        webRun: false,
+        webSearch: "disabled",
+      }),
+    );
+    const previousAgentDir = process.env["PI_CODING_AGENT_DIR"];
+    const previousFetch = globalThis.fetch;
+    process.env["PI_CODING_AGENT_DIR"] = agentDir;
+    t.after(async () => {
+      globalThis.fetch = previousFetch;
+      if (previousAgentDir === undefined) delete process.env["PI_CODING_AGENT_DIR"];
+      else process.env["PI_CODING_AGENT_DIR"] = previousAgentDir;
+      await rm(tempRoot, { recursive: true, force: true });
+    });
+
+    const turns: JsonRecord[] = [];
+    const compactions: JsonRecord[] = [];
+    globalThis.fetch = async (_input, init) => {
+      const body = init?.body;
+      const text = isString(body)
+        ? body
+        : body instanceof Uint8Array
+          ? new Headers(init?.headers).get("content-encoding") === "zstd"
+            ? zstdDecompressSync(body).toString("utf8")
+            : new TextDecoder().decode(body)
+          : undefined;
+      if (!text) throw new Error("Codex request body was not JSON text");
+      const request = requireJsonRecord(JSON.parse(text));
+      if (requireJsonRecords(request.input).some((item) => item.type === "compaction_trigger")) {
+        compactions.push(request);
+        return sseResponse(compactionEvents());
+      }
+      turns.push(request);
+      return sseResponse([
+        {
+          type: "response.output_item.done",
+          output_index: 0,
+          item: {
+            type: "message",
+            id: "message-finished",
+            role: "assistant",
+            status: "completed",
+            content: [{ type: "output_text", text: "finished", annotations: [] }],
+          },
+        },
+        {
+          type: "response.completed",
+          response: {
+            id: "response-finished",
+            status: "completed",
+            usage: { input_tokens: 15, output_tokens: 2, total_tokens: 17 },
+          },
+        },
+      ]);
+    };
+
+    const credentials = new InMemoryCredentialStore();
+    await credentials.modify(
+      "openai-codex",
+      async () =>
+        ({
+          type: "oauth",
+          access: accessToken(),
+          refresh: "unused-refresh-token",
+          expires: Date.now() + 60 * 60 * 1_000,
+        }) satisfies Credential,
+    );
+    const modelRuntime = await ModelRuntime.create({
+      credentials,
+      modelsPath: null,
+      allowModelNetwork: false,
+    });
+    const model = modelRuntime.getModel("openai-codex", "gpt-5.6-luna");
+    assert.ok(model);
+    const settingsManager = SettingsManager.inMemory({
+      transport: "sse",
+      retry: { enabled: false, provider: { timeoutMs: 30_000, maxRetries: 0 } },
+      compaction: { enabled: false, keepRecentTokens: 1 },
+      codemode: { mode },
+    });
+    const execute = async () => ({ content: [{ type: "text" as const, text: "ok" }], details: {} });
+    const report = defineTool({
+      name: "report",
+      label: "Report",
+      description: "Report a value.",
+      parameters: Type.Object({ value: Type.String() }),
+      execute,
+    });
+    const handoff = defineTool({
+      name: "handoff",
+      label: "Handoff",
+      description: "Hand off the session.",
+      parameters: Type.Object({ goal: Type.String() }),
+      exposure: "model-only",
+      execute,
+    });
+    const sessionManager = SessionManager.inMemory(cwd);
+    // A fresh extension load has no cached turn template, as after resume.
+    const createSession = async () => {
+      const resourceLoader = new DefaultResourceLoader({
+        cwd,
+        agentDir,
+        settingsManager,
+        additionalExtensionPaths: [extensionPath],
+        extensionFactories: [createCodemodeExtension()],
+        systemPromptOverride: () => "Use the tools.",
+        appendSystemPromptOverride: () => [],
+        noSkills: true,
+        noPromptTemplates: true,
+        noThemes: true,
+        noContextFiles: true,
+      });
+      await resourceLoader.reload();
+      assert.deepEqual(resourceLoader.getExtensions().errors, []);
+      const created = await createAgentSession({
+        cwd,
+        agentDir,
+        modelRuntime,
+        settingsManager,
+        sessionManager,
+        resourceLoader,
+        model,
+        noTools: "builtin",
+        customTools: [report, handoff],
+      });
+      const errors: string[] = [];
+      await created.session.bindExtensions({
+        onError(error) {
+          errors.push(error.error);
+        },
+      });
+      t.after(() => created.session.dispose());
+      return { session: created.session, errors };
+    };
+
+    const first = await createSession();
+    first.session.setActiveToolsByName(["report", "handoff", "codemode"]);
+    await first.session.prompt("Report a value.", { expandPromptTemplates: false });
+    const turnTools = requireJsonRecords(turns.at(-1)?.tools);
+    const reportTool = turnTools.find((tool) => tool.name === "report");
+    if (mode === "on") {
+      assert.match(
+        requireString(reportTool?.["description"], "report description"),
+        /codemode tool declaration/,
+      );
+    } else {
+      assert.equal(reportTool, undefined);
+    }
+    assert.equal(
+      turnTools.find((tool) => tool.name === "handoff")?.["description"],
+      "Hand off the session.",
+    );
+
+    await first.session.compact();
+    assert.deepEqual(compactions.at(-1)?.tools, turnTools);
+    assert.deepEqual(first.errors, []);
+
+    if (mode === "on") {
+      await first.session.prompt("Continue.", { expandPromptTemplates: false });
+      const continued = turns.at(-1)?.tools;
+      const second = await createSession();
+      await second.session.compact();
+      assert.deepEqual(compactions.at(-1)?.tools, continued);
+      assert.deepEqual(second.errors, []);
+    }
+  });
+}

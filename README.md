@@ -399,6 +399,13 @@ The extension handles native compaction for `openai-codex`. It follows the Codex
    deduplicated, because each one is a distinct instruction the model already saw.
 4. Persist the opaque checkpoint in the Pi session and replay it on later requests.
 
+A compaction request declares the same tools as the session's last turn request, so both
+share a prompt-cache prefix. This covers Pi codemode, which rewrites tool descriptions in
+`on` mode and hides direct tools from requests in `only` mode. After a resume or a branch
+switch, no turn request exists yet, so compaction declares the tools the branch's
+transcript declares. In codemode `only` mode, that list still includes the hidden tools,
+so that one compaction request misses the prompt cache.
+
 Overflow and length recovery follow Pi 0.87's `context_edit` semantics. Every request
 reads Pi's session projection, so earlier omissions and replacements (an elided tool
 output, an omitted reply) apply exactly as they do for Pi's own adapters. Before an

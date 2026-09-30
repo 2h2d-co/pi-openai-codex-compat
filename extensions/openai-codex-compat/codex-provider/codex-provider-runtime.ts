@@ -6,7 +6,6 @@ import {
   clampThinkingLevel,
   createAssistantMessageEventStream,
   getCurrentTools,
-  getDeclaredTools,
   type Api,
   type AssistantMessage,
   type AssistantMessageEventStream,
@@ -15,6 +14,7 @@ import {
   type OpenAICodexResponsesOptions,
   type Provider,
   type SimpleStreamOptions,
+  type Tool,
   type TranscriptContext,
   type Usage,
   uuidv7,
@@ -28,7 +28,9 @@ import {
   checkpointData,
   providerHistory,
   remoteCompactionMarkerSummary,
+  requestGrammarToolInputProperties,
   requestInstructions,
+  requestTools,
   resolveRequestTranscript,
   responsesCompatibility,
   searchCheckpoint,
@@ -84,11 +86,7 @@ import {
   type ResponsesInputItem,
   type ResponsesOutputItem,
 } from "../responses-item-schema.ts";
-import {
-  convertResponsesTools,
-  convertResponsesMessages,
-  createGrammarToolInputProperties,
-} from "../vendor/pi-ai/openai-responses-serialization.ts";
+import { convertResponsesMessages } from "../vendor/pi-ai/openai-responses-serialization.ts";
 import { errorFromThrown } from "../error-from-thrown.ts";
 import type {
   ActiveAgentTurn,
@@ -174,6 +172,7 @@ export class CodexProviderRuntime {
   readonly transport = new CodexTransport();
   private readonly scopes = new Map<string, RuntimeScope>();
   private readonly templates = new Map<string, RequestTemplate>();
+  private readonly transcriptToolFingerprints = new Map<string, string>();
   private readonly prewarmedTemplates = new Set<string>();
   private readonly requestTails = new Map<string, Promise<void>>();
   private readonly activeAgentTurns = new Map<string, ActiveAgentTurn>();
@@ -367,6 +366,7 @@ export class CodexProviderRuntime {
   clearSession(sessionId: string): void {
     this.scopes.delete(sessionId);
     this.templates.delete(sessionId);
+    this.transcriptToolFingerprints.delete(sessionId);
     this.clearPrewarmState(sessionId);
     this.requestTails.delete(sessionId);
     this.activeAgentTurns.delete(sessionId);
@@ -540,13 +540,12 @@ export class CodexProviderRuntime {
       grammarToolInputProperties,
       turnId,
     } = options;
-    const compat = responsesCompatibility(model.compat);
     // Every request declares the complete current tool set at the top level,
     // as the official Codex client does. Replaying additions inside the input
     // made the Codex backend unreliable about which tools exist, and a native
     // checkpoint drops such history anyway. A mid-session tool change costs one
     // cache miss.
-    const requestTools = getCurrentTools(context.messages);
+    const currentTools = getCurrentTools(context.messages);
     // The leading system message is the prompt; later system messages travel
     // inline in `input` (or collapsed into the leading message by
     // resolveRequestTranscript), as Pi AI's Codex adapter does.
@@ -574,14 +573,7 @@ export class CodexProviderRuntime {
       ),
     });
     if (requestOptions.serviceTier !== undefined) body.service_tier = requestOptions.serviceTier;
-    if (requestTools.length > 0) {
-      body.tools = convertResponsesTools(requestTools, {
-        strict: false,
-        supportsStrictMode: compat.supportsStrictMode ?? true,
-        supportsOpenAIGrammarTools: compat.supportsOpenAIGrammarTools ?? false,
-        namespacedToolNames: CODEX_NAMESPACED_TOOL_NAMES,
-      });
-    }
+    if (currentTools.length > 0) body.tools = requestTools(model, currentTools);
     if (requestOptions.reasoningEffort !== undefined) {
       const mapped =
         requestOptions.reasoningEffort === "none"
@@ -806,6 +798,7 @@ export class CodexProviderRuntime {
     const context = resolveRequestTranscript(model, input);
     const stream = createAssistantMessageEventStream();
     const requestOptions = transportOptions(options);
+    const transcriptToolFingerprint = this.takeTranscriptToolFingerprint(requestOptions.sessionId);
     const output: AssistantMessage = {
       role: "assistant",
       content: [],
@@ -847,10 +840,7 @@ export class CodexProviderRuntime {
           requestOptions.signal,
         );
       }
-      const grammarToolInputProperties = createGrammarToolInputProperties(
-        getDeclaredTools(context.messages),
-        responsesCompatibility(model.compat).supportsOpenAIGrammarTools ?? false,
-      );
+      const grammarToolInputProperties = requestGrammarToolInputProperties(model, context.messages);
       let body = this.buildRequestBody({
         model,
         context,
@@ -873,7 +863,7 @@ export class CodexProviderRuntime {
         this.templates.set(runtimeSessionId, {
           modelId: model.id,
           payload: replacementValues ? {} : withoutConversationInput(body),
-          toolFingerprint: toolDefinitionFingerprint(getCurrentTools(context.messages)),
+          transcriptToolFingerprint,
           grammarToolInputProperties,
           requestOptions: { ...requestOptions },
         });
@@ -1280,6 +1270,23 @@ export class CodexProviderRuntime {
 
   latestTemplate(sessionId: string): RequestTemplate | undefined {
     return this.templates.get(sessionId);
+  }
+
+  /**
+   * Record the tools the session transcript declares for the next request, as
+   * extensions see it before Pi strips hidden declarations (codemode `only`
+   * mode) from the provider context. The next request of the session takes the
+   * record, so a request without a preceding transcript never inherits one.
+   */
+  noteTranscriptTools(sessionId: string, tools: readonly Tool[]): void {
+    this.transcriptToolFingerprints.set(sessionId, toolDefinitionFingerprint(tools));
+  }
+
+  private takeTranscriptToolFingerprint(sessionId: string | undefined): string | undefined {
+    if (sessionId === undefined) return undefined;
+    const fingerprint = this.transcriptToolFingerprints.get(sessionId);
+    this.transcriptToolFingerprints.delete(sessionId);
+    return fingerprint;
   }
 
   async compact(options: {

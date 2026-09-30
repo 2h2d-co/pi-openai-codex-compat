@@ -15,16 +15,19 @@ import {
 } from "@earendil-works/pi-ai";
 import {
   createAgentSession,
+  createCodemodeExtension,
   DefaultResourceLoader,
   defineTool,
   ModelRuntime,
   SessionManager,
   SettingsManager,
   type AgentSession,
+  type ExtensionAPI,
+  type InlineExtension,
   type ProviderStreamEvent,
   type ToolDefinition,
 } from "@earendil-works/pi-coding-agent";
-import { isString } from "../extensions/openai-codex-compat/value-contracts.ts";
+import { isString, requireString } from "../extensions/openai-codex-compat/value-contracts.ts";
 import { Type } from "typebox";
 import { CONFIG_FILE } from "../extensions/openai-codex-compat/config.ts";
 import {
@@ -258,6 +261,7 @@ async function createLivePiHost(
   customTools: ToolDefinition[] = [],
   options: {
     builtinTools?: string[];
+    codemode?: "on" | "only";
     onProviderStreamEvent?: (event: ProviderStreamEvent) => void;
   } = {},
 ): Promise<AgentSession> {
@@ -317,25 +321,29 @@ async function createLivePiHost(
       enabled: false,
       provider: { timeoutMs: 90_000, maxRetries: 0 },
     },
-    compaction: { enabled: false },
+    // Manual compaction needs a history older than the retained recent tokens.
+    compaction: { enabled: false, ...(options.codemode ? { keepRecentTokens: 1 } : {}) },
+    ...(options.codemode ? { codemode: { mode: options.codemode } } : {}),
   });
+  const extensionFactories: InlineExtension[] = [
+    ...(options.codemode ? [createCodemodeExtension()] : []),
+    ...(options.onProviderStreamEvent
+      ? [
+          {
+            name: "provider-stream-events",
+            factory: (pi: ExtensionAPI) => {
+              pi.on("provider_stream_event", (event) => options.onProviderStreamEvent?.(event));
+            },
+          },
+        ]
+      : []),
+  ];
   const resourceLoader = new DefaultResourceLoader({
     cwd,
     agentDir,
     settingsManager,
     additionalExtensionPaths: [extensionPath],
-    ...(options.onProviderStreamEvent
-      ? {
-          extensionFactories: [
-            {
-              name: "provider-stream-events",
-              factory: (pi) => {
-                pi.on("provider_stream_event", (event) => options.onProviderStreamEvent?.(event));
-              },
-            },
-          ],
-        }
-      : {}),
+    extensionFactories,
     systemPromptOverride: () => historyInstructions(mode),
     appendSystemPromptOverride: () => [],
     noSkills: true,
@@ -361,6 +369,9 @@ async function createLivePiHost(
     customTools,
   });
   await result.session.bindExtensions({});
+  if (options.codemode) {
+    result.session.setActiveToolsByName([...result.session.getActiveToolNames(), "codemode"]);
+  }
   t.after(() => result.session.dispose());
   return result.session;
 }
@@ -582,6 +593,70 @@ for (const modelId of ["gpt-5.6-luna", "gpt-6-sol", "gpt-6-luna", "gpt-6.1-sol"]
         final.content.flatMap((block) => (block.type === "text" ? [block.text] : [])).join(""),
         new RegExp(marker),
       );
+    },
+  );
+}
+
+for (const codemode of ["on", "only"] as const) {
+  test(
+    `live Pi host native compaction continues the turn request under codemode ${codemode} mode`,
+    { skip: !LIVE_TEST_ENABLED, timeout: LIVE_TEST_TIMEOUT_MS },
+    async (t) => {
+      const traffic = observeRealWebSocketTraffic(t);
+      const lookup = defineTool({
+        name: "lookup_value",
+        label: "Lookup",
+        description: "Look up a stored value by key.",
+        parameters: Type.Object({ key: Type.String() }),
+        async execute() {
+          return { content: [{ type: "text", text: "unused" }], details: {} };
+        },
+      });
+      const session = await createLivePiHost(t, "text", "gpt-5.6-luna", [lookup], { codemode });
+      await session.prompt("<history-item>text-alpha</history-item>", {
+        expandPromptTemplates: false,
+      });
+      const turn = latestAssistant(session);
+      const prewarm = traffic.frames.find((frame) => frame["generate"] === false);
+      assert.ok(prewarm, "Missing WebSocket prewarm frame");
+      // Responses Lite groups function tools in a namespace.
+      const declared = requireJsonRecords(
+        frameInput(prewarm).find((item) => item.type === "additional_tools")?.["tools"],
+      ).flatMap((tool) => (tool.type === "namespace" ? requireJsonRecords(tool["tools"]) : [tool]));
+      assert.ok(
+        declared.some((tool) => tool.name === "codemode"),
+        "codemode is not declared",
+      );
+      const lookupDeclaration = declared.find((tool) => tool.name === lookup.name);
+      if (codemode === "on") {
+        assert.match(
+          requireString(lookupDeclaration?.["description"], "lookup_value description"),
+          /codemode tool declaration/,
+        );
+      } else {
+        assert.equal(lookupDeclaration, undefined);
+      }
+
+      // The compaction request declares the turn's tools, so the transport
+      // continues the turn's response instead of resending the whole prefix.
+      const compactionStart = traffic.frames.length;
+      await session.compact();
+      const compaction = traffic.frames.slice(compactionStart).at(-1);
+      assert.ok(compaction, "Missing WebSocket compaction frame");
+      assert.equal(compaction["previous_response_id"], turn.responseId);
+      assert.deepEqual(frameInput(compaction), [{ type: "compaction_trigger" }]);
+      assert.ok(
+        session.sessionManager.getBranch().some((entry) => entry.type === "compaction"),
+        "Pi did not record the native compaction",
+      );
+
+      await session.prompt("<history-item>text-bravo</history-item>", {
+        expandPromptTemplates: false,
+      });
+      assert.deepEqual(responseLines(assistantText(latestAssistant(session))), [
+        "text-alpha",
+        "text-bravo",
+      ]);
     },
   );
 }

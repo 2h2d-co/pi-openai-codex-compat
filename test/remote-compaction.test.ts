@@ -9,22 +9,24 @@ import {
 import { isString, requireString } from "../extensions/openai-codex-compat/value-contracts.ts";
 import assert from "node:assert/strict";
 import test from "node:test";
+import { createReadTool, type SessionEntry, type ToolInfo } from "@earendil-works/pi-coding-agent";
 import {
-  createReadTool,
-  createSyntheticSourceInfo,
-  type SessionEntry,
-  type ToolInfo,
-} from "@earendil-works/pi-coding-agent";
-import type { Api, Model, ProviderHeaders } from "@earendil-works/pi-ai";
+  toToolDeclaration,
+  type Api,
+  type Model,
+  type ProviderHeaders,
+  type Tool,
+} from "@earendil-works/pi-ai";
 import {
   CHECKPOINT_ENTRY_TYPE,
   parseCheckpoint,
+  requestTools,
   toolDefinitionFingerprint,
 } from "../extensions/openai-codex-compat/compaction-checkpoint.ts";
 import { Type } from "typebox";
-import { convertResponsesTools } from "../extensions/openai-codex-compat/vendor/pi-ai/openai-responses-serialization.ts";
 import { CodexProviderRuntime } from "../extensions/openai-codex-compat/codex-provider.ts";
 import type { CodexProviderRuntimeApi } from "../extensions/openai-codex-compat/codex-provider/codex-provider-runtime.ts";
+import type { RequestTemplate } from "../extensions/openai-codex-compat/codex-provider/codex-provider-contracts.ts";
 import { DEFAULT_CONFIG } from "../extensions/openai-codex-compat/config.ts";
 import { CODEX_TURN_METADATA_HEADER } from "../extensions/openai-codex-compat/codex-metadata.ts";
 import {
@@ -136,9 +138,6 @@ class RemoteCompactionTestApi implements RemoteCompactionApi, CodexProviderRunti
   sessionStart: RemoteCompactionLifecycleHandler | undefined;
 
   appendEntry(): void {}
-  getActiveTools(): string[] {
-    return [];
-  }
   getAllTools(): ToolInfo[] {
     return [];
   }
@@ -332,116 +331,127 @@ test("sends the branch's leading system message as compaction instructions", asy
   }
 });
 
-test("refreshes cached tool declarations before native compaction", async () => {
-  const user = userEntry("user-1", "Remember this.");
-  const harness = createHarness([user]);
-  const tool = {
-    ...REPORT_TOOL,
-    exposure: "direct" as const,
-    sourceInfo: createSyntheticSourceInfo("test-tool", { source: "compaction test" }),
-  };
-  const read = createReadTool(process.cwd());
-  const readInfo = {
-    name: read.name,
-    description: read.description,
-    parameters: read.parameters,
-    exposure: "direct" as const,
-    sourceInfo: createSyntheticSourceInfo("builtin", { source: "compaction test" }),
-  };
-  harness.hooks.getAllTools = () => [tool, readInfo];
-  harness.hooks.getActiveTools = () => [tool.name, read.name];
-  // The last turn declared the same active tools, including Pi's strict schema
-  // for `read`, which the registry's ToolInfo cannot reproduce.
-  const turnTools = convertResponsesTools([REPORT_TOOL, read], {
-    strict: false,
-    supportsStrictMode: true,
-  });
-  const cached = {
-    modelId: "gpt-test",
+function toolsEntry(id: string, tools: Tool[], parentId: string | null = null): SessionEntry {
+  return {
+    type: "message",
+    id,
+    parentId,
+    timestamp: new Date(0).toISOString(),
+    message: { role: "system", content: "system prompt", toolsAdded: tools, timestamp: 0 },
+  } satisfies SessionEntry;
+}
+
+test("declares the last turn's tools in native compaction while the branch still declares them", async () => {
+  const read = toToolDeclaration(createReadTool(process.cwd()));
+  const hidden = { ...REPORT_TOOL, name: "hidden_report" };
+  const branchTools = [REPORT_TOOL, read, hidden];
+  const system = toolsEntry("system-0", branchTools);
+  const user = userEntry("user-1", "Remember this.", system.id);
+  const branch = [system, user];
+  const harness = createHarness(branch);
+  const model = harness.context.model;
+  // Pi stripped `hidden_report` from the turn request after extensions saw the
+  // transcript, as codemode `only` mode does, so only the cached declarations
+  // reproduce what the turn sent.
+  const turnTools = requestTools(model, [REPORT_TOOL, read]);
+  const cached: RequestTemplate = {
+    modelId: model.id,
     payload: { tools: structuredClone(turnTools) },
-    toolFingerprint: toolDefinitionFingerprint([REPORT_TOOL, read]),
+    transcriptToolFingerprint: toolDefinitionFingerprint(branchTools),
     grammarToolInputProperties: new Map<string, string>(),
     requestOptions: { transport: "sse" as const },
   };
-  harness.runtime.latestTemplate = () => cached;
+  let latest: RequestTemplate | undefined = cached;
+  harness.runtime.latestTemplate = () => latest;
   const handler = harness.hooks.sessionBeforeCompact;
   assert.ok(handler);
-  const event = {
-    branchEntries: [user],
-    preparation: { firstKeptEntryId: "user-1", tokensBefore: 50_000 },
-    reason: "manual" as const,
-    willRetry: false,
-    signal: new AbortController().signal,
-  };
-  requireCompactionResult(await handler(event, harness.context));
-  assert.deepEqual(harness.requests[0]?.tools, turnTools);
+  const compact = async (branchEntries: SessionEntry[]) =>
+    requireCompactionResult(
+      await handler(
+        {
+          branchEntries,
+          preparation: { firstKeptEntryId: "user-1", tokensBefore: 50_000 },
+          reason: "manual",
+          willRetry: false,
+          signal: new AbortController().signal,
+        },
+        harness.context,
+      ),
+    );
+
+  await compact(branch);
+  assert.deepEqual(harness.requests.at(-1)?.tools, turnTools);
+
+  // Fresh copies of the same definitions in another order still match.
+  await compact([toolsEntry("system-0", structuredClone([hidden, read, REPORT_TOOL])), user]);
+  assert.deepEqual(harness.requests.at(-1)?.tools, turnTools);
+
+  // A branch that declares other tools, such as after a branch switch, is
+  // declared as turn requests declare it, including Pi's strict schema for
+  // `read`. So is a changed description or parameter schema under an
+  // unchanged name.
+  for (const tools of [
+    [REPORT_TOOL, read],
+    [{ ...REPORT_TOOL, description: "Redefined report" }, read, hidden],
+    [
+      { ...REPORT_TOOL, parameters: Type.Object({ value: Type.String(), unit: Type.String() }) },
+      read,
+      hidden,
+    ],
+    [],
+  ]) {
+    await compact([toolsEntry("system-0", tools), user]);
+    assert.deepEqual(harness.requests.at(-1)?.tools, requestTools(model, tools));
+  }
   assert.equal(
-    requireJsonRecords(harness.requests[0]?.tools).find((item) => item.name === read.name)?.[
+    requireJsonRecords(requestTools(model, [read])).find((item) => item.name === read.name)?.[
       "strict"
     ],
     true,
   );
 
-  // A tool removed since that turn invalidates the cached declarations.
-  harness.hooks.getActiveTools = () => [tool.name];
-  requireCompactionResult(await handler(event, harness.context));
-  assert.deepEqual(
-    requireJsonRecords(harness.requests[1]?.tools).map((declaration) => declaration.name),
-    [tool.name],
-  );
-
-  // So does a redefinition under the same name, and an empty active set.
-  harness.hooks.getAllTools = () => [{ ...tool, description: "Redefined report" }, readInfo];
-  harness.hooks.getActiveTools = () => [tool.name, read.name];
-  requireCompactionResult(await handler(event, harness.context));
-  assert.equal(
-    requireJsonRecords(harness.requests[2]?.tools).find((item) => item.name === tool.name)?.[
-      "description"
-    ],
-    "Redefined report",
-  );
-  harness.hooks.getActiveTools = () => [];
-  requireCompactionResult(await handler(event, harness.context));
-  assert.deepEqual(harness.requests[3]?.tools, []);
+  // Without a matching template (after resume, for another model, or for a
+  // request without a recorded transcript) the branch's tools are declared.
+  for (const template of [
+    undefined,
+    { ...cached, modelId: "other-model" },
+    { ...cached, transcriptToolFingerprint: undefined },
+  ]) {
+    latest = template;
+    await compact(branch);
+    assert.deepEqual(harness.requests.at(-1)?.tools, requestTools(model, branchTools));
+  }
   assert.deepEqual(cached.payload.tools, turnTools);
-
-  // A parameter-schema change under an unchanged name and description also
-  // invalidates the cached declarations; the wire schema cannot be reversed
-  // into the registry's definition, so the raw definitions are fingerprinted.
-  const reshaped = {
-    ...tool,
-    parameters: Type.Object({ value: Type.String(), unit: Type.String() }),
-  };
-  harness.hooks.getAllTools = () => [reshaped, readInfo];
-  harness.hooks.getActiveTools = () => [tool.name, read.name];
-  requireCompactionResult(await handler(event, harness.context));
-  const rebuilt = requireJsonRecords(harness.requests[4]?.tools).find(
-    (item) => item.name === tool.name,
-  );
-  assert.deepEqual(
-    Object.keys(requireJsonRecord(requireJsonRecord(rebuilt?.["parameters"])["properties"])),
-    ["value", "unit"],
-  );
-  assert.deepEqual(cached.payload.tools, turnTools);
-
-  // Equivalent definitions keep the cached declarations: fresh copies of the
-  // same schemas, and the same active set in a different registry order.
-  harness.hooks.getAllTools = () => [structuredClone(readInfo), structuredClone(tool)];
-  harness.hooks.getActiveTools = () => [read.name, tool.name];
-  requireCompactionResult(await handler(event, harness.context));
-  assert.deepEqual(harness.requests[5]?.tools, turnTools);
 });
 
-test("fingerprints raw tool definitions independent of order and executable fields", () => {
-  const read = createReadTool(process.cwd());
-  const readInfo = {
-    name: read.name,
-    description: read.description,
-    parameters: read.parameters,
-    sourceInfo: createSyntheticSourceInfo("builtin", { source: "fingerprint test" }),
+test("records the transcript's tools for the next Codex request of the session", async () => {
+  const user = userEntry("user-1", "Remember this.");
+  const harness = createHarness([user]);
+  const recorded: Array<{ sessionId: string; names: string[] }> = [];
+  harness.runtime.noteTranscriptTools = (sessionId, tools) => {
+    recorded.push({ sessionId, names: tools.map((tool) => tool.name) });
   };
+  const handler = harness.hooks.context;
+  assert.ok(handler);
+  const messages = [
+    { role: "system" as const, content: "prompt", toolsAdded: [REPORT_TOOL], timestamp: 0 },
+    user.type === "message" ? user.message : undefined,
+  ].filter((message) => message !== undefined);
+  handler({ messages }, harness.context);
+  handler({ messages }, { ...harness.context, model: { ...codexModel(), provider: "other" } });
+  assert.deepEqual(recorded, [{ sessionId: "session-1", names: [REPORT_TOOL.name] }]);
+});
+
+test("fingerprints transcript tool definitions independent of order and executable fields", () => {
+  const read = createReadTool(process.cwd());
   const baseline = toolDefinitionFingerprint([REPORT_TOOL, read]);
-  assert.equal(toolDefinitionFingerprint([readInfo, structuredClone(REPORT_TOOL)]), baseline);
+  assert.equal(
+    toolDefinitionFingerprint([
+      structuredClone(toToolDeclaration(read)),
+      structuredClone(REPORT_TOOL),
+    ]),
+    baseline,
+  );
   assert.notEqual(
     toolDefinitionFingerprint([{ ...REPORT_TOOL, description: "Redefined report" }, read]),
     baseline,
@@ -449,6 +459,13 @@ test("fingerprints raw tool definitions independent of order and executable fiel
   assert.notEqual(
     toolDefinitionFingerprint([
       { ...REPORT_TOOL, parameters: Type.Object({ value: Type.Number() }) },
+      read,
+    ]),
+    baseline,
+  );
+  assert.notEqual(
+    toolDefinitionFingerprint([
+      { ...REPORT_TOOL, constrainedSampling: { type: "json_schema", strict: "require" } },
       read,
     ]),
     baseline,

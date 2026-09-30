@@ -1,35 +1,34 @@
-import { isString } from "./value-contracts.ts";
-import type {
-  BeforeProviderHeadersEvent,
-  CompactionResult,
-  ContextWithSystemEvent,
-  ExtensionAPI,
-  ExtensionContext,
-  SessionBeforeCompactEvent,
-  ToolInfo,
+import {
+  convertToLlm,
+  type BeforeProviderHeadersEvent,
+  type CompactionResult,
+  type ContextWithSystemEvent,
+  type ExtensionAPI,
+  type ExtensionContext,
+  type SessionBeforeCompactEvent,
 } from "@earendil-works/pi-coding-agent";
-import type {
-  Api,
-  Model,
-  OpenAICodexResponsesOptions,
-  ProviderHeaders,
+import {
+  getCurrentTools,
+  type Api,
+  type Model,
+  type OpenAICodexResponsesOptions,
+  type ProviderHeaders,
 } from "@earendil-works/pi-ai";
-import { addRemoteCompactionFeature, isObject, type JsonRecord } from "./codex-protocol.ts";
+import { addRemoteCompactionFeature, type JsonRecord } from "./codex-protocol.ts";
 import { CODEX_API, CODEX_PROVIDER } from "./codex-identifiers.ts";
 import {
-  activeResponsesTools,
   branchInstructions,
-  declaresActiveTools,
+  branchTranscript,
   providerHistory,
   remoteCompactionMarkerSummary,
-  responsesCompatibility,
+  requestGrammarToolInputProperties,
+  requestTools,
   searchCheckpoint,
-  type GrammarToolInputProperties,
+  toolDefinitionFingerprint,
 } from "./compaction-checkpoint.ts";
 import { resolveFileConfig, type ConfigResolver } from "./config-context.ts";
 import type { CodexProviderRuntime } from "./codex-provider.ts";
 import { responsesCompactionV2Metadata, type CodexCompactionMetadata } from "./codex-metadata.ts";
-import { APPLY_PATCH_INPUT_PROPERTY, APPLY_PATCH_TOOL_NAME } from "./apply-patch.ts";
 import { errorFromThrown } from "./error-from-thrown.ts";
 import { selectedRegistryModel } from "./model-context.ts";
 
@@ -87,8 +86,6 @@ export type RemoteCompactionHookHandler = (
 ) => Promise<RemoteCompactionHookResult | undefined>;
 
 export type RemoteCompactionApi = {
-  getActiveTools: () => string[];
-  getAllTools: () => ToolInfo[];
   onBeforeProviderHeaders: (handler: RemoteCompactionHeadersHandler) => void;
   onContext: (handler: RemoteCompactionContextHandler) => void;
   onSessionBeforeCompact: (handler: RemoteCompactionHookHandler) => void;
@@ -112,8 +109,6 @@ export function remoteCompactionApi(pi: ExtensionAPI): RemoteCompactionApi {
   };
 
   return {
-    getActiveTools: () => pi.getActiveTools(),
-    getAllTools: () => pi.getAllTools(),
     onBeforeProviderHeaders: (handler) =>
       pi.on("before_provider_headers", (event, ctx) => handler(event, context(ctx))),
     // The full-transcript event returns messages verbatim. A changed `context`
@@ -156,47 +151,6 @@ function instructionsForCompaction(systemPrompt: string, customInstructions?: st
     : systemPrompt;
 }
 
-function toolInputProperty(tool: ToolInfo | undefined): string | undefined {
-  if (tool?.name === APPLY_PATCH_TOOL_NAME) return APPLY_PATCH_INPUT_PROPERTY;
-  if (!tool || !isObject(tool.parameters)) return undefined;
-  const required = Array.isArray(tool.parameters["required"])
-    ? tool.parameters["required"].filter((name): name is string => typeof name === "string")
-    : [];
-  if (required.length !== 1 || !isObject(tool.parameters["properties"])) return undefined;
-  const requiredProperty = required[0];
-  if (requiredProperty === undefined) return undefined;
-  const property = tool.parameters["properties"][requiredProperty];
-  return isObject(property) && property.type === "string" ? requiredProperty : undefined;
-}
-
-function requestGrammarToolInputProperties(
-  payload: JsonRecord,
-  tools: readonly ToolInfo[],
-): GrammarToolInputProperties {
-  const byName = new Map(tools.map((tool) => [tool.name, tool]));
-  const properties = new Map<string, string>();
-  if (!Array.isArray(payload.tools)) return properties;
-
-  for (const declaration of payload.tools) {
-    if (!isObject(declaration)) continue;
-    const tool = declaration;
-    if (tool.type !== "custom" || !isString(tool.name)) continue;
-    const property = toolInputProperty(byName.get(tool.name));
-    if (property) properties.set(tool.name, property);
-  }
-  return properties;
-}
-
-function fallbackGrammarToolInputProperties(
-  activeNames: readonly string[],
-  model: Model<Api>,
-): GrammarToolInputProperties {
-  const compat = responsesCompatibility(model.compat);
-  return activeNames.includes(APPLY_PATCH_TOOL_NAME) && compat?.supportsOpenAIGrammarTools
-    ? new Map([[APPLY_PATCH_TOOL_NAME, APPLY_PATCH_INPUT_PROPERTY]])
-    : new Map();
-}
-
 function compactionMetadata(reason: SessionBeforeCompactEvent["reason"]): CodexCompactionMetadata {
   switch (reason) {
     case "manual":
@@ -220,6 +174,12 @@ export default function registerRemoteCompaction(
 
   pi.onContext((event, ctx) => {
     runtime.captureScope(ctx);
+    if (selectedCodexModel(ctx.model)) {
+      runtime.noteTranscriptTools(
+        ctx.sessionManager.getSessionId(),
+        getCurrentTools(convertToLlm(event.messages)),
+      );
+    }
     const checkpoint = searchCheckpoint(ctx.sessionManager.getBranch());
     if (checkpoint.kind === "absent") return undefined;
     return {
@@ -242,13 +202,26 @@ export default function registerRemoteCompaction(
       if (!authentication.apiKey) throw new Error("OpenAI Codex authentication is unavailable.");
 
       const sessionId = ctx.sessionManager.getSessionId();
-      const allTools = pi.getAllTools();
       const cached = runtime.latestTemplate(sessionId);
       const matching = cached?.modelId === ctx.model.id ? cached : undefined;
+      // Turn requests declare the transcript's current tools. The last turn's
+      // exact declarations are reused while the branch still declares the tools
+      // that turn's transcript declared: Pi strips hidden declarations (codemode
+      // `only` mode) from requests after extensions see the transcript, so only
+      // the cached declarations reproduce them. Otherwise, such as after resume
+      // or a branch switch, the declarations are rebuilt from the branch as turn
+      // requests build them.
+      const transcript = branchTranscript(event.branchEntries);
+      const transcriptTools = getCurrentTools(transcript);
+      const declared =
+        matching?.transcriptToolFingerprint === toolDefinitionFingerprint(transcriptTools) &&
+        Array.isArray(matching.payload.tools)
+          ? { ...matching, tools: matching.payload.tools }
+          : undefined;
       const config = resolveConfig(ctx);
       const grammarToolInputProperties =
-        matching?.grammarToolInputProperties ??
-        fallbackGrammarToolInputProperties(pi.getActiveTools(), ctx.model);
+        declared?.grammarToolInputProperties ??
+        requestGrammarToolInputProperties(ctx.model, transcript);
       const history = providerHistory({
         branch: event.branchEntries,
         wireModel: ctx.model,
@@ -256,22 +229,10 @@ export default function registerRemoteCompaction(
         imageDetail: config.imageDetail,
         recoverLatestOverflowPrefix: event.reason === "overflow" && event.willRetry,
       });
-      // Reuse the last turn's exact declarations when they still describe the
-      // active tools, so the compaction request shares the turn requests'
-      // prompt-cache prefix. Rebuild from the registry when the active set or
-      // any definition (including a parameter schema under an unchanged name)
-      // changed since that turn, or when no turn template exists.
-      const template: JsonRecord = { ...matching?.payload };
-      const activeNames = pi.getActiveTools();
-      const cachedTools = Array.isArray(matching?.payload.tools)
-        ? matching.payload.tools.filter(isObject)
-        : undefined;
-      template.tools =
-        cachedTools &&
-        matching &&
-        declaresActiveTools(cachedTools, matching.toolFingerprint, allTools, activeNames)
-          ? cachedTools
-          : (activeResponsesTools(allTools, activeNames, grammarToolInputProperties) ?? []);
+      const template: JsonRecord = {
+        ...matching?.payload,
+        tools: declared?.tools ?? requestTools(ctx.model, transcriptTools),
+      };
       const requestOptions: OpenAICodexResponsesOptions = {
         ...matching?.requestOptions,
         apiKey: authentication.apiKey,
@@ -291,9 +252,7 @@ export default function registerRemoteCompaction(
           branchInstructions(ctx.model, event.branchEntries) || ctx.getSystemPrompt(),
           event.customInstructions,
         ),
-        grammarToolInputProperties:
-          matching?.grammarToolInputProperties ??
-          requestGrammarToolInputProperties(template, allTools),
+        grammarToolInputProperties,
         template,
         priority: config.fastMode,
         compactionMetadata: compactionMetadata(event.reason),

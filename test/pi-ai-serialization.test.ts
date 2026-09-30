@@ -9,10 +9,8 @@ import {
   createBashTool,
   createEditTool,
   createReadTool,
-  createSyntheticSourceInfo,
   createWriteTool,
   type SessionEntry,
-  type ToolInfo,
 } from "@earendil-works/pi-coding-agent";
 import {
   normalizeContext,
@@ -28,8 +26,8 @@ import {
   convertResponsesTools as referenceConvertResponsesTools,
 } from "@earendil-works/pi-ai/api/openai-responses-shared";
 import {
-  activeResponsesTools,
   encodeSessionEntries,
+  requestTools,
 } from "../extensions/openai-codex-compat/compaction-checkpoint.ts";
 import { IMAGE_GENERATION_PARAMETERS } from "../extensions/openai-codex-compat/image-generation-schema.ts";
 import {
@@ -56,10 +54,6 @@ const model: Model<Api> = {
   maxTokens: 10_000,
   compat: { supportsOpenAIGrammarTools: true, supportsToolSearch: true },
 };
-
-const TEST_TOOL_SOURCE = createSyntheticSourceInfo("test-tool", {
-  source: "pi-ai-serialization test",
-});
 
 const applyPatchTool: Tool = {
   name: "apply_patch",
@@ -619,34 +613,17 @@ test("round-trips namespaced calls and deferred namespaced definitions", () => {
   }
 });
 
-test("serializes active compaction tools with the same namespace contract", () => {
+test("declares Codex request tools with the namespace contract", () => {
   assert.deepEqual(
-    activeResponsesTools(
-      [
-        {
-          name: "exec_command",
-          description: "Run a command",
-          parameters: Type.Object({ cmd: Type.String() }),
-          exposure: "direct",
-          sourceInfo: TEST_TOOL_SOURCE,
-        } satisfies ToolInfo,
-        {
-          name: WEB_RUN_TOOL_NAME,
-          description: webRunTool.description,
-          parameters: webRunTool.parameters,
-          exposure: "direct",
-          sourceInfo: TEST_TOOL_SOURCE,
-        } satisfies ToolInfo,
-        {
-          name: IMAGE_GENERATION_TOOL_NAME,
-          description: imageGenerationTool.description,
-          parameters: imageGenerationTool.parameters,
-          exposure: "direct",
-          sourceInfo: TEST_TOOL_SOURCE,
-        } satisfies ToolInfo,
-      ],
-      ["exec_command", WEB_RUN_TOOL_NAME, IMAGE_GENERATION_TOOL_NAME],
-    ),
+    requestTools(model, [
+      {
+        name: "exec_command",
+        description: "Run a command",
+        parameters: Type.Object({ cmd: Type.String() }),
+      },
+      webRunTool,
+      imageGenerationTool,
+    ]),
     [
       {
         type: "function",

@@ -11,6 +11,12 @@
 
 ### Fixed
 
+- Declare the same tools in native compaction requests as in turn requests while
+  Pi codemode is active. Compaction rebuilt the declarations from Pi's tool
+  registry, which lacks codemode's rewritten descriptions and still lists the
+  tools codemode `only` mode hides, so every compaction request missed the
+  prompt cache. Compaction after a resume now also keeps Pi's strict tool
+  schemas.
 - Resume sessions whose saved `/codex-settings` values include a setting this
   version removed or no longer accepts, such as `reasoningMode`. Those fields are
   skipped instead of failing the whole record at session start.

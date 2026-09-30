@@ -7,9 +7,9 @@ import {
   sessionEntryToContextMessages,
   type ContextEditEntry,
   type SessionEntry,
-  type ToolInfo,
 } from "@earendil-works/pi-coding-agent";
 import {
+  getDeclaredTools,
   getInitialSystemMessage,
   getSystemMessageText,
   normalizeContext,
@@ -19,24 +19,18 @@ import {
   type Message,
   type Model,
   type SystemMessage,
+  type Tool,
   type TranscriptContext,
 } from "@earendil-works/pi-ai";
 import { Value } from "typebox/value";
-import { APPLY_PATCH_LARK_GRAMMAR, APPLY_PATCH_TOOL_NAME } from "./apply-patch.ts";
 import { CODEX_TOOL_CALL_PROVIDERS } from "./codex-identifiers.ts";
 import type { ImageDetail } from "./config.ts";
-import {
-  installCompactionItem,
-  isObject,
-  requireResponsesInputItems,
-  type JsonRecord,
-} from "./codex-protocol.ts";
+import { installCompactionItem, isObject, requireResponsesInputItems } from "./codex-protocol.ts";
 import { nativeCommittedPrefixBeforeOverflow, nativeResponseOverrides } from "./native-history.ts";
 import { stableResponsesJson } from "./responses-replay.ts";
 import {
   CODEX_NAMESPACED_TOOL_NAMES,
   CODEX_TEXT_CONTENT_ITEM_TOOL_RESULT_NAMES,
-  splitNamespacedToolName,
 } from "./namespaced-tools.ts";
 import {
   RESPONSES_COMPACTION_ITEM_SCHEMA,
@@ -45,8 +39,12 @@ import {
   type ResponsesInputItem,
   type ResponsesOutputItem,
 } from "./responses-item-schema.ts";
-import type { ResponsesToolDefinition } from "./responses-tool-schema.ts";
-import { convertResponsesMessages } from "./vendor/pi-ai/openai-responses-serialization.ts";
+import {
+  convertResponsesMessages,
+  convertResponsesTools,
+  createGrammarToolInputProperties,
+  type ResponsesItem,
+} from "./vendor/pi-ai/openai-responses-serialization.ts";
 
 type AgentMessages = ReturnType<typeof sessionEntryToContextMessages>;
 
@@ -113,149 +111,62 @@ export function requestInstructions(context: TranscriptContext): string {
   return initial ? getSystemMessageText(initial) : "";
 }
 
+/** A session branch as the Pi AI messages Pi sends, including the system messages that declare tools. */
+export function branchTranscript(branch: readonly SessionEntry[]): Message[] {
+  return convertToLlm(buildSessionContext([...branch]).messages);
+}
+
 /** `instructions` for a request built from a session branch rather than Pi's live transcript. */
 export function branchInstructions(model: Model<Api>, branch: readonly SessionEntry[]): string {
   return requestInstructions(
-    resolveRequestTranscript(model, {
-      messages: convertToLlm(buildSessionContext([...branch]).messages),
-    }),
+    resolveRequestTranscript(model, { messages: branchTranscript(branch) }),
   );
 }
 
-function responsesToolParameters(tool: ToolInfo): JsonRecord {
-  if (!isObject(tool.parameters)) {
-    throw new Error(`Tool ${tool.name} must have JSON object parameters.`);
-  }
-  return tool.parameters;
-}
-
-function asResponsesTool(
-  tool: ToolInfo,
-  grammarToolInputProperties: GrammarToolInputProperties,
-): ResponsesToolDefinition {
-  if (tool.name === APPLY_PATCH_TOOL_NAME && grammarToolInputProperties.has(tool.name)) {
-    return {
-      type: "custom",
-      name: tool.name,
-      description: tool.description,
-      format: {
-        type: "grammar",
-        syntax: "lark",
-        definition: APPLY_PATCH_LARK_GRAMMAR,
-      },
-    };
-  }
-  const namespaced = splitNamespacedToolName(tool.name);
-  if (namespaced) {
-    return {
-      type: "namespace",
-      name: namespaced.namespace,
-      description: `Tools in the ${namespaced.namespace} namespace.`,
-      tools: [
-        {
-          type: "function",
-          name: namespaced.name,
-          description: tool.description,
-          parameters: responsesToolParameters(tool),
-          strict: false,
-        },
-      ],
-    };
-  }
-  return {
-    type: "function",
-    name: tool.name,
-    description: tool.description,
-    parameters: responsesToolParameters(tool),
+/**
+ * The top-level `tools` of a Codex request declaring the given transcript tools.
+ * Turn requests and native compaction share this conversion, so the same tools
+ * produce the same declarations and the same prompt-cache prefix.
+ */
+export function requestTools(model: Model<Api>, tools: readonly Tool[]): ResponsesItem[] {
+  const compat = responsesCompatibility(model.compat);
+  return convertResponsesTools(tools, {
     strict: false,
-  };
+    supportsStrictMode: compat.supportsStrictMode ?? true,
+    supportsOpenAIGrammarTools: compat.supportsOpenAIGrammarTools ?? false,
+    namespacedToolNames: CODEX_NAMESPACED_TOOL_NAMES,
+  });
 }
 
-export function activeResponsesTools(
-  allTools: readonly ToolInfo[],
-  activeNames: readonly string[],
-  grammarToolInputProperties: GrammarToolInputProperties = new Map(),
-): ResponsesToolDefinition[] | undefined {
-  const enabled = new Set(activeNames);
-  const tools = allTools.filter((tool) => enabled.has(tool.name));
-  return tools.length > 0
-    ? tools.map((tool) => asResponsesTool(tool, grammarToolInputProperties))
-    : undefined;
+/** Input properties of the grammar tools a transcript ever declared, for replaying their calls. */
+export function requestGrammarToolInputProperties(
+  model: Model<Api>,
+  messages: readonly Message[],
+): GrammarToolInputProperties {
+  return createGrammarToolInputProperties(
+    getDeclaredTools([...messages]),
+    responsesCompatibility(model.compat).supportsOpenAIGrammarTools ?? false,
+  );
 }
-
-/** The raw tool definition fields that both Pi AI's `Tool` and Pi's `ToolInfo` carry. */
-export type ToolDeclarationSource = Pick<ToolInfo, "name" | "description" | "parameters">;
 
 /**
- * Fingerprint raw tool definitions by name, description, and parameter schema,
- * independent of declaration order. Both the transcript tools a turn request
- * declared and the registry's active `ToolInfo` list produce the same value for
- * the same definitions, so a cached turn template can be compared with the
- * current tools without reversing the strict schema conversion applied on the
- * wire.
+ * Fingerprint transcript tool definitions by name, description, parameter
+ * schema, and constrained sampling, independent of declaration order.
  */
-export function toolDefinitionFingerprint(tools: readonly ToolDeclarationSource[]): string {
+export function toolDefinitionFingerprint(tools: readonly Tool[]): string {
   const declarations = tools
     .map((tool) => {
       // The JSON round-trip drops typebox symbol keys and undefined fields, as
       // Pi AI's own declaration comparison does.
       const parameters: unknown = JSON.parse(JSON.stringify(tool.parameters));
-      return { name: tool.name, description: tool.description, parameters };
+      const constrainedSampling: unknown =
+        tool.constrainedSampling === undefined
+          ? undefined
+          : JSON.parse(JSON.stringify(tool.constrainedSampling));
+      return { name: tool.name, description: tool.description, parameters, constrainedSampling };
     })
     .sort((left, right) => left.name.localeCompare(right.name));
   return createHash("sha256").update(stableResponsesJson(declarations)).digest("hex");
-}
-
-/** Fingerprint of the registry tools that are currently active. */
-export function activeToolFingerprint(
-  allTools: readonly ToolInfo[],
-  activeNames: readonly string[],
-): string {
-  const enabled = new Set(activeNames);
-  return toolDefinitionFingerprint(allTools.filter((tool) => enabled.has(tool.name)));
-}
-
-/**
- * Whether a cached turn template still declares exactly the active tools.
- *
- * The serialized `tools` list must name the active set (namespace members
- * count as `namespace.member`), and the raw definitions that produced it must
- * fingerprint identically to the active registry tools. Comparing names and
- * descriptions alone missed parameter-schema changes under an unchanged name.
- *
- * A cached turn template carries the exact declarations the turn requests sent,
- * including strict schema conversion that `ToolInfo` cannot reproduce. Reusing
- * it keeps the compaction request on the turn requests' prompt-cache prefix.
- */
-export function declaresActiveTools(
-  serialized: readonly JsonRecord[],
-  cachedToolFingerprint: string,
-  allTools: readonly ToolInfo[],
-  activeNames: readonly string[],
-): boolean {
-  if (cachedToolFingerprint !== activeToolFingerprint(allTools, activeNames)) return false;
-  const declared = new Map<string, string | undefined>();
-  for (const item of serialized) {
-    if (item.type === "namespace" && isString(item.name) && Array.isArray(item.tools)) {
-      for (const member of item.tools) {
-        if (!isObject(member) || !isString(member.name)) return false;
-        declared.set(
-          `${item.name}.${member.name}`,
-          isString(member["description"]) ? member["description"] : undefined,
-        );
-      }
-    } else if ((item.type === "function" || item.type === "custom") && isString(item.name)) {
-      declared.set(item.name, isString(item["description"]) ? item["description"] : undefined);
-    } else {
-      return false;
-    }
-  }
-  const enabled = new Set(activeNames);
-  const active = allTools.filter((tool) => enabled.has(tool.name));
-  return (
-    declared.size === active.length &&
-    active.every((tool) => declared.has(tool.name) && declared.get(tool.name) === tool.description)
-  );
 }
 
 export function remoteCompactionMarkerSummary(): string {
