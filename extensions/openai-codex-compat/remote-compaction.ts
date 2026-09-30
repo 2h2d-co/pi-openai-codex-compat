@@ -1,11 +1,10 @@
-import {
-  convertToLlm,
-  type BeforeProviderHeadersEvent,
-  type CompactionResult,
-  type ContextWithSystemEvent,
-  type ExtensionAPI,
-  type ExtensionContext,
-  type SessionBeforeCompactEvent,
+import type {
+  BeforeProviderHeadersEvent,
+  CompactionResult,
+  ContextWithSystemEvent,
+  ExtensionAPI,
+  ExtensionContext,
+  SessionBeforeCompactEvent,
 } from "@earendil-works/pi-coding-agent";
 import {
   getCurrentTools,
@@ -24,13 +23,12 @@ import {
   requestGrammarToolInputProperties,
   requestTools,
   searchCheckpoint,
-  toolDefinitionFingerprint,
 } from "./compaction-checkpoint.ts";
 import { resolveFileConfig, type ConfigResolver } from "./config-context.ts";
 import type { CodexProviderRuntime } from "./codex-provider.ts";
 import { responsesCompactionV2Metadata, type CodexCompactionMetadata } from "./codex-metadata.ts";
 import { errorFromThrown } from "./error-from-thrown.ts";
-import { projectCodemodeTranscript, type CodemodeLoadoutApi } from "./codemode-loadout.ts";
+import { latestRequestTools } from "./request-tools-entry.ts";
 import { selectedRegistryModel } from "./model-context.ts";
 
 export type RemoteCompactionContext = Parameters<ConfigResolver>[0] & {
@@ -86,7 +84,7 @@ export type RemoteCompactionHookHandler = (
   ctx: RemoteCompactionContext,
 ) => Promise<RemoteCompactionHookResult | undefined>;
 
-export type RemoteCompactionApi = CodemodeLoadoutApi & {
+export type RemoteCompactionApi = {
   onBeforeProviderHeaders: (handler: RemoteCompactionHeadersHandler) => void;
   onContext: (handler: RemoteCompactionContextHandler) => void;
   onSessionBeforeCompact: (handler: RemoteCompactionHookHandler) => void;
@@ -110,8 +108,6 @@ export function remoteCompactionApi(pi: ExtensionAPI): RemoteCompactionApi {
   };
 
   return {
-    getAllTools: () => pi.getAllTools(),
-    getSettings: () => pi.getSettings(),
     onBeforeProviderHeaders: (handler) =>
       pi.on("before_provider_headers", (event, ctx) => handler(event, context(ctx))),
     // The full-transcript event returns messages verbatim. A changed `context`
@@ -177,12 +173,6 @@ export default function registerRemoteCompaction(
 
   pi.onContext((event, ctx) => {
     runtime.captureScope(ctx);
-    if (selectedCodexModel(ctx.model)) {
-      runtime.noteTranscriptTools(
-        ctx.sessionManager.getSessionId(),
-        getCurrentTools(convertToLlm(event.messages)),
-      );
-    }
     const checkpoint = searchCheckpoint(ctx.sessionManager.getBranch());
     if (checkpoint.kind === "absent") return undefined;
     return {
@@ -207,28 +197,17 @@ export default function registerRemoteCompaction(
       const sessionId = ctx.sessionManager.getSessionId();
       const cached = runtime.latestTemplate(sessionId);
       const matching = cached?.modelId === ctx.model.id ? cached : undefined;
-      // Turn requests declare the transcript's current tools after Pi strips
-      // hidden declarations (codemode `only` mode). The last turn's exact
-      // declarations are reused while the branch still declares the tools that
-      // turn's transcript declared, which also keeps any payload changes other
-      // extensions made. Otherwise, such as after resume or a branch switch, the
-      // declarations are rebuilt from the branch as Pi projects it for turns.
-      const transcript = branchTranscript(event.branchEntries);
-      const transcriptTools = getCurrentTools(transcript);
-      const declared =
-        matching?.transcriptToolFingerprint === toolDefinitionFingerprint(transcriptTools) &&
-        Array.isArray(matching.payload.tools)
-          ? { ...matching, tools: matching.payload.tools }
-          : undefined;
-      const requestTranscript = projectCodemodeTranscript(
-        pi,
-        transcript,
-        transcriptTools.map((tool) => tool.name),
-      );
+      // Declare the tools the branch's latest request to this model sent, as
+      // saved in the session. The transcript also lists tools Pi leaves out of
+      // requests (codemode `only` mode), and other extensions can edit them.
+      // Sessions without a saved entry, such as those older versions wrote,
+      // declare the transcript's current tools.
+      const saved = latestRequestTools(event.branchEntries, ctx.model.id);
+      const transcript = saved ? undefined : branchTranscript(event.branchEntries);
       const config = resolveConfig(ctx);
       const grammarToolInputProperties =
-        declared?.grammarToolInputProperties ??
-        requestGrammarToolInputProperties(ctx.model, requestTranscript);
+        saved?.grammarToolInputProperties ??
+        requestGrammarToolInputProperties(ctx.model, transcript ?? []);
       const history = providerHistory({
         branch: event.branchEntries,
         wireModel: ctx.model,
@@ -238,7 +217,7 @@ export default function registerRemoteCompaction(
       });
       const template: JsonRecord = {
         ...matching?.payload,
-        tools: declared?.tools ?? requestTools(ctx.model, getCurrentTools(requestTranscript)),
+        tools: saved?.tools ?? requestTools(ctx.model, getCurrentTools(transcript ?? [])),
       };
       const requestOptions: OpenAICodexResponsesOptions = {
         ...matching?.requestOptions,

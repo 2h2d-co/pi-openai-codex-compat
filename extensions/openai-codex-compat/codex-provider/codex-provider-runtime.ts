@@ -14,7 +14,6 @@ import {
   type OpenAICodexResponsesOptions,
   type Provider,
   type SimpleStreamOptions,
-  type Tool,
   type TranscriptContext,
   type Usage,
   uuidv7,
@@ -34,7 +33,6 @@ import {
   resolveRequestTranscript,
   responsesCompatibility,
   searchCheckpoint,
-  toolDefinitionFingerprint,
   type CheckpointData,
   type CompactionDecision,
   type GrammarToolInputProperties,
@@ -59,6 +57,12 @@ import {
 } from "../codex-metadata.ts";
 import { resolveCodexThreadIdentity, type CodexThreadIdentity } from "../codex-thread-lineage.ts";
 import { applyResponsesLite } from "../responses-lite.ts";
+import {
+  REQUEST_TOOLS_ENTRY_TYPE,
+  requestToolsChanged,
+  requestToolsData,
+  type RequestToolsData,
+} from "../request-tools-entry.ts";
 import { requiredValue } from "../required-value.ts";
 import { processCodexStream, type CodexStreamAttemptState } from "../codex-stream.ts";
 import {
@@ -172,7 +176,6 @@ export class CodexProviderRuntime {
   readonly transport = new CodexTransport();
   private readonly scopes = new Map<string, RuntimeScope>();
   private readonly templates = new Map<string, RequestTemplate>();
-  private readonly transcriptToolFingerprints = new Map<string, string>();
   private readonly prewarmedTemplates = new Set<string>();
   private readonly requestTails = new Map<string, Promise<void>>();
   private readonly activeAgentTurns = new Map<string, ActiveAgentTurn>();
@@ -366,7 +369,6 @@ export class CodexProviderRuntime {
   clearSession(sessionId: string): void {
     this.scopes.delete(sessionId);
     this.templates.delete(sessionId);
-    this.transcriptToolFingerprints.delete(sessionId);
     this.clearPrewarmState(sessionId);
     this.requestTails.delete(sessionId);
     this.activeAgentTurns.delete(sessionId);
@@ -798,7 +800,6 @@ export class CodexProviderRuntime {
     const context = resolveRequestTranscript(model, input);
     const stream = createAssistantMessageEventStream();
     const requestOptions = transportOptions(options);
-    const transcriptToolFingerprint = this.takeTranscriptToolFingerprint(requestOptions.sessionId);
     const output: AssistantMessage = {
       role: "assistant",
       content: [],
@@ -863,11 +864,16 @@ export class CodexProviderRuntime {
         this.templates.set(runtimeSessionId, {
           modelId: model.id,
           payload: replacementValues ? {} : withoutConversationInput(body),
-          transcriptToolFingerprint,
           grammarToolInputProperties,
           requestOptions: { ...requestOptions },
         });
       }
+      // Saved after the response, because an entry appended now would move the
+      // branch leaf that percentage compaction checks.
+      const sentTools =
+        runtimeSessionId && !replacementValues && Array.isArray(body.tools)
+          ? requestToolsData(model.id, body.tools.filter(isObject), grammarToolInputProperties)
+          : undefined;
       if (!replacementValues) {
         body = await this.maybeCompactPercentage(
           model,
@@ -1199,6 +1205,7 @@ export class CodexProviderRuntime {
         (item) =>
           item["type"] !== "function_call_output" && item["type"] !== "custom_tool_call_output",
       );
+      if (runtimeSessionId && sentTools) this.saveRequestTools(runtimeSessionId, sentTools);
       const persistNativeItems =
         rawItems.length > 0 &&
         (responseRequests > 1 || nativeOverrideRequired(rawItems, canonicalItems));
@@ -1273,20 +1280,16 @@ export class CodexProviderRuntime {
   }
 
   /**
-   * Record the tools the session transcript declares for the next request, as
-   * extensions see it before Pi strips hidden declarations (codemode `only`
-   * mode) from the provider context. The next request of the session takes the
-   * record, so a request without a preceding transcript never inherits one.
+   * Save the tools a turn request of the session sends when they differ from the
+   * branch's latest saved tools for the model. Native compaction declares them,
+   * because the transcript also lists tools Pi leaves out of requests.
    */
-  noteTranscriptTools(sessionId: string, tools: readonly Tool[]): void {
-    this.transcriptToolFingerprints.set(sessionId, toolDefinitionFingerprint(tools));
-  }
-
-  private takeTranscriptToolFingerprint(sessionId: string | undefined): string | undefined {
-    if (sessionId === undefined) return undefined;
-    const fingerprint = this.transcriptToolFingerprints.get(sessionId);
-    this.transcriptToolFingerprints.delete(sessionId);
-    return fingerprint;
+  private saveRequestTools(sessionId: string, data: RequestToolsData): void {
+    const scope = this.scopes.get(sessionId);
+    if (!scope) return;
+    if (requestToolsChanged(scope.manager.getBranch(), data)) {
+      this.pi.appendEntry(REQUEST_TOOLS_ENTRY_TYPE, data);
+    }
   }
 
   async compact(options: {

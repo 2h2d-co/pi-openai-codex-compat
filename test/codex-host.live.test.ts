@@ -664,7 +664,7 @@ for (const codemode of ["on", "only"] as const) {
       ]);
 
       // A fresh extension load, as after a resume, has no turn request yet. Its
-      // compaction declares the branch's tools, without the ones `only` mode hides.
+      // compaction declares the tools the session saved for the last turn.
       const resumed = await createLivePiHost(t, "text", "gpt-5.6-luna", [lookup], {
         codemode,
         sessionManager: session.sessionManager,

@@ -49,6 +49,55 @@ test("streams ordinary responses without persisting redundant native data", asyn
   assert.equal(harness.customEntries.length, 0);
 });
 
+test("saves the tools a turn request sends once per change", async () => {
+  const user = userEntry("user-1", "hello");
+  const harness = createHarness([user]);
+  const requests: JsonRecord[] = [];
+  harness.runtime.transport.request = async function* (_model, body) {
+    requests.push(structuredClone(requireJsonRecord(body)));
+    yield* textEvents("hello back");
+  };
+  const report: Tool = {
+    name: "report",
+    description: "Report a value",
+    parameters: Type.Object({ value: Type.String() }),
+  };
+  const lookup: Tool = { ...report, name: "lookup", description: "Look up a value" };
+  const turn = async (tools: Tool[], onPayload?: (payload: unknown) => unknown) => {
+    const context: Context = {
+      messages: [
+        { role: "system", content: "prompt", toolsAdded: tools, timestamp: 0 },
+        user.message,
+      ],
+    };
+    const message = await harness.runtime
+      .streamSimple(codexModel(), context, {
+        apiKey: accessToken(),
+        sessionId: "session-1",
+        transport: "sse",
+        ...(onPayload ? { onPayload } : {}),
+      })
+      .result();
+    assert.equal(message.stopReason, "stop");
+  };
+  const saved = () => harness.requestToolsEntries.map((data) => requireJsonRecord(data)["tools"]);
+
+  await turn([report]);
+  assert.deepEqual(saved(), [requests.at(-1)?.tools]);
+  await turn([report]);
+  assert.equal(saved().length, 1);
+  await turn([report, lookup]);
+  assert.deepEqual(saved().at(-1), requests.at(-1)?.tools);
+  assert.equal(saved().length, 2);
+  // Another extension's payload edit is what the request sent, so it is saved.
+  await turn([report, lookup], (payload) => ({
+    ...requireJsonRecord(payload),
+    tools: [{ type: "function", name: "edited" }],
+  }));
+  assert.deepEqual(saved().at(-1), [{ type: "function", name: "edited" }]);
+  assert.equal(saved().length, 3);
+});
+
 test("prewarms only the static prefix before its first WebSocket turn", async () => {
   const user = userEntry("user-1", "hello");
   const harness = createHarness([user]);

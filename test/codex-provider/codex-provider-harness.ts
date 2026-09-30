@@ -32,6 +32,7 @@ import {
 } from "../../extensions/openai-codex-compat/codex-transport.ts";
 import { IMAGE_GENERATION_PARAMETERS } from "../../extensions/openai-codex-compat/image-generation-schema.ts";
 import { NATIVE_RESPONSE_ENTRY_TYPE } from "../../extensions/openai-codex-compat/native-history.ts";
+import { REQUEST_TOOLS_ENTRY_TYPE } from "../../extensions/openai-codex-compat/request-tools-entry.ts";
 import { IMAGE_GENERATION_TOOL_NAME } from "../../extensions/openai-codex-compat/namespaced-tools.ts";
 import { CHECKPOINT_ENTRY_TYPE } from "../../extensions/openai-codex-compat/compaction-checkpoint.ts";
 import {
@@ -205,12 +206,15 @@ export function createHarness(
   responseRetryPolicy = { maxRetries: 0, baseDelayMs: 0 },
 ) {
   let branch = [...initialBranch];
+  // Native-response and other entries; saved request tools are kept apart.
   const customEntries: Array<{ customType: string; data: unknown }> = [];
+  const requestToolsEntries: unknown[] = [];
   const compactions: Array<{ details: unknown; usage: unknown }> = [];
   const pi: CodexProviderRuntimeApi = {
     getAllTools: () => [],
     appendEntry(customType: string, data: unknown) {
-      customEntries.push({ customType, data });
+      if (customType === REQUEST_TOOLS_ENTRY_TYPE) requestToolsEntries.push(data);
+      else customEntries.push({ customType, data });
       branch.push({
         type: "custom",
         id: `custom-${branch.length}`,
@@ -280,6 +284,7 @@ export function createHarness(
     extensionContext,
     branch: () => branch,
     customEntries,
+    requestToolsEntries,
     compactions,
   };
 }

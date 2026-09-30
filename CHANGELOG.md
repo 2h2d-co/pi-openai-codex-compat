@@ -15,8 +15,9 @@
   Pi codemode is active. Compaction rebuilt the declarations from Pi's tool
   registry, which lacks codemode's rewritten descriptions and still lists the
   tools codemode `only` mode hides, so every compaction request missed the
-  prompt cache. Compaction after a resume or branch switch now also keeps
-  Pi's strict tool schemas and leaves out the tools `only` mode hides.
+  prompt cache. Turn requests now save the tools they send in the session
+  whenever those tools change, and compaction declares the saved tools, also
+  after a resume or a branch switch.
 - Resume sessions whose saved `/codex-settings` values include a setting this
   version removed or no longer accepts, such as `reasoningMode`. Those fields are
   skipped instead of failing the whole record at session start.

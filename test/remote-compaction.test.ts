@@ -9,13 +9,7 @@ import {
 import { isString, requireString } from "../extensions/openai-codex-compat/value-contracts.ts";
 import assert from "node:assert/strict";
 import test from "node:test";
-import {
-  createReadTool,
-  createSyntheticSourceInfo,
-  type ExtensionAPI,
-  type SessionEntry,
-  type ToolInfo,
-} from "@earendil-works/pi-coding-agent";
+import { createReadTool, type SessionEntry, type ToolInfo } from "@earendil-works/pi-coding-agent";
 import {
   toToolDeclaration,
   type Api,
@@ -27,12 +21,15 @@ import {
   CHECKPOINT_ENTRY_TYPE,
   parseCheckpoint,
   requestTools,
-  toolDefinitionFingerprint,
 } from "../extensions/openai-codex-compat/compaction-checkpoint.ts";
-import { Type } from "typebox";
 import { CodexProviderRuntime } from "../extensions/openai-codex-compat/codex-provider.ts";
 import type { CodexProviderRuntimeApi } from "../extensions/openai-codex-compat/codex-provider/codex-provider-runtime.ts";
-import type { RequestTemplate } from "../extensions/openai-codex-compat/codex-provider/codex-provider-contracts.ts";
+import {
+  latestRequestTools,
+  REQUEST_TOOLS_ENTRY_TYPE,
+  requestToolsChanged,
+  requestToolsData,
+} from "../extensions/openai-codex-compat/request-tools-entry.ts";
 import { DEFAULT_CONFIG } from "../extensions/openai-codex-compat/config.ts";
 import { CODEX_TURN_METADATA_HEADER } from "../extensions/openai-codex-compat/codex-metadata.ts";
 import {
@@ -49,8 +46,6 @@ import registerRemoteCompaction, {
 } from "../extensions/openai-codex-compat/remote-compaction.ts";
 import type { ResponsesOutputMessageItem } from "../extensions/openai-codex-compat/responses-item-schema.ts";
 import { REPORT_TOOL } from "./codex-provider/codex-provider-harness.ts";
-
-type Settings = ReturnType<ExtensionAPI["getSettings"]>;
 
 interface TestCompactionResult {
   compaction: {
@@ -145,15 +140,9 @@ class RemoteCompactionTestApi implements RemoteCompactionApi, CodexProviderRunti
   sessionShutdown: RemoteCompactionLifecycleHandler | undefined;
   sessionStart: RemoteCompactionLifecycleHandler | undefined;
 
-  allTools: ToolInfo[] = [];
-  settings: Settings = {};
-
   appendEntry(): void {}
   getAllTools(): ToolInfo[] {
-    return this.allTools;
-  }
-  getSettings(): Settings {
-    return this.settings;
+    return [];
   }
 
   onBeforeProviderHeaders(handler: RemoteCompactionHeadersHandler): void {
@@ -355,28 +344,29 @@ function toolsEntry(id: string, tools: Tool[], parentId: string | null = null): 
   } satisfies SessionEntry;
 }
 
-test("declares the last turn's tools in native compaction while the branch still declares them", async () => {
+function requestToolsEntry(id: string, parentId: string, data: unknown): SessionEntry {
+  return {
+    type: "custom",
+    id,
+    parentId,
+    timestamp: new Date(0).toISOString(),
+    customType: REQUEST_TOOLS_ENTRY_TYPE,
+    data,
+  } satisfies SessionEntry;
+}
+
+test("declares the branch's saved request tools in native compaction", async () => {
   const read = toToolDeclaration(createReadTool(process.cwd()));
   const hidden = { ...REPORT_TOOL, name: "hidden_report" };
   const branchTools = [REPORT_TOOL, read, hidden];
   const system = toolsEntry("system-0", branchTools);
   const user = userEntry("user-1", "Remember this.", system.id);
-  const branch = [system, user];
-  const harness = createHarness(branch);
+  const harness = createHarness([system, user]);
   const model = harness.context.model;
-  // Pi stripped `hidden_report` from the turn request after extensions saw the
-  // transcript, as codemode `only` mode does, so only the cached declarations
-  // reproduce what the turn sent.
-  const turnTools = requestTools(model, [REPORT_TOOL, read]);
-  const cached: RequestTemplate = {
-    modelId: model.id,
-    payload: { tools: structuredClone(turnTools) },
-    transcriptToolFingerprint: toolDefinitionFingerprint(branchTools),
-    grammarToolInputProperties: new Map<string, string>(),
-    requestOptions: { transport: "sse" as const },
-  };
-  let latest: RequestTemplate | undefined = cached;
-  harness.runtime.latestTemplate = () => latest;
+  // Pi left `hidden_report` out of the turn request, as codemode `only` mode
+  // does, so only the saved request tools reproduce what the turn sent.
+  const turnTools = requireJsonRecords(requestTools(model, [REPORT_TOOL, read]));
+  const saved = requestToolsData(model.id, turnTools, new Map([["report", "value"]]));
   const handler = harness.hooks.sessionBeforeCompact;
   assert.ok(handler);
   const compact = async (branchEntries: SessionEntry[]) =>
@@ -392,120 +382,73 @@ test("declares the last turn's tools in native compaction while the branch still
         harness.context,
       ),
     );
-
-  await compact(branch);
-  assert.deepEqual(harness.requests.at(-1)?.tools, turnTools);
-
-  // Fresh copies of the same definitions in another order still match.
-  await compact([toolsEntry("system-0", structuredClone([hidden, read, REPORT_TOOL])), user]);
-  assert.deepEqual(harness.requests.at(-1)?.tools, turnTools);
-
-  // A branch that declares other tools, such as after a branch switch, is
-  // declared as turn requests declare it, including Pi's strict schema for
-  // `read`. So is a changed description or parameter schema under an
-  // unchanged name.
-  for (const tools of [
-    [REPORT_TOOL, read],
-    [{ ...REPORT_TOOL, description: "Redefined report" }, read, hidden],
-    [
-      { ...REPORT_TOOL, parameters: Type.Object({ value: Type.String(), unit: Type.String() }) },
-      read,
-      hidden,
-    ],
-    [],
-  ]) {
-    await compact([toolsEntry("system-0", tools), user]);
-    assert.deepEqual(harness.requests.at(-1)?.tools, requestTools(model, tools));
-  }
+  const transcriptTools = requestTools(model, branchTools);
   assert.equal(
-    requireJsonRecords(requestTools(model, [read])).find((item) => item.name === read.name)?.[
-      "strict"
-    ],
+    requireJsonRecords(transcriptTools).find((item) => item.name === read.name)?.["strict"],
     true,
   );
 
-  // Without a matching template (after resume, for another model, or for a
-  // request without a recorded transcript) the branch's tools are declared.
-  for (const template of [
-    undefined,
-    { ...cached, modelId: "other-model" },
-    { ...cached, transcriptToolFingerprint: undefined },
+  await compact([system, user, requestToolsEntry("tools-1", user.id, saved)]);
+  assert.deepEqual(harness.requests.at(-1)?.tools, turnTools);
+
+  // The latest parseable entry for the selected model wins.
+  const other = requestToolsData("other-model", [], new Map());
+  const earlier = requestToolsData(model.id, requireJsonRecords(transcriptTools), new Map());
+  for (const later of [
+    other,
+    { ...saved, version: 2 },
+    { ...saved, tools: ["not an object"] },
+    { ...saved, grammarToolInputProperties: [["report"]] },
   ]) {
-    latest = template;
-    await compact(branch);
-    assert.deepEqual(harness.requests.at(-1)?.tools, requestTools(model, branchTools));
+    await compact([
+      system,
+      user,
+      requestToolsEntry("tools-1", user.id, earlier),
+      requestToolsEntry("tools-2", "tools-1", saved),
+      requestToolsEntry("tools-3", "tools-2", later),
+    ]);
+    assert.deepEqual(harness.requests.at(-1)?.tools, turnTools);
   }
 
-  // Codemode `only` mode hides active direct tools from turn requests. Without
-  // a template, compaction applies the same rule to the branch's declarations.
-  const source = createSyntheticSourceInfo("test-tool", { source: "compaction test" });
-  const codemode = { ...REPORT_TOOL, name: "codemode" };
-  const loadout = [
-    { ...REPORT_TOOL, exposure: "direct" as const, sourceInfo: source },
-    { ...read, exposure: "direct" as const, sourceInfo: source },
-    { ...hidden, exposure: "model-only" as const, sourceInfo: source },
-    { ...codemode, exposure: "model-only" as const, sourceInfo: source },
-  ];
-  harness.hooks.allTools = loadout;
-  harness.hooks.settings = { codemode: { mode: "only" } };
-  const codemodeBranch = [toolsEntry("system-0", [...branchTools, codemode]), user];
-  latest = undefined;
-  await compact(codemodeBranch);
-  assert.deepEqual(harness.requests.at(-1)?.tools, requestTools(model, [hidden, codemode]));
-  // `on` mode hides nothing.
-  harness.hooks.settings = { codemode: { mode: "on" } };
-  await compact(codemodeBranch);
-  assert.deepEqual(harness.requests.at(-1)?.tools, requestTools(model, [...branchTools, codemode]));
-  assert.deepEqual(cached.payload.tools, turnTools);
+  // A branch without a saved entry for the model, such as one an older
+  // version wrote, declares the transcript's current tools.
+  for (const branch of [
+    [system, user],
+    [system, user, requestToolsEntry("tools-1", user.id, other)],
+  ]) {
+    await compact(branch);
+    assert.deepEqual(harness.requests.at(-1)?.tools, transcriptTools);
+  }
 });
 
-test("records the transcript's tools for the next Codex request of the session", async () => {
-  const user = userEntry("user-1", "Remember this.");
-  const harness = createHarness([user]);
-  const recorded: Array<{ sessionId: string; names: string[] }> = [];
-  harness.runtime.noteTranscriptTools = (sessionId, tools) => {
-    recorded.push({ sessionId, names: tools.map((tool) => tool.name) });
-  };
-  const handler = harness.hooks.context;
-  assert.ok(handler);
-  const messages = [
-    { role: "system" as const, content: "prompt", toolsAdded: [REPORT_TOOL], timestamp: 0 },
-    user.type === "message" ? user.message : undefined,
-  ].filter((message) => message !== undefined);
-  handler({ messages }, harness.context);
-  handler({ messages }, { ...harness.context, model: { ...codexModel(), provider: "other" } });
-  assert.deepEqual(recorded, [{ sessionId: "session-1", names: [REPORT_TOOL.name] }]);
-});
-
-test("fingerprints transcript tool definitions independent of order and executable fields", () => {
-  const read = createReadTool(process.cwd());
-  const baseline = toolDefinitionFingerprint([REPORT_TOOL, read]);
+test("saves request tools in a parseable and order-independent form", () => {
+  const tools = [{ type: "function", name: "report" }];
+  const data = requestToolsData(
+    "gpt-test",
+    tools,
+    new Map([
+      ["zeta", "input"],
+      ["alpha", "patch"],
+    ]),
+  );
+  assert.deepEqual(data.grammarToolInputProperties, [
+    ["alpha", "patch"],
+    ["zeta", "input"],
+  ]);
+  const branch = [requestToolsEntry("tools-1", "user-1", data)];
+  assert.deepEqual(latestRequestTools(branch, "gpt-test"), {
+    tools,
+    grammarToolInputProperties: new Map([
+      ["alpha", "patch"],
+      ["zeta", "input"],
+    ]),
+  });
+  assert.equal(requestToolsChanged(branch, structuredClone(data)), false);
   assert.equal(
-    toolDefinitionFingerprint([
-      structuredClone(toToolDeclaration(read)),
-      structuredClone(REPORT_TOOL),
-    ]),
-    baseline,
+    requestToolsChanged(branch, requestToolsData("gpt-test", tools, new Map([["zeta", "input"]]))),
+    true,
   );
-  assert.notEqual(
-    toolDefinitionFingerprint([{ ...REPORT_TOOL, description: "Redefined report" }, read]),
-    baseline,
-  );
-  assert.notEqual(
-    toolDefinitionFingerprint([
-      { ...REPORT_TOOL, parameters: Type.Object({ value: Type.Number() }) },
-      read,
-    ]),
-    baseline,
-  );
-  assert.notEqual(
-    toolDefinitionFingerprint([
-      { ...REPORT_TOOL, constrainedSampling: { type: "json_schema", strict: "require" } },
-      read,
-    ]),
-    baseline,
-  );
-  assert.notEqual(toolDefinitionFingerprint([REPORT_TOOL]), baseline);
+  assert.equal(requestToolsChanged(branch, { ...data, modelId: "other-model" }), true);
 });
 
 test("classifies every Pi compaction lifecycle in official Codex metadata", async (t) => {

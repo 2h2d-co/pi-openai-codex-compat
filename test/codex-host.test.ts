@@ -26,6 +26,7 @@ import {
 } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import { CONFIG_FILE } from "../extensions/openai-codex-compat/config.ts";
+import { REQUEST_TOOLS_ENTRY_TYPE } from "../extensions/openai-codex-compat/request-tools-entry.ts";
 import type { JsonRecord } from "../extensions/openai-codex-compat/codex-protocol.ts";
 import { compactionEvents } from "./codex-provider/codex-provider-harness.ts";
 
@@ -489,6 +490,11 @@ for (const mode of ["on", "only"] as const) {
 
     await first.session.prompt("Continue.", { expandPromptTemplates: false });
     const continued = turns.at(-1)?.tools;
+    // Turns with unchanged tools save them once.
+    const saved = sessionManager
+      .getEntries()
+      .filter((entry) => entry.type === "custom" && entry.customType === REQUEST_TOOLS_ENTRY_TYPE);
+    assert.equal(saved.length, 1);
     const second = await createSession();
     await second.session.compact();
     assert.deepEqual(compactions.at(-1)?.tools, continued);

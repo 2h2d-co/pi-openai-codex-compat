@@ -35,7 +35,6 @@ extensions/openai-codex-compat/apply-patch-matcher/apply-patch-matcher-strict-co
 extensions/openai-codex-compat/apply-patch-render.ts
 extensions/openai-codex-compat/apply-patch.ts
 extensions/openai-codex-compat/background-process-browser.ts
-extensions/openai-codex-compat/codemode-loadout.ts
 extensions/openai-codex-compat/codex-cache-diagnostics.ts
 extensions/openai-codex-compat/codex-cache-key.ts
 extensions/openai-codex-compat/codex-identifiers.ts
@@ -87,6 +86,7 @@ extensions/openai-codex-compat/output-limit-continuation.ts
 extensions/openai-codex-compat/pi-runtime.ts
 extensions/openai-codex-compat/remote-compaction.ts
 extensions/openai-codex-compat/request-options.ts
+extensions/openai-codex-compat/request-tools-entry.ts
 extensions/openai-codex-compat/required-value.ts
 extensions/openai-codex-compat/responses-event-schema.ts
 extensions/openai-codex-compat/responses-item-schema.ts

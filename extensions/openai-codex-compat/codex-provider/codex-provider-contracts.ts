@@ -47,12 +47,6 @@ export type RuntimeScope = {
 export type RequestTemplate = {
   modelId: string;
   payload: JsonRecord;
-  /**
-   * Fingerprint of the tools the session transcript declared for this request,
-   * before Pi stripped hidden declarations. `payload.tools` can declare fewer
-   * tools. Undefined when no transcript was recorded for the request.
-   */
-  transcriptToolFingerprint: string | undefined;
   grammarToolInputProperties: GrammarToolInputProperties;
   requestOptions: OpenAICodexResponsesOptions;
 };

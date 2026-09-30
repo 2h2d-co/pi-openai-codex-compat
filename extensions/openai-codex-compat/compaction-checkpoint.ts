@@ -1,5 +1,5 @@
 import { isBoolean, isString } from "./value-contracts.ts";
-import { createHash, randomUUID } from "node:crypto";
+import { randomUUID } from "node:crypto";
 import {
   buildSessionContext,
   buildSessionProjection,
@@ -27,7 +27,6 @@ import { CODEX_TOOL_CALL_PROVIDERS } from "./codex-identifiers.ts";
 import type { ImageDetail } from "./config.ts";
 import { installCompactionItem, isObject, requireResponsesInputItems } from "./codex-protocol.ts";
 import { nativeCommittedPrefixBeforeOverflow, nativeResponseOverrides } from "./native-history.ts";
-import { stableResponsesJson } from "./responses-replay.ts";
 import {
   CODEX_NAMESPACED_TOOL_NAMES,
   CODEX_TEXT_CONTENT_ITEM_TOOL_RESULT_NAMES,
@@ -147,26 +146,6 @@ export function requestGrammarToolInputProperties(
     getDeclaredTools([...messages]),
     responsesCompatibility(model.compat).supportsOpenAIGrammarTools ?? false,
   );
-}
-
-/**
- * Fingerprint transcript tool definitions by name, description, parameter
- * schema, and constrained sampling, independent of declaration order.
- */
-export function toolDefinitionFingerprint(tools: readonly Tool[]): string {
-  const declarations = tools
-    .map((tool) => {
-      // The JSON round-trip drops typebox symbol keys and undefined fields, as
-      // Pi AI's own declaration comparison does.
-      const parameters: unknown = JSON.parse(JSON.stringify(tool.parameters));
-      const constrainedSampling: unknown =
-        tool.constrainedSampling === undefined
-          ? undefined
-          : JSON.parse(JSON.stringify(tool.constrainedSampling));
-      return { name: tool.name, description: tool.description, parameters, constrainedSampling };
-    })
-    .sort((left, right) => left.name.localeCompare(right.name));
-  return createHash("sha256").update(stableResponsesJson(declarations)).digest("hex");
 }
 
 export function remoteCompactionMarkerSummary(): string {
