@@ -274,6 +274,11 @@ supports `gpt-5.6`, `gpt-5.6-*`, and exactly `gpt-6-astra`. GPT-6 Sol, GPT-6
 Luna, and GPT-6.1 Sol use standard reasoning mode even when `pro` is configured.
 Both controls remain opt-in. GPT-6.1 Sol requires Pi 0.99.1's model catalog.
 
+As of September 30, 2026, the Codex endpoint rejects `reasoning.mode` for every
+tested model, including those listed above, so `pro` requests fail there. The
+setting remains for providers that accept it. Releases do not test pro mode
+against `openai-codex`.
+
 Invalid JSON setting values are ignored and invalid JSON does not prevent Pi from
 starting. The settings pane reports malformed JSON instead of overwriting it.
 Project configuration is read only when the project is trusted.
