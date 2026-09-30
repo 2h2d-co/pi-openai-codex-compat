@@ -487,13 +487,11 @@ for (const mode of ["on", "only"] as const) {
     assert.deepEqual(compactions.at(-1)?.tools, turnTools);
     assert.deepEqual(first.errors, []);
 
-    if (mode === "on") {
-      await first.session.prompt("Continue.", { expandPromptTemplates: false });
-      const continued = turns.at(-1)?.tools;
-      const second = await createSession();
-      await second.session.compact();
-      assert.deepEqual(compactions.at(-1)?.tools, continued);
-      assert.deepEqual(second.errors, []);
-    }
+    await first.session.prompt("Continue.", { expandPromptTemplates: false });
+    const continued = turns.at(-1)?.tools;
+    const second = await createSession();
+    await second.session.compact();
+    assert.deepEqual(compactions.at(-1)?.tools, continued);
+    assert.deepEqual(second.errors, []);
   });
 }

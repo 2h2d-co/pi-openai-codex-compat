@@ -402,9 +402,14 @@ The extension handles native compaction for `openai-codex`. It follows the Codex
 A compaction request declares the same tools as the session's last turn request, so both
 share a prompt-cache prefix. This covers Pi codemode, which rewrites tool descriptions in
 `on` mode and hides direct tools from requests in `only` mode. After a resume or a branch
-switch, no turn request exists yet, so compaction declares the tools the branch's
-transcript declares. In codemode `only` mode, that list still includes the hidden tools,
-so that one compaction request misses the prompt cache.
+switch, no turn request exists yet in the running Pi process. Compaction then declares the
+tools the branch's transcript declares and removes the tools codemode `only` mode hides.
+Pi exposes no hidden-tool list to extensions, so the extension applies Pi 0.99.1's rule
+itself: while the transcript declares `codemode` in `only` mode, every declared `direct`
+tool except `codemode` is hidden. Tests compare this rule with Pi's codemode for every
+combination of mode, tool exposure, and active tools. A replacement `codemode` tool from
+another extension is not mirrored. After changing `codemode.mode`, the first compaction
+before a turn can miss the cache.
 
 Overflow and length recovery follow Pi 0.87's `context_edit` semantics. Every request
 reads Pi's session projection, so earlier omissions and replacements (an elided tool

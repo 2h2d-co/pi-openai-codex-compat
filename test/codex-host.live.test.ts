@@ -262,6 +262,7 @@ async function createLivePiHost(
   options: {
     builtinTools?: string[];
     codemode?: "on" | "only";
+    sessionManager?: SessionManager;
     onProviderStreamEvent?: (event: ProviderStreamEvent) => void;
   } = {},
 ): Promise<AgentSession> {
@@ -359,7 +360,7 @@ async function createLivePiHost(
     agentDir,
     modelRuntime,
     settingsManager,
-    sessionManager: SessionManager.inMemory(cwd),
+    sessionManager: options.sessionManager ?? SessionManager.inMemory(cwd),
     resourceLoader,
     model,
     thinkingLevel: "medium",
@@ -620,9 +621,13 @@ for (const codemode of ["on", "only"] as const) {
       const prewarm = traffic.frames.find((frame) => frame["generate"] === false);
       assert.ok(prewarm, "Missing WebSocket prewarm frame");
       // Responses Lite groups function tools in a namespace.
-      const declared = requireJsonRecords(
-        frameInput(prewarm).find((item) => item.type === "additional_tools")?.["tools"],
-      ).flatMap((tool) => (tool.type === "namespace" ? requireJsonRecords(tool["tools"]) : [tool]));
+      const additionalTools = (frame: JsonRecord) =>
+        requireJsonRecords(
+          frameInput(frame).find((item) => item.type === "additional_tools")?.["tools"],
+        );
+      const declared = additionalTools(prewarm).flatMap((tool) =>
+        tool.type === "namespace" ? requireJsonRecords(tool["tools"]) : [tool],
+      );
       assert.ok(
         declared.some((tool) => tool.name === "codemode"),
         "codemode is not declared",
@@ -657,6 +662,20 @@ for (const codemode of ["on", "only"] as const) {
         "text-alpha",
         "text-bravo",
       ]);
+
+      // A fresh extension load, as after a resume, has no turn request yet. Its
+      // compaction declares the branch's tools, without the ones `only` mode hides.
+      const resumed = await createLivePiHost(t, "text", "gpt-5.6-luna", [lookup], {
+        codemode,
+        sessionManager: session.sessionManager,
+      });
+      const resumedStart = traffic.frames.length;
+      await resumed.compact();
+      const resumedCompaction = traffic.frames.slice(resumedStart).at(-1);
+      assert.ok(resumedCompaction, "Missing WebSocket compaction frame after resume");
+      assert.equal(resumedCompaction["previous_response_id"], undefined);
+      assert.deepEqual(frameInput(resumedCompaction).at(-1), { type: "compaction_trigger" });
+      assert.deepEqual(additionalTools(resumedCompaction), additionalTools(prewarm));
     },
   );
 }

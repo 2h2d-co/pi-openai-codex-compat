@@ -30,6 +30,7 @@ import { resolveFileConfig, type ConfigResolver } from "./config-context.ts";
 import type { CodexProviderRuntime } from "./codex-provider.ts";
 import { responsesCompactionV2Metadata, type CodexCompactionMetadata } from "./codex-metadata.ts";
 import { errorFromThrown } from "./error-from-thrown.ts";
+import { projectCodemodeTranscript, type CodemodeLoadoutApi } from "./codemode-loadout.ts";
 import { selectedRegistryModel } from "./model-context.ts";
 
 export type RemoteCompactionContext = Parameters<ConfigResolver>[0] & {
@@ -85,7 +86,7 @@ export type RemoteCompactionHookHandler = (
   ctx: RemoteCompactionContext,
 ) => Promise<RemoteCompactionHookResult | undefined>;
 
-export type RemoteCompactionApi = {
+export type RemoteCompactionApi = CodemodeLoadoutApi & {
   onBeforeProviderHeaders: (handler: RemoteCompactionHeadersHandler) => void;
   onContext: (handler: RemoteCompactionContextHandler) => void;
   onSessionBeforeCompact: (handler: RemoteCompactionHookHandler) => void;
@@ -109,6 +110,8 @@ export function remoteCompactionApi(pi: ExtensionAPI): RemoteCompactionApi {
   };
 
   return {
+    getAllTools: () => pi.getAllTools(),
+    getSettings: () => pi.getSettings(),
     onBeforeProviderHeaders: (handler) =>
       pi.on("before_provider_headers", (event, ctx) => handler(event, context(ctx))),
     // The full-transcript event returns messages verbatim. A changed `context`
@@ -204,13 +207,12 @@ export default function registerRemoteCompaction(
       const sessionId = ctx.sessionManager.getSessionId();
       const cached = runtime.latestTemplate(sessionId);
       const matching = cached?.modelId === ctx.model.id ? cached : undefined;
-      // Turn requests declare the transcript's current tools. The last turn's
-      // exact declarations are reused while the branch still declares the tools
-      // that turn's transcript declared: Pi strips hidden declarations (codemode
-      // `only` mode) from requests after extensions see the transcript, so only
-      // the cached declarations reproduce them. Otherwise, such as after resume
-      // or a branch switch, the declarations are rebuilt from the branch as turn
-      // requests build them.
+      // Turn requests declare the transcript's current tools after Pi strips
+      // hidden declarations (codemode `only` mode). The last turn's exact
+      // declarations are reused while the branch still declares the tools that
+      // turn's transcript declared, which also keeps any payload changes other
+      // extensions made. Otherwise, such as after resume or a branch switch, the
+      // declarations are rebuilt from the branch as Pi projects it for turns.
       const transcript = branchTranscript(event.branchEntries);
       const transcriptTools = getCurrentTools(transcript);
       const declared =
@@ -218,10 +220,15 @@ export default function registerRemoteCompaction(
         Array.isArray(matching.payload.tools)
           ? { ...matching, tools: matching.payload.tools }
           : undefined;
+      const requestTranscript = projectCodemodeTranscript(
+        pi,
+        transcript,
+        transcriptTools.map((tool) => tool.name),
+      );
       const config = resolveConfig(ctx);
       const grammarToolInputProperties =
         declared?.grammarToolInputProperties ??
-        requestGrammarToolInputProperties(ctx.model, transcript);
+        requestGrammarToolInputProperties(ctx.model, requestTranscript);
       const history = providerHistory({
         branch: event.branchEntries,
         wireModel: ctx.model,
@@ -231,7 +238,7 @@ export default function registerRemoteCompaction(
       });
       const template: JsonRecord = {
         ...matching?.payload,
-        tools: declared?.tools ?? requestTools(ctx.model, transcriptTools),
+        tools: declared?.tools ?? requestTools(ctx.model, getCurrentTools(requestTranscript)),
       };
       const requestOptions: OpenAICodexResponsesOptions = {
         ...matching?.requestOptions,

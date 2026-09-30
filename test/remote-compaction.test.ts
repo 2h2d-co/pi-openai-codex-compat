@@ -9,7 +9,13 @@ import {
 import { isString, requireString } from "../extensions/openai-codex-compat/value-contracts.ts";
 import assert from "node:assert/strict";
 import test from "node:test";
-import { createReadTool, type SessionEntry, type ToolInfo } from "@earendil-works/pi-coding-agent";
+import {
+  createReadTool,
+  createSyntheticSourceInfo,
+  type ExtensionAPI,
+  type SessionEntry,
+  type ToolInfo,
+} from "@earendil-works/pi-coding-agent";
 import {
   toToolDeclaration,
   type Api,
@@ -43,6 +49,8 @@ import registerRemoteCompaction, {
 } from "../extensions/openai-codex-compat/remote-compaction.ts";
 import type { ResponsesOutputMessageItem } from "../extensions/openai-codex-compat/responses-item-schema.ts";
 import { REPORT_TOOL } from "./codex-provider/codex-provider-harness.ts";
+
+type Settings = ReturnType<ExtensionAPI["getSettings"]>;
 
 interface TestCompactionResult {
   compaction: {
@@ -137,9 +145,15 @@ class RemoteCompactionTestApi implements RemoteCompactionApi, CodexProviderRunti
   sessionShutdown: RemoteCompactionLifecycleHandler | undefined;
   sessionStart: RemoteCompactionLifecycleHandler | undefined;
 
+  allTools: ToolInfo[] = [];
+  settings: Settings = {};
+
   appendEntry(): void {}
   getAllTools(): ToolInfo[] {
-    return [];
+    return this.allTools;
+  }
+  getSettings(): Settings {
+    return this.settings;
   }
 
   onBeforeProviderHeaders(handler: RemoteCompactionHeadersHandler): void {
@@ -421,6 +435,27 @@ test("declares the last turn's tools in native compaction while the branch still
     await compact(branch);
     assert.deepEqual(harness.requests.at(-1)?.tools, requestTools(model, branchTools));
   }
+
+  // Codemode `only` mode hides active direct tools from turn requests. Without
+  // a template, compaction applies the same rule to the branch's declarations.
+  const source = createSyntheticSourceInfo("test-tool", { source: "compaction test" });
+  const codemode = { ...REPORT_TOOL, name: "codemode" };
+  const loadout = [
+    { ...REPORT_TOOL, exposure: "direct" as const, sourceInfo: source },
+    { ...read, exposure: "direct" as const, sourceInfo: source },
+    { ...hidden, exposure: "model-only" as const, sourceInfo: source },
+    { ...codemode, exposure: "model-only" as const, sourceInfo: source },
+  ];
+  harness.hooks.allTools = loadout;
+  harness.hooks.settings = { codemode: { mode: "only" } };
+  const codemodeBranch = [toolsEntry("system-0", [...branchTools, codemode]), user];
+  latest = undefined;
+  await compact(codemodeBranch);
+  assert.deepEqual(harness.requests.at(-1)?.tools, requestTools(model, [hidden, codemode]));
+  // `on` mode hides nothing.
+  harness.hooks.settings = { codemode: { mode: "on" } };
+  await compact(codemodeBranch);
+  assert.deepEqual(harness.requests.at(-1)?.tools, requestTools(model, [...branchTools, codemode]));
   assert.deepEqual(cached.payload.tools, turnTools);
 });
 
