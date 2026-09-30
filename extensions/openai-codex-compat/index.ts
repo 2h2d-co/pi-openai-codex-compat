@@ -1,7 +1,6 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import * as piAi from "@earendil-works/pi-ai";
 import * as piCodingAgent from "@earendil-works/pi-coding-agent";
-import { getBuiltinModels } from "@earendil-works/pi-ai/providers/all";
 import { requirePiRuntime } from "./pi-runtime.ts";
 import { DEFAULT_CONFIG, loadConfig, type CodexCompatConfig } from "./config.ts";
 import type { ConfigContext } from "./config-context.ts";
@@ -25,7 +24,7 @@ export {
 } from "./codex-transport.ts";
 
 export default function registerOpenAICodexCompat(pi: ExtensionAPI): void {
-  requirePiRuntime(piAi, piCodingAgent, getBuiltinModels);
+  requirePiRuntime(piAi, piCodingAgent, pi);
   let activeConfig: CodexCompatConfig | undefined;
   let sessionContext: Parameters<typeof loadSessionConfig>[0] | undefined;
   const resolveConfig = (ctx: ConfigContext): CodexCompatConfig => {

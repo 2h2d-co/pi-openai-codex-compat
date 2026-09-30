@@ -25,32 +25,68 @@ export const TRANSCRIPT_APIS = [
 export const SESSION_APIS = ["buildSessionProjection"] as const;
 
 /**
- * Pi 0.99.1 differs from 0.99.0 only in its model catalog: it adds GPT-6.1 Sol
- * to the built-in OpenAI Codex models. The host's own catalog is the runtime
- * signal for the minimum version.
+ * Host APIs that first shipped in Pi 0.99: the footer's `SessionManager.getEntryCount()`
+ * and the extension API's `getSettings()`. They prove the loaded runtime is 0.99 even when
+ * `PI_PACKAGE_DIR` points package metadata at another installation.
  */
-export const MINIMUM_PI_CODEX_MODEL = "gpt-6.1-sol";
+export const PI_099_APIS = ["SessionManager.getEntryCount", "ExtensionAPI.getSettings"] as const;
 
-export const REQUIRED_PI = "Pi 0.99.1 or later";
+export const MINIMUM_PI_VERSION = "0.99.1";
+export const REQUIRED_PI = `Pi ${MINIMUM_PI_VERSION} or later`;
 
-export type BuiltinModels = (provider: "openai-codex") => readonly { id: string }[];
+function isFunction(value: unknown): boolean {
+  return typeof value === "function";
+}
 
-/** Check the loaded host, not package metadata that PI_PACKAGE_DIR can override. */
+function prototypeMethod(value: unknown, name: string): unknown {
+  if (typeof value !== "function") return undefined;
+  const prototype: unknown = value.prototype;
+  return typeof prototype === "object" && prototype !== null
+    ? Reflect.get(prototype, name)
+    : undefined;
+}
+
+/** Compare dotted numeric release versions; prerelease suffixes rank below their release. */
+export function atLeastVersion(version: unknown, minimum: string): boolean {
+  if (typeof version !== "string") return false;
+  const match = /^(\d+)\.(\d+)\.(\d+)(-.+)?$/.exec(version);
+  if (!match) return false;
+  const actual = [Number(match[1]), Number(match[2]), Number(match[3])];
+  const required = minimum.split(".").map(Number);
+  for (let index = 0; index < 3; index++) {
+    const left = actual[index] ?? 0;
+    const right = required[index] ?? 0;
+    if (left !== right) return left > right;
+  }
+  return match[4] === undefined;
+}
+
+/**
+ * Require the Pi 0.99 host surface and a reported version of at least 0.99.1. The version comes
+ * from package metadata, so the API checks also run to catch an older executable whose
+ * `PI_PACKAGE_DIR` names a newer package.
+ */
 export function requirePiRuntime(
   transcriptApi: Record<string, unknown>,
   sessionApi: Record<string, unknown>,
-  builtinModels: BuiltinModels | undefined,
+  extensionApi: { readonly getSettings?: unknown },
 ): void {
   const missing = [
-    ...TRANSCRIPT_APIS.filter((name) => typeof transcriptApi[name] !== "function"),
-    ...SESSION_APIS.filter((name) => typeof sessionApi[name] !== "function"),
+    ...TRANSCRIPT_APIS.filter((name) => !isFunction(transcriptApi[name])),
+    ...SESSION_APIS.filter((name) => !isFunction(sessionApi[name])),
+    ...(isFunction(prototypeMethod(sessionApi["SessionManager"], "getEntryCount"))
+      ? []
+      : ["SessionManager.getEntryCount"]),
+    ...(isFunction(extensionApi.getSettings) ? [] : ["ExtensionAPI.getSettings"]),
   ];
+  const version = sessionApi["VERSION"];
   const problems = [
     ...(missing.length > 0 ? [`Missing host APIs: ${missing.join(", ")}.`] : []),
-    ...(typeof builtinModels === "function" &&
-    builtinModels("openai-codex").some((model) => model.id === MINIMUM_PI_CODEX_MODEL)
+    ...(atLeastVersion(version, MINIMUM_PI_VERSION)
       ? []
-      : [`The host's built-in OpenAI Codex catalog lacks ${MINIMUM_PI_CODEX_MODEL}.`]),
+      : [
+          `The host reports Pi ${typeof version === "string" ? version : "with no version"}, below ${MINIMUM_PI_VERSION}.`,
+        ]),
   ];
   if (problems.length > 0) {
     throw new Error(

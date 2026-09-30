@@ -26,11 +26,12 @@ Pi provides the Codex OAuth flow and model catalog. At session start, this packa
 - An OpenAI Codex login in Pi
 
 Restart Pi after upgrading its runtime. `/reload` reloads extensions but cannot
-upgrade the running Pi process. At load time, the extension checks the host's
-transcript APIs and requires GPT-6.1 Sol in the host's built-in OpenAI Codex
-catalog, which first ships in Pi 0.99.1. It refuses to load on an older runtime.
-`PI_PACKAGE_DIR` can point an older executable at newer package
-metadata, so its displayed version alone does not establish compatibility.
+upgrade the running Pi process. At load time, the extension requires the host's
+transcript APIs, the Pi 0.99 APIs `SessionManager.getEntryCount()` and
+`ExtensionAPI.getSettings()`, and a reported Pi version of at least 0.99.1. It
+refuses to load otherwise. `PI_PACKAGE_DIR` can point an older executable at
+newer package metadata, so the reported version alone does not establish
+compatibility. The API checks cover that case.
 
 Authenticate through Pi if needed:
 

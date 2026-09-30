@@ -4,11 +4,7 @@ import test from "node:test";
 import { fileURLToPath } from "node:url";
 import * as piAi from "@earendil-works/pi-ai";
 import * as piCodingAgent from "@earendil-works/pi-coding-agent";
-import { getBuiltinModels } from "@earendil-works/pi-ai/providers/all";
-import {
-  requirePiRuntime,
-  type BuiltinModels,
-} from "../extensions/openai-codex-compat/pi-runtime.ts";
+import { requirePiRuntime } from "../extensions/openai-codex-compat/pi-runtime.ts";
 
 test("in-process Pi uses the repository dependency's package resources", async () => {
   assert.equal(
@@ -19,41 +15,48 @@ test("in-process Pi uses the repository dependency's package resources", async (
   );
 });
 
-const builtinModels: BuiltinModels = getBuiltinModels;
+const extensionApi = { getSettings: () => ({}) };
 
-test("accepts the Pi 0.99.1 host APIs and model catalog", () => {
-  assert.doesNotThrow(() => requirePiRuntime(piAi, piCodingAgent, builtinModels));
+test("accepts the Pi 0.99.1 host", () => {
+  assert.equal(piCodingAgent.VERSION, "0.99.1");
+  assert.doesNotThrow(() => requirePiRuntime(piAi, piCodingAgent, extensionApi));
 });
 
 test("rejects missing host APIs even when package metadata reports Pi 0.99.1", () => {
   assert.throws(
-    () => requirePiRuntime({ VERSION: "0.99.1" }, piCodingAgent, builtinModels),
+    () => requirePiRuntime({ VERSION: "0.99.1" }, piCodingAgent, extensionApi),
     /requires a running Pi 0\.99\.1 or later runtime.*normalizeContext.*Exit Pi.*\/reload.*PI_PACKAGE_DIR/,
   );
   assert.throws(
-    () => requirePiRuntime({ ...piAi, normalizeContext: undefined }, piCodingAgent, builtinModels),
+    () => requirePiRuntime({ ...piAi, normalizeContext: undefined }, piCodingAgent, extensionApi),
     /Missing host APIs: normalizeContext\./,
   );
   assert.throws(
     () =>
-      requirePiRuntime(
-        piAi,
-        { ...piCodingAgent, buildSessionProjection: undefined },
-        builtinModels,
-      ),
+      requirePiRuntime(piAi, { ...piCodingAgent, buildSessionProjection: undefined }, extensionApi),
     /Missing host APIs: buildSessionProjection\./,
   );
 });
 
-test("rejects a Pi 0.99.0 host whose built-in Codex catalog lacks GPT-6.1 Sol", () => {
-  const pi0990: BuiltinModels = (provider) =>
-    getBuiltinModels(provider).filter((model) => model.id !== "gpt-6.1-sol");
+test("rejects a Pi 0.87 host surface that reports a newer version", () => {
+  class SessionManager087 {}
   assert.throws(
-    () => requirePiRuntime(piAi, piCodingAgent, undefined),
-    /catalog lacks gpt-6\.1-sol/,
+    () => requirePiRuntime(piAi, { ...piCodingAgent, SessionManager: SessionManager087 }, {}),
+    /Missing host APIs: SessionManager\.getEntryCount, ExtensionAPI\.getSettings\./,
   );
-  assert.throws(
-    () => requirePiRuntime(piAi, piCodingAgent, pi0990),
-    /requires a running Pi 0\.99\.1 or later runtime\. The host's built-in OpenAI Codex catalog lacks gpt-6\.1-sol\./,
-  );
+});
+
+test("rejects Pi versions below 0.99.1", () => {
+  for (const version of ["0.99.0", "0.99.1-rc.1", "0.87.1", "invalid", undefined]) {
+    assert.throws(
+      () => requirePiRuntime(piAi, { ...piCodingAgent, VERSION: version }, extensionApi),
+      /requires a running Pi 0\.99\.1 or later runtime\. The host reports Pi .*below 0\.99\.1\./,
+      String(version),
+    );
+  }
+  for (const version of ["0.99.2", "0.100.0", "1.0.0"]) {
+    assert.doesNotThrow(() =>
+      requirePiRuntime(piAi, { ...piCodingAgent, VERSION: version }, extensionApi),
+    );
+  }
 });

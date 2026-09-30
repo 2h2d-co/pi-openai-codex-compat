@@ -18,6 +18,7 @@ function recordingExtensionApi(recording: ExtensionRegistrationRecording): Exten
     appendEntry() {},
     getActiveTools: () => [],
     getAllTools: () => [],
+    getSettings: () => ({}),
     on(event: string) {
       recording.events.push(event);
     },
