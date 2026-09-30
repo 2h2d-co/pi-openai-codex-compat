@@ -24,6 +24,7 @@ import {
   type CommandCallRenderContext,
 } from "./command-render.ts";
 import {
+  COMMAND_TOOL_ANNOTATIONS,
   EXEC_COMMAND_PARAMETERS,
   EXEC_COMMAND_TOOL_NAME,
   execCommandPromptMetadata,
@@ -253,6 +254,7 @@ export default function registerCommandTools(
   pi.registerTool<typeof EXEC_COMMAND_PARAMETERS, CommandOutputDetails, ExecCommandRenderState>({
     name: EXEC_COMMAND_TOOL_NAME,
     label: EXEC_COMMAND_TOOL_NAME,
+    annotations: COMMAND_TOOL_ANNOTATIONS,
     description: execCommandPrompt.description,
     promptSnippet: execCommandPrompt.promptSnippet,
     promptGuidelines: execCommandPrompt.promptGuidelines,
@@ -289,6 +291,7 @@ export default function registerCommandTools(
   pi.registerTool<typeof WRITE_STDIN_PARAMETERS, CommandOutputDetails, WriteStdinRenderState>({
     name: WRITE_STDIN_TOOL_NAME,
     label: WRITE_STDIN_TOOL_NAME,
+    annotations: COMMAND_TOOL_ANNOTATIONS,
     description: writeStdinPrompt.description,
     promptSnippet: writeStdinPrompt.promptSnippet,
     promptGuidelines: writeStdinPrompt.promptGuidelines,
@@ -318,6 +321,7 @@ export default function registerCommandTools(
   pi.registerTool({
     name: SHELL_COMMAND_TOOL_NAME,
     label: SHELL_COMMAND_TOOL_NAME,
+    annotations: COMMAND_TOOL_ANNOTATIONS,
     description: shellCommandPrompt.description,
     promptSnippet: shellCommandPrompt.promptSnippet,
     promptGuidelines: shellCommandPrompt.promptGuidelines,

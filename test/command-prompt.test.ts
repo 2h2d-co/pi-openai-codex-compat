@@ -14,7 +14,7 @@ import registerCommandTools, {
 
 type PromptTool = Pick<
   ToolDefinition,
-  "description" | "name" | "promptGuidelines" | "promptSnippet"
+  "annotations" | "description" | "name" | "promptGuidelines" | "promptSnippet"
 >;
 
 function registeredCommandTools(catalog: CommandShellCatalog): Map<string, PromptTool> {
@@ -118,6 +118,15 @@ test("registers generated command prompt metadata", () => {
     },
     shellCommandPromptMetadata("zsh"),
   );
+  const commandAnnotations = {
+    readOnlyHint: false,
+    destructiveHint: true,
+    idempotentHint: false,
+    openWorldHint: true,
+  };
+  assert.deepEqual(exec.annotations, commandAnnotations);
+  assert.deepEqual(write.annotations, commandAnnotations);
+  assert.deepEqual(classic.annotations, commandAnnotations);
 });
 
 test("renders registered unified tools in Pi's default system prompt", () => {

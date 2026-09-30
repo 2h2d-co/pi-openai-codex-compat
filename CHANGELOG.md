@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+### Added
+
+- Forward every parsed Codex stream event to Pi's `provider_stream_event` hook, so
+  debugging extensions see Codex traffic. A failing handler ends the turn without
+  a retry or transport fallback.
+- Annotate the command tools, `apply_patch`, `image_gen.imagegen`, and `web.run`
+  with read-only, destructive, and open-world hints for permission extensions.
+  `web.run` is the only read-only tool.
+
 ## 0.0.18 - 2026-09-30
 
 ### Fixed

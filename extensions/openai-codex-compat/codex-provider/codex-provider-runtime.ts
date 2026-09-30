@@ -136,6 +136,7 @@ import {
   continueResponseBody,
   discardIncompleteAttemptContent,
   emptyUsage,
+  forwardProviderStreamEvents,
   reachedProviderCompactionThreshold,
   responseDecisionDiagnostic,
   responseRetryDelayMs,
@@ -978,7 +979,11 @@ export class CodexProviderRuntime {
           await processCodexStream(
             startOnFirstEvent(
               captureRawEvents(
-                this.transport.request(model, requestBody, transportRequestOptions),
+                forwardProviderStreamEvents(
+                  this.transport.request(model, requestBody, transportRequestOptions),
+                  model,
+                  requestOptions.onProviderStreamEvent,
+                ),
                 attemptCapture,
                 terminalCapture,
               ),

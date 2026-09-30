@@ -1,8 +1,17 @@
+import type { ToolAnnotations } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 
 export const EXEC_COMMAND_TOOL_NAME = "exec_command";
 export const WRITE_STDIN_TOOL_NAME = "write_stdin";
 export const SHELL_COMMAND_TOOL_NAME = "shell_command";
+
+/** Commands run arbitrary programs: they can overwrite or delete data and reach the network. */
+export const COMMAND_TOOL_ANNOTATIONS = {
+  readOnlyHint: false,
+  destructiveHint: true,
+  idempotentHint: false,
+  openWorldHint: true,
+} as const satisfies ToolAnnotations;
 
 export type CommandToolPromptMetadata = {
   description: string;

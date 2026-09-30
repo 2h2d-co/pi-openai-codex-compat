@@ -169,6 +169,8 @@ export default function registerWebRun(
     parameters: WEB_RUN_PARAMETERS,
     executionMode: "parallel",
     renderShell: "self",
+    // Searching and browsing change nothing locally but reach the open web.
+    annotations: { readOnlyHint: true, openWorldHint: true },
     async execute(_toolCallId, params, signal, _onUpdate, ctx) {
       const model = ctx.model;
       if (!isCodexModel(model)) {

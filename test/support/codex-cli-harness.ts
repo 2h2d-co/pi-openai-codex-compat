@@ -10,6 +10,7 @@ import { RpcClient } from "../../node_modules/@earendil-works/pi-coding-agent/di
 import {
   parseJsonRecord,
   requireJsonRecord,
+  requireJsonRecords,
 } from "../../extensions/openai-codex-compat/codex-protocol.ts";
 import { packageArchive } from "./package-archive.ts";
 
@@ -221,6 +222,21 @@ export async function verifyPackagedCli(
     // Tool declarations never travel inside `input`.
     assert.deepEqual(data["inlineTools"], []);
     assert.deepEqual(call.arguments, { marker, value });
+    // Pi's provider_stream_event hook sees every parsed Codex event of the turn.
+    const streamed = entries
+      .filter((entry) => entry.type === "custom" && entry.customType === "release-test-stream")
+      .at(-1);
+    assert.ok(streamed?.type === "custom");
+    const streamEvents = requireJsonRecords(requireJsonRecord(streamed.data)["events"]);
+    assert.ok(streamEvents.length > 0);
+    for (const event of streamEvents) {
+      assert.deepEqual(
+        { provider: event["provider"], api: event["api"], model: event["model"] },
+        { provider: "openai-codex", api: "openai-codex-responses", model: clientOptions.model },
+      );
+    }
+    assert.equal(streamEvents.at(-1)?.["type"], "response.completed");
+    assert.ok(streamEvents.some((event) => event["type"] === "response.output_item.done"));
     assert.doesNotMatch(client.getStderr(), /Failed to load extension|not a function/);
   }
 

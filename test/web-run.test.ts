@@ -219,6 +219,7 @@ test("registers the complete reserved web.run schema and executes alpha/search",
   const result = await tool.execute("call-web|fc-web", commands, undefined, undefined, context);
 
   assert.equal(tool.renderShell, "self");
+  assert.deepEqual(tool.annotations, { readOnlyHint: true, openWorldHint: true });
   assert.equal(requests[0]?.path, "alpha/search");
   assert.deepEqual(requests[0]?.body["commands"], commands);
   assert.deepEqual(requests[0]?.body["settings"], {

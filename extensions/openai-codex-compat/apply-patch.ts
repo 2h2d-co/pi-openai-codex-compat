@@ -135,6 +135,13 @@ export default function registerApplyPatch(
     },
     executionMode: "sequential",
     renderShell: "self",
+    // Patches can overwrite and delete local files; they never reach the network.
+    annotations: {
+      readOnlyHint: false,
+      destructiveHint: true,
+      idempotentHint: false,
+      openWorldHint: false,
+    },
     async execute(toolCallId, params, signal, onUpdate, ctx) {
       const diagnosticsStartedAt = performance.now();
       let preparedDiagnostics: PreparedApplyPatchDiagnostics | undefined;

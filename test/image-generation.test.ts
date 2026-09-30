@@ -255,6 +255,12 @@ test("executes generation and recent-image edits through Codex Images", async (t
 
   assert.equal(tool.executionMode, "sequential");
   assert.equal(tool.renderShell, "self");
+  assert.deepEqual(tool.annotations, {
+    readOnlyHint: false,
+    destructiveHint: false,
+    idempotentHint: false,
+    openWorldHint: true,
+  });
   assert.equal(requests[0]?.path, "images/generations");
   assert.equal(requests[0]?.body["images"], undefined);
   assert.equal(requests[0]?.body["model"], "gpt-image-2");

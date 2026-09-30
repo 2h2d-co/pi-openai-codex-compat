@@ -131,6 +131,19 @@ The following official Codex facilities are not exact equivalents in this packag
 | Goals, memories, and remote skill-resource tools                        | Not implemented; Pi's sessions, files, and native skills remain separate systems.                                                                             |
 | Remote/deferred execution environments                                  | Not implemented.                                                                                                                                              |
 
+Each tool declares Pi tool annotations, which permission extensions can use to decide which calls to confirm:
+
+| Tool                                           | Read-only | Destructive | Open world |
+| ---------------------------------------------- | --------- | ----------- | ---------- |
+| `exec_command`, `write_stdin`, `shell_command` | No        | Yes         | Yes        |
+| `apply_patch`                                  | No        | Yes         | No         |
+| `image_gen.imagegen`                           | No        | No          | Yes        |
+| `web.run`                                      | Yes       | n/a         | Yes        |
+
+None of the tools is idempotent. Pi does not verify annotations.
+
+The provider passes every parsed Codex stream event, over WebSocket and SSE, to Pi's `provider_stream_event` hook before processing it. Remote compaction requests are not forwarded. A failing hook handler ends the turn with an error and never triggers a WebSocket retry or the SSE fallback.
+
 See [`OFFICIAL_CODEX_CLI_TOOL_CATALOG.md`](OFFICIAL_CODEX_CLI_TOOL_CATALOG.md) for the complete researched Codex tool inventory, and [`CUSTOM_CODEX_PROVIDER_WEB_REFERENCES.md`](CUSTOM_CODEX_PROVIDER_WEB_REFERENCES.md) for the unimplemented citation/reference design.
 
 ## Install

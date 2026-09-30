@@ -288,6 +288,14 @@ export default function registerImageGeneration(
     parameters: IMAGE_GENERATION_PARAMETERS,
     executionMode: "sequential",
     renderShell: "self",
+    // Each call adds a new image file and refuses to replace a different one. The request goes
+    // to the OpenAI image service.
+    annotations: {
+      readOnlyHint: false,
+      destructiveHint: false,
+      idempotentHint: false,
+      openWorldHint: true,
+    },
     async execute(toolCallId, params, signal, onUpdate, ctx) {
       const model = ctx.model;
       if (!isCodexModel(model)) {

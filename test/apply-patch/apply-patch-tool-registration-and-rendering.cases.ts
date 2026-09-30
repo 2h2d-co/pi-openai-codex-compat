@@ -59,6 +59,12 @@ test("registers the Codex freeform tool with model, UI, and failed-history parit
   ]);
   assert.equal(tool.executionMode, "sequential");
   assert.equal(tool.renderShell, "self");
+  assert.deepEqual(tool.annotations, {
+    readOnlyHint: false,
+    destructiveHint: true,
+    idempotentHint: false,
+    openWorldHint: false,
+  });
   assert.deepEqual(tool.constrainedSampling, {
     type: "grammar",
     variants: { openai_lark: APPLY_PATCH_LARK_GRAMMAR },

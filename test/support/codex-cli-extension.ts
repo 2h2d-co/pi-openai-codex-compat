@@ -123,9 +123,19 @@ export default function (pi: ExtensionAPI): void {
         .flatMap((item) => requireJsonRecords(item["tools"]).map((tool) => tool["name"])),
     });
   });
+  const streamEvents: Record<string, unknown>[] = [];
+  pi.on("provider_stream_event", (event) => {
+    streamEvents.push({
+      provider: event.provider,
+      api: event.api,
+      model: event.model,
+      type: requireJsonRecord(event.data)["type"],
+    });
+  });
   pi.on("turn_end", () => {
     for (const observation of observations.splice(0)) {
       pi.appendEntry("release-test-request", observation);
     }
+    pi.appendEntry("release-test-stream", { events: streamEvents.splice(0) });
   });
 }

@@ -21,6 +21,7 @@ import {
   SessionManager,
   SettingsManager,
   type AgentSession,
+  type ProviderStreamEvent,
   type ToolDefinition,
 } from "@earendil-works/pi-coding-agent";
 import { isString } from "../extensions/openai-codex-compat/value-contracts.ts";
@@ -255,7 +256,10 @@ async function createLivePiHost(
   mode: HistoryMode,
   modelId: string,
   customTools: ToolDefinition[] = [],
-  options: { builtinTools?: string[] } = {},
+  options: {
+    builtinTools?: string[];
+    onProviderStreamEvent?: (event: ProviderStreamEvent) => void;
+  } = {},
 ): Promise<AgentSession> {
   const tempRoot = await mkdtemp(join(tmpdir(), "pi-codex-live-host-"));
   const cwd = join(tempRoot, "cwd");
@@ -321,6 +325,18 @@ async function createLivePiHost(
     agentDir,
     settingsManager,
     additionalExtensionPaths: [extensionPath],
+    ...(options.onProviderStreamEvent
+      ? {
+          extensionFactories: [
+            {
+              name: "provider-stream-events",
+              factory: (pi) => {
+                pi.on("provider_stream_event", (event) => options.onProviderStreamEvent?.(event));
+              },
+            },
+          ],
+        }
+      : {}),
     systemPromptOverride: () => historyInstructions(mode),
     appendSystemPromptOverride: () => [],
     noSkills: true,
@@ -356,7 +372,10 @@ for (const modelId of ["gpt-5.6-luna", "gpt-6-sol", "gpt-6-luna", "gpt-6.1-sol"]
     { skip: !LIVE_TEST_ENABLED, timeout: LIVE_TEST_TIMEOUT_MS },
     async (t) => {
       const traffic = observeRealWebSocketTraffic(t);
-      const session = await createLivePiHost(t, "text", modelId);
+      const streamEvents: ProviderStreamEvent[] = [];
+      const session = await createLivePiHost(t, "text", modelId, [], {
+        onProviderStreamEvent: (event) => streamEvents.push(event),
+      });
       const values = ["text-alpha", "text-bravo", "text-charlie"];
       const cache: CacheObservation[] = [];
       let previousResponseId: string | undefined;
@@ -371,6 +390,23 @@ for (const modelId of ["gpt-5.6-luna", "gpt-6-sol", "gpt-6-luna", "gpt-6.1-sol"]
         const assistant = latestAssistant(session);
         cache.push(cacheObservation(assistant));
         assert.equal(assistant.stopReason, "stop");
+        // Pi's provider_stream_event hook receives the parsed WebSocket events of the turn.
+        const turnEvents = streamEvents.splice(0);
+        assert.ok(turnEvents.length > 0, "No provider stream events were forwarded.");
+        for (const event of turnEvents) {
+          assert.deepEqual(
+            { provider: event.provider, api: event.api, model: event.model },
+            { provider: CODEX_PROVIDER, api: "openai-codex-responses", model: modelId },
+          );
+        }
+        const completed = turnEvents.filter(
+          (event) => requireJsonRecord(event.data)["type"] === "response.completed",
+        );
+        assert.equal(completed.length, 1);
+        assert.equal(
+          requireJsonRecord(requireJsonRecord(completed[0]?.data)["response"])["id"],
+          assistant.responseId,
+        );
         assert.deepEqual(responseLines(assistantText(assistant)), values.slice(0, index + 1));
         if (index === 0) {
           const prewarm = promptFrames.find((frame) => frame["generate"] === false);
