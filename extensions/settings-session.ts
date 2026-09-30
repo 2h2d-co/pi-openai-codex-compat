@@ -57,22 +57,25 @@ export function readSessionSettings(
       !object(data["observed"])
     )
       return fail();
+    // Newer versions may remove a setting or narrow its values. Skip such fields so a session
+    // saved by an older version still resumes; only a malformed record fails.
     const values: SettingValues = {};
     const session: SettingsSessionState = { changes: {} };
     for (const [id, value] of Object.entries(data["values"])) {
       const field = fields.find((candidate) => candidate.id === id);
-      if (!field || !valid(field, value)) return fail();
-      values[id] = value;
+      if (field && valid(field, value)) values[id] = value;
     }
     const observed: Record<string, [string, string]> = {};
     for (const [id, change] of Object.entries(data["changes"])) {
+      if (!Array.isArray(change) || change.length > 1) return fail();
       const field = fields.find((candidate) => candidate.id === id);
-      if (!field || !Array.isArray(change) || change.length > 1 || !Object.hasOwn(values, id))
-        return fail();
+      if (!field || !Object.hasOwn(values, id)) continue;
       const value: unknown = change[0];
-      if (change.length === 0) session.changes[id] = undefined;
-      else if (valid(field, value)) session.changes[id] = value;
-      else return fail();
+      let next: SettingValue | undefined;
+      if (change.length !== 0) {
+        if (!valid(field, value)) continue;
+        next = value;
+      }
       const hashes = data["observed"][id];
       if (!Array.isArray(hashes) || hashes.length !== 2) return fail();
       const global: unknown = hashes[0];
@@ -84,6 +87,7 @@ export function readSessionSettings(
         !/^[a-f0-9]{64}$/.test(project)
       )
         return fail();
+      session.changes[id] = next;
       observed[id] = [global, project];
     }
     if (Object.keys(session.changes).length) {

@@ -11,6 +11,9 @@
 
 ### Fixed
 
+- Resume sessions whose saved `/codex-settings` values include a setting this
+  version removed or no longer accepts, such as `reasoningMode`. Those fields are
+  skipped instead of failing the whole record at session start.
 - Refuse to load on Pi runtimes older than 0.99.1. The load-time check accepted
   any runtime since Pi 0.87 and reported the requirement as Pi 0.99.x. It now
   requires Pi 0.99 host APIs and a reported Pi version of at least 0.99.1.

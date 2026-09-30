@@ -112,24 +112,64 @@ test("latest session record clears pending saves and excludes environment-contro
   });
 });
 
-test("invalid session records fail visibly instead of silently selecting file defaults", () => {
-  for (const values of [
-    { enabled: "invalid" },
-    { budget: 201 },
-    { budget: 1.5 },
-    { unknown: true },
-  ]) {
-    const manager = SessionManager.inMemory("/synthetic");
-    manager.appendCustomEntry(type, {
+test("fields a newer version removed or no longer accepts are skipped on resume", () => {
+  const hash = "a".repeat(64);
+  const manager = SessionManager.inMemory("/synthetic");
+  manager.appendCustomEntry(type, {
+    version: 1,
+    sessionId: manager.getSessionId(),
+    values: { enabled: true, budget: 201, removed: "pro" },
+    changes: { enabled: [true], budget: [201], removed: ["pro"] },
+    file: "/synthetic/global.json",
+    observed: { enabled: [hash, hash], budget: [hash, hash], removed: [hash, hash] },
+  });
+  const state = readSessionSettings({ sessionManager: manager }, type, fields);
+  assert.deepEqual(state.values, { enabled: true });
+  assert.deepEqual(state.session.changes, { enabled: true });
+  assert.deepEqual(state.session.baseline?.observed, { enabled: [hash, hash] });
+
+  for (const values of [{ enabled: "invalid" }, { budget: 1.5 }, { unknown: true }]) {
+    const stale = SessionManager.inMemory("/synthetic");
+    stale.appendCustomEntry(type, {
       version: 1,
-      sessionId: manager.getSessionId(),
+      sessionId: stale.getSessionId(),
       values,
       changes: {},
       observed: {},
     });
+    assert.deepEqual(readSessionSettings({ sessionManager: stale }, type, fields), {
+      values: {},
+      session: { changes: {} },
+    });
+  }
+});
+
+test("malformed session records fail visibly instead of silently selecting file defaults", () => {
+  const hash = "a".repeat(64);
+  for (const record of [
+    { version: 2, values: {}, changes: {}, observed: {} },
+    { version: 1, values: [], changes: {}, observed: {} },
+    { version: 1, values: { enabled: true }, changes: { enabled: true }, observed: {} },
+    {
+      version: 1,
+      values: { enabled: true },
+      changes: { enabled: [true] },
+      file: "/synthetic/global.json",
+      observed: { enabled: ["not-a-hash", hash] },
+    },
+    {
+      version: 1,
+      values: { enabled: true },
+      changes: { enabled: [true] },
+      observed: { enabled: [hash, hash] },
+    },
+  ]) {
+    const manager = SessionManager.inMemory("/synthetic");
+    manager.appendCustomEntry(type, { ...record, sessionId: manager.getSessionId() });
     assert.throws(
       () => readSessionSettings({ sessionManager: manager }, type, fields),
       /Invalid saved session settings/,
+      JSON.stringify(record),
     );
   }
 });

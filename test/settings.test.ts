@@ -14,6 +14,7 @@ import {
 import registerCodexSettings, {
   settingFields,
   loadSessionConfig,
+  SESSION_SETTINGS_TYPE,
   type CodexSettingsContext,
   type CodexSettingsHandler,
 } from "../extensions/openai-codex-compat/settings-pane.ts";
@@ -297,4 +298,34 @@ test("toggles image_gen.imagegen and web.run independently on Codex models", () 
     });
     assert.deepEqual(active, ["read", "edit", "write", "web.run"]);
   }
+});
+
+test("a session saved with the removed reasoningMode setting resumes with its other settings", async (t) => {
+  const root = await mkdtemp(join(tmpdir(), "codex-settings-stale-"));
+  const previous = process.env["PI_CODING_AGENT_DIR"];
+  process.env["PI_CODING_AGENT_DIR"] = join(root, "agent");
+  await mkdir(join(root, "agent"));
+  t.after(async () => {
+    if (previous === undefined) delete process.env["PI_CODING_AGENT_DIR"];
+    else process.env["PI_CODING_AGENT_DIR"] = previous;
+    await rm(root, { recursive: true, force: true });
+  });
+  const manager = SessionManager.inMemory(root);
+  const hash = "b".repeat(64);
+  // The record shape 0.0.18 wrote after "Apply to session", including reasoningMode.
+  manager.appendCustomEntry(SESSION_SETTINGS_TYPE, {
+    version: 1,
+    sessionId: manager.getSessionId(),
+    values: { ...DEFAULT_CONFIG, fastMode: true, reasoningMode: "pro" },
+    changes: { fastMode: [true], reasoningMode: ["pro"] },
+    file: join(root, "agent", CONFIG_FILE),
+    observed: { fastMode: [hash, hash], reasoningMode: [hash, hash] },
+  });
+  const config = loadSessionConfig({
+    cwd: root,
+    isProjectTrusted: () => false,
+    sessionManager: manager,
+  });
+  assert.equal(config.fastMode, true);
+  assert.equal(Object.hasOwn(config, "reasoningMode"), false);
 });
