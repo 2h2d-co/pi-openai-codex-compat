@@ -350,7 +350,7 @@ async function createLivePiHost(
   return result.session;
 }
 
-for (const modelId of ["gpt-5.6-luna", "gpt-6-sol", "gpt-6-luna"]) {
+for (const modelId of ["gpt-5.6-luna", "gpt-6-sol", "gpt-6-luna", "gpt-6.1-sol"]) {
   test(
     `live Pi host ${modelId} preserves text conversation history through Codex`,
     { skip: !LIVE_TEST_ENABLED, timeout: LIVE_TEST_TIMEOUT_MS },

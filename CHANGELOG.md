@@ -2,6 +2,20 @@
 
 ## Unreleased
 
+### Fixed
+
+- Keep Pi 0.99 running in the terminal UI. Pi 0.99's footer reads session
+  methods the Codex footer did not provide, so Pi exited on its first render.
+
+### Added
+
+- Opt-in Responses Lite for GPT-6.1 Sol. GPT-6.1 Sol uses standard reasoning
+  mode even when `pro` is configured.
+
+### Changed
+
+- Require Pi `>=0.99.1 <0.100.0`. Restart Pi after upgrading it.
+
 ## 0.0.17 - 2026-09-25
 
 ### Fixed

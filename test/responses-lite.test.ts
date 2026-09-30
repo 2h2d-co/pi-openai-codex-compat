@@ -18,19 +18,21 @@ test("selects only supported Responses Lite models when enabled", () => {
   assert.equal(usesResponsesLite("gpt-5.6-terra"), true);
   assert.equal(usesResponsesLite("gpt-5.6-luna"), true);
   assert.equal(usesResponsesLite("gpt-6-astra"), true);
-  for (const modelId of ["gpt-6-sol", "gpt-6-luna"]) {
+  for (const modelId of ["gpt-6-sol", "gpt-6-luna", "gpt-6.1-sol"]) {
     assert.equal(usesResponsesLite(modelId), true);
     assert.equal(usesResponsesLite(modelId, false), false);
     assert.equal(usesResponsesLite(`${modelId}-preview`), false);
   }
   assert.equal(usesResponsesLite("gpt-6-astra-preview"), false);
   assert.equal(usesResponsesLite("gpt-6"), false);
+  assert.equal(usesResponsesLite("gpt-6.1"), false);
+  assert.equal(usesResponsesLite("gpt-6.1-luna"), false);
   assert.equal(usesResponsesLite("gpt-6-astra", false), false);
   assert.equal(usesResponsesLite("gpt-5.5"), false);
   assert.equal(usesResponsesLite("gpt-5.6-sol", false), false);
 });
 
-for (const modelId of ["gpt-5.6-sol", "gpt-6-astra", "gpt-6-sol", "gpt-6-luna"]) {
+for (const modelId of ["gpt-5.6-sol", "gpt-6-astra", "gpt-6-sol", "gpt-6-luna", "gpt-6.1-sol"]) {
   test(`builds the Responses Lite instruction and tool prefix for ${modelId}`, () => {
     const payload = applyResponsesLite(
       {

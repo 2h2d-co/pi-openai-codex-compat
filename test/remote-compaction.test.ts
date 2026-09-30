@@ -337,6 +337,7 @@ test("refreshes cached tool declarations before native compaction", async () => 
   const harness = createHarness([user]);
   const tool = {
     ...REPORT_TOOL,
+    exposure: "direct" as const,
     sourceInfo: createSyntheticSourceInfo("test-tool", { source: "compaction test" }),
   };
   const read = createReadTool(process.cwd());
@@ -344,6 +345,7 @@ test("refreshes cached tool declarations before native compaction", async () => 
     name: read.name,
     description: read.description,
     parameters: read.parameters,
+    exposure: "direct" as const,
     sourceInfo: createSyntheticSourceInfo("builtin", { source: "compaction test" }),
   };
   harness.hooks.getAllTools = () => [tool, readInfo];

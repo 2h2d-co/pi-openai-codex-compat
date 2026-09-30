@@ -24,7 +24,7 @@ export const TRANSCRIPT_APIS = [
  */
 export const SESSION_APIS = ["buildSessionProjection"] as const;
 
-export const REQUIRED_PI = "Pi 0.87.x";
+export const REQUIRED_PI = "Pi 0.99.x";
 
 /** Check the loaded host, not package metadata that PI_PACKAGE_DIR can override. */
 export function requirePiTranscriptRuntime(

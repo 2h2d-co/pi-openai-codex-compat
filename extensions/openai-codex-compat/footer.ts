@@ -4,6 +4,7 @@ import {
   type ExtensionContext,
   type ReadonlyFooterDataProvider,
   type SessionEntry,
+  type SessionManager,
 } from "@earendil-works/pi-coding-agent";
 import type { Component } from "@earendil-works/pi-tui";
 import type { CodexCompatConfig } from "./config.ts";
@@ -69,14 +70,23 @@ export function footerModel(
   return { ...model, id, reasoning: false };
 }
 
+/**
+ * The part of Pi's `AgentSession` that `FooterComponent` reads. Pi constructs the
+ * footer with its own session, so the compiler cannot check this adapter against
+ * the footer's actual reads; the packaged TUI test renders it through Pi.
+ */
 interface FooterSessionAdapter {
   readonly state: {
     model: Model<Api> | undefined;
     thinkingLevel: string;
   };
+  /** Pi keys its cached session statistics on this identity. */
+  readonly model: Model<Api> | undefined;
+  /** Extensions cannot observe virtual-model routing, so the footer omits it. */
+  readonly routedModel: undefined;
   sessionManager: Pick<
-    ExtensionContext["sessionManager"],
-    "getEntries" | "getCwd" | "getSessionName"
+    SessionManager,
+    "getEntries" | "getEntryCount" | "getCwd" | "getLeafId" | "getSessionId" | "getSessionName"
   >;
   getContextUsage: () => ReturnType<ExtensionContext["getContextUsage"]>;
   modelRuntime: {
@@ -190,13 +200,20 @@ class CachedFooterSession implements FooterSessionAdapter {
 
   readonly sessionManager: FooterSessionAdapter["sessionManager"];
   readonly modelRuntime: FooterSessionAdapter["modelRuntime"];
+  readonly routedModel = undefined;
 
   constructor(ctx: FooterContext, resolveConfig: ConfigResolver) {
     this.ctx = ctx;
     this.resolveConfig = resolveConfig;
+    // Pi's footer caches its statistics by session id, leaf id, entry count, and
+    // model. The aggregated snapshot is keyed by the same session and leaf, so
+    // both caches refresh together.
     this.sessionManager = {
       getEntries: () => this.getSnapshot().entries,
+      getEntryCount: () => this.getSnapshot().entries.length,
       getCwd: () => ctx.sessionManager.getCwd(),
+      getLeafId: () => ctx.sessionManager.getLeafId(),
+      getSessionId: () => ctx.sessionManager.getSessionId(),
       getSessionName: () => this.getSnapshot().displayName,
     };
     this.modelRuntime = {
@@ -218,6 +235,10 @@ class CachedFooterSession implements FooterSessionAdapter {
         );
       },
     };
+  }
+
+  get model(): Model<Api> | undefined {
+    return selectedRegistryModel(this.ctx);
   }
 
   get state(): FooterSessionAdapter["state"] {

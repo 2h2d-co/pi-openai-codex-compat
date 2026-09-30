@@ -267,6 +267,7 @@ for (const modelId of [
   "gpt-6-astra-preview",
   "gpt-6-sol",
   "gpt-6-luna",
+  "gpt-6.1-sol",
   "gpt-6-sol-preview",
   "gpt-6-luna-preview",
 ]) {

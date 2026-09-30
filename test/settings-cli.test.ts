@@ -39,7 +39,7 @@ for (const mode of ["regular", "fullscreen"]) {
         env: { ...process.env, PI_PACKAGE_DIR: piPackage },
         encoding: "utf8",
       }).trim(),
-      "0.87.1",
+      "0.99.1",
     );
     // No credentials or provider requests. Keep normal extension loading enabled.
     const manager = SessionManager.create(temporary, join(temporary, "sessions"));
