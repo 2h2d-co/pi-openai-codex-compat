@@ -45,7 +45,7 @@ import registerRemoteCompaction, {
   type RemoteCompactionLifecycleHandler,
 } from "../extensions/openai-codex-compat/remote-compaction.ts";
 import type { ResponsesOutputMessageItem } from "../extensions/openai-codex-compat/responses-item-schema.ts";
-import { REPORT_TOOL } from "./codex-provider/codex-provider-harness.ts";
+import { assistantEntry, REPORT_TOOL } from "./codex-provider/codex-provider-harness.ts";
 
 interface TestCompactionResult {
   compaction: {
@@ -140,7 +140,12 @@ class RemoteCompactionTestApi implements RemoteCompactionApi, CodexProviderRunti
   sessionShutdown: RemoteCompactionLifecycleHandler | undefined;
   sessionStart: RemoteCompactionLifecycleHandler | undefined;
 
+  activeTools: string[] = [];
+
   appendEntry(): void {}
+  getActiveTools(): string[] {
+    return this.activeTools;
+  }
   getAllTools(): ToolInfo[] {
     return [];
   }
@@ -419,6 +424,69 @@ test("declares the branch's saved request tools in native compaction", async () 
     await compact(branch);
     assert.deepEqual(harness.requests.at(-1)?.tools, transcriptTools);
   }
+});
+
+test("keeps apply_patch history as custom tool calls in sessions without tool declarations", async () => {
+  // Pi sessions from before transcript tool declarations declare no tools and
+  // have no saved request tools.
+  const user = userEntry("user-1", "Patch the file.");
+  const patch = "*** Begin Patch\n*** End Patch";
+  const call: SessionEntry = {
+    ...assistantEntry("assistant-1", user.id, ""),
+    message: {
+      ...assistantEntry("assistant-1", user.id, "").message,
+      content: [
+        {
+          type: "toolCall",
+          id: "call_patch|ctc_patch",
+          name: "apply_patch",
+          arguments: { patch },
+        },
+      ],
+      stopReason: "toolUse",
+    },
+  };
+  const result: SessionEntry = {
+    type: "message",
+    id: "result-1",
+    parentId: call.id,
+    timestamp: new Date().toISOString(),
+    message: {
+      role: "toolResult",
+      toolCallId: "call_patch|ctc_patch",
+      toolName: "apply_patch",
+      content: [{ type: "text", text: "Done" }],
+      isError: false,
+      timestamp: Date.now(),
+    },
+  };
+  const branch = [user, call, result];
+  const harness = createHarness(branch);
+  const handler = harness.hooks.sessionBeforeCompact;
+  assert.ok(handler);
+  const types = async (activeTools: string[]) => {
+    harness.hooks.activeTools = activeTools;
+    requireCompactionResult(
+      await handler(
+        {
+          branchEntries: branch,
+          preparation: { firstKeptEntryId: "user-1", tokensBefore: 50_000 },
+          reason: "manual",
+          willRetry: false,
+          signal: new AbortController().signal,
+        },
+        harness.context,
+      ),
+    );
+    return requireJsonRecords(harness.requests.at(-1)?.input)
+      .map((item) => item.type)
+      .filter((type) => isString(type) && type.includes("call"));
+  };
+
+  // The next turn declares the active apply_patch, so compaction encodes its
+  // calls as that turn will.
+  assert.deepEqual(await types(["apply_patch"]), ["custom_tool_call", "custom_tool_call_output"]);
+  assert.deepEqual(await types([]), ["function_call", "function_call_output"]);
 });
 
 test("saves request tools in a parseable and order-independent form", () => {

@@ -9,6 +9,7 @@ import type {
 import {
   getCurrentTools,
   type Api,
+  type Message,
   type Model,
   type OpenAICodexResponsesOptions,
   type ProviderHeaders,
@@ -22,8 +23,11 @@ import {
   remoteCompactionMarkerSummary,
   requestGrammarToolInputProperties,
   requestTools,
+  responsesCompatibility,
   searchCheckpoint,
+  type GrammarToolInputProperties,
 } from "./compaction-checkpoint.ts";
+import { APPLY_PATCH_INPUT_PROPERTY, APPLY_PATCH_TOOL_NAME } from "./apply-patch.ts";
 import { resolveFileConfig, type ConfigResolver } from "./config-context.ts";
 import type { CodexProviderRuntime } from "./codex-provider.ts";
 import { responsesCompactionV2Metadata, type CodexCompactionMetadata } from "./codex-metadata.ts";
@@ -85,6 +89,7 @@ export type RemoteCompactionHookHandler = (
 ) => Promise<RemoteCompactionHookResult | undefined>;
 
 export type RemoteCompactionApi = {
+  getActiveTools: () => string[];
   onBeforeProviderHeaders: (handler: RemoteCompactionHeadersHandler) => void;
   onContext: (handler: RemoteCompactionContextHandler) => void;
   onSessionBeforeCompact: (handler: RemoteCompactionHookHandler) => void;
@@ -108,6 +113,7 @@ export function remoteCompactionApi(pi: ExtensionAPI): RemoteCompactionApi {
   };
 
   return {
+    getActiveTools: () => pi.getActiveTools(),
     onBeforeProviderHeaders: (handler) =>
       pi.on("before_provider_headers", (event, ctx) => handler(event, context(ctx))),
     // The full-transcript event returns messages verbatim. A changed `context`
@@ -148,6 +154,30 @@ function instructionsForCompaction(systemPrompt: string, customInstructions?: st
   return custom
     ? `${systemPrompt}\n\nAdditional guidance for this compaction:\n${custom}`
     : systemPrompt;
+}
+
+/**
+ * Grammar input properties for a branch without saved request tools. The next
+ * turn declares the transcript's tools plus the active ones. Sessions from
+ * before Pi recorded tool declarations declare none, so an active
+ * `apply_patch`, the only grammar tool Pi's tool registry can identify, is
+ * added as that turn would add it. Its replayed calls then keep their custom
+ * tool call and output types.
+ */
+function fallbackGrammarToolInputProperties(
+  model: Model<Api>,
+  transcript: readonly Message[],
+  activeNames: readonly string[],
+): GrammarToolInputProperties {
+  const properties = new Map(requestGrammarToolInputProperties(model, transcript));
+  if (
+    !properties.has(APPLY_PATCH_TOOL_NAME) &&
+    activeNames.includes(APPLY_PATCH_TOOL_NAME) &&
+    responsesCompatibility(model.compat).supportsOpenAIGrammarTools
+  ) {
+    properties.set(APPLY_PATCH_TOOL_NAME, APPLY_PATCH_INPUT_PROPERTY);
+  }
+  return properties;
 }
 
 function compactionMetadata(reason: SessionBeforeCompactEvent["reason"]): CodexCompactionMetadata {
@@ -207,7 +237,7 @@ export default function registerRemoteCompaction(
       const config = resolveConfig(ctx);
       const grammarToolInputProperties =
         saved?.grammarToolInputProperties ??
-        requestGrammarToolInputProperties(ctx.model, transcript ?? []);
+        fallbackGrammarToolInputProperties(ctx.model, transcript ?? [], pi.getActiveTools());
       const history = providerHistory({
         branch: event.branchEntries,
         wireModel: ctx.model,

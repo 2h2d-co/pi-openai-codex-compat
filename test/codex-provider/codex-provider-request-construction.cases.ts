@@ -82,6 +82,13 @@ test("saves the tools a turn request sends once per change", async () => {
   };
   const saved = () => harness.requestToolsEntries.map((data) => requireJsonRecord(data)["tools"]);
 
+  // A request outside an agent run, such as Pi's bug-report summary, neither
+  // saves tools nor replaces the turn template.
+  await turn([report]);
+  assert.equal(saved().length, 0);
+  assert.equal(harness.runtime.latestTemplate("session-1"), undefined);
+
+  harness.runtime.beginAgentTurn(harness.extensionContext);
   await turn([report]);
   assert.deepEqual(saved(), [requests.at(-1)?.tools]);
   await turn([report]);
@@ -96,6 +103,19 @@ test("saves the tools a turn request sends once per change", async () => {
   }));
   assert.deepEqual(saved().at(-1), [{ type: "function", name: "edited" }]);
   assert.equal(saved().length, 3);
+  // An edit that removes `tools` sent none.
+  await turn([report, lookup], (payload) => {
+    const { tools: _tools, ...rest } = requireJsonRecord(payload);
+    return rest;
+  });
+  assert.deepEqual(saved().at(-1), []);
+  assert.equal(saved().length, 4);
+
+  const template = harness.runtime.latestTemplate("session-1");
+  harness.runtime.endAgentTurn(harness.extensionContext);
+  await turn([lookup]);
+  assert.equal(saved().length, 4);
+  assert.equal(harness.runtime.latestTemplate("session-1"), template);
 });
 
 test("prewarms only the static prefix before its first WebSocket turn", async () => {

@@ -190,6 +190,12 @@ export type CodexTransportOptions = OpenAICodexResponsesOptions & {
   onWebSocketResponseHandle?: (handle: CodexWebSocketResponseHandle) => void;
   onTransportStart?: () => void;
   onTransportDiagnostic?: (diagnostic: CodexTransportDiagnostic) => void;
+  /**
+   * Receives each parsed server event before the transport filters or
+   * normalizes it. A rejection must be a `ProviderStreamEventCallbackError`,
+   * which ends the request without a retry or transport fallback.
+   */
+  forwardRawEvent?: (event: JsonRecord) => Promise<void>;
   warmup?: boolean;
   requestKind?: CodexRequestKind;
   turnState?: CodexTurnState;

@@ -102,11 +102,23 @@ export function thrownMessage(error: unknown): string {
   return error instanceof Error ? error.message || error.name : String(error);
 }
 
+/** A failed `provider_stream_event` callback. It ends the turn and is never retried. */
+export class ProviderStreamEventCallbackError extends Error {
+  constructor(cause: unknown) {
+    super(
+      `Provider stream event handler failed: ${cause instanceof Error ? cause.message : String(cause)}`,
+      { cause },
+    );
+    this.name = "ProviderStreamEventCallbackError";
+  }
+}
+
 export function isCodexNonTransportError(error: unknown): boolean {
   return (
     error instanceof CodexApiError ||
     error instanceof CodexHttpError ||
-    error instanceof CodexProtocolError
+    error instanceof CodexProtocolError ||
+    error instanceof ProviderStreamEventCallbackError
   );
 }
 

@@ -254,6 +254,7 @@ export async function* requestWebSocket(
     let responseId: string | undefined;
     let responseCompleted = false;
     for await (const event of parseWebSocket(acquired.socket, options.signal, timeoutMs)) {
+      await options.forwardRawEvent?.(event);
       captureTurnStateEvent(event, options.turnState);
       if (event.type === "response.metadata") continue;
       if (

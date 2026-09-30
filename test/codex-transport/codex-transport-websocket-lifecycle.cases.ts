@@ -1,5 +1,6 @@
 import { requireJsonRecord } from "../../extensions/openai-codex-compat/codex-protocol.ts";
 import { hasObjectType } from "../../extensions/openai-codex-compat/value-contracts.ts";
+import { ProviderStreamEventCallbackError } from "../../extensions/openai-codex-compat/codex-transport.ts";
 import {
   assert,
   test,
@@ -906,4 +907,124 @@ test("reuses one WebSocket for compaction and continuation requests", async (t) 
   assert.equal(compactEvents.at(-1)?.type, "response.completed");
   assert.equal(continuationEvents.at(-1)?.type, "response.completed");
   transport.close("session-1");
+});
+
+test("forwards raw WebSocket events and ends without fallback when forwarding fails", async (t) => {
+  const previousWebSocket = globalThis.WebSocket;
+  const serverEvents: JsonRecord[] = [
+    { type: "response.created", response: { id: "resp_raw" } },
+    { type: "response.metadata", headers: { "x-codex-turn-state": "state-1" } },
+    {
+      type: "response.output_item.done",
+      output_index: 0,
+      item: {
+        type: "message",
+        id: "msg_raw",
+        role: "assistant",
+        status: "completed",
+        content: [{ type: "output_text", text: "done", annotations: [] }],
+      },
+    },
+    {
+      type: "response.done",
+      response: {
+        id: "resp_raw",
+        status: "completed",
+        usage: { input_tokens: 1, output_tokens: 1, total_tokens: 2 },
+      },
+    },
+  ];
+
+  class RawEventWebSocket {
+    readyState = 1;
+    private readonly listeners = new Map<string, Set<(event: unknown) => void>>();
+
+    constructor() {
+      queueMicrotask(() => this.emit("open", {}));
+    }
+
+    addEventListener(type: string, listener: (event: unknown) => void): void {
+      const listeners = this.listeners.get(type) ?? new Set();
+      listeners.add(listener);
+      this.listeners.set(type, listeners);
+    }
+
+    removeEventListener(type: string, listener: (event: unknown) => void): void {
+      this.listeners.get(type)?.delete(listener);
+    }
+
+    send(): void {
+      queueMicrotask(() => {
+        for (const event of serverEvents) this.emit("message", { data: JSON.stringify(event) });
+      });
+    }
+
+    close(): void {
+      this.readyState = 3;
+      this.emit("close", { code: 1_000, wasClean: true });
+    }
+
+    private emit(type: string, event: unknown): void {
+      for (const listener of this.listeners.get(type) ?? []) listener(event);
+    }
+  }
+
+  Object.defineProperty(globalThis, "WebSocket", {
+    configurable: true,
+    value: RawEventWebSocket,
+  });
+  t.after(() => {
+    Object.defineProperty(globalThis, "WebSocket", {
+      configurable: true,
+      value: previousWebSocket,
+    });
+  });
+
+  const forwarded: JsonRecord[] = [];
+  const yielded: JsonRecord[] = [];
+  for await (const event of new CodexTransport().request(
+    codexModel(),
+    { input: [] },
+    {
+      apiKey: accessToken(),
+      sessionId: "raw-session",
+      transport: "websocket",
+      async forwardRawEvent(event) {
+        forwarded.push(event);
+      },
+    },
+  )) {
+    yielded.push(event);
+  }
+  // Pi's hook sees metadata and the `response.done` alias as sent; the stream
+  // the extension processes has neither.
+  assert.deepEqual(forwarded, serverEvents);
+  assert.deepEqual(
+    yielded.map((event) => event.type),
+    ["response.created", "response.output_item.done", "response.completed"],
+  );
+
+  let sseRequests = 0;
+  await assert.rejects(
+    async () => {
+      for await (const _event of new CodexTransport().request(
+        codexModel(),
+        { input: [] },
+        {
+          apiKey: accessToken(),
+          sessionId: "raw-failure-session",
+          transport: "auto",
+          fetch: async () => {
+            sseRequests += 1;
+            return new Response("", { status: 500 });
+          },
+          async forwardRawEvent() {
+            throw new ProviderStreamEventCallbackError(new Error("handler exploded"));
+          },
+        },
+      ));
+    },
+    { name: "ProviderStreamEventCallbackError" },
+  );
+  assert.equal(sseRequests, 0);
 });

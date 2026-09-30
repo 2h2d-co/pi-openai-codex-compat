@@ -27,9 +27,10 @@
 
 ### Added
 
-- Forward every parsed Codex stream event to Pi's `provider_stream_event` hook, so
-  debugging extensions see Codex traffic. A failing handler ends the turn without
-  a retry or transport fallback.
+- Forward every Codex stream event of a turn to Pi's `provider_stream_event` hook
+  as the server sent it, including metadata, error events, and terminal aliases,
+  so debugging extensions see Codex traffic. Pi reports a failing handler and
+  continues the turn.
 - Annotate the command tools, `apply_patch`, `image_gen.imagegen`, and `web.run`
   with read-only, destructive, and open-world hints for permission extensions.
   `web.run` is the only read-only tool.

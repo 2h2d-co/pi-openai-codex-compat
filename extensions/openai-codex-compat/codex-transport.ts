@@ -95,6 +95,7 @@ export {
   resetOpenAICodexWebSocketDebugStats,
 } from "./codex-transport/codex-transport-websocket-pool.ts";
 export {
+  ProviderStreamEventCallbackError,
   WEBSOCKET_CONNECTION_LIMIT_REACHED_CODE,
   isWebSocketConnectionLimitReachedError,
 } from "./codex-transport/codex-transport-errors.ts";

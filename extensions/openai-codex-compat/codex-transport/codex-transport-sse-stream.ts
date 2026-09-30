@@ -206,6 +206,7 @@ export async function* requestSse(
   options.onTransportStart?.();
   let terminal = false;
   for await (const event of parseSse(response, options.signal)) {
+    await options.forwardRawEvent?.(event);
     const normalized = normalizeEvent(event);
     if (!normalized) continue;
     yield normalized;

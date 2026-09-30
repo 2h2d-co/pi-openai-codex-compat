@@ -114,42 +114,6 @@ export function responseDecisionDiagnostic(options: {
   };
 }
 
-/** A failed `provider_stream_event` handler. It ends the turn and is never retried. */
-export class ProviderStreamEventCallbackError extends Error {
-  constructor(cause: unknown) {
-    super(
-      `Provider stream event handler failed: ${cause instanceof Error ? cause.message : String(cause)}`,
-      { cause },
-    );
-    this.name = "ProviderStreamEventCallbackError";
-  }
-}
-
-/**
- * Pass each parsed Codex event to Pi's `provider_stream_event` hook before the extension processes
- * it. This wraps the transport rather than running inside it, so a handler failure never reaches
- * the WebSocket retry or SSE fallback paths.
- */
-export function forwardProviderStreamEvents(
-  events: AsyncIterable<JsonRecord>,
-  model: Model<Api>,
-  onProviderStreamEvent: OpenAICodexResponsesOptions["onProviderStreamEvent"],
-): AsyncIterable<JsonRecord> {
-  if (!onProviderStreamEvent) return events;
-  return {
-    async *[Symbol.asyncIterator]() {
-      for await (const event of events) {
-        try {
-          await onProviderStreamEvent(event, model);
-        } catch (error) {
-          throw new ProviderStreamEventCallbackError(error);
-        }
-        yield event;
-      }
-    },
-  };
-}
-
 export function captureRawEvents(
   events: AsyncIterable<JsonRecord>,
   capture: CodexAttemptCapture,

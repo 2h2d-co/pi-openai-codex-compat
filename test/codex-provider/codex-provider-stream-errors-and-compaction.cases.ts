@@ -48,27 +48,38 @@ test("emits start only when the Codex transport starts", async () => {
   assert.equal(events.at(-1)?.type, "done");
 });
 
-test("forwards every parsed Codex event to Pi's provider stream hook in order", async () => {
+function sseResponse(events: readonly JsonRecord[]): Response {
+  return new Response(events.map((event) => `data: ${JSON.stringify(event)}\n\n`).join(""), {
+    status: 200,
+    headers: { "content-type": "text/event-stream" },
+  });
+}
+
+test("forwards every raw Codex event to Pi's provider stream hook before normalizing it", async () => {
   const user = userEntry("user-1", "hello");
   const harness = createHarness([user]);
-  const sent = textEvents("hello back");
-  harness.runtime.transport.request = async function* () {
-    yield* sent;
-  };
+  // `response.done` is the terminal alias the transport normalizes.
+  const sent = textEvents("hello back").map((event) =>
+    event.type === "response.completed" ? { ...event, type: "response.done" } : event,
+  );
   const model = codexModel();
   const forwarded: Array<{ data: unknown; model: string }> = [];
 
-  const events = [];
+  const events: Array<{ type: string }> = [];
   const result = harness.runtime.streamSimple(
     model,
     { messages: [user.message] },
     {
       apiKey: accessToken(),
       sessionId: "session-1",
-      transport: "auto",
+      transport: "sse",
+      fetch: async () => sseResponse(sent),
       onProviderStreamEvent(data, eventModel) {
-        // The first event arrives before the extension emits anything for it.
-        if (forwarded.length === 0) assert.equal(events.length, 0);
+        // The first event arrives before the extension processes it: at most
+        // the transport start has been emitted.
+        if (forwarded.length === 0) {
+          assert.ok(events.every((event) => event.type === "start"));
+        }
         forwarded.push({ data, model: eventModel.id });
       },
     },
@@ -82,24 +93,11 @@ test("forwards every parsed Codex event to Pi's provider stream hook in order", 
   );
 });
 
-test("a failing provider stream hook ends the turn without another request", async () => {
+test("forwards a raw Codex error event before the turn fails", async () => {
   const user = userEntry("user-1", "hello");
   const harness = createHarness([user]);
-  let requests = 0;
-  let closed = false;
-  let consumed = 0;
-  harness.runtime.transport.request = async function* () {
-    requests += 1;
-    try {
-      for (const event of textEvents("hello back")) {
-        consumed += 1;
-        yield event;
-      }
-    } finally {
-      closed = true;
-    }
-  };
-
+  const error = { type: "error", code: "server_error", message: "backend exploded" };
+  const forwarded: unknown[] = [];
   const events = [];
   const result = harness.runtime.streamSimple(
     codexModel(),
@@ -107,7 +105,35 @@ test("a failing provider stream hook ends the turn without another request", asy
     {
       apiKey: accessToken(),
       sessionId: "session-1",
-      transport: "auto",
+      transport: "sse",
+      fetch: async () => sseResponse([{ type: "response.created", response: { id: "r1" } }, error]),
+      onProviderStreamEvent(data) {
+        forwarded.push(data);
+      },
+    },
+  );
+  for await (const event of result) events.push(event);
+
+  assert.equal(events.at(-1)?.type, "error");
+  assert.deepEqual(forwarded.at(-1), error);
+});
+
+test("a failing provider stream hook ends the turn without another request", async () => {
+  const user = userEntry("user-1", "hello");
+  const harness = createHarness([user]);
+  let requests = 0;
+  const events = [];
+  const result = harness.runtime.streamSimple(
+    codexModel(),
+    { messages: [user.message] },
+    {
+      apiKey: accessToken(),
+      sessionId: "session-1",
+      transport: "sse",
+      fetch: async () => {
+        requests += 1;
+        return sseResponse(textEvents("hello back"));
+      },
       onProviderStreamEvent() {
         throw new Error("handler exploded");
       },
@@ -117,7 +143,7 @@ test("a failing provider stream hook ends the turn without another request", asy
 
   assert.deepEqual(
     events.map((event) => event.type),
-    ["error"],
+    ["start", "error"],
   );
   const errorEvent = events.find((event) => event.type === "error");
   assert.equal(
@@ -125,8 +151,6 @@ test("a failing provider stream hook ends the turn without another request", asy
     "Provider stream event handler failed: handler exploded",
   );
   assert.equal(requests, 1);
-  assert.equal(consumed, 1);
-  assert.equal(closed, true);
 });
 
 test("normalizes pre-stream failures without emitting start", async () => {

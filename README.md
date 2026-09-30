@@ -29,7 +29,9 @@ Restart Pi after upgrading its runtime. `/reload` reloads extensions but cannot
 upgrade the running Pi process. At load time, the extension requires the host's
 transcript APIs, the Pi 0.99 APIs `SessionManager.getEntryCount()` and
 `ExtensionAPI.getSettings()`, and a reported Pi version of at least 0.99.1. It
-refuses to load otherwise. `PI_PACKAGE_DIR` can point an older executable at
+refuses to load otherwise. The load check does not reject newer releases: the
+`<0.100.0` bound is the package's peer range, which Pi does not enforce when it
+installs packages. `PI_PACKAGE_DIR` can point an older executable at
 newer package metadata, so the reported version alone does not establish
 compatibility. The API checks cover that case.
 
@@ -145,7 +147,7 @@ Each tool declares Pi tool annotations, which permission extensions can use to d
 
 None of the tools is idempotent. Pi does not verify annotations.
 
-The provider passes every parsed Codex stream event, over WebSocket and SSE, to Pi's `provider_stream_event` hook before processing it. Remote compaction requests are not forwarded. A failing hook handler ends the turn with an error and never triggers a WebSocket retry or the SSE fallback.
+The provider passes every event of a turn request, over WebSocket and SSE, to Pi's `provider_stream_event` hook as the server sent it. Forwarding happens before the transport drops WebSocket `response.metadata` events, renames `response.done` to `response.completed`, or turns an `error` event into a failed turn. Prewarm and remote compaction requests are not forwarded. Pi reports a failing hook handler and continues the turn. When an SDK caller passes its own `onProviderStreamEvent` callback and it throws, the turn ends with an error without a WebSocket retry or the SSE fallback.
 
 See [`OFFICIAL_CODEX_CLI_TOOL_CATALOG.md`](OFFICIAL_CODEX_CLI_TOOL_CATALOG.md) for the complete researched Codex tool inventory, and [`CUSTOM_CODEX_PROVIDER_WEB_REFERENCES.md`](CUSTOM_CODEX_PROVIDER_WEB_REFERENCES.md) for the unimplemented citation/reference design.
 

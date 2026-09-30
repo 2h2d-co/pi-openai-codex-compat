@@ -68,6 +68,7 @@ import { processCodexStream, type CodexStreamAttemptState } from "../codex-strea
 import {
   CodexTransport,
   CodexTurnState,
+  ProviderStreamEventCallbackError,
   WEBSOCKET_CONNECTION_LIMIT_REACHED_CODE,
   isWebSocketConnectionLimitReachedError,
   validateCodexAuthentication,
@@ -138,7 +139,6 @@ import {
   continueResponseBody,
   discardIncompleteAttemptContent,
   emptyUsage,
-  forwardProviderStreamEvents,
   reachedProviderCompactionThreshold,
   responseDecisionDiagnostic,
   responseRetryDelayMs,
@@ -860,7 +860,12 @@ export class CodexProviderRuntime {
           body = requireJsonRecord(transformed, "Codex payload replacement");
         }
       }
-      if (runtimeSessionId) {
+      // Only agent turns define the prefix native compaction must match. Other
+      // requests with the session id, such as Pi's bug-report summary, run
+      // outside an agent run and must not replace the turn template or tools.
+      const agentRequest =
+        runtimeSessionId !== undefined && this.activeAgentTurns.has(runtimeSessionId);
+      if (runtimeSessionId && agentRequest) {
         this.templates.set(runtimeSessionId, {
           modelId: model.id,
           payload: replacementValues ? {} : withoutConversationInput(body),
@@ -869,10 +874,15 @@ export class CodexProviderRuntime {
         });
       }
       // Saved after the response, because an entry appended now would move the
-      // branch leaf that percentage compaction checks.
+      // branch leaf that percentage compaction checks. A payload edit that
+      // removed `tools` sent no tools.
       const sentTools =
-        runtimeSessionId && !replacementValues && Array.isArray(body.tools)
-          ? requestToolsData(model.id, body.tools.filter(isObject), grammarToolInputProperties)
+        agentRequest && !replacementValues
+          ? requestToolsData(
+              model.id,
+              Array.isArray(body.tools) ? body.tools.filter(isObject) : [],
+              grammarToolInputProperties,
+            )
           : undefined;
       if (!replacementValues) {
         body = await this.maybeCompactPercentage(
@@ -934,6 +944,7 @@ export class CodexProviderRuntime {
         startEmitted = true;
         stream.push({ type: "start", partial: output });
       };
+      const onProviderStreamEvent = requestOptions.onProviderStreamEvent;
       const transportRequestOptions = {
         ...requestOptions,
         accountId,
@@ -947,6 +958,19 @@ export class CodexProviderRuntime {
           webSocketResponseHandle = handle;
         },
         onTransportStart: emitStart,
+        // Pi's `provider_stream_event` hook sees each event as the server sent
+        // it, before the transport filters or normalizes it.
+        ...(onProviderStreamEvent
+          ? {
+              async forwardRawEvent(event: JsonRecord) {
+                try {
+                  await onProviderStreamEvent(event, model);
+                } catch (error) {
+                  throw new ProviderStreamEventCallbackError(error);
+                }
+              },
+            }
+          : {}),
         onTransportDiagnostic(diagnostic: CodexTransportDiagnostic) {
           output.diagnostics = [
             ...(output.diagnostics ?? []),
@@ -975,11 +999,7 @@ export class CodexProviderRuntime {
           await processCodexStream(
             startOnFirstEvent(
               captureRawEvents(
-                forwardProviderStreamEvents(
-                  this.transport.request(model, requestBody, transportRequestOptions),
-                  model,
-                  requestOptions.onProviderStreamEvent,
-                ),
+                this.transport.request(model, requestBody, transportRequestOptions),
                 attemptCapture,
                 terminalCapture,
               ),
