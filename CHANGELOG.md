@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.0.19 - 2026-10-01
+
 ### Removed
 
 - The `reasoningMode` setting, its `PI_OPENAI_CODEX_COMPAT_REASONING_MODE` override,
