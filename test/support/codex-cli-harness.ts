@@ -343,7 +343,8 @@ export async function verifyPackagedCli(
       "read-hotel",
       ["read", "verify_release", "write"],
       "SECOND",
-      "Read marker.txt in the working directory and report its exact content with verify_release.",
+      'Call read with path set to the literal relative path "marker.txt". ' +
+        "Report its exact content with verify_release.",
     );
     const readResult = (await client.getMessages())
       .slice(messageCount)
