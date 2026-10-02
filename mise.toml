@@ -1,5 +1,6 @@
 [settings]
 lockfile = true
+lockfile_mode = "generate"
 locked = true
 minimum_release_age = "7d"
 
