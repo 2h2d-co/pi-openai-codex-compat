@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+## 0.0.21 - 2026-10-02
+
+### Fixed
+
+- Keep `exec_command` errors inside the tool box when a provider failure,
+  cancellation, or execution error supplies no result metadata.
+
 ## 0.0.20 - 2026-10-02
 
 ### Fixed

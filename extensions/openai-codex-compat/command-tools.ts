@@ -278,10 +278,12 @@ export default function registerCommandTools(
     },
     renderResult(result, options, theme, context) {
       if (!options.isPartial) {
-        if (result.details.sessionId === undefined) {
+        // Pi's provider, abort, and execution errors can omit tool-owned details.
+        const sessionId = result.details?.sessionId;
+        if (sessionId === undefined) {
           Reflect.deleteProperty(context.state, "sessionId");
         } else {
-          context.state.sessionId = result.details.sessionId;
+          context.state.sessionId = sessionId;
         }
       }
       return renderCommandResult(result, options, theme, context, resolveToolBackground);

@@ -693,6 +693,9 @@ prompt reload, native compaction, and persisted-session resume against Codex.
 SDK tests verify Responses Lite
 WebSocket history, prewarming, continuation, and the built-in read tool.
 CLI tests also execute the built-in read tool after resume.
+Terminal tests check interrupted `exec_command` error framing in regular and
+fullscreen mode. A live terminal case blocks a real Codex command call before
+execution and checks that Pi's metadata-free error retains its tool box.
 Six additional CLI cases replay grammar-tool history with `gpt-5.6-luna` in both
 response formats. They cover foreign-provider history, different-model history,
 and calls previously recorded as function calls.
