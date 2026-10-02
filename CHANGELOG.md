@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+## 0.0.20 - 2026-10-02
+
+### Fixed
+
+- Omit incompatible response-item IDs when replaying grammar-tool calls that came
+  from another provider or were recorded as function calls.
+  Call/result pairing and valid same-model item IDs remain unchanged.
+
+### Changed
+
+- Require Pi `>=1.0.0 <1.1.0`. Restart Pi after upgrading its runtime.
+
 ## 0.0.19 - 2026-10-01
 
 ### Removed

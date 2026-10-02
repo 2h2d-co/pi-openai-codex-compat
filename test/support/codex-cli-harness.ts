@@ -6,6 +6,7 @@ import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import type { TestContext } from "node:test";
 import { fileURLToPath } from "node:url";
+import { SessionManager } from "@earendil-works/pi-coding-agent";
 import { RpcClient } from "../../node_modules/@earendil-works/pi-coding-agent/dist/modes/rpc/rpc-client.js";
 import {
   parseJsonRecord,
@@ -55,7 +56,12 @@ export async function linkProductionDependencies(packageRoot: string): Promise<v
 
 export async function verifyPackagedCli(
   t: TestContext,
-  options: { live: boolean; lite: boolean; modelId: string },
+  options: {
+    live: boolean;
+    lite: boolean;
+    modelId: string;
+    replay?: "function" | "foreign" | "model";
+  },
 ): Promise<void> {
   const temporary = await mkdtemp(join(tmpdir(), "codex-packaged-cli-"));
   t.after(() => rm(temporary, { recursive: true, force: true }));
@@ -88,7 +94,7 @@ export async function verifyPackagedCli(
   );
   const piRoot = resolve(dirname(cli), "../..");
   const piManifest = parseJsonRecord(await readFile(join(piRoot, "package.json"), "utf8"));
-  assert.equal(piManifest["version"], "0.99.1");
+  assert.equal(piManifest["version"], "1.0.0");
   const token = options.live
     ? process.env["PI_CODEX_LIVE_API_KEY"]
     : `test.${Buffer.from(
@@ -112,7 +118,7 @@ export async function verifyPackagedCli(
       // Pi's built-in read tool joins later in the lifecycle: its strict JSON-schema
       // sampling must serialize into the strict subset Codex accepts, and its
       // mid-session addition must survive a provider-boundary checkpoint.
-      defaultTools: ["verify_release"],
+      defaultTools: options.replay ? ["verify_release", "replay_probe"] : ["verify_release"],
     }),
   );
   const writeCompatConfig = async (overrides: Record<string, unknown> = {}) =>
@@ -130,7 +136,40 @@ export async function verifyPackagedCli(
     );
   await writeCompatConfig();
   await writeFile(join(agent, "SYSTEM.md"), instruction("FIRST"));
-  const sessionFile = join(temporary, "session.jsonl");
+  let sessionFile = join(temporary, "session.jsonl");
+  if (options.replay) {
+    const manager = SessionManager.create(temporary, join(temporary, "sessions"));
+    const id = `call_replay|${options.replay === "function" ? "fc" : "ctc"}_replay`;
+    manager.appendMessage({ role: "user", content: "Run the replay probe.", timestamp: 0 });
+    manager.appendMessage({
+      role: "assistant",
+      provider: options.replay === "foreign" ? "radius" : "openai-codex",
+      api: options.replay === "foreign" ? "pi-messages" : "openai-codex-responses",
+      model: options.replay === "function" ? options.modelId : "other-model",
+      content: [{ type: "toolCall", id, name: "replay_probe", arguments: { input: "probe" } }],
+      stopReason: "toolUse",
+      timestamp: 1,
+      usage: {
+        input: 0,
+        output: 0,
+        cacheRead: 0,
+        cacheWrite: 0,
+        totalTokens: 0,
+        cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+      },
+    });
+    manager.appendMessage({
+      role: "toolResult",
+      toolCallId: id,
+      toolName: "replay_probe",
+      content: [{ type: "text", text: "probe accepted" }],
+      isError: false,
+      timestamp: 2,
+    });
+    const saved = manager.getSessionFile();
+    assert.ok(saved);
+    sessionFile = saved;
+  }
   const clientOptions = {
     cliPath: cli,
     cwd: temporary,
@@ -144,6 +183,7 @@ export async function verifyPackagedCli(
       PI_TELEMETRY: "0",
       PI_CODEX_LIVE_API_KEY: token,
       PI_CODEX_CLI_MOCK: options.live ? "0" : "1",
+      PI_CODEX_CLI_REPLAY: options.replay ?? "",
     },
     args: [
       "--offline",
@@ -166,7 +206,7 @@ export async function verifyPackagedCli(
       env: { ...process.env, ...clientOptions.env },
       encoding: "utf8",
     }).trim(),
-    "0.99.1",
+    "1.0.0",
   );
   let client = new RpcClient(clientOptions);
   t.after(async () => client.stop());
@@ -239,6 +279,23 @@ export async function verifyPackagedCli(
     assert.doesNotMatch(client.getStderr(), /Failed to load extension|not a function/);
   }
 
+  if (options.replay) {
+    await turn("FIRST", "alpha", ["verify_release", "replay_probe"]);
+    const { entries } = await client.getEntries();
+    const observation = entries.findLast(
+      (entry) => entry.type === "custom" && entry.customType === "release-test-request",
+    );
+    assert.ok(observation?.type === "custom");
+    assert.deepEqual(requireJsonRecord(observation.data)["replay"], [
+      { type: "custom_tool_call", call_id: "call_replay", name: "replay_probe", input: "probe" },
+      { type: "custom_tool_call_output", call_id: "call_replay", output: "probe accepted" },
+    ]);
+    await client.stop();
+    t.diagnostic(
+      `Packaged Pi 1.0.0 ${options.replay} grammar replay passed (Lite=${String(options.lite)}).`,
+    );
+    return;
+  }
   await turn("FIRST", "alpha", ["verify_release"]);
   await writeFile(join(agent, "SYSTEM.md"), instruction("SECOND"));
   await client.prompt("/release-test-reload");

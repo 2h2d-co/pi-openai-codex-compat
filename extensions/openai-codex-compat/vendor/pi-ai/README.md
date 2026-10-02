@@ -4,6 +4,10 @@ This directory intentionally contains only the Pi AI methods needed to serialize
 
 [`openai-responses-serialization.ts`](openai-responses-serialization.ts) adapts the relevant methods from `@earendil-works/pi-ai@0.86.0`. Its header lists the upstream source files. It also carries the strict JSON-schema conversion from `src/api/constrained-sampling.ts`; Pi's built-in tools request strict sampling, and Codex rejects `strict: true` without that subset. Keep the wire-equivalence tests in [`test/pi-ai-serialization.test.ts`](../../../../test/pi-ai-serialization.test.ts) passing when updating the Pi dependencies.
 
+The copy also includes Pi 1.0.0's tool-call item-ID guard: same-model replay
+preserves valid `fc_` function IDs and `ctc_` grammar IDs, while incompatible
+item IDs are omitted without changing the `call_id` that pairs calls with results.
+
 Pi AI's transcript helpers replay system sections and tool declarations.
 `supportsAdditionalTools` and `supportsToolSearch` select the dynamic tool
 history representation for additive `toolsAdded` system messages:

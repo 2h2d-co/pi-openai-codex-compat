@@ -3,6 +3,9 @@ import {
   requireJsonRecords,
 } from "../extensions/openai-codex-compat/codex-protocol.ts";
 import assert from "node:assert/strict";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import test from "node:test";
 import { Type } from "typebox";
 import {
@@ -10,6 +13,8 @@ import {
   createEditTool,
   createReadTool,
   createWriteTool,
+  convertToLlm,
+  SessionManager,
   type SessionEntry,
 } from "@earendil-works/pi-coding-agent";
 import {
@@ -172,6 +177,100 @@ test("copied Pi AI Responses serialization matches the dependency", () => {
   const copied = copiedConvertResponsesMessages(model, context, allowedProviders, options);
   assert.deepEqual(copied, reference);
 });
+
+for (const scenario of [
+  { name: "same-model function", itemId: "fc_test", grammar: false, source: "same", keepId: true },
+  { name: "same-model grammar", itemId: "ctc_test", grammar: true, source: "same", keepId: true },
+  { name: "function to grammar", itemId: "fc_test", grammar: true, source: "same", keepId: false },
+  {
+    name: "grammar to function",
+    itemId: "ctc_test",
+    grammar: false,
+    source: "same",
+    keepId: false,
+  },
+  { name: "foreign grammar", itemId: "ctc_test", grammar: true, source: "foreign", keepId: false },
+  {
+    name: "different-model grammar",
+    itemId: "ctc_test",
+    grammar: true,
+    source: "model",
+    keepId: false,
+  },
+  {
+    name: "different-model function",
+    itemId: "fc_test",
+    grammar: false,
+    source: "model",
+    keepId: false,
+  },
+] as const) {
+  test(`restored ${scenario.name} history preserves call pairing and matches Pi item IDs`, async (t) => {
+    const source: AssistantMessage = {
+      ...assistantMessage,
+      provider: scenario.source === "foreign" ? "radius" : model.provider,
+      api: scenario.source === "foreign" ? "pi-messages" : model.api,
+      model: scenario.source === "same" ? model.id : "other-model",
+      content: [
+        {
+          type: "toolCall",
+          id: `call_test|${scenario.itemId}`,
+          name: "apply_patch",
+          arguments: { patch: "*** Begin Patch\n*** End Patch" },
+        },
+      ],
+    };
+    const transcript = normalizeContext({
+      messages: [
+        { role: "user", content: "Apply the synthetic patch.", timestamp: 0 },
+        source,
+        {
+          role: "toolResult",
+          toolCallId: `call_test|${scenario.itemId}`,
+          toolName: "apply_patch",
+          content: [{ type: "text", text: "done" }],
+          isError: false,
+          timestamp: 2,
+        },
+      ],
+    });
+    const directory = await mkdtemp(join(tmpdir(), "codex-replay-ids-"));
+    t.after(() => rm(directory, { recursive: true, force: true }));
+    const manager = SessionManager.create(directory, directory);
+    for (const message of transcript.messages) manager.appendMessage(message);
+    const sessionFile = manager.getSessionFile();
+    assert.ok(sessionFile);
+    // A cold resume must preserve the IDs persisted by the previous runtime.
+    const restored = normalizeContext({
+      messages: convertToLlm(SessionManager.open(sessionFile).buildSessionContext().messages),
+    });
+    const original = JSON.stringify(restored);
+    const replayOptions = {
+      ...options,
+      grammarToolInputProperties: new Map(scenario.grammar ? [["apply_patch", "patch"]] : []),
+    };
+    const copied = copiedConvertResponsesMessages(model, restored, allowedProviders, replayOptions);
+    const reference = referenceConvertResponsesMessages(
+      model,
+      restored,
+      allowedProviders,
+      replayOptions,
+    );
+    assert.deepEqual(copied, JSON.parse(JSON.stringify(reference)));
+    const callType = scenario.grammar ? "custom_tool_call" : "function_call";
+    const call = copied.find((item) => item.type === callType);
+    const result = copied.find((item) => item.type === `${callType}_output`);
+    assert.ok(call && result);
+    assert.equal(call["id"], scenario.keepId ? scenario.itemId : undefined);
+    assert.equal(call["call_id"], "call_test");
+    assert.equal(result["call_id"], "call_test");
+    assert.equal(
+      JSON.stringify(restored),
+      original,
+      "Serialization must not rewrite saved history.",
+    );
+  });
+}
 
 test("matches Pi 0.86 system sections and tool state without mutating the transcript", () => {
   const updates: SystemMessage[] = [

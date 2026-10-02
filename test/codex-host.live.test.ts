@@ -636,7 +636,7 @@ for (const codemode of ["on", "only"] as const) {
       if (codemode === "on") {
         assert.match(
           requireString(lookupDeclaration?.["description"], "lookup_value description"),
-          /codemode tool declaration/,
+          /Codemode: `tools.lookup_value\(args\)` resolves to a string/,
         );
       } else {
         assert.equal(lookupDeclaration, undefined);

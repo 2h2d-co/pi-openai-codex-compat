@@ -474,7 +474,7 @@ for (const mode of ["on", "only"] as const) {
     if (mode === "on") {
       assert.match(
         requireString(reportTool?.["description"], "report description"),
-        /codemode tool declaration/,
+        /Codemode: `tools.report\(args\)` resolves to a string/,
       );
     } else {
       assert.equal(reportTool, undefined);

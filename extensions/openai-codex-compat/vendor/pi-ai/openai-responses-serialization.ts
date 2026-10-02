@@ -826,10 +826,11 @@ export function convertResponsesMessages(
           const customInputProperty = options?.grammarToolInputProperties?.get(block.name);
           const namespaced = splitNamespacedToolName(block.name, options?.namespacedToolNames);
           let itemId = itemIdRaw;
-          if (
-            (isDifferentModel && itemId?.startsWith("fc_")) ||
-            (customInputProperty === undefined && !itemId?.startsWith("fc_"))
-          ) {
+          // Preserve item IDs only when they match the replayed tool type.
+          // Item IDs from another model of the same provider and API are always omitted.
+          // call_id still pairs every call with its result when an item ID is omitted.
+          const itemIdPrefix = customInputProperty === undefined ? "fc_" : "ctc_";
+          if (isDifferentModel || !itemId?.startsWith(itemIdPrefix)) {
             itemId = undefined;
           }
           if (customInputProperty !== undefined) {

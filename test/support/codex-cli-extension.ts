@@ -34,6 +34,21 @@ function promptMarkers(payload: Record<string, unknown>): { leading: Marker; cur
 }
 
 export default function (pi: ExtensionAPI): void {
+  if (process.env["PI_CODEX_CLI_REPLAY"]) {
+    pi.registerTool({
+      name: "replay_probe",
+      label: "Replay Probe",
+      description: "A probe already completed in the saved history. Do not call it again.",
+      parameters: Type.Object({ input: Type.String() }),
+      constrainedSampling: {
+        type: "grammar",
+        variants: { openai_lark: "start: /.+/" },
+      },
+      async execute() {
+        return { content: [{ type: "text", text: "probe accepted" }], details: {} };
+      },
+    });
+  }
   if (process.env["PI_CODEX_CLI_MOCK"] === "1") {
     let count = 0;
     Object.defineProperty(globalThis, "WebSocket", {
@@ -121,6 +136,7 @@ export default function (pi: ExtensionAPI): void {
       inlineTools: input
         .filter((item) => item["type"] === "additional_tools")
         .flatMap((item) => requireJsonRecords(item["tools"]).map((tool) => tool["name"])),
+      replay: input.filter((item) => item["call_id"] === "call_replay"),
     });
   });
   const streamEvents: Record<string, unknown>[] = [];
