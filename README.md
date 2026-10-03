@@ -22,19 +22,19 @@ Pi provides the Codex OAuth flow and model catalog. At session start, this packa
 ## Requirements
 
 - Node.js 22.19 or newer
-- Pi `>=1.0.0 <1.1.0`
+- Pi `>=1.0.1 <1.1.0`
 - An OpenAI Codex login in Pi
 
 Restart Pi after upgrading its runtime. `/reload` reloads extensions but cannot
 upgrade the running Pi process. At load time, the extension requires the host's
 transcript APIs, the Pi 0.99 APIs `SessionManager.getEntryCount()` and
-`ExtensionAPI.getSettings()`, and a reported Pi version of at least 1.0.0. It
+`ExtensionAPI.getSettings()`, and a reported Pi version of at least 1.0.1. It
 refuses to load otherwise. The load check does not reject newer releases: the
 `<1.1.0` bound is the package's peer range, which Pi does not enforce when it
 installs packages. `PI_PACKAGE_DIR` can point an older executable at
 newer package metadata, so the reported version alone does not establish
 compatibility. The API checks detect missing capabilities from before Pi 0.99.
-They do not distinguish a Pi 0.99 executable from Pi 1.0.0 when its metadata
+They do not distinguish a Pi 0.99 executable from Pi 1.0.1 when its metadata
 points at the newer installation.
 
 Authenticate through Pi if needed:
@@ -670,7 +670,7 @@ npm run pack:dry
 `mise run check` runs the linters, formatters, type checks, and the offline
 test suite; `mise run test` runs only the offline suite. Both tasks bind
 `PI_PACKAGE_DIR` to `node_modules/@earendil-works/pi-coding-agent`, so tests
-that load Pi in-process read this repository's Pi 1.0.0 resources even when a
+that load Pi in-process read this repository's Pi 1.0.1 resources even when a
 global `PI_PACKAGE_DIR` points at another installation. Ordinary `pi` launches
 outside these tasks are unaffected. Offline tests also exercise
 `scripts/release.ts` with every child process mocked: they never run Git, npm,
@@ -688,7 +688,7 @@ mise run test:live:codex
 The task obtains the local Codex bearer token and runs the tests with
 `gpt-5.6-luna`, `gpt-6-sol`, `gpt-6-luna`, and `gpt-6.1-sol` at medium reasoning
 effort. It also packs the extension and loads that archive through the shipped Pi
-1.0.0 CLI. Ordinary Responses and Responses Lite tests exercise tool calls,
+1.0.1 CLI. Ordinary Responses and Responses Lite tests exercise tool calls,
 prompt reload, native compaction, and persisted-session resume against Codex.
 SDK tests verify Responses Lite
 WebSocket history, prewarming, continuation, and the built-in read tool.
@@ -710,9 +710,9 @@ The packaged-CLI test selects its archive and executable as follows:
   existing regular file that `tar` can list, and an empty, missing, directory,
   or invalid value fails the test instead of falling back to a fresh pack.
 - `PI_CODEX_CLI_PATH` selects another Pi `cli.js`; the default is this
-  repository's Pi 1.0.0 dependency. The test asserts that the selected
-  executable reports version 1.0.0, the only Pi version the packaged CLI test
-  is run against. The supported range is `>=1.0.0 <1.1.0`.
+  repository's Pi 1.0.1 dependency. The test asserts that the selected
+  executable reports version 1.0.1, the only Pi version the packaged CLI test
+  is run against. The supported range is `>=1.0.1 <1.1.0`.
 - Each Pi child process receives `PI_PACKAGE_DIR` bound to the selected
   executable's package directory, so the runtime under test reads its own
   metadata.

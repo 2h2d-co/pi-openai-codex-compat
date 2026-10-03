@@ -1,13 +1,21 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { stripVTControlCharacters } from "node:util";
-import { initTheme } from "@earendil-works/pi-coding-agent";
+import { initTheme, type ToolRenderers } from "@earendil-works/pi-coding-agent";
 import { ProcessTerminal, TuiMainScreen, visibleWidth } from "@earendil-works/pi-tui";
-import {
-  ToolExecutionComponent,
-  type ToolRenderers,
-} from "../node_modules/@earendil-works/pi-coding-agent/dist/modes/interactive/components/tool-execution.js";
+import { ToolExecutionComponent } from "../node_modules/@earendil-works/pi-coding-agent/dist/modes/interactive/components/tool-execution.js";
 import registerCommandTools from "../extensions/openai-codex-compat/command-tools.ts";
+
+/** Pi's renderer type cannot accept a generic `ToolDefinition`; check the renderer shape instead. */
+function hasToolRenderers(value: unknown): value is ToolRenderers {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    ["renderCall", "renderResult"].every(
+      (name) => !(name in value) || typeof Reflect.get(value, name) === "function",
+    )
+  );
+}
 
 function commandComponent(): ToolExecutionComponent {
   let renderer: ToolRenderers | undefined;
@@ -15,7 +23,7 @@ function commandComponent(): ToolExecutionComponent {
     on: () => () => {},
     registerCommand() {},
     registerTool(tool) {
-      if (tool.name === "exec_command") renderer = tool;
+      if (tool.name === "exec_command" && hasToolRenderers(tool)) renderer = tool;
     },
   });
   assert.ok(renderer);

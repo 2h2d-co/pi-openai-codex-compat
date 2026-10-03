@@ -54,7 +54,7 @@ for (const { mode, live } of [
           env: { ...process.env, PI_PACKAGE_DIR: piPackage },
           encoding: "utf8",
         }).trim(),
-        "1.0.0",
+        "1.0.1",
       );
       const manager = SessionManager.create(temporary, join(temporary, "sessions"));
       manager.appendMessage({
