@@ -668,13 +668,12 @@ npm run pack:dry
 ```
 
 `mise run check` runs the linters, formatters, type checks, and the offline
-test suite; `mise run test` runs only the offline suite. Both tasks bind
-`PI_PACKAGE_DIR` to `node_modules/@earendil-works/pi-coding-agent`, so tests
-that load Pi in-process read this repository's Pi resources even when a
-global `PI_PACKAGE_DIR` points at another installation. Ordinary `pi` launches
-outside these tasks are unaffected. Offline tests also exercise
+test suite; `npm test` runs only the offline suite. `npm test` and
+`npm run test:live:codex` remove an inherited `PI_PACKAGE_DIR` from their test
+processes, so tests that load Pi in-process read this repository's Pi
+resources. Ordinary `pi` launches are unaffected. Offline tests also exercise
 `scripts/release.ts` with every child process mocked: they never run Git, npm,
-Mise, or provider calls.
+or provider calls.
 
 Run the credentialed Pi/Codex integration tests separately. They load the real
 extension into headless Pi sessions, use the real WebSocket service, and ask
@@ -682,12 +681,13 @@ the model to report all prior history markers after each text and tool
 continuation:
 
 ```bash
-mise run test:live:codex
+npm run test:live:codex
 ```
 
-The task obtains the local Codex bearer token and runs the tests with
-`gpt-5.6-luna`, `gpt-6-sol`, `gpt-6-luna`, and `gpt-6.1-sol` at medium reasoning
-effort. It also packs the extension and loads that archive through the shipped Pi
+`scripts/test-live.ts` first runs the offline packaged terminal tests. It then
+obtains the local Codex bearer token through the repository Pi and runs the
+tests with `gpt-5.6-luna`, `gpt-6-sol`, `gpt-6-luna`, and `gpt-6.1-sol` at
+medium reasoning effort. It also packs the extension and loads that archive through the shipped Pi
 CLI. Ordinary Responses and Responses Lite tests exercise tool calls,
 prompt reload, native compaction, and persisted-session resume against Codex.
 SDK tests verify Responses Lite
@@ -714,9 +714,8 @@ The packaged-CLI test selects its archive and executable as follows:
   selected executable has the development dependency's version, the only Pi
   version releases are validated against. The supported range is
   `>=1.0.1 <1.1.0`.
-- Each Pi child process receives `PI_PACKAGE_DIR` bound to the selected
-  executable's package directory, so the runtime under test reads its own
-  metadata.
+- Each Pi child process resolves its own package directory, so the runtime
+  under test reads its own metadata.
 
 The public package entrypoint is `extensions/index.ts`; implementation modules remain under
 `extensions/openai-codex-compat/`. The focused Pi AI serializer copy lives under
@@ -749,7 +748,7 @@ The release command runs these steps in order:
    only those two files.
 3. Check out the staged index into a temporary directory, run
    `npm ci --ignore-scripts` and `npm pack` there, validate the package
-   identity, file list, and manifest, then run `mise run test:live:codex` in
+   identity, file list, and manifest, then run `npm run test:live:codex` in
    the repository with `PI_CODEX_PACKAGE_ARCHIVE` set to that archive. This is
    the exact archive release gate: the live CLI tests load that archive and
    nothing else. A live process that cannot start, a nonzero exit, or a failed

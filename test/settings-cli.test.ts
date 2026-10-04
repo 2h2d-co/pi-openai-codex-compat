@@ -67,7 +67,6 @@ for (const mode of ["regular", "fullscreen"]) {
           HOME: temporary,
           TERM: "xterm-256color",
           PI_CODING_AGENT_DIR: agent,
-          PI_PACKAGE_DIR: piPackage,
         },
       });
     let terminal = launch();

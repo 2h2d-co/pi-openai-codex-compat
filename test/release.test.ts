@@ -9,7 +9,7 @@ import { fileURLToPath } from "node:url";
 
 const root = resolve(fileURLToPath(new URL("../", import.meta.url)));
 const releaseScript = join(root, "scripts/release.ts");
-const liveCommand = "mise run test:live:codex";
+const liveCommand = "npm synthetic-npm run test:live:codex";
 const version = "0.0.14"; // Has a CHANGELOG.md section; every Git and npm call is mocked.
 const candidate = "synthetic release archive";
 const digest = createHash("sha256").update(candidate).digest("hex");
@@ -45,7 +45,7 @@ type Observed = {
 
 /**
  * Run the real release script with every child process intercepted. No Git,
- * npm, Mise, or provider call occurs; the archive the mocked `npm pack` writes
+ * npm, or provider call occurs; the archive the mocked `npm pack` writes
  * is the only filesystem effect, inside the script's own temporary directory.
  */
 async function runRelease(
@@ -133,24 +133,24 @@ async function runRelease(
               files: packageFiles,
             },
           ]);
+        } else if (verb === "run") {
+          assert.equal(operation, liveCommand);
+          const archive = options.env?.["PI_CODEX_PACKAGE_ARCHIVE"];
+          observed.liveRuns.push({
+            cwd: options.cwd,
+            archive,
+            archiveContents:
+              typeof archive === "string" && existsSync(archive)
+                ? readFileSync(archive, "utf8")
+                : undefined,
+          });
+          if (scenario.live instanceof Error) {
+            error = scenario.live;
+            status = null;
+          } else {
+            status = scenario.live ?? 0;
+          }
         } else throw new Error(`Unexpected npm command: ${operation}`);
-      } else if (command === "mise") {
-        assert.equal(operation, liveCommand);
-        const archive = options.env?.["PI_CODEX_PACKAGE_ARCHIVE"];
-        observed.liveRuns.push({
-          cwd: options.cwd,
-          archive,
-          archiveContents:
-            typeof archive === "string" && existsSync(archive)
-              ? readFileSync(archive, "utf8")
-              : undefined,
-        });
-        if (scenario.live instanceof Error) {
-          error = scenario.live;
-          status = null;
-        } else {
-          status = scenario.live ?? 0;
-        }
       } else throw new Error(`Unexpected child command: ${operation}`);
       return {
         pid: 0,
@@ -232,7 +232,7 @@ test("release validates the exact archive live once before signing and tagging",
 
 test("release stops before signing when live validation exits nonzero", async (t) => {
   const { observed, failure } = await runRelease(t, { live: 1 });
-  assertFailure(failure, /mise run test:live:codex exited with 1/);
+  assertFailure(failure, /synthetic-npm run test:live:codex exited with 1/);
   assert.equal(observed.liveRuns.length, 1);
   assert.equal(observed.liveRuns[0]?.archiveContents, candidate);
   assert.equal(observed.committed, false);
@@ -242,7 +242,7 @@ test("release stops before signing when live validation exits nonzero", async (t
 });
 
 test("release stops before signing when the live process cannot start", async (t) => {
-  const spawnError = Object.assign(new Error("spawn mise ENOENT"), { code: "ENOENT" });
+  const spawnError = Object.assign(new Error("spawn node ENOENT"), { code: "ENOENT" });
   const { observed, failure } = await runRelease(t, { live: spawnError });
   assert.equal(failure, spawnError);
   assert.equal(observed.liveRuns.length, 1);

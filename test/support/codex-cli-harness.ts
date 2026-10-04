@@ -187,7 +187,6 @@ export async function verifyPackagedCli(
     env: {
       HOME: temporary,
       PI_CODING_AGENT_DIR: agent,
-      PI_PACKAGE_DIR: piRoot,
       PI_OFFLINE: "1",
       PI_TELEMETRY: "0",
       PI_CODEX_LIVE_API_KEY: token,

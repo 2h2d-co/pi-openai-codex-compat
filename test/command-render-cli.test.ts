@@ -136,7 +136,6 @@ export default function (pi) {
           HOME: temporary,
           TERM: "xterm-256color",
           PI_CODING_AGENT_DIR: agent,
-          PI_PACKAGE_DIR: piPackage,
           ...(live ? { PI_CODEX_LIVE_API_KEY: process.env["PI_CODEX_LIVE_API_KEY"] } : {}),
         },
       });

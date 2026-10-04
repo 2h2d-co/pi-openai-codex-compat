@@ -26,5 +26,5 @@
 - Use `npm run release -- <version>` to build the release locally, record its SHA-256 in an SSH-signed `release: v<version>` commit, prove a clean rebuild is reproducible, and create the matching lightweight tag.
 - Push release commits and tags atomically; do not create annotated or signed tag objects.
 - The tag workflow creates the immutable GitHub release from the verified archive and the version's changelog section. Never create GitHub releases by hand.
-- Run `mise run check` before committing meaningful code changes. The Mise tasks bind `PI_PACKAGE_DIR` to the repository's Pi dependency; a bare `npm test` inherits any global `PI_PACKAGE_DIR` and can load another Pi installation's metadata.
+- Run `mise run check` before committing meaningful code changes. Never bind `PI_PACKAGE_DIR` for tests: `npm test` and `npm run test:live:codex` remove an inherited value so Pi resolves its own package directory.
 - Gate new model capabilities on the actual Codex endpoint, not public Responses API documentation. Extend the packaged CLI and WebSocket live matrices when adding supported models, and retain exact tool-argument assertions with explicit extraction instructions.

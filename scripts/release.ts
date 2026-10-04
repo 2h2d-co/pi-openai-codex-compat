@@ -177,9 +177,7 @@ async function buildPackageFromIndex(releaseVersion: string, verifyLive = false)
 
     const archive = join(output, result.filename);
     if (verifyLive) {
-      run("mise", ["run", "test:live:codex"], root, false, {
-        PI_CODEX_PACKAGE_ARCHIVE: archive,
-      });
+      npm(["run", "test:live:codex"], root, { PI_CODEX_PACKAGE_ARCHIVE: archive });
     }
     const contents = await readFile(archive);
     return createHash("sha256").update(contents).digest("hex");
@@ -274,8 +272,8 @@ function verifyReleaseCommit(commit: string, releaseTag: string, digest: string)
   }
 }
 
-function npm(args: string[], cwd: string): void {
-  run(process.execPath, [npmExecPath, ...args], cwd, false);
+function npm(args: string[], cwd: string, env: NodeJS.ProcessEnv = {}): void {
+  run(process.execPath, [npmExecPath, ...args], cwd, false, env);
 }
 
 function npmOutput(args: string[], cwd: string): string {
