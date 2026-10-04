@@ -8,6 +8,7 @@ import type { TestContext } from "node:test";
 import { fileURLToPath } from "node:url";
 import { SessionManager } from "@earendil-works/pi-coding-agent";
 import { RpcClient } from "../../node_modules/@earendil-works/pi-coding-agent/dist/modes/rpc/rpc-client.js";
+import manifest from "../../package.json" with { type: "json" };
 import {
   parseJsonRecord,
   requireJsonRecord,
@@ -94,7 +95,15 @@ export async function verifyPackagedCli(
   );
   const piRoot = resolve(dirname(cli), "../..");
   const piManifest = parseJsonRecord(await readFile(join(piRoot, "package.json"), "utf8"));
-  assert.equal(piManifest["version"], "1.0.1");
+  const piVersion = piManifest["version"];
+  assert.ok(typeof piVersion === "string");
+  if (options.live) {
+    assert.equal(
+      piVersion,
+      manifest.devDependencies["@earendil-works/pi-coding-agent"],
+      "Live validation requires the Pi version pinned as the development dependency.",
+    );
+  }
   const token = options.live
     ? process.env["PI_CODEX_LIVE_API_KEY"]
     : `test.${Buffer.from(
@@ -201,13 +210,6 @@ export async function verifyPackagedCli(
       fixture,
     ],
   };
-  assert.equal(
-    execFileSync(process.execPath, [cli, "--version"], {
-      env: { ...process.env, ...clientOptions.env },
-      encoding: "utf8",
-    }).trim(),
-    "1.0.1",
-  );
   let client = new RpcClient(clientOptions);
   t.after(async () => client.stop());
   await client.start();
@@ -292,7 +294,7 @@ export async function verifyPackagedCli(
     ]);
     await client.stop();
     t.diagnostic(
-      `Packaged Pi 1.0.1 ${options.replay} grammar replay passed (Lite=${String(options.lite)}).`,
+      `Packaged Pi ${piVersion} ${options.replay} grammar replay passed (Lite=${String(options.lite)}).`,
     );
     return;
   }
@@ -361,7 +363,7 @@ export async function verifyPackagedCli(
   assert.equal(requests.at(-1)?.["checkpoint"], true);
   await client.stop();
   t.diagnostic(
-    `Pi ${String(piManifest["version"])} packaged ${packageVersion}: ` +
+    `Pi ${piVersion} packaged ${packageVersion}: ` +
       `${clientOptions.model}, ` +
       `${options.lite ? "Lite" : "Responses"}, tools, reload, native compaction, ` +
       "percentage checkpoint, and resume passed",

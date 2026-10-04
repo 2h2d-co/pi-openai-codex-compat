@@ -49,13 +49,6 @@ for (const { mode, live } of [
       );
       const piPackage = join(root, "node_modules/@earendil-works/pi-coding-agent");
       const cli = join(piPackage, "dist/bundle/cli.js");
-      assert.equal(
-        execFileSync(process.execPath, [cli, "--version"], {
-          env: { ...process.env, PI_PACKAGE_DIR: piPackage },
-          encoding: "utf8",
-        }).trim(),
-        "1.0.1",
-      );
       const manager = SessionManager.create(temporary, join(temporary, "sessions"));
       manager.appendMessage({
         role: "assistant",

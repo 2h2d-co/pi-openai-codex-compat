@@ -670,7 +670,7 @@ npm run pack:dry
 `mise run check` runs the linters, formatters, type checks, and the offline
 test suite; `mise run test` runs only the offline suite. Both tasks bind
 `PI_PACKAGE_DIR` to `node_modules/@earendil-works/pi-coding-agent`, so tests
-that load Pi in-process read this repository's Pi 1.0.1 resources even when a
+that load Pi in-process read this repository's Pi resources even when a
 global `PI_PACKAGE_DIR` points at another installation. Ordinary `pi` launches
 outside these tasks are unaffected. Offline tests also exercise
 `scripts/release.ts` with every child process mocked: they never run Git, npm,
@@ -688,7 +688,7 @@ mise run test:live:codex
 The task obtains the local Codex bearer token and runs the tests with
 `gpt-5.6-luna`, `gpt-6-sol`, `gpt-6-luna`, and `gpt-6.1-sol` at medium reasoning
 effort. It also packs the extension and loads that archive through the shipped Pi
-1.0.1 CLI. Ordinary Responses and Responses Lite tests exercise tool calls,
+CLI. Ordinary Responses and Responses Lite tests exercise tool calls,
 prompt reload, native compaction, and persisted-session resume against Codex.
 SDK tests verify Responses Lite
 WebSocket history, prewarming, continuation, and the built-in read tool.
@@ -710,9 +710,10 @@ The packaged-CLI test selects its archive and executable as follows:
   existing regular file that `tar` can list, and an empty, missing, directory,
   or invalid value fails the test instead of falling back to a fresh pack.
 - `PI_CODEX_CLI_PATH` selects another Pi `cli.js`; the default is this
-  repository's Pi 1.0.1 dependency. The test asserts that the selected
-  executable reports version 1.0.1, the only Pi version the packaged CLI test
-  is run against. The supported range is `>=1.0.1 <1.1.0`.
+  repository's Pi development dependency. The live test asserts that the
+  selected executable has the development dependency's version, the only Pi
+  version releases are validated against. The supported range is
+  `>=1.0.1 <1.1.0`.
 - Each Pi child process receives `PI_PACKAGE_DIR` bound to the selected
   executable's package directory, so the runtime under test reads its own
   metadata.

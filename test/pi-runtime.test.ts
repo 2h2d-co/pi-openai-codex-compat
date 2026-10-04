@@ -17,8 +17,7 @@ test("in-process Pi uses the repository dependency's package resources", async (
 
 const extensionApi = { getSettings: () => ({}) };
 
-test("accepts the Pi 1.0.1 host", () => {
-  assert.equal(piCodingAgent.VERSION, "1.0.1");
+test("accepts the installed Pi host", () => {
   assert.doesNotThrow(() => requirePiRuntime(piAi, piCodingAgent, extensionApi));
 });
 
