@@ -13,16 +13,13 @@ cocogitto = "7.0.0"
 actionlint = "1.7.12"
 zizmor = "1.30.1"
 
-[env]
-_.path = ["{{config_root}}/node_modules/.bin"]
-
 [shell_alias]
-"pi:local" = "pi --no-extensions -e {{config_root}}"
-"pi:npm" = "pi --no-extensions -e npm:pi-openai-codex-compat"
+"pi:local" = "{{config_root}}/node_modules/.bin/pi --no-extensions -e {{config_root}}"
+"pi:npm" = "{{config_root}}/node_modules/.bin/pi --no-extensions -e npm:pi-openai-codex-compat"
 
 [tasks.check]
 description = "Run all non-writing quality checks and tests"
-run = ["npm run check", "npm test"]
+run = ["hk check --all --check", "npm test", "npm audit", "npm run pack:dry"]
 
 [tasks.init]
 description = "Install locked dependencies and Git hooks"

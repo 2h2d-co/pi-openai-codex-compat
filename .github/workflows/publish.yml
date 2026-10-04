@@ -50,7 +50,7 @@ jobs:
         run: npm ci --ignore-scripts
 
       - name: Check
-        run: npm run check
+        run: hk check --all --check
 
       - name: Test
         run: npm test

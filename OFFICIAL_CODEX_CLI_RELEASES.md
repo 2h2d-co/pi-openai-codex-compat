@@ -737,8 +737,7 @@ When asked to check a new official Codex CLI release:
    - Update README and focused reports whose claims changed.
    - Change normative semantic documents only when their contracts changed.
    - Add a changelog entry only for a user-visible package change.
-   - Add tests for implementation changes, then run `npm run check` and
-     `npm test`.
+   - Add tests for implementation changes, then run `mise run check`.
    - Commit the review as a cohesive checkpoint.
 
 ## Primary official sources
