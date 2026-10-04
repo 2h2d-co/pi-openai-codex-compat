@@ -662,7 +662,7 @@ Both namespace tools are accepted only from the fixed extension-owned allowlist.
 ```bash
 mise trust
 mise install
-npm install
+mise run init
 mise run check
 npm run pack:dry
 ```
