@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+### Fixed
+
+- Create command-output temporary files with owner-only permissions and refuse
+  to overwrite existing files or follow symlinks. Failed creation leaves
+  existing files intact.
+
 ### Changed
 
 - Require Pi `>=1.0.1 <1.1.0`. Restart Pi after upgrading its runtime.

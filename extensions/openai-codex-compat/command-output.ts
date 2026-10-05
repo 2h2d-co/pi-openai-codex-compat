@@ -134,6 +134,7 @@ export class CommandOutputAccumulator {
   private hasOpenLine = false;
   private finished = false;
   private tempFilePath: string | undefined;
+  private tempFileCreated = false;
   private tempFileStream: WriteStream | undefined;
   private tempFileError: Error | undefined;
   private readonly retainCompleteOutput: boolean;
@@ -230,6 +231,8 @@ export class CommandOutputAccumulator {
 
     const stream = this.tempFileStream;
     this.tempFileStream = undefined;
+    const previousError = this.tempFileError;
+    if (previousError) throw previousError;
     await new Promise<void>((resolve, reject) => {
       const onError = (error: Error): void => {
         stream.off("finish", onFinish);
@@ -256,8 +259,9 @@ export class CommandOutputAccumulator {
           ? error
           : new Error("Could not close discarded command output.", { cause: error });
     }
-    if (this.tempFilePath !== undefined) {
+    if (this.tempFileCreated && this.tempFilePath !== undefined) {
       await rm(this.tempFilePath, { force: true });
+      this.tempFileCreated = false;
     }
     if (closeError) throw closeError;
   }
@@ -325,7 +329,10 @@ export class CommandOutputAccumulator {
   private ensureTempFile(): void {
     if (this.tempFilePath) return;
     this.tempFilePath = tempFilePath(this.tempFilePrefix);
-    const stream = createWriteStream(this.tempFilePath);
+    const stream = createWriteStream(this.tempFilePath, { mode: 0o600, flags: "wx" });
+    stream.once("open", () => {
+      this.tempFileCreated = true;
+    });
     stream.on("error", (error) => {
       this.tempFileError = error;
     });
@@ -344,6 +351,7 @@ export class CommandOutputSpool {
   private readonly tempFilePrefix: string;
   private totalBytes = 0;
   private tempFilePath: string | undefined;
+  private tempFileCreated = false;
   private tempFileStream: WriteStream | undefined;
   private tempFileError: Error | undefined;
   private finishing: Promise<void> | undefined;
@@ -390,8 +398,9 @@ export class CommandOutputSpool {
           ? error
           : new Error("Could not finish disposable command output.", { cause: error });
     }
-    if (this.tempFilePath !== undefined) {
+    if (this.tempFileCreated && this.tempFilePath !== undefined) {
       await rm(this.tempFilePath, { force: true });
+      this.tempFileCreated = false;
     }
     if (finishError) throw finishError;
   }
@@ -400,6 +409,10 @@ export class CommandOutputSpool {
     if (this.finishing) return this.finishing;
     const stream = this.tempFileStream;
     this.tempFileStream = undefined;
+    if (this.tempFileError) {
+      this.finishing = Promise.reject(this.tempFileError);
+      return this.finishing;
+    }
     if (!stream) {
       this.finishing = Promise.resolve();
       return this.finishing;
@@ -423,7 +436,10 @@ export class CommandOutputSpool {
   private ensureTempFile(): void {
     if (this.tempFilePath) return;
     this.tempFilePath = tempFilePath(this.tempFilePrefix);
-    const stream = createWriteStream(this.tempFilePath);
+    const stream = createWriteStream(this.tempFilePath, { mode: 0o600, flags: "wx" });
+    stream.once("open", () => {
+      this.tempFileCreated = true;
+    });
     stream.on("error", (error) => {
       this.tempFileError = error;
     });
