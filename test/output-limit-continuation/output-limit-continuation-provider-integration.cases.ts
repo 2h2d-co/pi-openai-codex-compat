@@ -43,6 +43,42 @@ function bypassResponseRetryBackoff(t: TestContext): void {
   t.mock.method(globalThis, "setTimeout", immediateRetryTimeout);
 }
 
+test("Pi run cancellation suppresses an exhausted output-limit continuation after compaction", async (t) => {
+  bypassResponseRetryBackoff(t);
+  const server = await startCodexServer(t, (requestNumber, body) => {
+    if (requireJsonRecords(body["input"]).some((item) => item["type"] === "compaction_trigger")) {
+      return compactionEvents();
+    }
+    return requestNumber <= 6
+      ? exhaustedOutputLimitEvents(requestNumber)
+      : textEvents("unexpected restart");
+  });
+  const { session } = await createTestSession(t, server.baseUrl, {
+    extensionFactories: [
+      (pi) => {
+        pi.on("agent_before_settle", (_event, ctx) => ctx.abort());
+      },
+    ],
+  });
+  const settled: boolean[] = [];
+  session.subscribe((event) => {
+    if (event.type === "agent_settled") settled.push(event.aborted);
+  });
+  await session.prompt("Finish this synthetic task");
+  await session.waitForIdle();
+  assert.equal(server.requests.length, 7);
+  assert.deepEqual(settled, [true]);
+  assert.equal(
+    session.sessionManager
+      .getBranch()
+      .some(
+        (entry) =>
+          entry.type === "custom_message" && entry.customType === OUTPUT_LIMIT_CONTINUATION_TYPE,
+      ),
+    false,
+  );
+});
+
 test("resamples a Codex output limit before returning control to Pi", async (t) => {
   const server = await startCodexServer(t);
   const { session } = await createTestSession(t, server.baseUrl);

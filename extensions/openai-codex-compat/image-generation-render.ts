@@ -25,6 +25,7 @@ export const IMAGE_GENERATION_DETAILS_SCHEMA = {
 export type ImageGenerationDetails = Static<typeof IMAGE_GENERATION_DETAILS_SCHEMA>;
 
 type ImageGenerationRenderContext = {
+  outputPad: number;
   args: ImageGenerationParameters;
   isPartial: boolean;
   expanded: boolean;
@@ -150,6 +151,7 @@ export function renderImageGenerationCall(
   const summary = theme.fg("muted", describeImageCall(args));
   return new CodexToolSurfaceComponent(new Text(`${title}  ${summary}`, 0, 0), theme, {
     background: resolveBackground,
+    outputPad: context.outputPad,
     status: context.isPartial ? "pending" : context.isError ? "error" : "success",
     top: true,
     bottom: context.isPartial,
@@ -171,6 +173,7 @@ export function renderImageGenerationResult(
     theme,
     {
       background: resolveBackground,
+      outputPad: context.outputPad,
       status: context.isError ? "error" : "success",
       top: false,
       bottom: true,

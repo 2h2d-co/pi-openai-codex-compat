@@ -257,6 +257,8 @@ test("registers the complete reserved web.run schema and executes alpha/search",
 
   const theme = testTheme();
   const renderContext: WebRunRenderContext = {
+    outputPad: 1,
+    durationMs: undefined,
     args: commands,
     toolCallId: "call-web|fc-web",
     invalidate() {},

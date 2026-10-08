@@ -22,19 +22,19 @@ Pi provides the Codex OAuth flow and model catalog. At session start, this packa
 ## Requirements
 
 - Node.js 22.19 or newer
-- Pi `>=1.0.1 <1.1.0`
+- Pi `>=1.1.0 <1.2.0`
 - An OpenAI Codex login in Pi
 
 Restart Pi after upgrading its runtime. `/reload` reloads extensions but cannot
 upgrade the running Pi process. At load time, the extension requires the host's
 transcript APIs, the Pi 0.99 APIs `SessionManager.getEntryCount()` and
-`ExtensionAPI.getSettings()`, and a reported Pi version of at least 1.0.1. It
+`ExtensionAPI.getSettings()`, and a reported Pi version of at least 1.1.0. It
 refuses to load otherwise. The load check does not reject newer releases: the
-`<1.1.0` bound is the package's peer range, which Pi does not enforce when it
+`<1.2.0` bound is the package's peer range, which Pi does not enforce when it
 installs packages. `PI_PACKAGE_DIR` can point an older executable at
 newer package metadata, so the reported version alone does not establish
 compatibility. The API checks detect missing capabilities from before Pi 0.99.
-They do not distinguish a Pi 0.99 executable from Pi 1.0.1 when its metadata
+They do not distinguish a Pi 0.99 executable from Pi 1.1.0 when its metadata
 points at the newer installation.
 
 Authenticate through Pi if needed:
@@ -713,7 +713,7 @@ The packaged-CLI test selects its archive and executable as follows:
   repository's Pi development dependency. The live test asserts that the
   selected executable has the development dependency's version, the only Pi
   version releases are validated against. The supported range is
-  `>=1.0.1 <1.1.0`.
+  `>=1.1.0 <1.2.0`.
 - Each Pi child process resolves its own package directory, so the runtime
   under test reads its own metadata.
 

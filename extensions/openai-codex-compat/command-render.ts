@@ -9,6 +9,7 @@ import { DEFAULT_CONFIG } from "./config.ts";
 export type CommandRenderContext = {
   isError: boolean;
   isPartial: boolean;
+  outputPad: number;
 };
 
 export type CommandCallRenderContext = CommandRenderContext & {
@@ -223,6 +224,7 @@ export function renderCommandCall(
     theme,
     {
       background: resolveBackground,
+      outputPad: context.outputPad,
       status: context.isPartial ? "pending" : context.isError ? "error" : "success",
       top: true,
       bottom: context.isPartial && !context.executionStarted,
@@ -243,6 +245,7 @@ export function renderCommandResult(
     theme,
     {
       background: resolveBackground,
+      outputPad: context.outputPad,
       status: context.isPartial ? "pending" : context.isError ? "error" : "success",
       top: output.length > 0,
       bottom: true,

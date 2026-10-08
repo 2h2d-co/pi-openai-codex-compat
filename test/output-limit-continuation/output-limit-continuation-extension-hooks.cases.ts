@@ -135,3 +135,20 @@ test("continues after successful compaction completes", async () => {
     },
   ]);
 });
+
+test("aborted settlement discards recovery without restarting the run", async () => {
+  for (const compacted of [false, true]) {
+    const harness = continuationHarness();
+    await harness.emit("agent_end", { messages: [assistant("length")] });
+    if (compacted) {
+      await harness.emit("session_before_compact", { signal: new AbortController().signal });
+      await harness.emit("session_compact");
+    }
+    await harness.emit("agent_settled", { aborted: true });
+    await harness.emit("agent_settled", { aborted: false });
+    assert.deepEqual(harness.sent, []);
+    await harness.emit("agent_end", { messages: [assistant("length")] });
+    await harness.emit("agent_settled", { aborted: false });
+    assert.equal(harness.sent.length, 1);
+  }
+});

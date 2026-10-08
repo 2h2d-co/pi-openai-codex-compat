@@ -301,6 +301,8 @@ test("executes generation and recent-image edits through Codex Images", async (t
   const theme = testTheme();
   const args = { prompt: "Draw a blue square." };
   const renderContext: ImageRenderContext = {
+    outputPad: 1,
+    durationMs: undefined,
     args,
     toolCallId: "call-generate|fc-generate",
     invalidate() {},

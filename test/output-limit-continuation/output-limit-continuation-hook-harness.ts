@@ -10,6 +10,7 @@ import { codexModel } from "./output-limit-continuation-contracts-and-builders.t
 export type TestEvent = {
   messages?: unknown[];
   signal?: AbortSignal;
+  aborted?: boolean;
 };
 export type TestHandler = (
   event: TestEvent,
@@ -33,7 +34,10 @@ export function continuationHarness(options?: {
         if (!event.messages) throw new Error("agent_end test event has no messages.");
         return handler({ messages: event.messages }, ctx);
       }),
-    onAgentSettled: (handler) => handlers.set("agent_settled", (_event, ctx) => handler(ctx)),
+    onAgentSettled: (handler) =>
+      handlers.set("agent_settled", (event, ctx) =>
+        handler({ aborted: event.aborted ?? false }, ctx),
+      ),
     onSessionBeforeCompact: (handler) =>
       handlers.set("session_before_compact", (event, ctx) => {
         if (!event.signal) {

@@ -89,6 +89,8 @@ test("registers the Codex freeform tool with model, UI, and failed-history parit
     { patch: "*** Begin Patch\n*** Add File: rendered.txt\n+hello\n*** End Patch" },
     theme,
     {
+      outputPad: 1,
+      durationMs: undefined,
       args: {
         patch: "*** Begin Patch\n*** Add File: rendered.txt\n+hello\n*** End Patch",
       },
@@ -115,6 +117,8 @@ test("registers the Codex freeform tool with model, UI, and failed-history parit
     { patch: "*** Begin Patch\n*** Add File: pending.txt\n+pending\n*** End Patch" },
     theme,
     {
+      outputPad: 1,
+      durationMs: undefined,
       args: {
         patch: "*** Begin Patch\n*** Add File: pending.txt\n+pending\n*** End Patch",
       },
@@ -141,6 +145,8 @@ test("registers the Codex freeform tool with model, UI, and failed-history parit
   toolBackground = "subtle";
 
   const component = renderResult(result, { expanded: false, isPartial: false }, theme, {
+    outputPad: 1,
+    durationMs: undefined,
     args: {
       patch: "*** Begin Patch\n*** Add File: rendered.txt\n+hello\n*** End Patch",
     },
@@ -166,6 +172,8 @@ test("registers the Codex freeform tool with model, UI, and failed-history parit
   applyPatchDebug = true;
   const debugResultText = stripAnsi(
     renderResult(result, { expanded: false, isPartial: false }, theme, {
+      outputPad: 1,
+      durationMs: undefined,
       args: {
         patch: "*** Begin Patch\n*** Add File: rendered.txt\n+hello\n*** End Patch",
       },
@@ -391,6 +399,8 @@ test("registers the Codex freeform tool with model, UI, and failed-history parit
     { expanded: false, isPartial: false },
     theme,
     {
+      outputPad: 1,
+      durationMs: undefined,
       args: { patch: failedPatch },
       toolCallId: "failed-call",
       invalidate() {},
@@ -421,6 +431,8 @@ test("registers the Codex freeform tool with model, UI, and failed-history parit
     { expanded: false, isPartial: false },
     theme,
     {
+      outputPad: 1,
+      durationMs: undefined,
       args: { patch: failedPatch },
       toolCallId: "failed-call",
       invalidate() {},
@@ -521,6 +533,8 @@ test("registers the Codex freeform tool with model, UI, and failed-history parit
     { expanded: false, isPartial: false },
     theme,
     {
+      outputPad: 1,
+      durationMs: undefined,
       args: { patch: verificationPatch },
       toolCallId: "verification-call",
       invalidate() {},
@@ -555,6 +569,8 @@ test("registers the Codex freeform tool with model, UI, and failed-history parit
     { expanded: false, isPartial: false },
     theme,
     {
+      outputPad: 1,
+      durationMs: undefined,
       args: { patch: verificationPatch },
       toolCallId: "verification-call",
       invalidate() {},
@@ -620,6 +636,8 @@ test("registers the Codex freeform tool with model, UI, and failed-history parit
     { expanded: false, isPartial: false },
     theme,
     {
+      outputPad: 1,
+      durationMs: undefined,
       args: { patch: reverseOrderedPatch },
       toolCallId: "matcher-call",
       invalidate() {},
@@ -645,12 +663,7 @@ test("registers the Codex freeform tool with model, UI, and failed-history parit
     { content: [], details: {} },
     { isPartial: false },
     theme,
-    {
-      cwd,
-      expanded: true,
-      isPartial: false,
-      isError: true,
-    },
+    { outputPad: 1, cwd, expanded: true, isPartial: false, isError: true },
     () => toolBackground,
     () => applyPatchDebug,
   );
@@ -665,12 +678,7 @@ test("registers the Codex freeform tool with model, UI, and failed-history parit
     },
     { isPartial: false },
     theme,
-    {
-      cwd,
-      expanded: false,
-      isPartial: false,
-      isError: true,
-    },
+    { outputPad: 1, cwd, expanded: false, isPartial: false, isError: true },
     () => toolBackground,
     () => applyPatchDebug,
   );

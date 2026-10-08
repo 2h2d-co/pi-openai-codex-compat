@@ -155,6 +155,7 @@ export class CodexToolSurfaceComponent implements Component {
   private readonly status: CodexToolSurfaceStatus;
   private readonly topPadding: boolean;
   private readonly bottomPadding: boolean;
+  private readonly outputPad: number;
   private renderCache:
     | {
         width: number;
@@ -172,6 +173,7 @@ export class CodexToolSurfaceComponent implements Component {
       status: CodexToolSurfaceStatus;
       top: boolean;
       bottom: boolean;
+      outputPad: number;
     },
   ) {
     this.component = component;
@@ -180,12 +182,13 @@ export class CodexToolSurfaceComponent implements Component {
     this.status = options.status;
     this.topPadding = options.top;
     this.bottomPadding = options.bottom;
+    this.outputPad = options.outputPad;
   }
 
   render(width: number): string[] {
     const effectiveWidth = Math.max(1, width);
     const background = surfaceBackground(this.theme, this.resolveBackground(), this.status);
-    const horizontalPadding = effectiveWidth > 2 ? 1 : 0;
+    const horizontalPadding = Math.min(this.outputPad, Math.floor((effectiveWidth - 1) / 2));
     const contentWidth = Math.max(1, effectiveWidth - horizontalPadding * 2);
     const componentLines = this.component.render(contentWidth);
     const cached = this.renderCache;

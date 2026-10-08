@@ -975,6 +975,8 @@ test("renders original exec_command context only for write_stdin polls", () => {
     bold: (text: string) => text,
   };
   const renderContext = {
+    outputPad: 1,
+    durationMs: undefined,
     executionStarted: true,
     isError: false,
     isPartial: true,

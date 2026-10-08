@@ -36,9 +36,14 @@ export type OutputLimitContinuationLifecycleHandler = (
   ctx: OutputLimitContinuationContext,
 ) => Promise<void> | void;
 
+export type OutputLimitContinuationSettledHandler = (
+  event: { aborted: boolean },
+  ctx: OutputLimitContinuationContext,
+) => Promise<void> | void;
+
 export type OutputLimitContinuationApi = {
   onAgentEnd: (handler: OutputLimitContinuationAgentEndHandler) => void;
-  onAgentSettled: (handler: OutputLimitContinuationLifecycleHandler) => void;
+  onAgentSettled: (handler: OutputLimitContinuationSettledHandler) => void;
   onSessionBeforeCompact: (handler: OutputLimitContinuationCompactionHandler) => void;
   onSessionCompact: (handler: OutputLimitContinuationLifecycleHandler) => void;
   onSessionShutdown: (handler: OutputLimitContinuationLifecycleHandler) => void;
@@ -66,7 +71,8 @@ export function outputLimitContinuationApi(pi: ExtensionAPI): OutputLimitContinu
   return {
     onAgentEnd: (handler) =>
       pi.on("agent_end", (event, ctx) => handler({ messages: event.messages }, context(ctx))),
-    onAgentSettled: (handler) => pi.on("agent_settled", (_event, ctx) => handler(context(ctx))),
+    onAgentSettled: (handler) =>
+      pi.on("agent_settled", (event, ctx) => handler({ aborted: event.aborted }, context(ctx))),
     onSessionBeforeCompact: (handler) =>
       pi.on("session_before_compact", (event, ctx) =>
         handler({ signal: event.signal }, context(ctx)),
@@ -181,7 +187,7 @@ export default function registerOutputLimitContinuation(pi: OutputLimitContinuat
     if (recovery?.compaction === "started") recovery.compaction = "completed";
   });
 
-  pi.onAgentSettled((ctx) => {
+  pi.onAgentSettled((event, ctx) => {
     const sessionId = ctx.sessionManager.getSessionId();
     const recovery = pendingRecoveries.get(sessionId);
     if (!recovery) return;
@@ -189,6 +195,7 @@ export default function registerOutputLimitContinuation(pi: OutputLimitContinuat
 
     const compactionFailed = recovery.compaction === "started";
     if (
+      event.aborted ||
       recovery.cancelled ||
       compactionFailed ||
       !ctx.isIdle() ||

@@ -17,6 +17,7 @@ type ApplyPatchArgs = {
 };
 
 type ApplyPatchRenderContext = {
+  outputPad: number;
   cwd: string;
   isPartial: boolean;
   expanded: boolean;
@@ -132,6 +133,7 @@ export function renderApplyPatchCall(
 
   return new CodexToolSurfaceComponent(container, theme, {
     background: resolveBackground,
+    outputPad: context.outputPad,
     status: context.isPartial ? "pending" : context.isError ? "error" : "success",
     top: true,
     bottom: context.isPartial,
@@ -163,6 +165,7 @@ export function renderApplyPatchResult(
       theme,
       {
         background: resolveBackground,
+        outputPad: context.outputPad,
         status: context.isError ? "error" : "success",
         top: true,
         bottom: true,
@@ -176,6 +179,7 @@ export function renderApplyPatchResult(
     theme,
     {
       background: resolveBackground,
+      outputPad: context.outputPad,
       status: "error",
       top: true,
       bottom: true,

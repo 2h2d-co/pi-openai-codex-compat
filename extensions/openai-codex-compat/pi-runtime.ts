@@ -31,7 +31,7 @@ export const SESSION_APIS = ["buildSessionProjection"] as const;
  */
 export const PI_099_APIS = ["SessionManager.getEntryCount", "ExtensionAPI.getSettings"] as const;
 
-export const MINIMUM_PI_VERSION = "1.0.1";
+export const MINIMUM_PI_VERSION = "1.1.0";
 export const REQUIRED_PI = `Pi ${MINIMUM_PI_VERSION} or later`;
 
 function isFunction(value: unknown): boolean {
@@ -62,9 +62,9 @@ export function atLeastVersion(version: unknown, minimum: string): boolean {
 }
 
 /**
- * Require the Pi 0.99 host surface and a reported version of at least 1.0.1. The version comes
+ * Require the Pi 0.99 host surface and a reported version of at least 1.1.0. The version comes
  * from package metadata. The API checks detect missing capabilities, but cannot distinguish
- * a Pi 0.99 executable pointed at Pi 1.0.1 metadata through `PI_PACKAGE_DIR`.
+ * a Pi 0.99 executable pointed at Pi 1.1.0 metadata through `PI_PACKAGE_DIR`.
  */
 export function requirePiRuntime(
   transcriptApi: Record<string, unknown>,

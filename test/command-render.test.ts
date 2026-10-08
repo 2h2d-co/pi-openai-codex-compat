@@ -16,8 +16,14 @@ import {
   CodexToolSurfaceComponent,
   type RenderTheme,
 } from "../extensions/openai-codex-compat/codex-tool-surface.ts";
-import { renderImageGenerationResult } from "../extensions/openai-codex-compat/image-generation-render.ts";
-import { renderWebRunResult } from "../extensions/openai-codex-compat/web-run-render.ts";
+import {
+  renderImageGenerationCall,
+  renderImageGenerationResult,
+} from "../extensions/openai-codex-compat/image-generation-render.ts";
+import {
+  renderWebRunCall,
+  renderWebRunResult,
+} from "../extensions/openai-codex-compat/web-run-render.ts";
 
 const plainTheme: RenderTheme = {
   fg: (_color, text) => text,
@@ -82,7 +88,7 @@ test("normalizes command carriage returns before rendering", () => {
     },
     { expanded: false, isPartial: false },
     plainTheme,
-    { isError: false, isPartial: false },
+    { outputPad: 1, isError: false, isPartial: false },
     () => "none",
   ).render(80);
 
@@ -99,7 +105,12 @@ test("adds a yielded exec_command session ID to its title line", () => {
     "250ms",
     "/workspace",
     plainTheme,
-    { executionStarted: true, isError: false, isPartial: false },
+    {
+      outputPad: 1,
+      executionStarted: true,
+      isError: false,
+      isPartial: false,
+    },
     () => "none",
     () => (sessionId === undefined ? {} : { sessionId }),
   );
@@ -124,25 +135,25 @@ test("balances command and apply_patch surface padding", () => {
     undefined,
     undefined,
     plainTheme,
-    { executionStarted: true, isError: false, isPartial: false },
+    {
+      outputPad: 1,
+      executionStarted: true,
+      isError: false,
+      isPartial: false,
+    },
     () => "none",
   ).render(40);
   const commandResult = renderCommandResult(
     { content: [{ type: "text", text: "output\n" }] },
     { expanded: false, isPartial: false },
     plainTheme,
-    { isError: false, isPartial: false },
+    { outputPad: 1, isError: false, isPartial: false },
     () => "none",
   ).render(40);
   const applyPatchCall = renderApplyPatchCall(
     { patch: "*** Begin Patch\n*** End Patch\n" },
     plainTheme,
-    {
-      cwd: process.cwd(),
-      expanded: false,
-      isError: false,
-      isPartial: false,
-    },
+    { outputPad: 1, cwd: process.cwd(), expanded: false, isError: false, isPartial: false },
     () => "none",
   ).render(40);
   const applyPatchResult = renderApplyPatchResult(
@@ -159,12 +170,7 @@ test("balances command and apply_patch surface padding", () => {
     },
     { isPartial: false },
     plainTheme,
-    {
-      cwd: process.cwd(),
-      expanded: false,
-      isError: false,
-      isPartial: false,
-    },
+    { outputPad: 1, cwd: process.cwd(), expanded: false, isError: false, isPartial: false },
     () => "none",
     () => true,
   ).render(40);
@@ -193,7 +199,12 @@ test("renders partial command output with balanced running padding", () => {
     "250ms",
     "/workspace",
     plainTheme,
-    { executionStarted: false, isError: false, isPartial: true },
+    {
+      outputPad: 1,
+      executionStarted: false,
+      isError: false,
+      isPartial: true,
+    },
     () => "none",
   ).render(80);
   const runningCall = renderCommandCall(
@@ -202,21 +213,26 @@ test("renders partial command output with balanced running padding", () => {
     "250ms",
     "/workspace",
     plainTheme,
-    { executionStarted: true, isError: false, isPartial: true },
+    {
+      outputPad: 1,
+      executionStarted: true,
+      isError: false,
+      isPartial: true,
+    },
     () => "none",
   ).render(80);
   const emptyUpdate = renderCommandResult(
     { content: [] },
     { expanded: false, isPartial: true },
     plainTheme,
-    { isError: false, isPartial: true },
+    { outputPad: 1, isError: false, isPartial: true },
     () => "none",
   ).render(80);
   const outputUpdate = renderCommandResult(
     { content: [{ type: "text", text: "first\nsecond\n" }] },
     { expanded: false, isPartial: true },
     plainTheme,
-    { isError: false, isPartial: true },
+    { outputPad: 1, isError: false, isPartial: true },
     () => "none",
   ).render(80);
 
@@ -258,7 +274,12 @@ test("emphasizes command calls while muting their output and metadata", () => {
     "30s",
     "/workspace",
     theme,
-    { executionStarted: true, isError: false, isPartial: true },
+    {
+      outputPad: 1,
+      executionStarted: true,
+      isError: false,
+      isPartial: true,
+    },
     () => "none",
   ).render(80);
   assert.equal(colors.get("exec_command"), "accent");
@@ -270,12 +291,7 @@ test("emphasizes command calls while muting their output and metadata", () => {
   renderApplyPatchCall(
     { patch: "*** Begin Patch\n*** End Patch\n" },
     theme,
-    {
-      cwd: process.cwd(),
-      expanded: false,
-      isError: false,
-      isPartial: false,
-    },
+    { outputPad: 1, cwd: process.cwd(), expanded: false, isError: false, isPartial: false },
     () => "none",
   ).render(80);
   assert.equal(colors.get("apply_patch"), "accent");
@@ -292,7 +308,7 @@ test("emphasizes command calls while muting their output and metadata", () => {
     },
     { expanded: true, isPartial: false },
     theme,
-    { isError: false, isPartial: false },
+    { outputPad: 1, isError: false, isPartial: false },
     () => "none",
   ).render(80);
 
@@ -305,7 +321,7 @@ test("emphasizes command calls while muting their output and metadata", () => {
     { content: [{ type: "text", text: "one\ntwo\nthree\nfour\nfive\nsix\n" }] },
     { expanded: false, isPartial: true },
     theme,
-    { isError: false, isPartial: true },
+    { outputPad: 1, isError: false, isPartial: true },
     () => "none",
   ).render(80);
   assert.equal(colors.get("… (1 earlier lines)"), "dim");
@@ -332,7 +348,7 @@ test("caches completed command rendering by width until invalidated", () => {
     },
     { expanded: false, isPartial: false },
     theme,
-    { isError: false, isPartial: false },
+    { outputPad: 1, isError: false, isPartial: false },
     () => "none",
   );
 
@@ -367,6 +383,7 @@ test("reuses tool surface output while detecting child and background changes", 
     getBgAnsi: () => "\u001b[48;5;22m",
   };
   const surface = new CodexToolSurfaceComponent(child, theme, {
+    outputPad: 1,
     background: () => background,
     status: "success",
     top: false,
@@ -389,6 +406,75 @@ test("reuses tool surface output while detecting child and background changes", 
   surface.invalidate();
   assert.equal(invalidations, 1);
   assert.notStrictEqual(surface.render(20), changedBackground);
+});
+
+test("tool surfaces honor padding and keep narrow layouts within their width", () => {
+  for (const outputPad of [0, 1]) {
+    for (const width of [1, 2, 3, 20]) {
+      const childWidths: number[] = [];
+      const surface = new CodexToolSurfaceComponent(
+        {
+          render: (available) => {
+            childWidths.push(available);
+            return ["x"];
+          },
+          invalidate: () => {},
+        },
+        plainTheme,
+        { outputPad, background: () => "none", status: "success", top: true, bottom: true },
+      );
+      const inset = Math.min(outputPad, Math.floor((width - 1) / 2));
+      const lines = surface.render(width);
+      assert.deepEqual(childWidths, [width - inset * 2]);
+      assert.equal(lines[1]?.indexOf("x"), inset);
+      assert.ok(lines.every((line) => line.length === width));
+    }
+  }
+});
+
+test("every Codex renderer forwards padding for calls and metadata-free errors", () => {
+  for (const outputPad of [0, 1]) {
+    const context = {
+      outputPad,
+      isPartial: false,
+      isError: true,
+      expanded: true,
+      executionStarted: true,
+      cwd: process.cwd(),
+    };
+    const background = () => "none" as const;
+    const result = { content: [{ type: "text", text: "synthetic failure" }] };
+    const image = { ...context, args: { prompt: "synthetic image" } };
+    const web = { ...context, args: { search_query: [{ q: "synthetic query" }] } };
+    const components = [
+      renderCommandCall(
+        "exec_command",
+        "printf synthetic",
+        undefined,
+        undefined,
+        plainTheme,
+        context,
+        background,
+      ),
+      renderCommandResult(result, context, plainTheme, context, background),
+      renderApplyPatchCall({ patch: "" }, plainTheme, context, background),
+      renderApplyPatchResult(result, context, plainTheme, context, background),
+      renderImageGenerationCall(image.args, plainTheme, image, background),
+      renderImageGenerationResult(result, context, plainTheme, image, background),
+      renderWebRunCall(web.args, plainTheme, web, background),
+      renderWebRunResult(result, context, plainTheme, web, background),
+    ];
+    for (const component of components) {
+      const line = component.render(80).find((value) => value.trim());
+      assert.ok(line);
+      assert.equal(line.match(/^ */u)?.[0].length, outputPad);
+    }
+    const partial = { ...context, isPartial: true, isError: false };
+    const line = renderCommandResult(result, partial, plainTheme, partial, background)
+      .render(80)
+      .find((value) => value.trim());
+    assert.equal(line?.match(/^ */u)?.[0].length, outputPad);
+  }
 });
 
 test("caches static apply_patch diff rendering by width", () => {
@@ -442,6 +528,7 @@ test("caches immutable extension child renderers until width, debug, or theme ch
       { expanded: false, isPartial: false },
       theme,
       {
+        outputPad: 1,
         args: { prompt: "A blue square" },
         expanded: false,
         isError: false,
@@ -459,6 +546,7 @@ test("caches immutable extension child renderers until width, debug, or theme ch
       { expanded: false, isPartial: false },
       theme,
       {
+        outputPad: 1,
         args: { search_query: [{ q: "Pi" }] },
         expanded: false,
         isError: false,
@@ -472,12 +560,7 @@ test("caches immutable extension child renderers until width, debug, or theme ch
   const applyPatch = renderApplyPatchCall(
     { patch: "*** Begin Patch\n*** End Patch\n" },
     theme,
-    {
-      cwd: process.cwd(),
-      expanded: false,
-      isError: false,
-      isPartial: false,
-    },
+    { outputPad: 1, cwd: process.cwd(), expanded: false, isError: false, isPartial: false },
     () => "none",
     () => debug,
   );

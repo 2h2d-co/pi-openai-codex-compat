@@ -15,13 +15,15 @@ import { packageArchive } from "./support/package-archive.ts";
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const errorMessage = "Codex error: Our servers are currently overloaded. Please try again later.";
 
-for (const { mode, live } of [
-  { mode: "regular", live: false },
-  { mode: "fullscreen", live: false },
-  { mode: "regular", live: true },
+for (const { mode, live, outputPad } of [
+  { mode: "regular", live: false, outputPad: 1 },
+  { mode: "fullscreen", live: false, outputPad: 1 },
+  { mode: "regular", live: false, outputPad: 0 },
+  { mode: "fullscreen", live: false, outputPad: 0 },
+  { mode: "regular", live: true, outputPad: 0 },
 ]) {
   test(
-    `packaged exec_command error stays boxed in ${mode} Pi TUI (live=${live})`,
+    `packaged exec_command error stays boxed in ${mode} Pi TUI (live=${live}, outputPad=${outputPad})`,
     {
       skip: live && process.env["PI_CODEX_LIVE_TEST"] !== "1",
       timeout: 90_000,
@@ -41,6 +43,7 @@ for (const { mode, live } of [
         join(agent, "settings.json"),
         JSON.stringify({
           tuiMode: mode,
+          outputPad,
           quietStartup: true,
           defaultProjectTrust: "never",
           enableInstallTelemetry: false,
@@ -175,7 +178,10 @@ export default function (pi) {
       );
       const row = lines.findIndex((line) => line.includes(errorMessage));
       assert.ok(row > 0);
-      assert.equal(stripVTControlCharacters(lines[row] ?? "").trimEnd(), ` ${errorMessage}`);
+      assert.equal(
+        stripVTControlCharacters(lines[row] ?? "").trimEnd(),
+        `${" ".repeat(outputPad)}${errorMessage}`,
+      );
       for (const index of [row - 1, row, row + 1]) {
         assert.ok(
           lines[index]?.includes("\u001b[48;"),

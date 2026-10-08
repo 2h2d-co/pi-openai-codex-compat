@@ -36,6 +36,7 @@ type NullishOptionalProperties<Value> = Value extends readonly (infer Item)[]
 export type WebRunRenderCommands = NullishOptionalProperties<WebRunCommands>;
 
 type WebRunRenderContext = {
+  outputPad: number;
   args: WebRunRenderCommands;
   isPartial: boolean;
   expanded: boolean;
@@ -683,6 +684,7 @@ export function renderWebRunCall(
   const summary = theme.fg("muted", describeWebRunCall(args));
   return new CodexToolSurfaceComponent(new Text(`${title}  ${summary}`, 0, 0), theme, {
     background: resolveBackground,
+    outputPad: context.outputPad,
     status: context.isPartial ? "pending" : context.isError ? "error" : "success",
     top: true,
     bottom: context.isPartial,
@@ -702,6 +704,7 @@ export function renderWebRunResult(
     theme,
     {
       background: resolveBackground,
+      outputPad: context.outputPad,
       status: context.isError ? "error" : "success",
       top: false,
       bottom: true,

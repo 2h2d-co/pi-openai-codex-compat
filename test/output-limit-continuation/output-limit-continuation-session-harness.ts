@@ -18,6 +18,7 @@ import {
   ModelRuntime,
   SessionManager,
   SettingsManager,
+  type ExtensionFactory,
 } from "@earendil-works/pi-coding-agent";
 import type { Model } from "@earendil-works/pi-ai";
 import { getBuiltinModels } from "@earendil-works/pi-ai/providers/all";
@@ -271,6 +272,7 @@ export async function createTestSession(
     autoCompactAtPercent?: number;
     keepRecentTokens?: number;
     reserveTokens?: number;
+    extensionFactories?: ExtensionFactory[];
   },
 ) {
   await pointBuiltInCodexAt(baseUrl, t);
@@ -319,6 +321,7 @@ export async function createTestSession(
     agentDir,
     settingsManager,
     additionalExtensionPaths: [extensionPath],
+    extensionFactories: options?.extensionFactories ?? [],
     noSkills: true,
     noPromptTemplates: true,
     noThemes: true,

@@ -164,19 +164,20 @@ export function baseHeaders(
   accountId: string,
   token: string,
 ): Headers {
-  const headers = new Headers(modelHeaders);
+  const os = nodeOs();
+  const headers = new Headers({
+    originator: "pi",
+    "User-Agent": os ? `pi (${os.platform()} ${os.release()}; ${os.arch()})` : "pi (browser)",
+  });
+  for (const [name, value] of Object.entries(modelHeaders ?? {})) {
+    headers.set(name, value);
+  }
   for (const [name, value] of Object.entries(additionalHeaders ?? {})) {
     if (value === null) headers.delete(name);
     else headers.set(name, value);
   }
   headers.set("Authorization", `Bearer ${token}`);
   headers.set("chatgpt-account-id", accountId);
-  headers.set("originator", "pi");
-  const os = nodeOs();
-  headers.set(
-    "User-Agent",
-    os ? `pi (${os.platform()} ${os.release()}; ${os.arch()})` : "pi (browser)",
-  );
   return headers;
 }
 

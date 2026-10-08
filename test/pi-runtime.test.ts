@@ -21,10 +21,10 @@ test("accepts the installed Pi host", () => {
   assert.doesNotThrow(() => requirePiRuntime(piAi, piCodingAgent, extensionApi));
 });
 
-test("rejects missing host APIs even when package metadata reports Pi 1.0.1", () => {
+test("rejects missing host APIs even when package metadata reports Pi 1.1.0", () => {
   assert.throws(
-    () => requirePiRuntime({ VERSION: "1.0.1" }, piCodingAgent, extensionApi),
-    /requires a running Pi 1\.0\.1 or later runtime.*normalizeContext.*Exit Pi.*\/reload.*PI_PACKAGE_DIR/,
+    () => requirePiRuntime({ VERSION: "1.1.0" }, piCodingAgent, extensionApi),
+    /requires a running Pi 1\.1\.0 or later runtime.*normalizeContext.*Exit Pi.*\/reload.*PI_PACKAGE_DIR/,
   );
   assert.throws(
     () => requirePiRuntime({ ...piAi, normalizeContext: undefined }, piCodingAgent, extensionApi),
@@ -45,23 +45,24 @@ test("rejects a Pi 0.87 host surface that reports a newer version", () => {
   );
 });
 
-test("rejects Pi versions below 1.0.1", () => {
+test("rejects Pi versions below 1.1.0", () => {
   for (const version of [
     "0.87.1",
     "0.99.1",
     "0.99.2",
     "1.0.0",
-    "1.0.1-rc.1",
+    "1.0.4",
+    "1.1.0-rc.1",
     "invalid",
     undefined,
   ]) {
     assert.throws(
       () => requirePiRuntime(piAi, { ...piCodingAgent, VERSION: version }, extensionApi),
-      /requires a running Pi 1\.0\.1 or later runtime\. The host reports Pi .*below 1\.0\.1\./,
+      /requires a running Pi 1\.1\.0 or later runtime\. The host reports Pi .*below 1\.1\.0\./,
       String(version),
     );
   }
-  for (const version of ["1.0.1", "1.0.2", "1.1.0"]) {
+  for (const version of ["1.1.0", "1.1.1", "1.2.0"]) {
     assert.doesNotThrow(() =>
       requirePiRuntime(piAi, { ...piCodingAgent, VERSION: version }, extensionApi),
     );

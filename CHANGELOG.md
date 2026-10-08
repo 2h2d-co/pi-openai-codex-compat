@@ -2,15 +2,21 @@
 
 ## Unreleased
 
+## 0.0.22 - 2026-10-08
+
 ### Fixed
 
 - Create command-output temporary files with owner-only permissions and refuse
   to overwrite existing files or follow symlinks. Failed creation leaves
   existing files intact.
+- Preserve explicit `originator` and `User-Agent` overrides without changing
+  the default Pi identity.
+- Honor Pi's horizontal output padding setting in Codex tool calls and results.
+- Do not restart output-limit recovery after the user cancels the Pi run.
 
 ### Changed
 
-- Require Pi `>=1.0.1 <1.1.0`. Restart Pi after upgrading its runtime.
+- Require Pi `>=1.1.0 <1.2.0`. Restart Pi after upgrading its runtime.
 
 ## 0.0.21 - 2026-10-02
 

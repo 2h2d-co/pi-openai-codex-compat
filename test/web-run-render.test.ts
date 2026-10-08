@@ -33,7 +33,7 @@ function renderResult(
       { content: [{ type: "text", text: output }], details },
       { expanded, isPartial: false },
       theme,
-      { args, expanded, isPartial: false, isError: false },
+      { outputPad: 1, args, expanded, isPartial: false, isError: false },
     )
       .render(140)
       .join("\n"),

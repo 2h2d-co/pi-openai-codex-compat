@@ -50,9 +50,9 @@
   "devDependencies": {
     "@2h2d/oxlint-config": "0.1.2",
     "@2h2d/ts-config": "0.0.1",
-    "@earendil-works/pi-ai": "1.0.1",
-    "@earendil-works/pi-coding-agent": "1.0.1",
-    "@earendil-works/pi-tui": "1.0.1",
+    "@earendil-works/pi-ai": "1.1.0",
+    "@earendil-works/pi-coding-agent": "1.1.0",
+    "@earendil-works/pi-tui": "1.1.0",
     "@types/node": "22.20.4",
     "oxfmt": "0.70.0",
     "oxlint": "1.85.0",
@@ -61,9 +61,9 @@
     "typescript": "7.0.2"
   },
   "peerDependencies": {
-    "@earendil-works/pi-ai": ">=1.0.1 <1.1.0",
-    "@earendil-works/pi-coding-agent": ">=1.0.1 <1.1.0",
-    "@earendil-works/pi-tui": ">=1.0.1 <1.1.0",
+    "@earendil-works/pi-ai": ">=1.1.0 <1.2.0",
+    "@earendil-works/pi-coding-agent": ">=1.1.0 <1.2.0",
+    "@earendil-works/pi-tui": ">=1.1.0 <1.2.0",
     "typebox": "*"
   },
   "engines": {
