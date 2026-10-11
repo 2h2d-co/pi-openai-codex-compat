@@ -1,8 +1,8 @@
-amends "package://github.com/2h2d-co/hk-config/releases/download/v0.13.0/hk-config@0.13.0#/Config.pkl"
+amends "package://github.com/2h2d-co/hk-config/releases/download/v0.13.1/hk-config@0.13.1#/Config.pkl"
 
-import "package://github.com/2h2d-co/hk-config/releases/download/v0.13.0/hk-config@0.13.0#/Base.pkl" as Base
-import "package://github.com/2h2d-co/hk-config/releases/download/v0.13.0/hk-config@0.13.0#/GitHubActions.pkl" as GitHubActions
-import "package://github.com/2h2d-co/hk-config/releases/download/v0.13.0/hk-config@0.13.0#/TypeScript.pkl" as TypeScript
+import "package://github.com/2h2d-co/hk-config/releases/download/v0.13.1/hk-config@0.13.1#/Base.pkl" as Base
+import "package://github.com/2h2d-co/hk-config/releases/download/v0.13.1/hk-config@0.13.1#/GitHubActions.pkl" as GitHubActions
+import "package://github.com/2h2d-co/hk-config/releases/download/v0.13.1/hk-config@0.13.1#/TypeScript.pkl" as TypeScript
 
 local projectSteps = (Base.baseSteps) {
   ...TypeScript.typeScriptSteps
