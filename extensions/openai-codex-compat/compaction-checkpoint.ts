@@ -169,6 +169,8 @@ export type EncodeSessionEntriesOptions = {
   initialSystemMessage?: SystemMessage;
   /** Model-visible messages per entry. Defaults to the entry's raw messages. */
   entryMessages?: (entry: SessionEntry) => AgentMessages;
+  /** Pi's live request transcript, whose request-local system messages are added in place. */
+  requestMessages?: readonly Message[];
 };
 
 /**
@@ -221,6 +223,7 @@ export function encodeSessionEntries(options: EncodeSessionEntriesOptions): Resp
     entryMessages = sessionEntryToContextMessages,
   } = options;
   const messages = entries.flatMap((entry) => entryMessages(entry));
+  const converted = convertToLlm(messages);
   const encodeOptions: EncodeMessagesOptions = {
     model,
     // A partial tail can start with a system update. Seed its prior state so
@@ -228,13 +231,77 @@ export function encodeSessionEntries(options: EncodeSessionEntriesOptions): Resp
     // leading system message that `instructions` already carries.
     messages: [
       options.initialSystemMessage ?? { role: "system", content: "", timestamp: 0 },
-      ...convertToLlm(messages),
+      ...(options.requestMessages
+        ? withRequestSystemMessages(converted, options.requestMessages)
+        : converted),
     ],
     grammarToolInputProperties,
     imageDetail,
   };
   if (nativeAssistantItems) encodeOptions.nativeAssistantItems = nativeAssistantItems;
   return encodeMessages(encodeOptions);
+}
+
+function systemKey(message: SystemMessage): string {
+  return JSON.stringify([message.timestamp, message.content, message.sections ?? null]);
+}
+
+function sameMessage(left: Message, right: Message): boolean {
+  if (left.role !== right.role || left.timestamp !== right.timestamp) return false;
+  if (left.role === "toolResult" && right.role === "toolResult") {
+    return left.toolCallId === right.toolCallId;
+  }
+  return true;
+}
+
+/**
+ * Add the system messages an extension placed in Pi's live request transcript
+ * without storing them in the session, such as request-local instructions from a
+ * `context_with_system` handler. History is built from the session branch, so
+ * such messages would otherwise never reach Codex.
+ *
+ * A request-local system message is one that matches no stored system message by
+ * timestamp, content, and sections; the leading prompt is excluded. It follows the
+ * nearest earlier request message that is also in `messages`, matched by role,
+ * timestamp, and tool call ID. Without such a message it leads the conversation
+ * after `start` messages. Messages anchored before an encoded range are skipped.
+ */
+export function withRequestSystemMessages(
+  messages: readonly Message[],
+  requestMessages: readonly Message[],
+  start = 0,
+): Message[] {
+  const stored = new Set(
+    messages.flatMap((message) => (message.role === "system" ? [systemKey(message)] : [])),
+  );
+  const after = new Map<number, Message[]>();
+  for (let index = 1; index < requestMessages.length; index++) {
+    const message = requestMessages[index];
+    if (message?.role !== "system" || stored.has(systemKey(message))) continue;
+    let position = start - 1;
+    for (let previous = index - 1; previous > 0; previous--) {
+      const anchor = requestMessages[previous];
+      if (!anchor || anchor.role === "system") continue;
+      const found = messages.findLastIndex(
+        (candidate) => candidate.role !== "system" && sameMessage(candidate, anchor),
+      );
+      if (found >= 0) {
+        position = found;
+        break;
+      }
+      position = Number.NaN;
+    }
+    if (Number.isNaN(position)) continue;
+    after.set(position, [...(after.get(position) ?? []), message]);
+  }
+  if (after.size === 0) return [...messages];
+  return [
+    ...messages.slice(0, start),
+    ...(after.get(start - 1) ?? []),
+    ...messages
+      .slice(start)
+      .flatMap((message, offset) => [message, ...(after.get(start + offset) ?? [])]),
+  ];
 }
 
 export function parseCheckpoint(value: unknown): CheckpointData | undefined {
@@ -415,6 +482,8 @@ export function providerHistory(options: {
   grammarToolInputProperties?: GrammarToolInputProperties;
   imageDetail?: ImageDetail;
   recoverLatestOverflowPrefix?: boolean;
+  /** Pi's live request transcript, whose request-local system messages are added in place. */
+  requestMessages?: readonly Message[];
 }): ResponsesInputItem[] {
   const branch = [...options.branch];
   let recoveredPrefix: ResponsesInputItem[] = [];
@@ -486,17 +555,25 @@ export function providerHistory(options: {
         nativeAssistantItems,
         entryMessages,
         ...(initialSystemMessage ? { initialSystemMessage } : {}),
+        ...(options.requestMessages ? { requestMessages: options.requestMessages } : {}),
       }),
       ...recoveredPrefix,
     ];
   }
 
+  const messages = convertToLlm(
+    projection.entries.flatMap((entry) => entryMessages(entry.sourceEntry)),
+  );
   return [
     ...encodeMessages({
       model: options.wireModel,
-      messages: convertToLlm(
-        projection.entries.flatMap((entry) => entryMessages(entry.sourceEntry)),
-      ),
+      messages: options.requestMessages
+        ? withRequestSystemMessages(
+            messages,
+            options.requestMessages,
+            getInitialSystemMessage(messages) ? 1 : 0,
+          )
+        : messages,
       grammarToolInputProperties: options.grammarToolInputProperties ?? new Map(),
       imageDetail: options.imageDetail ?? "auto",
       nativeAssistantItems,

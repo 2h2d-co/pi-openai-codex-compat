@@ -18,6 +18,7 @@ import { CodexProviderRuntime } from "../extensions/openai-codex-compat/codex-pr
 import {
   checkpointData,
   providerHistory,
+  withRequestSystemMessages,
 } from "../extensions/openai-codex-compat/compaction-checkpoint.ts";
 import {
   requireJsonRecord,
@@ -194,6 +195,150 @@ test("derives instructions, inline prompt updates, and tool placement from Pi tr
       }
     }
   }
+});
+
+const LOCAL_A_TEXT = "Request-local instruction A";
+const LOCAL_B_TEXT = "Request-local instruction B";
+const LOCAL_A: SystemMessage = { role: "system", content: LOCAL_A_TEXT, timestamp: 100 };
+const LOCAL_B: SystemMessage = { role: "system", content: LOCAL_B_TEXT, timestamp: 101 };
+const FIRST_REQUEST: Message = { role: "user", content: "first request", timestamp: 1 };
+const NEXT_REQUEST: Message = { role: "user", content: "next request", timestamp: 4 };
+
+test("places request-local system messages after the nearest stored request message", () => {
+  const reply = assistantEntry("assistant", "user", "first reply").message;
+  const stored: Message[] = [initial, FIRST_REQUEST, reply, update, NEXT_REQUEST];
+  // An extension marker sent as a user message is not stored, so the
+  // instruction after it anchors to the stored reply before it.
+  const marker: Message = { role: "user", content: "marker", timestamp: reply.timestamp };
+  const request: Message[] = [
+    initial,
+    FIRST_REQUEST,
+    reply,
+    marker,
+    LOCAL_A,
+    update,
+    NEXT_REQUEST,
+    LOCAL_B,
+  ];
+  assert.deepEqual(withRequestSystemMessages(stored, request, 1), [
+    initial,
+    FIRST_REQUEST,
+    reply,
+    LOCAL_A,
+    update,
+    NEXT_REQUEST,
+    LOCAL_B,
+  ]);
+  // Stored system messages are never duplicated, and the leading prompt is not
+  // treated as request-local even when a forced prompt replaces it.
+  assert.deepEqual(
+    withRequestSystemMessages(stored, [{ ...initial, content: "forced" }, ...stored.slice(1)], 1),
+    stored,
+  );
+  // An instruction before every conversation message leads the encoded range.
+  assert.deepEqual(
+    withRequestSystemMessages(stored.slice(1), [initial, LOCAL_A, ...stored.slice(1)]),
+    [LOCAL_A, ...stored.slice(1)],
+  );
+  // A partial range skips instructions anchored before it.
+  assert.deepEqual(withRequestSystemMessages(stored.slice(3), request), [
+    update,
+    NEXT_REQUEST,
+    LOCAL_B,
+  ]);
+});
+
+test("sends request-local system messages in place as developer items", async () => {
+  for (const supportsMidConvoSystemMessages of [true, false]) {
+    const reply = assistantEntry("assistant", "user", "first reply").message;
+    const stored: Message[] = [initial, FIRST_REQUEST, reply, update, NEXT_REQUEST];
+    const harness = createHarness(entries(stored));
+    let request: JsonRecord | undefined;
+    harness.runtime.transport.request = async function* (_model, body) {
+      request = structuredClone(requireJsonRecord(body));
+      yield* textEvents("done");
+    };
+    const result = await harness.runtime
+      .streamSimple(
+        {
+          ...codexModel(),
+          compat: { supportsOpenAIGrammarTools: true, supportsMidConvoSystemMessages },
+        },
+        normalizeContext({
+          messages: [initial, FIRST_REQUEST, reply, LOCAL_A, update, NEXT_REQUEST, LOCAL_B],
+        }),
+        { apiKey: accessToken(), sessionId: "session-1", transport: "sse" },
+      )
+      .result();
+    assert.equal(result.stopReason, "stop", result.errorMessage);
+    assert.ok(request);
+    const input = requireJsonRecords(request.input);
+    const developer = input.filter((item) => item.role === "developer").map((item) => item.content);
+    if (supportsMidConvoSystemMessages) {
+      assert.deepEqual(developer, [LOCAL_A_TEXT, renderSystemMessageUpdate(update), LOCAL_B_TEXT]);
+      const text = JSON.stringify(input);
+      assert.ok(text.indexOf("first reply") < text.indexOf(LOCAL_A_TEXT));
+      assert.ok(text.indexOf("next request") < text.indexOf(LOCAL_B_TEXT));
+    } else {
+      // Without mid-conversation support Pi folds them into the prompt.
+      assert.deepEqual(developer, []);
+      assert.equal(typeof request.instructions, "string");
+      assert.match(JSON.stringify(request.instructions), /Request-local instruction A/);
+      assert.match(JSON.stringify(request.instructions), /Request-local instruction B/);
+    }
+  }
+});
+
+test("sends request-local system messages after a checkpoint", async () => {
+  const messages: Message[] = [
+    initial,
+    { role: "user", content: "old request", timestamp: 1 },
+    assistantEntry("assistant", "user", "old reply").message,
+    { role: "user", content: "compacted request", timestamp: 4 },
+  ];
+  const harness = createHarness(entries(messages), { ...DEFAULT_CONFIG, autoCompactAtPercent: 80 });
+  const model = {
+    ...codexModel(),
+    compat: { supportsOpenAIGrammarTools: true, supportsMidConvoSystemMessages: true },
+  };
+  const requests: JsonRecord[] = [];
+  harness.runtime.transport.request = async function* (_model, body) {
+    requests.push(structuredClone(requireJsonRecord(body)));
+    if (requests.length === 1) yield* compactionEvents();
+    else yield* textEvents("done");
+  };
+  const options = { apiKey: accessToken(), sessionId: "session-1", transport: "sse" as const };
+  const reply = await harness.runtime
+    .streamSimple(model, normalizeContext({ messages }), options)
+    .result();
+  assert.equal(reply.stopReason, "stop", reply.errorMessage);
+  const next: Message = { role: "user", content: "next request", timestamp: 6 };
+  const branch = harness.branch();
+  for (const [index, message] of [reply, next].entries()) {
+    branch.push({
+      type: "message",
+      id: `tail-${String(index)}`,
+      parentId: branch.at(-1)?.id ?? null,
+      timestamp: new Date(5 + index).toISOString(),
+      message,
+    });
+  }
+  harness.runtime.captureScope({
+    ...harness.extensionContext,
+    getContextUsage: () => ({ tokens: 10_000, contextWindow: 100_000, percent: 10 }),
+  });
+  const result = await harness.runtime
+    .streamSimple(
+      model,
+      normalizeContext({ messages: [...messages, reply, next, LOCAL_B] }),
+      options,
+    )
+    .result();
+  assert.equal(result.stopReason, "stop", result.errorMessage);
+  const input = requireJsonRecords(requests.at(-1)?.input);
+  assert.match(JSON.stringify(input), /opaque-state/);
+  assert.deepEqual(input.at(-1), { role: "developer", content: LOCAL_B_TEXT });
+  assert.deepEqual(input.at(-2)?.["content"], [{ type: "input_text", text: "next request" }]);
 });
 
 test("matches Pi 0.86 reasoning Off defaults and null mappings", async () => {

@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+### Fixed
+
+- Send system messages that other extensions add to a single request, such as
+  context-threshold instructions from `pi-compact-assistant`, to Codex as
+  developer messages at their position. Codex requests are built from the
+  stored session, so these messages were previously dropped.
+
 ## 0.0.22 - 2026-10-08
 
 ### Fixed

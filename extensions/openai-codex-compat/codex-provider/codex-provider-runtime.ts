@@ -524,11 +524,14 @@ export class CodexProviderRuntime {
         convertResponsesMessages(model, context, CODEX_TOOL_CALL_PROVIDERS, serializationOptions),
       );
     }
+    // History comes from the branch so native items replay exactly. Pi's live
+    // transcript adds only the system messages extensions placed in this request.
     return providerHistory({
       branch: scope.manager.getBranch(),
       wireModel: model,
       grammarToolInputProperties,
       imageDetail: scope.config.imageDetail,
+      requestMessages: context.messages,
     });
   }
 
