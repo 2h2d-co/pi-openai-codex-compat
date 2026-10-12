@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.0.23 - 2026-10-12
+
 ### Fixed
 
 - Send system messages that other extensions add to a single request, such as
