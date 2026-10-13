@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.0.24 - 2026-10-14
+
 ### Fixed
 
 - Keep each request-local system message after its own anchor message when
