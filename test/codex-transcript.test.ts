@@ -248,6 +248,29 @@ test("places request-local system messages after the nearest stored request mess
   ]);
 });
 
+test("places request-local system messages at their own anchor among same-timestamp messages", () => {
+  // Pi can store several messages with the same role in one millisecond.
+  const twin: Message = { role: "user", content: "same millisecond", timestamp: 1 };
+  const reply = assistantEntry("assistant", "user", "first reply").message;
+  const stored: Message[] = [initial, FIRST_REQUEST, twin, reply];
+  assert.deepEqual(
+    withRequestSystemMessages(stored, [initial, FIRST_REQUEST, LOCAL_A, twin, LOCAL_B, reply], 1),
+    [initial, FIRST_REQUEST, LOCAL_A, twin, LOCAL_B, reply],
+  );
+  // A range that starts at the second message skips the instruction after the first.
+  assert.deepEqual(
+    withRequestSystemMessages(stored.slice(2), [
+      initial,
+      FIRST_REQUEST,
+      LOCAL_A,
+      twin,
+      LOCAL_B,
+      reply,
+    ]),
+    [twin, LOCAL_B, reply],
+  );
+});
+
 test("sends request-local system messages in place as developer items", async () => {
   for (const supportsMidConvoSystemMessages of [true, false]) {
     const reply = assistantEntry("assistant", "user", "first reply").message;

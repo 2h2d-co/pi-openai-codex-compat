@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+### Fixed
+
+- Keep each request-local system message after its own anchor message when
+  several messages share a role and millisecond. It previously followed the
+  last of those messages.
+
 ## 0.0.23 - 2026-10-12
 
 ### Fixed

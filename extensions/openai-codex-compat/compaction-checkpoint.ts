@@ -263,8 +263,10 @@ function sameMessage(left: Message, right: Message): boolean {
  * A request-local system message is one that matches no stored system message by
  * timestamp, content, and sections; the leading prompt is excluded. It follows the
  * nearest earlier request message that is also in `messages`, matched by role,
- * timestamp, and tool call ID. Without such a message it leads the conversation
- * after `start` messages. Messages anchored before an encoded range are skipped.
+ * timestamp, and tool call ID. Several messages can share a role and millisecond,
+ * so each request message is paired with its own stored occurrence. Without such a
+ * message it leads the conversation after `start` messages. Messages anchored before
+ * an encoded range are skipped.
  */
 export function withRequestSystemMessages(
   messages: readonly Message[],
@@ -274,6 +276,24 @@ export function withRequestSystemMessages(
   const stored = new Set(
     messages.flatMap((message) => (message.role === "system" ? [systemKey(message)] : [])),
   );
+  // Both lists keep conversation order, and the encoded range ends where the request
+  // does. Pairing from the end matches each request message to its own stored
+  // occurrence and leaves messages before the range unmatched.
+  const positions = new Map<number, number>();
+  let cursor = messages.length - 1;
+  for (let index = requestMessages.length - 1; index > 0; index--) {
+    const message = requestMessages[index];
+    if (!message || message.role === "system") continue;
+    let found = cursor;
+    while (found >= 0) {
+      const candidate = messages[found];
+      if (candidate && candidate.role !== "system" && sameMessage(candidate, message)) break;
+      found--;
+    }
+    if (found < 0) continue;
+    positions.set(index, found);
+    cursor = found - 1;
+  }
   const after = new Map<number, Message[]>();
   for (let index = 1; index < requestMessages.length; index++) {
     const message = requestMessages[index];
@@ -282,10 +302,8 @@ export function withRequestSystemMessages(
     for (let previous = index - 1; previous > 0; previous--) {
       const anchor = requestMessages[previous];
       if (!anchor || anchor.role === "system") continue;
-      const found = messages.findLastIndex(
-        (candidate) => candidate.role !== "system" && sameMessage(candidate, anchor),
-      );
-      if (found >= 0) {
+      const found = positions.get(previous);
+      if (found !== undefined) {
         position = found;
         break;
       }
