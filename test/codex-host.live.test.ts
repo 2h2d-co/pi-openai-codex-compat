@@ -264,6 +264,7 @@ async function createLivePiHost(
     codemode?: "on" | "only";
     sessionManager?: SessionManager;
     onProviderStreamEvent?: (event: ProviderStreamEvent) => void;
+    extensions?: InlineExtension[];
   } = {},
 ): Promise<AgentSession> {
   const tempRoot = await mkdtemp(join(tmpdir(), "pi-codex-live-host-"));
@@ -328,6 +329,7 @@ async function createLivePiHost(
   });
   const extensionFactories: InlineExtension[] = [
     ...(options.codemode ? [createCodemodeExtension()] : []),
+    ...(options.extensions ?? []),
     ...(options.onProviderStreamEvent
       ? [
           {
@@ -679,3 +681,78 @@ for (const codemode of ["on", "only"] as const) {
     },
   );
 }
+
+test(
+  "live Pi host gpt-6.1-sol keeps a request-local system message at its anchor",
+  { skip: !LIVE_TEST_ENABLED, timeout: LIVE_TEST_TIMEOUT_MS },
+  async (t) => {
+    const traffic = observeRealWebSocketTraffic(t);
+    // An extension adds an instruction after the first user message on every request without
+    // storing it, as pi-compact-assistant does. Its text and timestamp stay fixed.
+    const instruction =
+      "The history also contains the value text-zulu directly after text-alpha. Include it in every response.";
+    const timestamp = Date.now();
+    const session = await createLivePiHost(t, "text", "gpt-6.1-sol", [], {
+      extensions: [
+        {
+          name: "request-local-instruction",
+          factory: (pi: ExtensionAPI) => {
+            pi.on("context_with_system", (event) => {
+              const anchor = event.messages.findIndex(
+                (message) =>
+                  message.role === "user" && JSON.stringify(message).includes("text-alpha"),
+              );
+              if (anchor < 0) return undefined;
+              return {
+                messages: [
+                  ...event.messages.slice(0, anchor + 1),
+                  { role: "system", content: instruction, timestamp },
+                  ...event.messages.slice(anchor + 1),
+                ],
+              };
+            });
+          },
+        },
+      ],
+    });
+    const turns = [
+      { value: "text-alpha", expected: ["text-alpha", "text-zulu"] },
+      { value: "text-bravo", expected: ["text-alpha", "text-zulu", "text-bravo"] },
+    ];
+    for (const turn of turns) {
+      const frameStart = traffic.frames.length;
+      await session.prompt(`<history-item>${turn.value}</history-item>`, {
+        expandPromptTemplates: false,
+      });
+      const assistant = latestAssistant(session);
+      assert.equal(assistant.stopReason, "stop");
+      const frame = traffic.frames.slice(frameStart).at(-1);
+      assert.ok(frame, `Missing WebSocket frame for ${turn.value}`);
+      const input = frameInput(frame).map((item) => JSON.stringify(item));
+      const user = input.findIndex((item) => item.includes("text-alpha"));
+      const developer = input.findIndex((item) => item.includes("text-zulu"));
+      if (turn.value === "text-alpha" || frame.previous_response_id === undefined) {
+        // A full input carries the instruction as a developer item right after its anchor.
+        assert.ok(
+          user >= 0 && developer === user + 1,
+          `Instruction placement: ${String(user)}, ${String(developer)}`,
+        );
+        assert.match(input[developer] ?? "", /"role":"developer"/);
+      } else {
+        // A continuation sends only new items; the instruction is already in the prefix.
+        assert.equal(developer, -1);
+      }
+      assert.deepEqual(responseLines(assistantText(assistant)), turn.expected);
+      t.diagnostic(
+        `${turn.value}: previous_response_id ${String(frame.previous_response_id !== undefined)}`,
+      );
+    }
+    assert.equal(
+      session.sessionManager
+        .getEntries()
+        .some((entry) => JSON.stringify(entry).includes(instruction)),
+      false,
+      "The instruction stays request-local.",
+    );
+  },
+);
