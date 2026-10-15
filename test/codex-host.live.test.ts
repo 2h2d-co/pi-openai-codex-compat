@@ -28,6 +28,7 @@ import {
   type ToolDefinition,
 } from "@earendil-works/pi-coding-agent";
 import { isString, requireString } from "../extensions/openai-codex-compat/value-contracts.ts";
+import { describeFailure, errorLog } from "./support/error-log.ts";
 import { Type } from "typebox";
 import { CONFIG_FILE } from "../extensions/openai-codex-compat/config.ts";
 import {
@@ -138,7 +139,7 @@ function assistantMessages(session: AgentSession): AssistantMessage[] {
 function latestAssistant(session: AgentSession): AssistantMessage {
   const message = assistantMessages(session).at(-1);
   assert.ok(message, "Pi did not persist an assistant message");
-  assert.equal(message.errorMessage, undefined);
+  assert.ok(message.errorMessage === undefined, describeFailure(message));
   assert.equal(message.model, session.model?.id);
   assert.equal(cacheObservation(message).selectedTransport, "websocket");
   assert.equal(requireJsonRecord(cacheObservation(message).cache)["envelope"], "responses_lite");
@@ -371,7 +372,22 @@ async function createLivePiHost(
       : { noTools: customTools.length > 0 ? "builtin" : "all" }),
     customTools,
   });
-  await result.session.bindExtensions({});
+  const errors = errorLog(t);
+  result.session.subscribe((event) => {
+    if (event.type === "message_end") errors.response(event.message);
+  });
+  await result.session.bindExtensions({
+    // Replace only notify in Pi's no-op UI, so extension notices reach the test log.
+    uiContext: {
+      ...result.session.extensionRunner.getUIContext(),
+      notify: (message, level) => {
+        errors.notice(message, level);
+      },
+    },
+    onError: (error) => {
+      errors.extensionError(error.event, error.error);
+    },
+  });
   if (options.codemode) {
     result.session.setActiveToolsByName([...result.session.getActiveToolNames(), "codemode"]);
   }
@@ -591,7 +607,7 @@ for (const modelId of ["gpt-5.6-luna", "gpt-6-sol", "gpt-6-luna", "gpt-6.1-sol"]
         "Codex called the read tool.",
       );
       const final = latestAssistant(session);
-      assert.equal(final.stopReason, "stop", final.errorMessage);
+      assert.equal(final.stopReason, "stop", describeFailure(final));
       assert.match(
         final.content.flatMap((block) => (block.type === "text" ? [block.text] : [])).join(""),
         new RegExp(marker),

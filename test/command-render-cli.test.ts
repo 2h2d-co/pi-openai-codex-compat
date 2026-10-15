@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
+import { existsSync } from "node:fs";
 import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
@@ -10,6 +11,7 @@ import { stripVTControlCharacters } from "node:util";
 import { SessionManager } from "@earendil-works/pi-coding-agent";
 import { spawn } from "node-pty";
 import { linkProductionDependencies } from "./support/codex-cli-harness.ts";
+import { errorLog } from "./support/error-log.ts";
 import { packageArchive } from "./support/package-archive.ts";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
@@ -82,6 +84,7 @@ for (const { mode, live, outputPad } of [
       assert.ok(sessionFile);
       const args = [cli, "--session", sessionFile, "-e", join(temporary, "package")];
       const observedCall = join(temporary, "observed-call.json");
+      const responses = join(temporary, "responses.jsonl");
       if (live) {
         assert.ok(
           process.env["PI_CODEX_LIVE_API_KEY"],
@@ -99,8 +102,11 @@ for (const { mode, live, outputPad } of [
         await writeFile(
           guard,
           `
-import { writeFileSync } from "node:fs";
+import { appendFileSync, writeFileSync } from "node:fs";
 export default function (pi) {
+  pi.on("message_end", (event) => {
+    appendFileSync(${JSON.stringify(responses)}, JSON.stringify(event.message) + "\\n");
+  });
   pi.on("tool_call", (event) => {
     writeFileSync(${JSON.stringify(observedCall)}, JSON.stringify({
       toolName: event.toolName, cmd: event.input.cmd,
@@ -157,6 +163,12 @@ export default function (pi) {
       });
       for (let attempt = 0; attempt < 3_000 && !output.includes(errorMessage) && !exited; attempt++)
         await setTimeout(20);
+      if (live) {
+        // The TUI shows notices and errors only on screen. Report failed responses from the guard.
+        const errors = errorLog(t);
+        const saved = existsSync(responses) ? await readFile(responses, "utf8") : "";
+        for (const line of saved.split("\n").filter(Boolean)) errors.response(JSON.parse(line));
+      }
       assert.ok(output.includes(errorMessage), "Pi should render the interrupted tool call");
       if (live) {
         assert.deepEqual(JSON.parse(await readFile(observedCall, "utf8")), {

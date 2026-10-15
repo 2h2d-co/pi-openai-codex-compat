@@ -14,6 +14,7 @@ import {
   requireJsonRecord,
   requireJsonRecords,
 } from "../../extensions/openai-codex-compat/codex-protocol.ts";
+import { describeFailure, errorLog } from "./error-log.ts";
 import { packageArchive } from "./package-archive.ts";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
@@ -209,8 +210,10 @@ export async function verifyPackagedCli(
       fixture,
     ],
   };
+  const errors = errorLog(t);
   let client = new RpcClient(clientOptions);
   t.after(async () => client.stop());
+  client.onEvent(errors.rpcEvent);
   await client.start();
   assert.ok((await client.getCommands()).some((command) => command.name === "codex-settings"));
 
@@ -233,7 +236,9 @@ export async function verifyPackagedCli(
     assert.equal(
       assistant.stopReason,
       "toolUse",
-      assistant.errorMessage ?? JSON.stringify(assistant.content),
+      assistant.errorMessage !== undefined
+        ? describeFailure(assistant)
+        : JSON.stringify(assistant.content),
     );
     const call = assistant.content.find((block) => block.type === "toolCall");
     assert.ok(call);
@@ -331,6 +336,7 @@ export async function verifyPackagedCli(
   await turn("SECOND", "foxtrot", ["read", "verify_release", "write"]);
   await client.stop();
   client = new RpcClient(clientOptions);
+  client.onEvent(errors.rpcEvent);
   await client.start();
   // Resume rebuilds Pi's transcript from the checkpoint but restores the
   // configured default loadout, so declare the same tools again before prompting.
