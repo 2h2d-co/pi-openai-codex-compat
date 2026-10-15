@@ -1172,6 +1172,47 @@ test("shows live recent output in a scrollable terminal details popup", (t) => {
   details.handleInput?.("\u001b[F");
   assert.match(details.render(80).join("\n"), /line 20$/mu);
 
+  const wheel = (wheelDelta: number) =>
+    details.handleMouse?.({
+      type: "wheel",
+      button: "none",
+      x: 0,
+      y: 0,
+      screenX: 0,
+      screenY: 0,
+      width: 80,
+      height: 20,
+      shift: false,
+      alt: false,
+      ctrl: false,
+      wheelDelta,
+    });
+  assert.deepEqual(wheel(-3), { handled: true });
+  const wheeled = details.render(80).join("\n");
+  assert.match(wheeled, /line 17$/mu);
+  assert.doesNotMatch(wheeled, /line 20$/mu);
+  // Scrolling up stops following new output until the wheel reaches the end again.
+  recentOutput += "\nline 21";
+  assert.doesNotMatch(details.render(80).join("\n"), /line 21$/mu);
+  wheel(100);
+  assert.match(details.render(80).join("\n"), /line 21$/mu);
+  assert.equal(
+    details.handleMouse?.({
+      type: "click",
+      button: "left",
+      x: 0,
+      y: 0,
+      screenX: 0,
+      screenY: 0,
+      width: 80,
+      height: 20,
+      shift: false,
+      alt: false,
+      ctrl: false,
+    }),
+    undefined,
+  );
+
   details.handleInput?.("\u0018");
   assert.deepEqual(actions, ["stop"]);
 });

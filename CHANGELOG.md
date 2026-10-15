@@ -6,6 +6,11 @@
 
 - Require Pi `>=1.2.0 <1.3.0`.
 
+### Added
+
+- The `/ps` recent-output popup scrolls with the mouse wheel. Before, Pi 1.2.0 scrolled the
+  transcript behind the popup instead.
+
 ## 0.0.24 - 2026-10-14
 
 ### Fixed

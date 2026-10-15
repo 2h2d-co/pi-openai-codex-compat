@@ -10,6 +10,8 @@ import {
   stripTerminalSequences,
   Text,
   truncateToWidth,
+  type TuiMouseEvent,
+  type TuiMouseEventResult,
   wrapTextWithAnsi,
 } from "@earendil-works/pi-tui";
 import type { UnifiedExecProcessInfo } from "./command-runtime.ts";
@@ -192,7 +194,7 @@ class BackgroundProcessDetails implements Component {
       line(this.theme.fg("dim", `↑ ${above} lines · ↓ ${below} lines`)),
       line(
         [
-          `${this.theme.fg("accent", "↑↓/pgup/pgdn")} ${this.theme.fg("dim", "scroll")}`,
+          `${this.theme.fg("accent", "↑↓/pgup/pgdn/wheel")} ${this.theme.fg("dim", "scroll")}`,
           `${this.theme.fg("accent", "ctrl+x")} ${this.theme.fg("dim", "stop terminal")}`,
           `${this.theme.fg("accent", "esc/q")} ${this.theme.fg("dim", "back")}`,
         ].join(" · "),
@@ -203,6 +205,18 @@ class BackgroundProcessDetails implements Component {
   }
 
   invalidate(): void {}
+
+  /** Scroll the output with the mouse wheel, as Pi scrolls the transcript. */
+  handleMouse(event: TuiMouseEvent): TuiMouseEventResult | undefined {
+    if (event.type !== "wheel" || !event.wheelDelta) return undefined;
+    this.scrollOffset = Math.min(
+      this.maximumScrollOffset,
+      Math.max(0, this.scrollOffset + event.wheelDelta),
+    );
+    this.followingEnd = this.scrollOffset === this.maximumScrollOffset;
+    this.requestRender();
+    return { handled: true };
+  }
 
   handleInput(data: string): void {
     if (matchesKey(data, Key.ctrl("x"))) {
