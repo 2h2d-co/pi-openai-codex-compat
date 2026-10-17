@@ -24,7 +24,7 @@ function runTests(files: string[], testEnv: NodeJS.ProcessEnv): void {
 runTests(["test/settings-cli.test.ts", "test/command-render-cli.test.ts"], env);
 const token = execFileSync(
   process.execPath,
-  [pi, "auth", "print-bearer-token", "--provider", "openai-codex", "--model", "gpt-5.6-luna"],
+  [pi, "auth", "print-bearer-token", "--provider", "openai-codex", "--model", "gpt-6-luna"],
   { cwd: root, env, encoding: "utf8", stdio: ["ignore", "pipe", "inherit"] },
 ).trim();
 runTests(

@@ -687,17 +687,17 @@ npm run test:live:codex
 
 `scripts/test-live.ts` first runs the offline packaged terminal tests. It then
 obtains the local Codex bearer token through the repository Pi and runs the
-tests with `gpt-5.6-luna`, `gpt-6-sol`, `gpt-6-luna`, and `gpt-6.1-sol` at
-medium reasoning effort. It also packs the extension and loads that archive through the shipped Pi
-CLI. Ordinary Responses and Responses Lite tests exercise tool calls,
-prompt reload, native compaction, and persisted-session resume against Codex.
+tests with `gpt-6-luna` and `gpt-6.1-sol` at medium reasoning effort. It also
+packs the extension and loads that archive through the shipped Pi CLI. Ordinary
+Responses and Responses Lite tests exercise tool calls, prompt reload, native
+compaction, and persisted-session resume against Codex.
 SDK tests verify Responses Lite
 WebSocket history, prewarming, continuation, and the built-in read tool.
 CLI tests also execute the built-in read tool after resume.
 Terminal tests check interrupted `exec_command` error framing in regular and
 fullscreen mode. A live terminal case blocks a real Codex command call before
 execution and checks that Pi's metadata-free error retains its tool box.
-Six additional CLI cases replay grammar-tool history with `gpt-5.6-luna` in both
+Six additional CLI cases replay grammar-tool history with `gpt-6-luna` in both
 response formats. They cover foreign-provider history, different-model history,
 and calls previously recorded as function calls.
 Test credentials stay in memory and child-process environments. Test sessions

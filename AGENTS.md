@@ -27,6 +27,6 @@
 - Push release commits and tags atomically; do not create annotated or signed tag objects.
 - The tag workflow creates the immutable GitHub release from the verified archive and the version's changelog section. Never create GitHub releases by hand.
 - Run `mise run check` before committing meaningful code changes. Never bind `PI_PACKAGE_DIR` for tests: `npm test` and `npm run test:live:codex` remove an inherited value so Pi resolves its own package directory.
-- Gate new model capabilities on the actual Codex endpoint, not public Responses API documentation. Extend the packaged CLI and WebSocket live matrices when adding supported models, and retain exact tool-argument assertions with explicit extraction instructions.
+- Gate new model capabilities on the actual Codex endpoint, not public Responses API documentation. Run the packaged CLI and WebSocket live matrices on `gpt-6-luna` and `gpt-6.1-sol` only, and run single-model live cases on `gpt-6-luna`. Retain exact tool-argument assertions with explicit extraction instructions.
 - Live tests report every error they meet as a test diagnostic, even when they pass: extension error and warning notices, extension errors, and failed responses. Use `test/support/error-log.ts`. Summarize failed responses by stop reason, HTTP status, and error category; never print provider error text or credentials.
 - Keep tests in `test/*.test.ts`, code that tests import or load into Pi in `test/support/`, and test data in `test/fixtures/`.

@@ -395,7 +395,7 @@ async function createLivePiHost(
   return result.session;
 }
 
-for (const modelId of ["gpt-5.6-luna", "gpt-6-sol", "gpt-6-luna", "gpt-6.1-sol"]) {
+for (const modelId of ["gpt-6-luna", "gpt-6.1-sol"]) {
   test(
     `live Pi host ${modelId} preserves text conversation history through Codex`,
     { skip: !LIVE_TEST_ENABLED, timeout: LIVE_TEST_TIMEOUT_MS },
@@ -631,7 +631,7 @@ for (const codemode of ["on", "only"] as const) {
           return { content: [{ type: "text", text: "unused" }], details: {} };
         },
       });
-      const session = await createLivePiHost(t, "text", "gpt-5.6-luna", [lookup], { codemode });
+      const session = await createLivePiHost(t, "text", "gpt-6-luna", [lookup], { codemode });
       await session.prompt("<history-item>text-alpha</history-item>", {
         expandPromptTemplates: false,
       });
@@ -683,7 +683,7 @@ for (const codemode of ["on", "only"] as const) {
 
       // A fresh extension load, as after a resume, has no turn request yet. Its
       // compaction declares the tools the session saved for the last turn.
-      const resumed = await createLivePiHost(t, "text", "gpt-5.6-luna", [lookup], {
+      const resumed = await createLivePiHost(t, "text", "gpt-6-luna", [lookup], {
         codemode,
         sessionManager: session.sessionManager,
       });

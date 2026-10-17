@@ -124,7 +124,7 @@ export default function (pi) {
           "--provider",
           "openai-codex",
           "--model",
-          "gpt-5.6-luna",
+          "gpt-6-luna",
           "--thinking",
           "low",
           "--tools",
