@@ -9,6 +9,10 @@
 - Keep `exec_command` and `write_stdin` in a resumed Codex session. Pi restores the tools a
   session declared, which no longer include the `bash` tool these replaced, so a resumed session
   lost its shell. This happened on restart and when switching to the session in a running Pi.
+- Retry a WebSocket request when Codex answers with a wrapped HTTP error that the HTTP
+  transport would retry, such as status 429 "Codex is at capacity, please try again later". The
+  retry waits for the delay the error's headers request, as the official Codex client does. Before,
+  the request failed at once, and Pi does not retry this message. Usage limits still fail at once.
 
 ## 0.0.26 - 2026-10-17
 

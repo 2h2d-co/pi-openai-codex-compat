@@ -1,6 +1,7 @@
-import { isFunction, isNonNullObject, isString } from "../value-contracts.ts";
+import { isFunction, isNonNullObject, isNumber, isString } from "../value-contracts.ts";
 import { isObject, type JsonRecord } from "../codex-protocol.ts";
 import { CodexApiError } from "./codex-transport-errors.ts";
+import { retryDelayMs } from "./codex-transport-retry.ts";
 
 interface ArrayBufferProvider {
   arrayBuffer: () => Promise<ArrayBuffer>;
@@ -32,6 +33,20 @@ export async function decodeWebSocketData(data: unknown): Promise<string | undef
   return undefined;
 }
 
+/** The retry delay that a wrapped error event's headers request, as the official client reads it. */
+function eventRetryDelayMs(event: JsonRecord, nested: JsonRecord | undefined): number | undefined {
+  for (const source of [nested?.["headers"], event["headers"]]) {
+    if (!isObject(source)) continue;
+    const headers = new Headers();
+    for (const [name, value] of Object.entries(source)) {
+      if (isString(value) || isNumber(value)) headers.set(name, String(value));
+    }
+    const delay = retryDelayMs(headers);
+    if (delay !== undefined) return delay;
+  }
+  return undefined;
+}
+
 export function normalizeEvent(event: JsonRecord): JsonRecord | undefined {
   const type = isString(event.type) ? event.type : undefined;
   if (!type) return undefined;
@@ -47,10 +62,19 @@ export function normalizeEvent(event: JsonRecord): JsonRecord | undefined {
       : isString(nested?.["message"])
         ? nested["message"]
         : undefined;
+    const status = isNumber(event["status"])
+      ? event["status"]
+      : isNumber(event["status_code"])
+        ? event["status_code"]
+        : undefined;
     throw new CodexApiError(
       `Codex error: ${message || code || JSON.stringify(event)}`,
       code,
       event,
+      {
+        status,
+        retryDelayMs: eventRetryDelayMs(event, nested),
+      },
     );
   }
   if (type === "response.done") {

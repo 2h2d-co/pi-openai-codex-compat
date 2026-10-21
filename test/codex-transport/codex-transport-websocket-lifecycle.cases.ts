@@ -1028,3 +1028,117 @@ test("forwards raw WebSocket events and ends without fallback when forwarding fa
   );
   assert.equal(sseRequests, 0);
 });
+
+/** A WebSocket that answers each request with the next scripted list of events. */
+function scriptedWebSocket(script: JsonRecord[][], sent: JsonRecord[]) {
+  return class ScriptedWebSocket {
+    readyState = 1;
+    private readonly listeners = new Map<string, Set<(event: unknown) => void>>();
+
+    constructor() {
+      queueMicrotask(() => this.emit("open", {}));
+    }
+
+    addEventListener(type: string, listener: (event: unknown) => void): void {
+      const listeners = this.listeners.get(type) ?? new Set();
+      listeners.add(listener);
+      this.listeners.set(type, listeners);
+    }
+
+    removeEventListener(type: string, listener: (event: unknown) => void): void {
+      this.listeners.get(type)?.delete(listener);
+    }
+
+    send(data: string): void {
+      sent.push(requireJsonRecord(JSON.parse(data)));
+      const events = script[sent.length - 1] ?? [];
+      queueMicrotask(() => {
+        for (const event of events) this.emit("message", { data: JSON.stringify(event) });
+      });
+    }
+
+    close(): void {
+      this.readyState = 3;
+    }
+
+    private emit(type: string, event: unknown): void {
+      for (const listener of this.listeners.get(type) ?? []) listener(event);
+    }
+  };
+}
+
+/** The error event Codex sends when a model is at capacity. */
+function capacityError(headers: JsonRecord): JsonRecord {
+  return {
+    type: "error",
+    status: 429,
+    headers,
+    error: {
+      type: "rate_limit_error",
+      code: "turn_rate_limit_exceeded",
+      message: "Codex is at capacity, please try again later",
+    },
+  };
+}
+
+const completed: JsonRecord = {
+  type: "response.completed",
+  response: { id: "response-1", status: "completed" },
+};
+
+test("retries a WebSocket 429 error event after the delay its headers request", async (t) => {
+  const previousWebSocket = globalThis.WebSocket;
+  const sent: JsonRecord[] = [];
+  Object.defineProperty(globalThis, "WebSocket", {
+    configurable: true,
+    value: scriptedWebSocket([[capacityError({ "retry-after-ms": "40" })], [completed]], sent),
+  });
+  t.after(() => {
+    Object.defineProperty(globalThis, "WebSocket", {
+      configurable: true,
+      value: previousWebSocket,
+    });
+  });
+  const started = Date.now();
+  const events: JsonRecord[] = [];
+  for await (const event of new CodexTransport().request(
+    codexModel(),
+    { input: [], prompt_cache_key: "capacity-session" },
+    { apiKey: accessToken(), sessionId: "capacity-session", transport: "websocket" },
+  )) {
+    events.push(event);
+  }
+  assert.equal(sent.length, 2);
+  assert.ok(Date.now() - started >= 35, "The retry waited for the requested delay.");
+  assert.equal(events.at(-1)?.type, "response.completed");
+});
+
+test("does not retry a WebSocket 429 error event for a usage limit", async (t) => {
+  const previousWebSocket = globalThis.WebSocket;
+  const sent: JsonRecord[] = [];
+  const usageLimit: JsonRecord = {
+    type: "error",
+    status: 429,
+    error: { type: "usage_limit_reached", message: "You have hit your usage limit." },
+  };
+  Object.defineProperty(globalThis, "WebSocket", {
+    configurable: true,
+    value: scriptedWebSocket([[usageLimit], [completed]], sent),
+  });
+  t.after(() => {
+    Object.defineProperty(globalThis, "WebSocket", {
+      configurable: true,
+      value: previousWebSocket,
+    });
+  });
+  await assert.rejects(async () => {
+    for await (const _event of new CodexTransport().request(
+      codexModel(),
+      { input: [], prompt_cache_key: "usage-session" },
+      { apiKey: accessToken(), sessionId: "usage-session", transport: "websocket" },
+    )) {
+      // The error ends the request.
+    }
+  }, /usage limit/);
+  assert.equal(sent.length, 1);
+});

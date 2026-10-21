@@ -8,13 +8,36 @@ export const PREVIOUS_RESPONSE_NOT_FOUND_CODE = "previous_response_not_found";
 export class CodexApiError extends Error {
   readonly code: string | undefined;
   readonly payload: JsonRecord;
+  /** The HTTP status a WebSocket error event wraps, if any. */
+  readonly status: number | undefined;
+  /** The retry delay the event's headers request, in milliseconds. */
+  readonly retryDelayMs: number | undefined;
 
-  constructor(message: string, code: string | undefined, payload: JsonRecord) {
+  constructor(
+    message: string,
+    code: string | undefined,
+    payload: JsonRecord,
+    options: { status?: number | undefined; retryDelayMs?: number | undefined } = {},
+  ) {
     super(message);
     this.name = "CodexApiError";
     this.code = code;
     this.payload = payload;
+    this.status = options.status;
+    this.retryDelayMs = options.retryDelayMs;
   }
+}
+
+/**
+ * Whether a WebSocket error event wraps an HTTP status that the HTTP transport retries, such as
+ * a 429 that is not a usage limit. The official Codex client retries these too.
+ */
+export function isRetryableErrorEvent(error: unknown): error is CodexApiError {
+  return (
+    error instanceof CodexApiError &&
+    error.status !== undefined &&
+    isRetryable(error.status, JSON.stringify(error.payload))
+  );
 }
 
 export class CodexProtocolError extends Error {

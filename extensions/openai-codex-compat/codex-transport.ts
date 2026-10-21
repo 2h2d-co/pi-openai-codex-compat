@@ -33,6 +33,7 @@ import {
   RetryDelayExceededError,
   isCodexNonTransportError,
   isPreviousResponseNotFoundError,
+  isRetryableErrorEvent,
   isWebSocketConnectionLimitReachedError,
   thrownMessage,
   codexHttpError,
@@ -57,6 +58,7 @@ import {
   normalizeTimeoutMs,
   retryBackoffMs,
   sleep,
+  validateRetryDelay,
 } from "./codex-transport/codex-transport-retry.ts";
 import { requestSse } from "./codex-transport/codex-transport-sse-stream.ts";
 import {
@@ -443,10 +445,15 @@ export class CodexTransport {
             retriedConnectionLimit = true;
             continue;
           }
+          // A wrapped HTTP error, such as "Codex is at capacity" with status 429, is retried
+          // after the delay its headers request.
+          const retryableEvent = isRetryableErrorEvent(error) ? error : undefined;
           const retryableTransportError =
             !aborted &&
             !visibleOutputEmitted &&
-            (!isCodexNonTransportError(error) || connectionLimitBeforeVisibleOutput);
+            (!isCodexNonTransportError(error) ||
+              connectionLimitBeforeVisibleOutput ||
+              retryableEvent !== undefined);
           if (retryableTransportError && websocketRetries < websocketMaxRetries) {
             websocketRetries += 1;
             if (attempt) {
@@ -465,7 +472,9 @@ export class CodexTransport {
               );
             }
             await sleep(
-              retryBackoffMs(websocketRetryBaseDelayMs, websocketRetries),
+              retryableEvent?.retryDelayMs === undefined
+                ? retryBackoffMs(websocketRetryBaseDelayMs, websocketRetries)
+                : validateRetryDelay(retryableEvent.retryDelayMs, options),
               options.signal,
             );
             continue;
