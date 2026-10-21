@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.0.27 - 2026-10-21
+
 ### Fixed
 
 - Keep `exec_command` and `write_stdin` in a resumed Codex session. Pi restores the tools a
