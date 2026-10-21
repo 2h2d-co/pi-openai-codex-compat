@@ -273,6 +273,20 @@ test("does not bypass a Pi session that started without bash", () => {
   assert.deepEqual(active, ["read"]);
 });
 
+test("keeps the Codex command tools of a resumed session whose bash was replaced", () => {
+  let active = ["read", "exec_command", "write_stdin"];
+  const pi: CodexToolActivationApi = {
+    getActiveTools: () => active,
+    setActiveTools(names) {
+      active = names;
+    },
+  };
+  assert.equal(setCodexCommandTool(pi, "unified_exec", true), true);
+  assert.deepEqual(active, ["read", "exec_command", "write_stdin"]);
+  setCodexCommandTool(pi, undefined);
+  assert.deepEqual(active, ["read", "bash"]);
+});
+
 test("toggles image_gen.imagegen and web.run independently on Codex models", () => {
   let active = ["read", "edit", "write"];
   const pi: CodexToolActivationApi = {

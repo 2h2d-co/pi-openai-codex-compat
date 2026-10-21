@@ -1,4 +1,4 @@
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI, SessionEntry } from "@earendil-works/pi-coding-agent";
 import type { Api, Model } from "@earendil-works/pi-ai";
 import registerApplyPatch, { APPLY_PATCH_TOOL_NAME, type ApplyPatchApi } from "./apply-patch.ts";
 import registerCommandTools, {
@@ -61,9 +61,32 @@ export function setApplyPatchEnabled(pi: CodexToolActivationApi, enabled: boolea
   pi.setActiveTools([...active]);
 }
 
+/**
+ * Whether the session already declared a Codex command tool. This extension enables one only in
+ * place of an active Pi `bash` tool, so a resumed session that declared one started with `bash`.
+ * Pi restores the declared tools on resume, which no longer include `bash`.
+ */
+export function declaresCodexCommandTool(entries: readonly SessionEntry[]): boolean {
+  const commandTools: readonly string[] = CODEX_COMMAND_TOOLS;
+  return entries.some((entry) => {
+    const message =
+      entry.type === "compaction"
+        ? entry.systemMessage
+        : entry.type === "message" && entry.message.role === "system"
+          ? entry.message
+          : undefined;
+    return (message?.toolsAdded ?? []).some((tool) => commandTools.includes(tool.name));
+  });
+}
+
+/**
+ * Swap Pi's `bash` for the selected Codex command tools. `bashReplaced` marks a resumed session
+ * whose `bash` this extension already replaced.
+ */
 export function setCodexCommandTool(
   pi: CodexToolActivationApi,
   shellTool: CodexShellTool | undefined,
+  bashReplaced = false,
 ): boolean {
   const active = new Set(pi.getActiveTools());
   for (const tool of CODEX_COMMAND_TOOLS) active.delete(tool);
@@ -76,7 +99,7 @@ export function setCodexCommandTool(
   }
 
   if (!suppressedBashTools.has(pi)) {
-    suppressedBashTools.set(pi, active.has(PI_BASH_TOOL));
+    suppressedBashTools.set(pi, active.has(PI_BASH_TOOL) || bashReplaced);
   }
   active.delete(PI_BASH_TOOL);
   const replacementEnabled = suppressedBashTools.get(pi) === true;
@@ -97,10 +120,15 @@ export function syncCodexTools(
   model: Model<Api> | undefined,
   config: CodexCompatConfig,
   commandTools?: CommandToolsController,
+  bashReplaced = false,
 ): void {
   const codexSelected = isCodexModel(model);
   setApplyPatchEnabled(pi, codexSelected && config.applyPatch);
-  const unifiedExecActive = setCodexCommandTool(pi, codexSelected ? config.shellTool : undefined);
+  const unifiedExecActive = setCodexCommandTool(
+    pi,
+    codexSelected ? config.shellTool : undefined,
+    bashReplaced,
+  );
   if (!unifiedExecActive) commandTools?.terminateUnifiedExecSessions();
 
   const active = new Set(pi.getActiveTools());

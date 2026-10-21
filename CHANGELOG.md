@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+### Fixed
+
+- Keep `exec_command` and `write_stdin` in a resumed Codex session. Pi restores the tools a
+  session declared, which no longer include the `bash` tool these replaced, so a resumed session
+  lost its shell. This happened on restart and when switching to the session in a running Pi.
+
 ## 0.0.26 - 2026-10-17
 
 ### Changed

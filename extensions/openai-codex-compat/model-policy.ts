@@ -5,7 +5,7 @@ import type { ConfigResolver } from "./config-context.ts";
 import { hasNativeCheckpointEntry } from "./compaction-checkpoint.ts";
 import { errorFromThrown } from "./error-from-thrown.ts";
 import { selectedRegistryModel } from "./model-context.ts";
-import { syncCodexTools } from "./tools.ts";
+import { declaresCodexCommandTool, syncCodexTools } from "./tools.ts";
 import type { CommandToolsController } from "./command-tools.ts";
 
 export type CodexModelPolicyContext = Parameters<ConfigResolver>[0] & {
@@ -86,7 +86,10 @@ export default function registerCodexModelPolicy(
   let restoringRejectedSwitch = false;
 
   pi.onSessionStart((ctx) => {
-    syncCodexTools(pi, ctx.model, resolveConfig(ctx), commandTools);
+    // A resumed session restores the tools it declared, so its replaced `bash` is no longer
+    // active. Its declared Codex command tools show that it was.
+    const bashReplaced = declaresCodexCommandTool(ctx.sessionManager.getBranch());
+    syncCodexTools(pi, ctx.model, resolveConfig(ctx), commandTools, bashReplaced);
   });
 
   pi.onSessionShutdown(() => {

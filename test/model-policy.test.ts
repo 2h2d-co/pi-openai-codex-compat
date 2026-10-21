@@ -51,11 +51,15 @@ function checkpointEntry(): SessionEntry {
   } satisfies SessionEntry;
 }
 
-function createHarness(branch: SessionEntry[], initialModel: Model<Api>) {
+function createHarness(
+  branch: SessionEntry[],
+  initialModel: Model<Api>,
+  initialTools = ["read", "edit", "write", "bash"],
+) {
   const handlers = new Map<string, TestHandler>();
   const notices: Array<{ message: string; level: string }> = [];
   const setModelCalls: Model<Api>[] = [];
-  let activeTools = ["read", "edit", "write", "bash"];
+  let activeTools = initialTools;
   let selectedModel = initialModel;
 
   const context = {
@@ -146,6 +150,47 @@ test("activates extension tools only for OpenAI Codex models", async () => {
 
   await harness.handlers.get("session_shutdown")?.(undefined, harness.context);
   assert.deepEqual(harness.activeTools(), ["read", "edit", "write", "bash"]);
+});
+
+/** A system message entry that declares `names`, as Pi records a session's tools. */
+function declaredToolsEntry(names: readonly string[]): SessionEntry {
+  return {
+    type: "message",
+    id: "tools-1",
+    parentId: null,
+    timestamp: new Date().toISOString(),
+    message: {
+      role: "system",
+      content: "",
+      toolsAdded: names.map((name) => ({
+        name,
+        description: name,
+        parameters: { type: "object", properties: {} },
+      })),
+      timestamp: 1,
+    },
+  } satisfies SessionEntry;
+}
+
+test("a resumed session keeps the Codex command tools that replaced bash", async () => {
+  // Pi restores the tools the session declared. They no longer include bash.
+  const restored = ["read", "apply_patch", "exec_command", "write_stdin", "image_gen.imagegen"];
+  const harness = createHarness([declaredToolsEntry(restored)], codexModel, restored);
+  await harness.handlers.get("session_start")?.(undefined, harness.context);
+  assert.deepEqual(harness.activeTools().toSorted(), restored.toSorted());
+
+  // Leaving Codex gives bash back, as it does in the session that replaced it.
+  await harness.select(foreignModel);
+  assert.ok(harness.activeTools().includes("bash"), harness.activeTools().join(","));
+  assert.ok(!harness.activeTools().includes("exec_command"), harness.activeTools().join(","));
+});
+
+test("a resumed session without declared Codex command tools still gets none", async () => {
+  const restored = ["read", "exec_command", "write_stdin"];
+  const harness = createHarness([declaredToolsEntry(["read"])], codexModel, restored);
+  await harness.handlers.get("session_start")?.(undefined, harness.context);
+  assert.ok(!harness.activeTools().includes("exec_command"), harness.activeTools().join(","));
+  assert.ok(!harness.activeTools().includes("bash"), harness.activeTools().join(","));
 });
 
 test("rejects model switches while the active branch contains a native checkpoint", async () => {
