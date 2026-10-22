@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+### Added
+
+- Publish why native compaction was cancelled on the shared `pi.events` channel
+  `compaction:cancelled` as `{ source: "pi-openai-codex-compat", reason }`. Pi reports only
+  "Compaction cancelled", so extensions that request compaction, such as pi-compact-assistant,
+  can now tell the model why. The reason names only the HTTP status, error code, WebSocket close
+  code, or an invalid response, never provider error text.
+
 ## 0.0.28 - 2026-10-22
 
 ### Changed

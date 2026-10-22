@@ -439,6 +439,8 @@ Any model switch is rejected while the active branch contains a native Codex che
 
 Native compaction fails closed for Codex models: a failed compaction is cancelled instead of silently replacing the opaque state with a local text summary. Other providers continue to use Pi's default compaction behavior. `/tree` branch summarization is intentionally not intercepted.
 
+Pi reports a cancelled compaction only as "Compaction cancelled". The extension shows the full failure as an error notification and publishes a short reason on the shared `pi.events` channel `compaction:cancelled` as `{ source: "pi-openai-codex-compat", reason }`, such as "OpenAI Codex native compaction failed (HTTP 400, context_length_exceeded). History was preserved." Provider error messages, WebSocket close reasons, and JSON parser errors can quote provider text, so the published reason names only the HTTP status, error code, WebSocket close code, or an invalid response. Aborted compactions publish nothing. An extension that requested the compaction, such as [`pi-compact-assistant`](https://github.com/2h2d-co/pi-compact-assistant), can pass the reason on to the model.
+
 When the active branch has no native Codex checkpoint, Pi model switching remains available. Selecting a provider other than `openai-codex` disables the extension-owned Codex tools, restores the Pi `edit` and `write` tools that `apply_patch` suppressed, restores a replaced Pi `bash` tool, and terminates persistent unified-exec sessions. Switching back to an `openai-codex` model reapplies the current session settings.
 
 ## `apply_patch`

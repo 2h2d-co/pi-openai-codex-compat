@@ -52,11 +52,13 @@ export class CodexProtocolError extends Error {
 
 export class CodexHttpError extends Error {
   readonly retryable: boolean;
+  readonly status: number;
 
-  constructor(message: string, retryable: boolean) {
+  constructor(message: string, retryable: boolean, status: number) {
     super(message);
     this.name = "CodexHttpError";
     this.retryable = retryable;
+    this.status = status;
   }
 }
 
@@ -169,9 +171,9 @@ export function codexHttpError(status: number, statusText: string, raw: string):
   const retryable = isRetryable(status, raw);
   try {
     const parsed: unknown = JSON.parse(raw);
-    if (!isObject(parsed)) return new CodexHttpError(message, retryable);
+    if (!isObject(parsed)) return new CodexHttpError(message, retryable, status);
     const error = isObject(parsed["error"]) ? parsed["error"] : undefined;
-    if (!error) return new CodexHttpError(message, retryable);
+    if (!error) return new CodexHttpError(message, retryable, status);
     const code =
       (isString(error["code"]) ? error["code"] : undefined) ??
       (isString(error["type"]) ? error["type"] : "");
@@ -193,7 +195,7 @@ export function codexHttpError(status: number, statusText: string, raw: string):
   } catch (error) {
     if (!(error instanceof SyntaxError)) throw error;
   }
-  return new CodexHttpError(friendlyMessage || message, retryable);
+  return new CodexHttpError(friendlyMessage || message, retryable, status);
 }
 
 export function isRetryable(status: number, text: string): boolean {

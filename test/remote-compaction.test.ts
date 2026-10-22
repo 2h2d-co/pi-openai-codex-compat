@@ -9,7 +9,12 @@ import {
 import { isString, requireString } from "../extensions/openai-codex-compat/value-contracts.ts";
 import assert from "node:assert/strict";
 import test from "node:test";
-import { createReadTool, type SessionEntry, type ToolInfo } from "@earendil-works/pi-coding-agent";
+import {
+  createReadTool,
+  type ExtensionAPI,
+  type SessionEntry,
+  type ToolInfo,
+} from "@earendil-works/pi-coding-agent";
 import {
   toToolDeclaration,
   type Api,
@@ -37,6 +42,9 @@ import {
   NATIVE_RESPONSE_ENTRY_TYPE,
 } from "../extensions/openai-codex-compat/native-history.ts";
 import registerRemoteCompaction, {
+  COMPACTION_CANCELLED_CHANNEL,
+  cancellationReason,
+  remoteCompactionApi,
   type RemoteCompactionApi,
   type RemoteCompactionContext,
   type RemoteCompactionContextHandler,
@@ -44,6 +52,12 @@ import registerRemoteCompaction, {
   type RemoteCompactionHookHandler,
   type RemoteCompactionLifecycleHandler,
 } from "../extensions/openai-codex-compat/remote-compaction.ts";
+import {
+  CodexApiError,
+  CodexProtocolError,
+  WebSocketCloseError,
+  codexHttpError,
+} from "../extensions/openai-codex-compat/codex-transport/codex-transport-errors.ts";
 import type { ResponsesOutputMessageItem } from "../extensions/openai-codex-compat/responses-item-schema.ts";
 import { assistantEntry, REPORT_TOOL } from "./codex-provider/codex-provider-harness.ts";
 
@@ -141,6 +155,11 @@ class RemoteCompactionTestApi implements RemoteCompactionApi, CodexProviderRunti
   sessionStart: RemoteCompactionLifecycleHandler | undefined;
 
   activeTools: string[] = [];
+  cancellations: string[] = [];
+
+  publishCancellation(reason: string): void {
+    this.cancellations.push(reason);
+  }
 
   appendEntry(): void {}
   getActiveTools(): string[] {
@@ -767,6 +786,9 @@ test("fails closed when runtime compaction fails", async () => {
 
   assert.deepEqual(result, { cancel: true });
   assert.match(harness.notices[0] ?? "", /native compaction failed/);
+  assert.deepEqual(harness.hooks.cancellations, [
+    "OpenAI Codex native compaction failed. History was preserved.",
+  ]);
 });
 
 test("normalizes non-Error runtime compaction failures", async () => {
@@ -793,4 +815,104 @@ test("normalizes non-Error runtime compaction failures", async () => {
 
   assert.deepEqual(result, { cancel: true });
   assert.match(harness.notices[0] ?? "", /native compaction failed with a non-Error value/);
+});
+
+test("cancellation reasons name only statuses, codes, and the kind of failure", () => {
+  const failed = "OpenAI Codex native compaction failed";
+  const cases: Array<[unknown, string]> = [
+    [
+      new CodexApiError("private provider text", "context_length_exceeded", {}, { status: 400 }),
+      `${failed} (HTTP 400, context_length_exceeded). History was preserved.`,
+    ],
+    [
+      new CodexApiError("private provider text", "Not An Identifier!", {}),
+      `${failed}. History was preserved.`,
+    ],
+    [
+      codexHttpError(503, "Service Unavailable", '{"error":{"message":"private provider text"}}'),
+      `${failed} (HTTP 503). History was preserved.`,
+    ],
+    [
+      new WebSocketCloseError("private provider text", {
+        code: 1011,
+        reason: "private provider text",
+        wasClean: false,
+      }),
+      `${failed} (WebSocket close code 1011). History was preserved.`,
+    ],
+    [
+      new CodexProtocolError("Invalid Codex SSE JSON: private provider text", "{", undefined),
+      `${failed} (invalid Codex response). History was preserved.`,
+    ],
+    [new Error("private provider text"), `${failed}. History was preserved.`],
+    ["private provider text", `${failed}. History was preserved.`],
+  ];
+  for (const [error, reason] of cases) {
+    assert.equal(cancellationReason(error), reason);
+    assert.doesNotMatch(cancellationReason(error), /private/);
+  }
+});
+
+test("publishes why native compaction was cancelled, but not for aborts or successes", async () => {
+  const user = userEntry("user-1", "hello");
+  const event = (signal: AbortSignal) => ({
+    branchEntries: [user],
+    preparation: { firstKeptEntryId: "user-1", tokensBefore: 50_000 },
+    reason: "threshold" as const,
+    willRetry: false,
+    signal,
+  });
+
+  const failing = createHarness([user]);
+  failing.runtime.transport.request = async function* () {
+    yield* [];
+    throw codexHttpError(500, "Internal Server Error", "private provider text");
+  };
+  assert.ok(failing.hooks.sessionBeforeCompact);
+  assert.deepEqual(
+    await failing.hooks.sessionBeforeCompact(event(new AbortController().signal), failing.context),
+    { cancel: true },
+  );
+  assert.deepEqual(failing.hooks.cancellations, [
+    "OpenAI Codex native compaction failed (HTTP 500). History was preserved.",
+  ]);
+
+  const aborted = createHarness([user]);
+  const controller = new AbortController();
+  aborted.runtime.transport.request = async function* () {
+    yield* [];
+    controller.abort();
+    throw new Error("aborted");
+  };
+  assert.ok(aborted.hooks.sessionBeforeCompact);
+  await aborted.hooks.sessionBeforeCompact(event(controller.signal), aborted.context);
+  assert.deepEqual(aborted.hooks.cancellations, []);
+
+  const succeeding = createHarness([user]);
+  assert.ok(succeeding.hooks.sessionBeforeCompact);
+  const result = await succeeding.hooks.sessionBeforeCompact(
+    event(new AbortController().signal),
+    succeeding.context,
+  );
+  assert.ok(result && "compaction" in result);
+  assert.deepEqual(succeeding.hooks.cancellations, []);
+});
+
+test("the Pi adapter publishes cancellations on the shared compaction channel", () => {
+  const emitted: unknown[][] = [];
+  // oxlint-disable-next-line typescript/no-unsafe-assignment -- This guarded broad third-party API boundary lets the focused adapter test fail immediately on every unimplemented member.
+  const pi: ExtensionAPI = Object.assign(Object.create(null), {
+    events: {
+      emit(channel: string, data: unknown) {
+        emitted.push([channel, data]);
+      },
+      on: () => () => {},
+    },
+  });
+  remoteCompactionApi(pi).publishCancellation("A synthetic reason.");
+  // The channel name is a contract shared with pi-anthropic-compat and pi-compact-assistant.
+  assert.equal(COMPACTION_CANCELLED_CHANNEL, "compaction:cancelled");
+  assert.deepEqual(emitted, [
+    ["compaction:cancelled", { source: "pi-openai-codex-compat", reason: "A synthetic reason." }],
+  ]);
 });

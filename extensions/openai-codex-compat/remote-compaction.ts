@@ -32,6 +32,12 @@ import { resolveFileConfig, type ConfigResolver } from "./config-context.ts";
 import type { CodexProviderRuntime } from "./codex-provider.ts";
 import { responsesCompactionV2Metadata, type CodexCompactionMetadata } from "./codex-metadata.ts";
 import { errorFromThrown } from "./error-from-thrown.ts";
+import {
+  CodexApiError,
+  CodexHttpError,
+  CodexProtocolError,
+  WebSocketCloseError,
+} from "./codex-transport/codex-transport-errors.ts";
 import { latestRequestTools } from "./request-tools-entry.ts";
 import { selectedRegistryModel } from "./model-context.ts";
 
@@ -88,8 +94,44 @@ export type RemoteCompactionHookHandler = (
   ctx: RemoteCompactionContext,
 ) => Promise<RemoteCompactionHookResult | undefined>;
 
+/**
+ * Shared `pi.events` channel that names why an extension cancelled a compaction. Pi reports only
+ * "Compaction cancelled", so an extension that requested the compaction, such as
+ * pi-compact-assistant, reads the reason here. The payload is `{ source, reason }`, where `reason`
+ * is a complete sentence without provider error text.
+ */
+export const COMPACTION_CANCELLED_CHANNEL = "compaction:cancelled";
+
+const IDENTIFIER = /^[a-z][a-z0-9_]{0,63}$/;
+
+/**
+ * Why native compaction failed, for other extensions and the model. Provider error messages,
+ * WebSocket close reasons, and JSON parser errors can quote provider text, so only statuses, codes,
+ * and the kind of failure are named.
+ */
+export function cancellationReason(error: unknown): string {
+  const failed = "OpenAI Codex native compaction failed";
+  let details: string[] = [];
+  if (error instanceof CodexProtocolError) {
+    details = ["invalid Codex response"];
+  } else if (error instanceof CodexApiError) {
+    details = [
+      ...(error.status === undefined ? [] : [`HTTP ${String(error.status)}`]),
+      ...(error.code !== undefined && IDENTIFIER.test(error.code) ? [error.code] : []),
+    ];
+  } else if (error instanceof CodexHttpError) {
+    details = [`HTTP ${String(error.status)}`];
+  } else if (error instanceof WebSocketCloseError && error.code !== undefined) {
+    details = [`WebSocket close code ${String(error.code)}`];
+  }
+  const named = details.length > 0 ? ` (${details.join(", ")})` : "";
+  return `${failed}${named}. History was preserved.`;
+}
+
 export type RemoteCompactionApi = {
   getActiveTools: () => string[];
+  /** Publish why native compaction was cancelled on the shared compaction-cancelled channel. */
+  publishCancellation: (reason: string) => void;
   onBeforeProviderHeaders: (handler: RemoteCompactionHeadersHandler) => void;
   onContext: (handler: RemoteCompactionContextHandler) => void;
   onSessionBeforeCompact: (handler: RemoteCompactionHookHandler) => void;
@@ -114,6 +156,9 @@ export function remoteCompactionApi(pi: ExtensionAPI): RemoteCompactionApi {
 
   return {
     getActiveTools: () => pi.getActiveTools(),
+    publishCancellation: (reason) => {
+      pi.events.emit(COMPACTION_CANCELLED_CHANNEL, { source: "pi-openai-codex-compat", reason });
+    },
     onBeforeProviderHeaders: (handler) =>
       pi.on("before_provider_headers", (event, ctx) => handler(event, context(ctx))),
     // The full-transcript event returns messages verbatim. A changed `context`
@@ -294,6 +339,7 @@ export default function registerRemoteCompaction(
         );
         ctx.ui.notify(`OpenAI Codex native compaction failed: ${failure.message}`, "error");
       }
+      if (!event.signal.aborted) pi.publishCancellation(cancellationReason(error));
       return { cancel: true };
     }
   });

@@ -38,6 +38,7 @@ import {
   type JsonValue,
 } from "../extensions/openai-codex-compat/codex-protocol.ts";
 import { NATIVE_RESPONSE_ENTRY_TYPE } from "../extensions/openai-codex-compat/native-history.ts";
+import { COMPACTION_CANCELLED_CHANNEL } from "../extensions/openai-codex-compat/remote-compaction.ts";
 
 const LIVE_TEST_ENABLED = process.env["PI_CODEX_LIVE_TEST"] === "1";
 const LIVE_TEST_TIMEOUT_MS = 4 * 60 * 1_000;
@@ -266,6 +267,10 @@ async function createLivePiHost(
     sessionManager?: SessionManager;
     onProviderStreamEvent?: (event: ProviderStreamEvent) => void;
     extensions?: InlineExtension[];
+    /** Let manual compaction summarize a short history. */
+    compactable?: boolean;
+    /** Authenticate with this token instead of the live one. */
+    apiKey?: string;
   } = {},
 ): Promise<AgentSession> {
   const tempRoot = await mkdtemp(join(tmpdir(), "pi-codex-live-host-"));
@@ -304,7 +309,7 @@ async function createLivePiHost(
     async () =>
       ({
         type: "oauth",
-        access: liveApiKey(),
+        access: options.apiKey ?? liveApiKey(),
         refresh: "unused-live-test-refresh-token",
         expires: Date.now() + 60 * 60 * 1_000,
       }) satisfies Credential,
@@ -325,7 +330,10 @@ async function createLivePiHost(
       provider: { timeoutMs: 90_000, maxRetries: 0 },
     },
     // Manual compaction needs a history older than the retained recent tokens.
-    compaction: { enabled: false, ...(options.codemode ? { keepRecentTokens: 1 } : {}) },
+    compaction: {
+      enabled: false,
+      ...(options.codemode || options.compactable ? { keepRecentTokens: 1 } : {}),
+    },
     ...(options.codemode ? { codemode: { mode: options.codemode } } : {}),
   });
   const extensionFactories: InlineExtension[] = [
@@ -770,5 +778,51 @@ test(
       false,
       "The instruction stays request-local.",
     );
+  },
+);
+
+test(
+  "live Pi host gpt-6-luna publishes a reason without provider text when Codex rejects compaction",
+  { skip: !LIVE_TEST_ENABLED, timeout: LIVE_TEST_TIMEOUT_MS },
+  async (t) => {
+    const session = await createLivePiHost(t, "text", "gpt-6-luna", [], { compactable: true });
+    await session.prompt("<history-item>text-alpha</history-item>", {
+      expandPromptTemplates: false,
+    });
+    assert.equal(latestAssistant(session).stopReason, "stop");
+    // A fresh extension load, as after a resume, whose token keeps the real account claims but
+    // carries an invalid signature. Codex rejects the compaction request before any work.
+    const [header, claims] = liveApiKey().split(".");
+    const cancellations: unknown[] = [];
+    const resumed = await createLivePiHost(t, "text", "gpt-6-luna", [], {
+      compactable: true,
+      sessionManager: session.sessionManager,
+      apiKey: `${header}.${claims}.invalid-signature`,
+      extensions: [
+        {
+          name: "compaction-cancellations",
+          factory: (pi: ExtensionAPI) => {
+            pi.events.on(COMPACTION_CANCELLED_CHANNEL, (data) => {
+              cancellations.push(data);
+            });
+          },
+        },
+      ],
+    });
+    await assert.rejects(resumed.compact(), { message: "Compaction cancelled" });
+    assert.equal(cancellations.length, 1);
+    const [published] = cancellations;
+    assert.ok(isObject(published));
+    assert.equal(published["source"], "pi-openai-codex-compat");
+    const reason = requireString(published["reason"], "published reason");
+    assert.match(
+      reason,
+      /^OpenAI Codex native compaction failed( \((HTTP \d{3}(, [a-z][a-z0-9_]*)?|[a-z][a-z0-9_]*|WebSocket close code \d+|invalid Codex response)\))?\. History was preserved\.$/,
+    );
+    assert.equal(
+      resumed.sessionManager.getBranch().some((entry) => entry.type === "compaction"),
+      false,
+    );
+    t.diagnostic(`gpt-6-luna compaction rejection published: ${reason}`);
   },
 );
