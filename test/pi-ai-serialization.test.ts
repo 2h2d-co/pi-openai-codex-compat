@@ -433,10 +433,23 @@ test("requires an explicit tool addition capability and supports additional_tool
       additionalToolsOptions,
     ),
   );
-  const additionalTools = additionalToolsHistory.find(
-    (item) => item["type"] === "additional_tools",
+  // Every tool is declared in `additional_tools` items: the leading tools at the head of the input,
+  // then each later addition after an incremental-update notice.
+  const additionalToolsIndexes = additionalToolsHistory.flatMap((item, index) =>
+    item["type"] === "additional_tools" ? [index] : [],
   );
-  assert.deepEqual(additionalTools, {
+  const [leadingIndex, addedIndex] = additionalToolsIndexes;
+  assert.ok(leadingIndex !== undefined && addedIndex !== undefined);
+  assert.equal(additionalToolsIndexes.length, 2);
+  assert.deepEqual(
+    requireJsonRecords(additionalToolsHistory[leadingIndex]?.["tools"]).map((tool) => tool["name"]),
+    [applyPatchTool.name],
+  );
+  assert.match(
+    JSON.stringify(additionalToolsHistory[addedIndex - 1]?.["content"]),
+    /This is an incremental tools update/,
+  );
+  assert.deepEqual(additionalToolsHistory[addedIndex], {
     type: "additional_tools",
     role: "developer",
     tools: [

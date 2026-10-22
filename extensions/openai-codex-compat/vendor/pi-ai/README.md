@@ -9,9 +9,10 @@ preserves valid `fc_` function IDs and `ctc_` grammar IDs, while incompatible
 item IDs are omitted without changing the `call_id` that pairs calls with results.
 
 Pi AI's transcript helpers replay system sections and tool declarations.
-`supportsAdditionalTools` and `supportsToolSearch` select the dynamic tool
-history representation for additive `toolsAdded` system messages:
-message-anchored `additional_tools` or a `tool_search_call`/`tool_search_output`
+`supportsAdditionalTools` and `supportsToolSearch` select Pi AI 1.4.0's tool
+change mode. With mid-conversation system messages, `supportsAdditionalTools`
+declares every tool in `additional_tools` items and announces removals as text.
+`supportsToolSearch` adds later tools with a `tool_search_call`/`tool_search_output`
 pair. The copy keeps both options so the wire-equivalence tests hold, but Compat
 always passes `false`: it declares every tool at the top level.
 

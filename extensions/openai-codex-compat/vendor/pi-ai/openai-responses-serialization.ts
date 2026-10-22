@@ -18,6 +18,7 @@ import type {
   Tool,
   ToolCall,
   ToolResultMessage,
+  TranscriptToolSupport,
 } from "@earendil-works/pi-ai";
 import {
   getSystemMessageText,
@@ -657,6 +658,34 @@ function convertToolResultOutput(
   ];
 }
 
+/**
+ * How a Responses transport expresses tool changes, as Pi AI 1.4.0 chooses it. `additional_tools`
+ * items accumulate and cannot remove a tool, so with them every tool is declared in
+ * `additional_tools` items and removals are announced as text. Synthetic tool search can only add
+ * tools.
+ */
+function getResponsesToolSupport(options: {
+  supportsMidConvoSystemMessages?: boolean;
+  supportsAdditionalTools?: boolean;
+  supportsToolSearch?: boolean;
+}): TranscriptToolSupport {
+  if (options.supportsMidConvoSystemMessages && options.supportsAdditionalTools) return "changes";
+  return options.supportsToolSearch ? "additions" : "none";
+}
+
+/** Precedes every `additional_tools` item after the first, as in Pi AI. */
+function renderIncrementalToolsNotice(unavailable: ReadonlySet<string>): string {
+  const notice =
+    "This is an incremental tools update. Previously declared tools remain available unless explicitly marked unavailable. A tool declared again here is available again, and its latest definition replaces the earlier one.";
+  return unavailable.size > 0
+    ? `${notice}\nStill unavailable: ${[...unavailable].join(", ")}.`
+    : notice;
+}
+
+function renderToolRemovalNotice(names: readonly string[]): string {
+  return `The following tools are no longer available. Do not call them:\n${names.map((name) => `- ${name}`).join("\n")}`;
+}
+
 export function convertResponsesMessages(
   model: Model<Api>,
   context: Context,
@@ -700,10 +729,11 @@ export function convertResponsesMessages(
   };
 
   const transformedMessages = transformMessages(transcript.messages, model, normalizeToolCallId);
-  const transcriptTools = resolveTranscriptTools(
-    transcript.messages,
-    (options?.supportsAdditionalTools ?? false) || (options?.supportsToolSearch ?? false),
-  );
+  const toolSupport = getResponsesToolSupport(options ?? {});
+  const transcriptTools = resolveTranscriptTools(transcript.messages, toolSupport);
+  let declaredAdditionalTools = false;
+  /** Tools announced as removed and not declared again since. */
+  const unavailableTools = new Set<string>();
   const includeSystemPrompt = options?.includeSystemPrompt ?? true;
   const supportsDeveloperRole =
     !isObject(model.compat) || model.compat["supportsDeveloperRole"] !== false;
@@ -711,24 +741,32 @@ export function convertResponsesMessages(
 
   let messageIndex = 0;
   let sourceIndex = 0;
+  let systemIndex = 0;
   for (const message of transformedMessages) {
     const isLeadingSystemMessage = sourceIndex++ === 0 && message.role === "system";
     if (message.role === "system") {
-      const addedTools =
-        !isLeadingSystemMessage && transcriptTools.anchorsAdditions
-          ? (message.toolsAdded ?? [])
-          : [];
+      // transformMessages keeps system messages in order, so their position matches the transcript.
+      const anchorsToolChanges = systemIndex++ >= transcriptTools.foldedSystemMessages;
+      const addedTools = anchorsToolChanges ? (message.toolsAdded ?? []) : [];
+      for (const tool of addedTools) unavailableTools.delete(tool.name);
       const toolOptions = { ...options?.toolOptions };
       if (options?.namespacedToolNames) {
         toolOptions.namespacedToolNames = options.namespacedToolNames;
       }
-      if (addedTools.length > 0 && options?.supportsAdditionalTools) {
+      if (addedTools.length > 0 && toolSupport === "changes") {
+        if (declaredAdditionalTools) {
+          messages.push({
+            role: instructionRole,
+            content: renderIncrementalToolsNotice(unavailableTools),
+          });
+        }
+        declaredAdditionalTools = true;
         messages.push({
           type: "additional_tools",
           role: "developer",
           tools: convertResponsesTools(addedTools, toolOptions),
         });
-      } else if (addedTools.length > 0 && options?.supportsToolSearch) {
+      } else if (addedTools.length > 0 && toolSupport === "additions") {
         const names = addedTools.map((tool) => tool.name);
         const callId = `pi_tool_load_${shortHash(`system:${messageIndex}:${names.join(",")}`)}`;
         messages.push({
@@ -747,9 +785,23 @@ export function convertResponsesMessages(
         });
       }
       if (!isLeadingSystemMessage || includeSystemPrompt) {
-        const text = isLeadingSystemMessage
-          ? getSystemMessageText(message)
-          : renderSystemMessageUpdate(message);
+        const parts = [
+          isLeadingSystemMessage
+            ? getSystemMessageText(message)
+            : renderSystemMessageUpdate(message),
+        ];
+        if (anchorsToolChanges) {
+          // A redefinition is a removal plus an addition of the same name; only true removals
+          // are announced.
+          const added = new Set((message.toolsAdded ?? []).map((tool) => tool.name));
+          const removed = (message.toolsRemoved ?? [])
+            .map((tool) => tool.name)
+            .filter((name) => !added.has(name));
+          if (removed.length > 0) parts.push(renderToolRemovalNotice(removed));
+          // Recorded after this message's additions, whose notice precedes this removal notice.
+          for (const name of removed) unavailableTools.add(name);
+        }
+        const text = parts.filter((part) => part.length > 0).join("\n\n");
         if (text.length > 0) {
           messages.push({ role: instructionRole, content: sanitizeSurrogates(text) });
         }
