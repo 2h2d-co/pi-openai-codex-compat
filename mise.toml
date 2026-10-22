@@ -10,7 +10,7 @@ npm = "11.21.0"
 hk = { version = "2.8.0", workflow = "release.yml", postinstall = "hk install --mise" }
 betterleaks = "1.9.0"
 cocogitto = "7.0.0"
-actionlint = "1.7.12"
+jactionlint = "2.3.0"
 zizmor = "1.30.1"
 
 [shell_alias]

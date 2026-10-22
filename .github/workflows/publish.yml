@@ -18,6 +18,7 @@ jobs:
   build:
     name: Build npm package
     runs-on: ubuntu-latest
+    timeout-minutes: 13
     permissions:
       contents: read
     outputs:
@@ -137,6 +138,7 @@ jobs:
     name: Stage npm package
     needs: build
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     environment: npm-publish
     outputs:
       npm-tag: ${{ steps.release.outputs.npm_tag }}
@@ -385,6 +387,7 @@ jobs:
     name: Create GitHub release
     needs: [build, stage]
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     permissions:
       contents: write # Required to create the release and upload the verified archive.
     steps:

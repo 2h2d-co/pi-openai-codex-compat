@@ -17,6 +17,7 @@ jobs:
   validate:
     name: Validate
     runs-on: ubuntu-latest
+    timeout-minutes: 13
     steps:
       - name: Distrust compromised eMudhra CA roots
         # Temporary until GitHub-hosted runner images ship the fixed ca-certificates
