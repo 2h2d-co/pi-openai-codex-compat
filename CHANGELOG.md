@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.0.29 - 2026-10-22
+
 ### Added
 
 - Publish why native compaction was cancelled on the shared `pi.events` channel
