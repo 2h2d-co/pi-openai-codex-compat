@@ -18,6 +18,20 @@ jobs:
     name: Validate
     runs-on: ubuntu-latest
     steps:
+      - name: Distrust compromised eMudhra CA roots
+        # Temporary until GitHub-hosted runner images ship the fixed ca-certificates
+        # package (actions/runner-images#15018). Debian's fixed package disables the same roots.
+        run: |
+          sudo sed -i -e 's|^mozilla/emSign_ECC_Root_CA_-_G3.crt|!&|' -e 's|^mozilla/Comodo_AAA_Services_root.crt|!&|' /etc/ca-certificates.conf
+          sudo update-ca-certificates --fresh >/dev/null
+          # PEM lines unique to emSign ECC Root CA - G3 and AAA Certificate Services.
+          for needle in RzMwHhcNMTgwMjE4MTgzMDAwWhcNNDMwMjE4MTgzMDAwWjBrMQswCQYDVQQGEwJJ YXRlIFNlcnZpY2VzMB4XDTA0MDEwMTAwMDAwMFoXDTI4MTIzMTIzNTk1OVowezEL; do
+            if grep -qF "$needle" /etc/ssl/certs/ca-certificates.crt; then
+              echo "A compromised eMudhra root is still trusted" >&2
+              exit 1
+            fi
+          done
+
       - name: Check out repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
