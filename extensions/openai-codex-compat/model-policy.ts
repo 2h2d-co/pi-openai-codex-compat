@@ -25,15 +25,14 @@ export type CodexModelPolicySelectHandler = (
   ctx: CodexModelPolicyContext,
 ) => Promise<void> | void;
 
-export type CodexModelPolicySessionStartHandler = (
-  ctx: CodexModelPolicyContext,
-) => Promise<void> | void;
+export type CodexModelPolicySessionHandler = (ctx: CodexModelPolicyContext) => Promise<void> | void;
 
 export type CodexModelPolicySessionShutdownHandler = () => Promise<void> | void;
 
 export type CodexModelPolicyApi = Pick<ExtensionAPI, "getActiveTools" | "setActiveTools"> & {
   onModelSelect: (handler: CodexModelPolicySelectHandler) => void;
-  onSessionStart: (handler: CodexModelPolicySessionStartHandler) => void;
+  onSessionStart: (handler: CodexModelPolicySessionHandler) => void;
+  onSessionTree: (handler: CodexModelPolicySessionHandler) => void;
   onSessionShutdown: (handler: CodexModelPolicySessionShutdownHandler) => void;
   setModel: (model: Model<Api>) => Promise<boolean>;
 };
@@ -68,6 +67,7 @@ export function codexModelPolicyApi(pi: ExtensionAPI): CodexModelPolicyApi {
         );
       }),
     onSessionStart: (handler) => pi.on("session_start", (_event, ctx) => handler(context(ctx))),
+    onSessionTree: (handler) => pi.on("session_tree", (_event, ctx) => handler(context(ctx))),
     onSessionShutdown: (handler) => pi.on("session_shutdown", handler),
     setActiveTools: (names) => pi.setActiveTools(names),
     setModel: (model) => pi.setModel(model),
@@ -85,12 +85,16 @@ export default function registerCodexModelPolicy(
 ): void {
   let restoringRejectedSwitch = false;
 
-  pi.onSessionStart((ctx) => {
+  // Pi restores the tools a branch declared on resume and tree navigation, and also activates
+  // registered extension tools the branch never declared. Apply the policy to the restored set.
+  const syncRestoredTools = (ctx: CodexModelPolicyContext): void => {
     // A resumed session restores the tools it declared, so its replaced `bash` is no longer
     // active. Its declared Codex command tools show that it was.
     const bashReplaced = declaresCodexCommandTool(ctx.sessionManager.getBranch());
     syncCodexTools(pi, ctx.model, resolveConfig(ctx), commandTools, bashReplaced);
-  });
+  };
+  pi.onSessionStart(syncRestoredTools);
+  pi.onSessionTree(syncRestoredTools);
 
   pi.onSessionShutdown(() => {
     syncCodexTools(pi, undefined, DEFAULT_CONFIG, commandTools);

@@ -85,6 +85,7 @@ function createHarness(
         return handler(event, ctx);
       }),
     onSessionStart: (handler) => handlers.set("session_start", (_event, ctx) => handler(ctx)),
+    onSessionTree: (handler) => handlers.set("session_tree", (_event, ctx) => handler(ctx)),
     onSessionShutdown: (handler) => handlers.set("session_shutdown", () => handler()),
     getActiveTools: () => activeTools,
     setActiveTools(names: string[]) {
@@ -116,6 +117,10 @@ function createHarness(
 
   return {
     activeTools: () => activeTools,
+    /** Replace the active tools as Pi's branch restore does, without running the policy. */
+    restoreTools(names: string[]) {
+      activeTools = names;
+    },
     handlers,
     notices,
     select,
@@ -150,6 +155,23 @@ test("activates extension tools only for OpenAI Codex models", async () => {
 
   await harness.handlers.get("session_shutdown")?.(undefined, harness.context);
   assert.deepEqual(harness.activeTools(), ["read", "edit", "write", "bash"]);
+});
+
+test("tree navigation reapplies the tool policy to the restored tools", async () => {
+  const harness = createHarness([], codexModel);
+  await harness.handlers.get("session_start")?.(undefined, harness.context);
+  const codexTools = harness.activeTools();
+  // Pi restores the branch's tools and activates registered tools the branch never declared,
+  // including the unselected `shell_command` and the disabled `web.run`.
+  harness.restoreTools([...codexTools, "shell_command", "web.run"]);
+  await harness.handlers.get("session_tree")?.(undefined, harness.context);
+  assert.deepEqual(harness.activeTools(), codexTools);
+
+  await harness.select(foreignModel);
+  const foreignTools = harness.activeTools();
+  harness.restoreTools([...foreignTools, "apply_patch", "exec_command", "image_gen.imagegen"]);
+  await harness.handlers.get("session_tree")?.(undefined, harness.context);
+  assert.deepEqual(harness.activeTools(), foreignTools);
 });
 
 /** A system message entry that declares `names`, as Pi records a session's tools. */

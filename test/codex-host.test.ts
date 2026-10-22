@@ -501,3 +501,114 @@ for (const mode of ["on", "only"] as const) {
     assert.deepEqual(second.errors, []);
   });
 }
+
+test("tree navigation keeps the configured Codex tools", async (t) => {
+  t.mock.method(globalThis, "WebSocket", function () {
+    throw new Error("The mocked SSE host test must not open a WebSocket.");
+  });
+  const tempRoot = await mkdtemp(join(tmpdir(), "pi-codex-tree-"));
+  const cwd = join(tempRoot, "cwd");
+  const agentDir = join(tempRoot, "agent");
+  await mkdir(cwd, { recursive: true });
+  await mkdir(agentDir, { recursive: true });
+  await writeFile(
+    join(agentDir, CONFIG_FILE),
+    JSON.stringify({ applyPatch: true, imageGeneration: false, webRun: false }),
+  );
+  const previousAgentDir = process.env["PI_CODING_AGENT_DIR"];
+  const previousFetch = globalThis.fetch;
+  process.env["PI_CODING_AGENT_DIR"] = agentDir;
+  t.after(async () => {
+    globalThis.fetch = previousFetch;
+    if (previousAgentDir === undefined) delete process.env["PI_CODING_AGENT_DIR"];
+    else process.env["PI_CODING_AGENT_DIR"] = previousAgentDir;
+    await rm(tempRoot, { recursive: true, force: true });
+  });
+  globalThis.fetch = async () =>
+    sseResponse([
+      {
+        type: "response.output_item.done",
+        output_index: 0,
+        item: {
+          type: "message",
+          id: "message-done",
+          role: "assistant",
+          status: "completed",
+          content: [{ type: "output_text", text: "done", annotations: [] }],
+        },
+      },
+      {
+        type: "response.completed",
+        response: {
+          id: "response-done",
+          status: "completed",
+          usage: { input_tokens: 5, output_tokens: 1, total_tokens: 6 },
+        },
+      },
+    ]);
+
+  const credentials = new InMemoryCredentialStore();
+  await credentials.modify(
+    "openai-codex",
+    async () =>
+      ({
+        type: "oauth",
+        access: accessToken(),
+        refresh: "unused-refresh-token",
+        expires: Date.now() + 60 * 60 * 1_000,
+      }) satisfies Credential,
+  );
+  const modelRuntime = await ModelRuntime.create({
+    credentials,
+    modelsPath: null,
+    allowModelNetwork: false,
+  });
+  const model = modelRuntime.getModel("openai-codex", "gpt-6-luna");
+  assert.ok(model);
+  const settingsManager = SettingsManager.inMemory({
+    transport: "sse",
+    retry: { enabled: false, provider: { timeoutMs: 30_000, maxRetries: 0 } },
+    compaction: { enabled: false, keepRecentTokens: 1 },
+  });
+  const resourceLoader = new DefaultResourceLoader({
+    cwd,
+    agentDir,
+    settingsManager,
+    additionalExtensionPaths: [extensionPath],
+    noSkills: true,
+    noPromptTemplates: true,
+    noThemes: true,
+    noContextFiles: true,
+  });
+  await resourceLoader.reload();
+  assert.deepEqual(resourceLoader.getExtensions().errors, []);
+  const { session } = await createAgentSession({
+    cwd,
+    agentDir,
+    modelRuntime,
+    settingsManager,
+    sessionManager: SessionManager.inMemory(cwd),
+    resourceLoader,
+    model,
+  });
+  const extensionErrors: string[] = [];
+  await session.bindExtensions({
+    onError(error) {
+      extensionErrors.push(error.error);
+    },
+  });
+  t.after(() => session.dispose());
+
+  await session.prompt("Say done.", { expandPromptTemplates: false });
+  const configured = session.getActiveToolNames().toSorted();
+  assert.deepEqual(configured, ["apply_patch", "exec_command", "read", "write_stdin"]);
+  const userEntry = session.sessionManager
+    .getBranch()
+    .find((entry) => entry.type === "message" && entry.message.role === "user");
+  assert.ok(userEntry);
+  // Pi activates registered tools the branch never declared, such as `shell_command`, `web.run`,
+  // and `image_gen.imagegen`, before it emits `session_tree`.
+  await session.navigateTree(userEntry.id, { summarize: false });
+  assert.deepEqual(session.getActiveToolNames().toSorted(), configured);
+  assert.deepEqual(extensionErrors, []);
+});

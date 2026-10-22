@@ -6,6 +6,12 @@
 
 - Require Pi `>=1.4.0 <1.5.0`.
 
+### Fixed
+
+- Keep the configured Codex tools after `/tree` navigation. Pi 1.4.0 activates extension tools
+  that the destination branch never declared, so navigation could enable image generation and
+  `web.run` when they were disabled, and add `shell_command` beside `exec_command`.
+
 ## 0.0.27 - 2026-10-21
 
 ### Fixed
