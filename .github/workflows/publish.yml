@@ -35,7 +35,7 @@ jobs:
       - name: Set up Node.js and npm
         uses: jdx/mise-action@7a4e45a543138629540c9a1616d08632b893e492 # v5.0.1
         with:
-          version: "2026.10.3"
+          version: "2026.10.17"
           install_args: --locked
           cache: false
 
@@ -143,17 +143,17 @@ jobs:
       - name: Set up npm publishing client
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          # Node 26.10.0 bundles npm 11.19.1, which this job uses as the publishing
+          # Node 26.12.1 bundles npm 11.20.0, which this job uses as the publishing
           # client. That intentionally differs from the Mise-pinned project npm
-          # 11.20.0 used by the build and release jobs; the version check below
+          # 11.21.0 used by the build and release jobs; the version check below
           # pins the bundled client.
-          node-version: "26.10.0"
+          node-version: "26.12.1"
           package-manager-cache: false
 
       - name: Verify npm publishing client
         run: |
-          test "$(node --version)" = v26.10.0
-          test "$(npm --version)" = 11.19.1
+          test "$(node --version)" = v26.12.1
+          test "$(npm --version)" = 11.20.0
 
       - name: Download package archive
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
@@ -369,7 +369,7 @@ jobs:
       - name: Set up Node.js and npm
         uses: jdx/mise-action@7a4e45a543138629540c9a1616d08632b893e492 # v5.0.1
         with:
-          version: "2026.10.3"
+          version: "2026.10.17"
           install_args: --locked
           cache: false
 
