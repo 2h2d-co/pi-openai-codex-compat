@@ -11,6 +11,8 @@
 - Keep the configured Codex tools after `/tree` navigation. Pi 1.4.0 activates extension tools
   that the destination branch never declared, so navigation could enable image generation and
   `web.run` when they were disabled, and add `shell_command` beside `exec_command`.
+- Send Pi's `(no tool output)` placeholder for whitespace-only tool output, as Pi 1.4.0 does.
+  Providers can reject whitespace-only tool content, such as a bare line break.
 
 ## 0.0.27 - 2026-10-21
 

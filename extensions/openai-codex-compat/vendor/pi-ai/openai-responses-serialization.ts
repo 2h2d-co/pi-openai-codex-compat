@@ -636,7 +636,7 @@ function convertToolResultOutput(
   const textContent = content.filter((item): item is TextContent => item.type === "text");
   const textResult = textContent.map((item) => item.text).join("\n");
   const images = content.filter((item): item is ImageContent => item.type === "image");
-  const hasText = textResult.length > 0;
+  const hasText = textResult.trim().length > 0;
 
   if (images.length === 0 && textAsContentItem && textContent.length > 0) {
     return [{ type: "input_text", text: sanitizeSurrogates(textResult) }];

@@ -464,6 +464,35 @@ test("requires an explicit tool addition capability and supports additional_tool
   });
 });
 
+test("sends a placeholder for whitespace-only tool output, as Pi AI does", () => {
+  const whitespaceContext: Context = {
+    ...context,
+    messages: context.messages.map((message) =>
+      message.role === "toolResult"
+        ? { ...message, content: [{ type: "text", text: "\r\n" }] }
+        : message,
+    ),
+  };
+  const copied = copiedConvertResponsesMessages(
+    model,
+    whitespaceContext,
+    allowedProviders,
+    options,
+  );
+  assert.deepEqual(
+    copied,
+    referenceConvertResponsesMessages(
+      model,
+      normalizeContext(whitespaceContext),
+      allowedProviders,
+      options,
+    ),
+  );
+  const outputs = copied.filter((item) => item["type"] === "custom_tool_call_output");
+  assert.equal(outputs.length, 1);
+  assert.equal(outputs[0]?.["output"], "(no tool output)");
+});
+
 test("configures image detail for image tool-result history", () => {
   const imageModel = { ...model, input: ["text", "image"] } satisfies Model<Api>;
   const imageAssistant = {
