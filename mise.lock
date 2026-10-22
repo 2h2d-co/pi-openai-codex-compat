@@ -106,21 +106,21 @@ checksum = "sha256:c9e1dbc748b33ed2d14f42445191ecaf14c56259c7a9a26d0042c49ec2b66
 url = "https://nodejs.org/dist/v22.23.4/node-v22.23.4-darwin-arm64.tar.gz"
 
 [[tools.npm]]
-version = "11.20.0"
+version = "11.21.0"
 backend = "aqua:npm/cli"
-specifiers = ["11.20.0"]
+specifiers = ["11.21.0"]
 
 [tools.npm."platforms.linux-arm64"]
-checksum = "sha256:d1a92f40e6c407b84c3a00c3cf978a10b24fd42f153c527e2016cef7bb34a483"
-url = "https://registry.npmjs.org/npm/-/npm-11.20.0.tgz"
+checksum = "sha256:783e7c92bf73b442fb800c2d6ef3921e86da8894a700fed45140e37916877482"
+url = "https://registry.npmjs.org/npm/-/npm-11.21.0.tgz"
 
 [tools.npm."platforms.linux-x64"]
-checksum = "sha256:d1a92f40e6c407b84c3a00c3cf978a10b24fd42f153c527e2016cef7bb34a483"
-url = "https://registry.npmjs.org/npm/-/npm-11.20.0.tgz"
+checksum = "sha256:783e7c92bf73b442fb800c2d6ef3921e86da8894a700fed45140e37916877482"
+url = "https://registry.npmjs.org/npm/-/npm-11.21.0.tgz"
 
 [tools.npm."platforms.macos-arm64"]
-checksum = "sha256:d1a92f40e6c407b84c3a00c3cf978a10b24fd42f153c527e2016cef7bb34a483"
-url = "https://registry.npmjs.org/npm/-/npm-11.20.0.tgz"
+checksum = "sha256:783e7c92bf73b442fb800c2d6ef3921e86da8894a700fed45140e37916877482"
+url = "https://registry.npmjs.org/npm/-/npm-11.21.0.tgz"
 
 [[tools.zizmor]]
 version = "1.30.1"
