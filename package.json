@@ -66,6 +66,9 @@
     "@earendil-works/pi-tui": ">=1.4.0 <1.5.0",
     "typebox": "*"
   },
+  "overrides": {
+    "undici": "8.12.2"
+  },
   "engines": {
     "node": ">=22.19.0"
   },
