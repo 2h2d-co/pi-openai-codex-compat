@@ -1,8 +1,8 @@
-amends "package://github.com/2h2d-co/hk-config/releases/download/v0.16.0/hk-config@0.16.0#/Config.pkl"
+amends "package://github.com/2h2d-co/hk-config/releases/download/v0.19.0/hk-config@0.19.0#/Config.pkl"
 
-import "package://github.com/2h2d-co/hk-config/releases/download/v0.16.0/hk-config@0.16.0#/Base.pkl" as Base
-import "package://github.com/2h2d-co/hk-config/releases/download/v0.16.0/hk-config@0.16.0#/GitHubActions.pkl" as GitHubActions
-import "package://github.com/2h2d-co/hk-config/releases/download/v0.16.0/hk-config@0.16.0#/TypeScript.pkl" as TypeScript
+import "package://github.com/2h2d-co/hk-config/releases/download/v0.19.0/hk-config@0.19.0#/Base.pkl" as Base
+import "package://github.com/2h2d-co/hk-config/releases/download/v0.19.0/hk-config@0.19.0#/GitHubActions.pkl" as GitHubActions
+import "package://github.com/2h2d-co/hk-config/releases/download/v0.19.0/hk-config@0.19.0#/TypeScript.pkl" as TypeScript
 
 local projectSteps = (Base.baseSteps) {
   ...TypeScript.typeScriptSteps
@@ -10,4 +10,4 @@ local projectSteps = (Base.baseSteps) {
 }
 
 display_skip_reasons = Base.displaySkipReasons
-hooks = Base.defaultHooks(true, projectSteps)
+hooks = Base.defaultHooks(projectSteps)
