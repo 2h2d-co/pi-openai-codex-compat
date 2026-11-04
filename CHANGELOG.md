@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.0.30 - 2026-11-04
+
 ### Added
 
 - Use the Responses Lite envelope for `gpt-6.1-terra`, which Pi 1.5.0 adds to `openai-codex`, when
