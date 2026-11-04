@@ -18,7 +18,7 @@ test("selects only supported Responses Lite models when enabled", () => {
   assert.equal(usesResponsesLite("gpt-5.6-terra"), true);
   assert.equal(usesResponsesLite("gpt-5.6-luna"), true);
   assert.equal(usesResponsesLite("gpt-6-astra"), true);
-  for (const modelId of ["gpt-6-sol", "gpt-6-luna", "gpt-6.1-sol"]) {
+  for (const modelId of ["gpt-6-sol", "gpt-6-luna", "gpt-6.1-sol", "gpt-6.1-terra"]) {
     assert.equal(usesResponsesLite(modelId), true);
     assert.equal(usesResponsesLite(modelId, false), false);
     assert.equal(usesResponsesLite(`${modelId}-preview`), false);

@@ -13,6 +13,7 @@ const RESPONSES_LITE_MODELS: ReadonlySet<string> = new Set([
   "gpt-6-sol",
   "gpt-6-luna",
   "gpt-6.1-sol",
+  "gpt-6.1-terra",
 ]);
 
 function isHostedTool(tool: JsonRecord): boolean {

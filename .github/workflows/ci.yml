@@ -49,9 +49,7 @@ jobs:
         run: mise run init
 
       - name: Audit dependencies
-        # Temporary: Pi 1.4.0 pins minimatch 10.2.6 (GHSA-g3hv-75wg-m249) in the Pi development
-        # dependency. Restore the full audit once a Pi release ships minimatch 11.0.1 or later.
-        run: npm audit --omit=dev
+        run: npm audit
 
       - name: Check
         run: hk check --all --check

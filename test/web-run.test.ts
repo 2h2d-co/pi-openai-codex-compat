@@ -17,6 +17,7 @@ import type { CodexJsonRequestOptions } from "../extensions/openai-codex-compat/
 import type { WebRunDetails } from "../extensions/openai-codex-compat/web-run-render.ts";
 import type { CodexToolExecutionContext } from "../extensions/openai-codex-compat/tool-definition-contract.ts";
 import type { WebRunCommands } from "../extensions/openai-codex-compat/web-run-schema.ts";
+import { keyHints } from "./support/key-hints.ts";
 import { testTheme } from "./support/test-theme.ts";
 
 const ANSI_SEQUENCE_PATTERN = new RegExp(String.raw`\u001b\[[0-?]*[ -/]*[@-~]`, "gu");
@@ -257,6 +258,7 @@ test("registers the complete reserved web.run schema and executes alpha/search",
 
   const theme = testTheme();
   const renderContext: WebRunRenderContext = {
+    ...keyHints,
     outputPad: 1,
     durationMs: undefined,
     args: commands,

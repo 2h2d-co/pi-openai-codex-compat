@@ -19,6 +19,7 @@ import type { CodexJsonRequestOptions } from "../extensions/openai-codex-compat/
 import { IMAGE_GENERATION_DETAILS_SCHEMA } from "../extensions/openai-codex-compat/image-generation-render.ts";
 import type { CodexToolExecutionContext } from "../extensions/openai-codex-compat/tool-definition-contract.ts";
 import { isString } from "../extensions/openai-codex-compat/value-contracts.ts";
+import { keyHints } from "./support/key-hints.ts";
 import { testTheme } from "./support/test-theme.ts";
 
 const GENERATED_PNG =
@@ -301,6 +302,7 @@ test("executes generation and recent-image edits through Codex Images", async (t
   const theme = testTheme();
   const args = { prompt: "Draw a blue square." };
   const renderContext: ImageRenderContext = {
+    ...keyHints,
     outputPad: 1,
     durationMs: undefined,
     args,

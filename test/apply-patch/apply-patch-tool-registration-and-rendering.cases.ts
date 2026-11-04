@@ -3,6 +3,7 @@ import type {
   ApplyPatchTool,
 } from "../../extensions/openai-codex-compat/apply-patch.ts";
 import { renderApplyPatchResult } from "../../extensions/openai-codex-compat/apply-patch-render.ts";
+import { keyHints } from "../support/key-hints.ts";
 import {
   assert,
   readFile,
@@ -89,6 +90,7 @@ test("registers the Codex freeform tool with model, UI, and failed-history parit
     { patch: "*** Begin Patch\n*** Add File: rendered.txt\n+hello\n*** End Patch" },
     theme,
     {
+      ...keyHints,
       outputPad: 1,
       durationMs: undefined,
       args: {
@@ -117,6 +119,7 @@ test("registers the Codex freeform tool with model, UI, and failed-history parit
     { patch: "*** Begin Patch\n*** Add File: pending.txt\n+pending\n*** End Patch" },
     theme,
     {
+      ...keyHints,
       outputPad: 1,
       durationMs: undefined,
       args: {
@@ -145,6 +148,7 @@ test("registers the Codex freeform tool with model, UI, and failed-history parit
   toolBackground = "subtle";
 
   const component = renderResult(result, { expanded: false, isPartial: false }, theme, {
+    ...keyHints,
     outputPad: 1,
     durationMs: undefined,
     args: {
@@ -172,6 +176,7 @@ test("registers the Codex freeform tool with model, UI, and failed-history parit
   applyPatchDebug = true;
   const debugResultText = stripAnsi(
     renderResult(result, { expanded: false, isPartial: false }, theme, {
+      ...keyHints,
       outputPad: 1,
       durationMs: undefined,
       args: {
@@ -399,6 +404,7 @@ test("registers the Codex freeform tool with model, UI, and failed-history parit
     { expanded: false, isPartial: false },
     theme,
     {
+      ...keyHints,
       outputPad: 1,
       durationMs: undefined,
       args: { patch: failedPatch },
@@ -431,6 +437,7 @@ test("registers the Codex freeform tool with model, UI, and failed-history parit
     { expanded: false, isPartial: false },
     theme,
     {
+      ...keyHints,
       outputPad: 1,
       durationMs: undefined,
       args: { patch: failedPatch },
@@ -533,6 +540,7 @@ test("registers the Codex freeform tool with model, UI, and failed-history parit
     { expanded: false, isPartial: false },
     theme,
     {
+      ...keyHints,
       outputPad: 1,
       durationMs: undefined,
       args: { patch: verificationPatch },
@@ -569,6 +577,7 @@ test("registers the Codex freeform tool with model, UI, and failed-history parit
     { expanded: false, isPartial: false },
     theme,
     {
+      ...keyHints,
       outputPad: 1,
       durationMs: undefined,
       args: { patch: verificationPatch },
@@ -636,6 +645,7 @@ test("registers the Codex freeform tool with model, UI, and failed-history parit
     { expanded: false, isPartial: false },
     theme,
     {
+      ...keyHints,
       outputPad: 1,
       durationMs: undefined,
       args: { patch: reverseOrderedPatch },
