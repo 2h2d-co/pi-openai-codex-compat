@@ -175,7 +175,7 @@ jobs:
         with:
           # Node 26.12.1 bundles npm 11.20.0, which this job uses as the publishing
           # client. That intentionally differs from the Mise-pinned project npm
-          # 11.21.0 used by the build and release jobs; the version check below
+          # 11.21.2 used by the build and release jobs; the version check below
           # pins the bundled client.
           node-version: "26.12.1"
           package-manager-cache: false
