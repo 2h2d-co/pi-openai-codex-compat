@@ -5,7 +5,7 @@ locked = true
 minimum_release_age = "7d"
 
 [tools]
-node = "22.23.4"
+node = "22.23.5"
 npm = "11.21.2"
 hk = { version = "2.10.0", workflow = "release.yml", postinstall = "hk install --mise" }
 betterleaks = "1.9.0"
