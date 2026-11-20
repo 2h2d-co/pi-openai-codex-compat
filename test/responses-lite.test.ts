@@ -11,6 +11,7 @@ import {
   RESPONSES_LITE_WS_METADATA_KEY,
   responsesLiteSsePayload,
   usesResponsesLite,
+  wireRequestBody,
 } from "../extensions/openai-codex-compat/responses-lite.ts";
 
 test("selects only supported Responses Lite models when enabled", () => {
@@ -18,7 +19,14 @@ test("selects only supported Responses Lite models when enabled", () => {
   assert.equal(usesResponsesLite("gpt-5.6-terra"), true);
   assert.equal(usesResponsesLite("gpt-5.6-luna"), true);
   assert.equal(usesResponsesLite("gpt-6-astra"), true);
-  for (const modelId of ["gpt-6-sol", "gpt-6-luna", "gpt-6.1-sol", "gpt-6.1-terra"]) {
+  for (const modelId of [
+    "gpt-6-sol",
+    "gpt-6-luna",
+    "gpt-6.1-sol",
+    "gpt-6.1-terra",
+    "gpt-6.2-sol",
+    "gpt-6.2-astra",
+  ]) {
     assert.equal(usesResponsesLite(modelId), true);
     assert.equal(usesResponsesLite(modelId, false), false);
     assert.equal(usesResponsesLite(`${modelId}-preview`), false);
@@ -32,7 +40,14 @@ test("selects only supported Responses Lite models when enabled", () => {
   assert.equal(usesResponsesLite("gpt-5.6-sol", false), false);
 });
 
-for (const modelId of ["gpt-5.6-sol", "gpt-6-astra", "gpt-6-sol", "gpt-6-luna", "gpt-6.1-sol"]) {
+for (const modelId of [
+  "gpt-5.6-sol",
+  "gpt-6-astra",
+  "gpt-6-sol",
+  "gpt-6-luna",
+  "gpt-6.1-sol",
+  "gpt-6.2-sol",
+]) {
   test(`builds the Responses Lite instruction and tool prefix for ${modelId}`, () => {
     const payload = applyResponsesLite(
       {
@@ -274,4 +289,38 @@ test("leaves ordinary Responses requests unchanged", () => {
   assert.equal(applyResponsesLite(payload, "gpt-5.6-sol", false), payload);
   assert.equal(applyResponsesLite(payload, "gpt-6-astra", false), payload);
   assert.throws(() => applyResponsesLite({}, "gpt-6-astra"), /requires array input/);
+});
+
+test("sends the system prompt of ordinary requests as the first developer message", () => {
+  const user = { type: "message", role: "user", content: [{ type: "input_text", text: "hi" }] };
+  const payload = { model: "gpt-6.2-sol", instructions: "Stable instructions", input: [user] };
+  for (const [modelId, enabled] of [
+    ["gpt-5.5", true],
+    ["gpt-6.2-sol", false],
+  ] as const) {
+    const wire = wireRequestBody(payload, modelId, enabled);
+    assert.equal(wire.instructions, undefined);
+    assert.deepEqual(wire.input, [
+      {
+        type: "message",
+        role: "developer",
+        content: [{ type: "input_text", text: "Stable instructions" }],
+      },
+      user,
+    ]);
+    assert.equal(payload.instructions, "Stable instructions");
+    assert.deepEqual(payload.input, [user]);
+  }
+  // Without a prompt nothing is prepended, as in Pi AI and official Codex.
+  const empty = wireRequestBody({ instructions: "", input: [user] }, "gpt-5.5");
+  assert.equal(empty.instructions, undefined);
+  assert.deepEqual(empty.input, [user]);
+  const unchanged = { input: [user] };
+  assert.equal(wireRequestBody(unchanged, "gpt-5.5"), unchanged);
+  assert.throws(() => wireRequestBody({ instructions: "x" }, "gpt-5.5"), /requires array input/);
+  // Responses Lite keeps its own envelope.
+  assert.deepEqual(
+    wireRequestBody(payload, "gpt-6.2-sol"),
+    applyResponsesLite(payload, "gpt-6.2-sol"),
+  );
 });

@@ -29,6 +29,7 @@ import {
   nativeResponseData,
 } from "../extensions/openai-codex-compat/native-history.ts";
 import type { ResponsesOutputMessageItem } from "../extensions/openai-codex-compat/responses-item-schema.ts";
+import { withPromptAsInstructions } from "./support/wire-prompt.ts";
 import {
   accessToken,
   assistantEntry,
@@ -183,14 +184,8 @@ test("derives instructions, inline prompt updates, and tool placement from Pi tr
           getCurrentTools(context.messages).map((tool) => tool.name),
         );
         if (change === "redefinition") assert.equal(declarations[0]?.["description"], "New report");
-        if (modelId === "gpt-5.6-sol") {
-          assert.equal(wire.instructions, undefined);
-          assert.deepEqual(requireJsonRecords(wire.input)[1]?.content, [
-            { type: "input_text", text: ordinary.instructions },
-          ]);
-        } else {
-          assert.equal(wire.instructions, ordinary.instructions);
-        }
+        // Both envelopes send the prompt as the first developer message in `input`.
+        assert.equal(withPromptAsInstructions(wire).instructions, ordinary.instructions);
         assert.deepEqual(context, original);
       }
     }
@@ -278,7 +273,7 @@ test("sends request-local system messages in place as developer items", async ()
     const harness = createHarness(entries(stored));
     let request: JsonRecord | undefined;
     harness.runtime.transport.request = async function* (_model, body) {
-      request = structuredClone(requireJsonRecord(body));
+      request = withPromptAsInstructions(structuredClone(requireJsonRecord(body)));
       yield* textEvents("done");
     };
     const result = await harness.runtime
@@ -413,7 +408,7 @@ test("declares current tools before percentage compaction and retains prompt upd
     });
     const requests: JsonRecord[] = [];
     harness.runtime.transport.request = async function* (_model, body) {
-      requests.push(structuredClone(requireJsonRecord(body)));
+      requests.push(withPromptAsInstructions(structuredClone(requireJsonRecord(body))));
       if (requests.length === 1) yield* compactionEvents();
       else yield* textEvents("continued");
     };
@@ -667,7 +662,7 @@ test("restores checkpoint system snapshots and post-checkpoint tool changes afte
   });
   let request: JsonRecord | undefined;
   runtime.transport.request = async function* (_model, body) {
-    request = requireJsonRecord(body);
+    request = withPromptAsInstructions(requireJsonRecord(body));
     yield* textEvents("done");
   };
   for (const supportsMidConvoSystemMessages of [false, true]) {
@@ -943,4 +938,110 @@ test("a tool-result omission alone does not identify an omitted recovery attempt
   const recovery = providerHistory({ branch, wireModel: model, recoverLatestOverflowPrefix: true });
   assert.deepEqual(recovery, ordinary);
   assert.doesNotMatch(JSON.stringify(recovery), /OMITTED_TOOL_RESULT/);
+});
+
+test("sends thinking levels as configuration updates on models with mid-conversation effort", async () => {
+  const reply = assistantEntry("assistant", "user", "first reply").message;
+  const stored: Message[] = [
+    initial,
+    FIRST_REQUEST,
+    { ...reply, providerThinkingLevel: "high" },
+    NEXT_REQUEST,
+  ];
+  for (const supportsMidConvoEffort of [true, false]) {
+    const model = {
+      ...codexModel(),
+      compat: { supportsOpenAIGrammarTools: true, supportsMidConvoEffort },
+    };
+    // Off is sent as effort `none`, so switching thinking off keeps the cache too.
+    for (const [reasoning, effort] of [
+      ["low", "low"],
+      [undefined, "none"],
+    ] as const) {
+      const harness = createHarness(entries(stored));
+      let request: JsonRecord | undefined;
+      harness.runtime.transport.request = async function* (_model, body) {
+        request = withPromptAsInstructions(structuredClone(requireJsonRecord(body)));
+        yield* textEvents("done");
+      };
+      const result = await harness.runtime
+        .streamSimple(model, normalizeContext({ messages: stored }), {
+          apiKey: accessToken(),
+          sessionId: "session-1",
+          transport: "sse",
+          ...(reasoning === undefined ? {} : { reasoning }),
+        })
+        .result();
+      assert.equal(result.stopReason, "stop", result.errorMessage);
+      assert.ok(request);
+      const input = requireJsonRecords(request.input);
+      const updates = input.filter((item) => item.type === "configuration_update");
+      if (supportsMidConvoEffort) {
+        // The effort stays fixed. Each earlier reply replays its recorded level, and the
+        // request's own level ends the input, so earlier input never changes.
+        assert.equal(result.providerThinkingLevel, effort);
+        assert.deepEqual(request["reasoning"], { effort: "medium", summary: "auto" });
+        assert.deepEqual(updates, [
+          { type: "configuration_update", reasoning: { effort: "high" } },
+          { type: "configuration_update", reasoning: { effort } },
+        ]);
+        const first = input.indexOf(updates[0] ?? {});
+        assert.match(JSON.stringify(input[first + 1]), /first reply/);
+        assert.equal(input.at(-1), updates[1]);
+      } else {
+        assert.equal(result.providerThinkingLevel, undefined);
+        assert.deepEqual(request["reasoning"], { effort, summary: "auto" });
+        assert.deepEqual(updates, []);
+      }
+    }
+  }
+});
+
+test("keeps the request's configuration update out of percentage compaction and after the checkpoint", async () => {
+  const reply = assistantEntry("assistant", "user", "old reply").message;
+  const messages: Message[] = [
+    initial,
+    { role: "user", content: "old request", timestamp: 1 },
+    { ...reply, providerThinkingLevel: "high" },
+    { role: "user", content: "unsampled request", timestamp: 3 },
+  ];
+  const harness = createHarness(entries(messages), {
+    ...DEFAULT_CONFIG,
+    autoCompactAtPercent: 80,
+  });
+  const requests: JsonRecord[] = [];
+  harness.runtime.transport.request = async function* (_model, body) {
+    requests.push(withPromptAsInstructions(structuredClone(requireJsonRecord(body))));
+    if (requests.length === 1) yield* compactionEvents();
+    else yield* textEvents("continued");
+  };
+  const result = await harness.runtime
+    .streamSimple(
+      {
+        ...codexModel(),
+        compat: { supportsOpenAIGrammarTools: true, supportsMidConvoEffort: true },
+      },
+      normalizeContext({ messages }),
+      { apiKey: accessToken(), sessionId: "session-1", transport: "sse", reasoning: "low" },
+    )
+    .result();
+  assert.equal(result.stopReason, "stop", result.errorMessage);
+  assert.equal(requests.length, 2);
+  const updates = (request: JsonRecord | undefined) =>
+    requireJsonRecords(request?.["input"]).flatMap((item) =>
+      item.type === "configuration_update" ? [item["reasoning"]] : [],
+    );
+  // The compaction request replays the earlier reply's level and ends with its trigger.
+  assert.deepEqual(updates(requests[0]), [{ effort: "high" }]);
+  assert.equal(requireJsonRecords(requests[0]?.["input"]).at(-1)?.type, "compaction_trigger");
+  // The continuation follows the checkpoint and ends with the request's own level.
+  const continued = requireJsonRecords(requests[1]?.["input"]);
+  assert.match(JSON.stringify(continued), /opaque-state/);
+  assert.deepEqual(continued.at(-1), {
+    type: "configuration_update",
+    reasoning: { effort: "low" },
+  });
+  assert.match(JSON.stringify(continued.at(-2)), /unsampled request/);
+  // The checkpoint stores no request-specific level.
+  assert.doesNotMatch(JSON.stringify(harness.compactions), /configuration_update/);
 });

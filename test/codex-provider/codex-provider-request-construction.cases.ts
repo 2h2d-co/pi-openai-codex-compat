@@ -3,6 +3,7 @@ import {
   requireJsonRecords,
 } from "../../extensions/openai-codex-compat/codex-protocol.ts";
 import { requireString } from "../../extensions/openai-codex-compat/value-contracts.ts";
+import { withPromptAsInstructions } from "../support/wire-prompt.ts";
 import {
   assert,
   test,
@@ -261,6 +262,7 @@ test("uses ordinary Responses when Responses Lite is disabled", async () => {
     .result();
 
   assert.ok(request);
+  request = withPromptAsInstructions(request);
   assert.equal(request.instructions, "Stable instructions");
   assert.deepEqual(request.tools, [
     {
@@ -281,7 +283,8 @@ test("uses ordinary Responses when Responses Lite is disabled", async () => {
     undefined,
   );
   assert.equal(cacheDiagnostics?.["envelope"], "responses");
-  assert.equal(cacheDiagnostics?.["staticInputItems"], 0);
+  // The static prefix sends the system prompt as its one input item.
+  assert.equal(cacheDiagnostics?.["staticInputItems"], 1);
 });
 
 test("reuses one turn id throughout an agent run", async () => {

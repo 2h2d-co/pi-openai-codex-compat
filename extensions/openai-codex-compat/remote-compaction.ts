@@ -19,6 +19,7 @@ import { CODEX_API, CODEX_PROVIDER } from "./codex-identifiers.ts";
 import {
   branchInstructions,
   branchTranscript,
+  configurationUpdateEffort,
   providerHistory,
   remoteCompactionMarkerSummary,
   requestGrammarToolInputProperties,
@@ -283,13 +284,22 @@ export default function registerRemoteCompaction(
       const grammarToolInputProperties =
         saved?.grammarToolInputProperties ??
         fallbackGrammarToolInputProperties(ctx.model, transcript ?? [], pi.getActiveTools());
+      // Replay the effort of earlier replies as turn requests do, so the compaction request
+      // shares their cached prefix. The trailing update sets a turn's own effort, and a
+      // compaction request ends with its trigger instead.
+      const updateEffort = configurationUpdateEffort(
+        ctx.model,
+        matching?.requestOptions.reasoningEffort,
+      );
       const history = providerHistory({
         branch: event.branchEntries,
         wireModel: ctx.model,
         grammarToolInputProperties,
         imageDetail: config.imageDetail,
         recoverLatestOverflowPrefix: event.reason === "overflow" && event.willRetry,
+        configurationUpdateEffort: updateEffort,
       });
+      if (updateEffort !== undefined) history.pop();
       const template: JsonRecord = {
         ...matching?.payload,
         tools: saved?.tools ?? requestTools(ctx.model, getCurrentTools(transcript ?? [])),

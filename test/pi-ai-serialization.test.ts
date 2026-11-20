@@ -155,6 +155,28 @@ const context: Context = {
 };
 
 const allowedProviders = new Set(["openai", "openai-codex", "opencode"]);
+
+/**
+ * Pi AI's serialization of a transcript without its leading system message. Since Pi AI 1.6.0 the
+ * leading system message is always the first developer item; the copy's extension-owned
+ * `includeSystemPrompt: false` omits it because Compat sends it from `instructions`.
+ */
+function referenceWithoutLeadingPrompt(
+  ...args: Parameters<typeof referenceConvertResponsesMessages>
+): unknown {
+  const items: unknown = JSON.parse(JSON.stringify(referenceConvertResponsesMessages(...args)));
+  assert.ok(Array.isArray(items));
+  const index = items.findIndex(
+    (item: unknown) =>
+      typeof item === "object" &&
+      item !== null &&
+      !("type" in item) &&
+      "role" in item &&
+      item.role === "developer",
+  );
+  assert.ok(index >= 0);
+  return items.filter((_: unknown, position: number) => position !== index);
+}
 const options = {
   includeSystemPrompt: false,
   grammarToolInputProperties: new Map([["apply_patch", "patch"]]),
@@ -356,16 +378,7 @@ test("holds a system message between a tool call and its results like Pi AI", ()
     );
     assert.deepEqual(
       copied,
-      JSON.parse(
-        JSON.stringify(
-          referenceConvertResponsesMessages(
-            model,
-            transcript,
-            allowedProviders,
-            serializationOptions,
-          ),
-        ),
-      ),
+      referenceWithoutLeadingPrompt(model, transcript, allowedProviders, serializationOptions),
     );
     // The update follows the (real or synthetic) tool result rather than
     // separating the call from its result.
@@ -883,4 +896,90 @@ test("strict JSON-schema tools serialize the strict schema subset exactly like P
   }
   // Conversion never mutates the caller's tool schemas.
   assert.equal(requireJsonRecord(requireTool.parameters)["additionalProperties"], undefined);
+});
+
+test("sends thinking levels as configuration updates like Pi AI", () => {
+  const reply = (text: string, timestamp: number, overrides: Partial<AssistantMessage>) =>
+    ({
+      ...assistantMessage,
+      content: [{ type: "text", text }],
+      stopReason: "stop",
+      timestamp,
+      ...overrides,
+    }) satisfies AssistantMessage;
+  const transcript = normalizeContext({
+    messages: [
+      { role: "system", content: "initial", timestamp: 0 },
+      { role: "user", content: "first", timestamp: 1 },
+      reply("high reply", 2, { providerThinkingLevel: "high" }),
+      { role: "user", content: "second", timestamp: 3 },
+      // Only replies of the same model replay their level.
+      reply("other model reply", 4, { model: "gpt-other", providerThinkingLevel: "low" }),
+      { role: "user", content: "third", timestamp: 5 },
+      reply("unrecorded reply", 6, {}),
+      { role: "user", content: "fourth", timestamp: 7 },
+    ],
+  });
+  const updateOptions = { ...options, configurationUpdateEffort: "none" };
+  const copied = copiedConvertResponsesMessages(model, transcript, allowedProviders, updateOptions);
+  assert.deepEqual(
+    copied,
+    referenceWithoutLeadingPrompt(model, transcript, allowedProviders, updateOptions),
+  );
+  const updates = copied.flatMap((item, index) =>
+    item["type"] === "configuration_update" ? [{ index, item }] : [],
+  );
+  assert.deepEqual(
+    updates.map(({ item }) => item),
+    [
+      { type: "configuration_update", reasoning: { effort: "high" } },
+      { type: "configuration_update", reasoning: { effort: "none" } },
+    ],
+  );
+  // The recorded level precedes its reply, and the request's own level ends the input.
+  assert.match(JSON.stringify(copied[(updates[0]?.index ?? 0) + 1]), /high reply/);
+  assert.equal(updates[1]?.index, copied.length - 1);
+  // Without the option no update is sent.
+  assert.equal(
+    copiedConvertResponsesMessages(model, transcript, allowedProviders, options).some(
+      (item) => item["type"] === "configuration_update",
+    ),
+    false,
+  );
+});
+
+test("replays the recorded thinking level before native reply items", () => {
+  const nativeItem = {
+    type: "message",
+    role: "assistant",
+    content: [{ type: "output_text", text: "native reply", annotations: [] }],
+    status: "completed",
+    id: "msg_native",
+  };
+  const transcript = normalizeContext({
+    messages: [
+      { role: "user", content: "first", timestamp: 1 },
+      {
+        ...assistantMessage,
+        content: [{ type: "text", text: "native reply" }],
+        stopReason: "stop",
+        timestamp: 2,
+        responseId: "resp_native",
+        providerThinkingLevel: "medium",
+      } satisfies AssistantMessage,
+    ],
+  });
+  assert.deepEqual(
+    copiedConvertResponsesMessages(model, transcript, allowedProviders, {
+      ...options,
+      configurationUpdateEffort: "low",
+      nativeAssistantItems: new Map([["resp_native", [nativeItem]]]),
+    }),
+    [
+      { role: "user", content: [{ type: "input_text", text: "first" }] },
+      { type: "configuration_update", reasoning: { effort: "medium" } },
+      nativeItem,
+      { type: "configuration_update", reasoning: { effort: "low" } },
+    ],
+  );
 });

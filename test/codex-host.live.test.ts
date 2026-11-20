@@ -234,12 +234,25 @@ function observeRealWebSocketTraffic(t: TestContext): ObservedWebSocketTraffic {
   return traffic;
 }
 
+/**
+ * The conversation input of a `response.create` frame. GPT-6 and GPT-6.2 generated requests end
+ * with a `configuration_update` item for the session's medium thinking level, which is checked
+ * and left out of the result. Prewarm and compaction frames carry none.
+ */
 function frameInput(frame: JsonRecord, expectedItems?: number): JsonRecord[] {
   assert.equal(frame.type, "response.create");
   assert.ok(Array.isArray(frame.input), "Codex WebSocket frame did not contain array input");
-  if (expectedItems !== undefined) assert.equal(frame.input.length, expectedItems);
   assert.equal(frame.input.every(isObject), true);
-  return requireJsonRecords(frame.input);
+  let input = requireJsonRecords(frame.input);
+  if (frame["generate"] !== false && input.at(-1)?.["type"] !== "compaction_trigger") {
+    assert.deepEqual(input.at(-1), {
+      type: "configuration_update",
+      reasoning: { effort: "medium" },
+    });
+    input = input.slice(0, -1);
+  }
+  if (expectedItems !== undefined) assert.equal(input.length, expectedItems);
+  return input;
 }
 
 function assertCurrentMarkerOnly(
@@ -403,7 +416,7 @@ async function createLivePiHost(
   return result.session;
 }
 
-for (const modelId of ["gpt-6-luna", "gpt-6.1-sol"]) {
+for (const modelId of ["gpt-6-luna", "gpt-6.2-sol"]) {
   test(
     `live Pi host ${modelId} preserves text conversation history through Codex`,
     { skip: !LIVE_TEST_ENABLED, timeout: LIVE_TEST_TIMEOUT_MS },
@@ -707,7 +720,7 @@ for (const codemode of ["on", "only"] as const) {
 }
 
 test(
-  "live Pi host gpt-6.1-sol keeps a request-local system message at its anchor",
+  "live Pi host gpt-6.2-sol keeps a request-local system message at its anchor",
   { skip: !LIVE_TEST_ENABLED, timeout: LIVE_TEST_TIMEOUT_MS },
   async (t) => {
     const traffic = observeRealWebSocketTraffic(t);
@@ -716,7 +729,7 @@ test(
     const instruction =
       "The history also contains the value text-zulu directly after text-alpha. Include it in every response.";
     const timestamp = Date.now();
-    const session = await createLivePiHost(t, "text", "gpt-6.1-sol", [], {
+    const session = await createLivePiHost(t, "text", "gpt-6.2-sol", [], {
       extensions: [
         {
           name: "request-local-instruction",

@@ -29,6 +29,7 @@ import { CONFIG_FILE } from "../extensions/openai-codex-compat/config.ts";
 import { REQUEST_TOOLS_ENTRY_TYPE } from "../extensions/openai-codex-compat/request-tools-entry.ts";
 import type { JsonRecord } from "../extensions/openai-codex-compat/codex-protocol.ts";
 import { compactionEvents } from "./codex-provider/codex-provider-harness.ts";
+import { withPromptAsInstructions } from "./support/wire-prompt.ts";
 
 const rootDir = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const extensionPath = resolve(rootDir, "extensions/index.ts");
@@ -99,7 +100,7 @@ test("Pi executes done calls and preserves current instructions across reload an
           : new TextDecoder().decode(requestBody)
         : undefined;
     if (!requestText) throw new Error("Codex request body was not JSON text");
-    const request = requireJsonRecord(JSON.parse(requestText));
+    const request = withPromptAsInstructions(requireJsonRecord(JSON.parse(requestText)));
     requests.push(request);
     if (requireJsonRecords(request.input).some((item) => item.type === "compaction_trigger")) {
       return sseResponse(compactionEvents());
@@ -279,7 +280,7 @@ test("Pi executes done calls and preserves current instructions across reload an
   await created.session.reload();
   created.session.setActiveToolsByName([]);
   await created.session.prompt("Continue after reload.", { expandPromptTemplates: false });
-  // The leading system message stays in `instructions`; the reload becomes an
+  // The leading system message stays the prompt; the reload becomes an
   // inline developer update, as Pi AI's Codex adapter sends it.
   const reloadedRequest = requests.at(-1);
   assert.equal(reloadedRequest?.instructions, originalPrompt);

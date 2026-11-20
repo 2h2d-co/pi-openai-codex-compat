@@ -42,7 +42,7 @@ class ApplyPatchTitleComponent implements Component {
     this.resolveDebug = resolveDebug;
   }
 
-  render(width: number): string[] {
+  render(width: number): readonly string[] {
     const debug = this.resolveDebug();
     if (this.renderedDebug !== debug) {
       const title = debug ? "apply_patch (debug)" : "apply_patch";
@@ -73,7 +73,7 @@ class ApplyPatchResultComponent implements Component {
   private readonly resolveDebug: ApplyPatchDebugResolver;
   private cachedWidth: number | undefined;
   private cachedFeedback: boolean | undefined;
-  private cachedLines: string[] | undefined;
+  private cachedLines: readonly string[] | undefined;
 
   constructor(
     ordinary: Component,
@@ -91,7 +91,7 @@ class ApplyPatchResultComponent implements Component {
     }
   }
 
-  render(width: number): string[] {
+  render(width: number): readonly string[] {
     const effectiveWidth = Math.max(1, width);
     const showFeedback = Boolean(!this.expanded && this.resolveDebug() && this.feedback);
     if (

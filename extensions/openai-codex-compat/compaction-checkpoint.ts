@@ -19,6 +19,7 @@ import {
   type Message,
   type Model,
   type SystemMessage,
+  type OpenAICodexResponsesOptions,
   type Tool,
   type TranscriptContext,
 } from "@earendil-works/pi-ai";
@@ -71,6 +72,7 @@ export type CheckpointSearch =
 export type GrammarToolInputProperties = ReadonlyMap<string, string>;
 
 export interface ResponsesCompatibility {
+  supportsMidConvoEffort?: boolean;
   supportsMidConvoSystemMessages?: boolean;
   supportsOpenAIGrammarTools?: boolean;
   supportsStrictMode?: boolean;
@@ -79,6 +81,9 @@ export interface ResponsesCompatibility {
 export function responsesCompatibility(value: unknown): ResponsesCompatibility {
   const compatibility: ResponsesCompatibility = {};
   if (!isObject(value)) return compatibility;
+  if (isBoolean(value["supportsMidConvoEffort"])) {
+    compatibility.supportsMidConvoEffort = value["supportsMidConvoEffort"];
+  }
   if (isBoolean(value["supportsMidConvoSystemMessages"])) {
     compatibility.supportsMidConvoSystemMessages = value["supportsMidConvoSystemMessages"];
   }
@@ -89,6 +94,32 @@ export function responsesCompatibility(value: unknown): ResponsesCompatibility {
     compatibility.supportsStrictMode = value["supportsStrictMode"];
   }
   return compatibility;
+}
+
+export type ReasoningEffort = NonNullable<OpenAICodexResponsesOptions["reasoningEffort"]>;
+
+/** Provider-native effort for a requested level; null when the model takes no reasoning field for it. */
+export function resolveReasoningEffort(model: Model<Api>, effort: ReasoningEffort): string | null {
+  if (effort === "none") {
+    return model.thinkingLevelMap?.off === undefined ? "none" : model.thinkingLevelMap.off;
+  }
+  return model.thinkingLevelMap?.[effort] ?? effort;
+}
+
+/**
+ * The effort to send in `configuration_update` items, or undefined to send it as
+ * `reasoning.effort`. Models with mid-conversation effort keep `reasoning.effort` fixed and
+ * carry thinking-level changes in the input, as Pi AI's Codex adapter and official Codex do, so a
+ * change keeps the prompt cache.
+ */
+export function configurationUpdateEffort(
+  model: Model<Api>,
+  effort: ReasoningEffort | undefined,
+): string | undefined {
+  if (!responsesCompatibility(model.compat).supportsMidConvoEffort || effort === undefined) {
+    return undefined;
+  }
+  return resolveReasoningEffort(model, effort) ?? undefined;
 }
 
 /**
@@ -158,6 +189,8 @@ type EncodeMessagesOptions = {
   grammarToolInputProperties: GrammarToolInputProperties;
   imageDetail: ImageDetail;
   nativeAssistantItems?: ReadonlyMap<string, readonly ResponsesOutputItem[]>;
+  /** Effort of the request being built; see {@link configurationUpdateEffort}. */
+  configurationUpdateEffort?: string | undefined;
 };
 
 export type EncodeSessionEntriesOptions = {
@@ -166,6 +199,7 @@ export type EncodeSessionEntriesOptions = {
   grammarToolInputProperties?: GrammarToolInputProperties;
   imageDetail?: ImageDetail;
   nativeAssistantItems?: ReadonlyMap<string, readonly ResponsesOutputItem[]>;
+  configurationUpdateEffort?: string | undefined;
   initialSystemMessage?: SystemMessage;
   /** Model-visible messages per entry. Defaults to the entry's raw messages. */
   entryMessages?: (entry: SessionEntry) => AgentMessages;
@@ -208,6 +242,9 @@ function encodeMessages(options: EncodeMessagesOptions): ResponsesInputItem[] {
   if (nativeAssistantItems) {
     serializationOptions.nativeAssistantItems = nativeAssistantItems;
   }
+  if (options.configurationUpdateEffort !== undefined) {
+    serializationOptions.configurationUpdateEffort = options.configurationUpdateEffort;
+  }
   return requireResponsesInputItems(
     convertResponsesMessages(model, { messages }, CODEX_TOOL_CALL_PROVIDERS, serializationOptions),
   );
@@ -237,6 +274,7 @@ export function encodeSessionEntries(options: EncodeSessionEntriesOptions): Resp
     ],
     grammarToolInputProperties,
     imageDetail,
+    configurationUpdateEffort: options.configurationUpdateEffort,
   };
   if (nativeAssistantItems) encodeOptions.nativeAssistantItems = nativeAssistantItems;
   return encodeMessages(encodeOptions);
@@ -502,6 +540,8 @@ export function providerHistory(options: {
   recoverLatestOverflowPrefix?: boolean;
   /** Pi's live request transcript, whose request-local system messages are added in place. */
   requestMessages?: readonly Message[];
+  /** Effort of the request being built; see {@link configurationUpdateEffort}. */
+  configurationUpdateEffort?: string | undefined;
 }): ResponsesInputItem[] {
   const branch = [...options.branch];
   let recoveredPrefix: ResponsesInputItem[] = [];
@@ -563,27 +603,31 @@ export function providerHistory(options: {
     const checkpointEntry = branch[checkpoint.entryIndex];
     const initialSystemMessage =
       checkpointEntry?.type === "compaction" ? checkpointEntry.systemMessage : undefined;
-    return [
-      ...checkpoint.data.history.map((item) => structuredClone(item)),
-      ...encodeSessionEntries({
-        model: options.wireModel,
-        entries: branch.slice(checkpoint.entryIndex + 1),
-        grammarToolInputProperties: options.grammarToolInputProperties ?? new Map(),
-        imageDetail: options.imageDetail ?? "auto",
-        nativeAssistantItems,
-        entryMessages,
-        ...(initialSystemMessage ? { initialSystemMessage } : {}),
-        ...(options.requestMessages ? { requestMessages: options.requestMessages } : {}),
-      }),
-      ...recoveredPrefix,
-    ];
+    return withRecoveredPrefix(
+      [
+        ...checkpoint.data.history.map((item) => structuredClone(item)),
+        ...encodeSessionEntries({
+          model: options.wireModel,
+          entries: branch.slice(checkpoint.entryIndex + 1),
+          grammarToolInputProperties: options.grammarToolInputProperties ?? new Map(),
+          imageDetail: options.imageDetail ?? "auto",
+          nativeAssistantItems,
+          entryMessages,
+          configurationUpdateEffort: options.configurationUpdateEffort,
+          ...(initialSystemMessage ? { initialSystemMessage } : {}),
+          ...(options.requestMessages ? { requestMessages: options.requestMessages } : {}),
+        }),
+      ],
+      options.configurationUpdateEffort !== undefined,
+      recoveredPrefix,
+    );
   }
 
   const messages = convertToLlm(
     projection.entries.flatMap((entry) => entryMessages(entry.sourceEntry)),
   );
-  return [
-    ...encodeMessages({
+  return withRecoveredPrefix(
+    encodeMessages({
       model: options.wireModel,
       messages: options.requestMessages
         ? withRequestSystemMessages(
@@ -595,7 +639,22 @@ export function providerHistory(options: {
       grammarToolInputProperties: options.grammarToolInputProperties ?? new Map(),
       imageDetail: options.imageDetail ?? "auto",
       nativeAssistantItems,
+      configurationUpdateEffort: options.configurationUpdateEffort,
     }),
-    ...recoveredPrefix,
-  ];
+    options.configurationUpdateEffort !== undefined,
+    recoveredPrefix,
+  );
+}
+
+/**
+ * Append the committed prefix of an overflowed response to encoded history. A trailing
+ * `configuration_update` item sets the effort of the request being built, so it stays last.
+ */
+function withRecoveredPrefix(
+  encoded: ResponsesInputItem[],
+  trailingUpdate: boolean,
+  recoveredPrefix: readonly ResponsesInputItem[],
+): ResponsesInputItem[] {
+  if (!trailingUpdate || recoveredPrefix.length === 0) return [...encoded, ...recoveredPrefix];
+  return [...encoded.slice(0, -1), ...recoveredPrefix, ...encoded.slice(-1)];
 }

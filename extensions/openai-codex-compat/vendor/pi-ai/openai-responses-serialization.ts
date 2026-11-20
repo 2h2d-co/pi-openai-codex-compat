@@ -63,6 +63,14 @@ type ConvertResponsesMessagesOptions = {
   namespacedToolNames?: ReadonlySet<string>;
   textContentItemToolResultNames?: ReadonlySet<string>;
   toolResultImageDetail?: ToolResultImageDetail;
+  /**
+   * Effort for the reply being generated. When set, the thinking level is sent as
+   * configuration_update items instead of a changing reasoning.effort, which would invalidate the
+   * prompt cache. Each item sets the effort from that point on: one goes before every earlier
+   * reply with the level recorded on it (`providerThinkingLevel`), and one with this effort goes
+   * at the end. Earlier input therefore never changes.
+   */
+  configurationUpdateEffort?: string;
 };
 
 export type ConvertResponsesToolsOptions = {
@@ -206,6 +214,11 @@ function makeJsonSchemaNodeStrict(schema: unknown): void {
     if (schema[key] !== undefined) {
       throw new UnsupportedStrictJsonSchemaError(`${key} schemas are unsupported`);
     }
+  }
+
+  // OpenAI strict mode rejects nodes without a type; a bare enum counts as typed, a bare const does not.
+  if (schema.type === undefined && schema["anyOf"] === undefined && schema["enum"] === undefined) {
+    throw new UnsupportedStrictJsonSchemaError("schemas without a type are unsupported");
   }
 
   const anyOf: unknown = schema["anyOf"];
@@ -826,10 +839,27 @@ export function convertResponsesMessages(
         messages.push({ role: "user", content });
       }
     } else if (message.role === "assistant") {
+      const isSameModel =
+        message.provider === model.provider &&
+        message.api === model.api &&
+        message.model === model.id;
+      const pushConfigurationUpdate = (): void => {
+        if (
+          options?.configurationUpdateEffort !== undefined &&
+          isSameModel &&
+          message.providerThinkingLevel !== undefined
+        ) {
+          messages.push({
+            type: "configuration_update",
+            reasoning: { effort: message.providerThinkingLevel },
+          });
+        }
+      };
       const nativeItems = message.responseId
         ? options?.nativeAssistantItems?.get(message.responseId)
         : undefined;
       if (nativeItems) {
+        if (nativeItems.length > 0) pushConfigurationUpdate();
         messages.push(...nativeItems.map((item) => structuredClone(item)));
         messageIndex++;
         continue;
@@ -910,6 +940,7 @@ export function convertResponsesMessages(
         }
       }
       if (output.length === 0) continue;
+      pushConfigurationUpdate();
       messages.push(...output);
     } else if (message.role === "toolResult") {
       const [callId] = message.toolCallId.split("|");
@@ -929,6 +960,12 @@ export function convertResponsesMessages(
       });
     }
     if (!isLeadingSystemMessage) messageIndex++;
+  }
+  if (options?.configurationUpdateEffort !== undefined) {
+    messages.push({
+      type: "configuration_update",
+      reasoning: { effort: options.configurationUpdateEffort },
+    });
   }
   return messages;
 }

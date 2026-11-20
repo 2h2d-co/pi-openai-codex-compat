@@ -981,7 +981,7 @@ test("renders original exec_command context only for write_stdin polls", () => {
     isError: false,
     isPartial: true,
   };
-  const visibleLines = (lines: string[]): string[] => {
+  const visibleLines = (lines: readonly string[]): string[] => {
     return lines.map((line) => line.trim()).filter(Boolean);
   };
 

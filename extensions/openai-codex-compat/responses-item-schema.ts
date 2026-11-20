@@ -214,6 +214,27 @@ export const RESPONSES_ADDITIONAL_TOOLS_ITEM_SCHEMA = {
 
 export type ResponsesAdditionalToolsItem = Static<typeof RESPONSES_ADDITIONAL_TOOLS_ITEM_SCHEMA>;
 
+/**
+ * Sets the reasoning effort from this point of the input on. Models with mid-conversation effort
+ * receive thinking-level changes this way, so `reasoning.effort` and the cached prefix stay fixed.
+ */
+export const RESPONSES_CONFIGURATION_UPDATE_ITEM_SCHEMA = {
+  type: "object",
+  properties: {
+    type: { const: "configuration_update" },
+    reasoning: {
+      type: "object",
+      properties: { effort: { type: "string" } },
+      required: ["effort"],
+    },
+  },
+  required: ["type", "reasoning"],
+} as const;
+
+export type ResponsesConfigurationUpdateItem = Static<
+  typeof RESPONSES_CONFIGURATION_UPDATE_ITEM_SCHEMA
+>;
+
 export const RESPONSES_REASONING_ITEM_SCHEMA = {
   type: "object",
   properties: {
@@ -454,6 +475,7 @@ export const RESPONSES_INPUT_ITEM_SCHEMA = {
     RESPONSES_FUNCTION_CALL_OUTPUT_ITEM_SCHEMA,
     RESPONSES_CUSTOM_TOOL_CALL_OUTPUT_ITEM_SCHEMA,
     RESPONSES_ADDITIONAL_TOOLS_ITEM_SCHEMA,
+    RESPONSES_CONFIGURATION_UPDATE_ITEM_SCHEMA,
     RESPONSES_COMPACTION_TRIGGER_ITEM_SCHEMA,
   ],
 } as const;

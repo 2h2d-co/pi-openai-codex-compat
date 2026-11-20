@@ -25,11 +25,13 @@ import {
 } from "../codex-cache-diagnostics.ts";
 import {
   checkpointData,
+  configurationUpdateEffort,
   providerHistory,
   remoteCompactionMarkerSummary,
   requestGrammarToolInputProperties,
   requestInstructions,
   requestTools,
+  resolveReasoningEffort,
   resolveRequestTranscript,
   responsesCompatibility,
   searchCheckpoint,
@@ -56,7 +58,7 @@ import {
   withCodexRequestMetadata,
 } from "../codex-metadata.ts";
 import { resolveCodexThreadIdentity, type CodexThreadIdentity } from "../codex-thread-lineage.ts";
-import { applyResponsesLite } from "../responses-lite.ts";
+import { applyResponsesLite, wireRequestBody } from "../responses-lite.ts";
 import {
   REQUEST_TOOLS_ENTRY_TYPE,
   requestToolsChanged,
@@ -162,6 +164,9 @@ export type CodexProviderRuntimeApi = Pick<ExtensionAPI, "appendEntry" | "getAll
 
 type CodexCompactionResult = { checkpoint: CheckpointData; usage?: Usage };
 
+/** Fixed `reasoning.effort` while `configuration_update` items carry the thinking level, as in Pi AI. */
+const CONFIGURATION_UPDATE_REQUEST_EFFORT = "medium";
+
 type BuildRequestBodyOptions = {
   model: Model<Api>;
   context: TranscriptContext;
@@ -170,6 +175,8 @@ type BuildRequestBodyOptions = {
   cacheSessionId: string | undefined;
   grammarToolInputProperties: GrammarToolInputProperties;
   turnId: string;
+  /** Effort of the reply in `configuration_update` items; see `configurationUpdateEffort`. */
+  configurationUpdateEffort: string | undefined;
 };
 
 export class CodexProviderRuntime {
@@ -499,6 +506,7 @@ export class CodexProviderRuntime {
     context: TranscriptContext,
     grammarToolInputProperties: GrammarToolInputProperties,
     sessionId: string | undefined,
+    configurationUpdateEffort: string | undefined,
   ): ResponsesInputItem[] {
     const scope = sessionId ? this.scopes.get(sessionId) : undefined;
     const compat = responsesCompatibility(model.compat);
@@ -520,6 +528,9 @@ export class CodexProviderRuntime {
         toolResultImageDetail: "auto",
         nativeAssistantItems: nativeItems,
       };
+      if (configurationUpdateEffort !== undefined) {
+        serializationOptions.configurationUpdateEffort = configurationUpdateEffort;
+      }
       return requireResponsesInputItems(
         convertResponsesMessages(model, context, CODEX_TOOL_CALL_PROVIDERS, serializationOptions),
       );
@@ -532,6 +543,7 @@ export class CodexProviderRuntime {
       grammarToolInputProperties,
       imageDetail: scope.config.imageDetail,
       requestMessages: context.messages,
+      configurationUpdateEffort,
     });
   }
 
@@ -544,6 +556,7 @@ export class CodexProviderRuntime {
       cacheSessionId,
       grammarToolInputProperties,
       turnId,
+      configurationUpdateEffort,
     } = options;
     // Every request declares the complete current tool set at the top level,
     // as the official Codex client does. Replaying additions inside the input
@@ -553,13 +566,20 @@ export class CodexProviderRuntime {
     const currentTools = getCurrentTools(context.messages);
     // The leading system message is the prompt; later system messages travel
     // inline in `input` (or collapsed into the leading message by
-    // resolveRequestTranscript), as Pi AI's Codex adapter does.
+    // resolveRequestTranscript), as Pi AI's Codex adapter does. `wireRequestBody`
+    // sends the prompt as the first developer message in `input`.
     let body: JsonRecord = {
       model: model.id,
       store: false,
       stream: true,
-      instructions: requestInstructions(context) || "You are a helpful assistant.",
-      input: this.wireHistory(model, context, grammarToolInputProperties, runtimeSessionId),
+      instructions: requestInstructions(context),
+      input: this.wireHistory(
+        model,
+        context,
+        grammarToolInputProperties,
+        runtimeSessionId,
+        configurationUpdateEffort,
+      ),
       text: { verbosity: requestOptions.textVerbosity ?? "low" },
       include: ["reasoning.encrypted_content"],
       tool_choice: requestOptions.toolChoice ?? "auto",
@@ -580,13 +600,11 @@ export class CodexProviderRuntime {
     if (requestOptions.serviceTier !== undefined) body.service_tier = requestOptions.serviceTier;
     if (currentTools.length > 0) body.tools = requestTools(model, currentTools);
     if (requestOptions.reasoningEffort !== undefined) {
+      // With `configuration_update` items, `reasoning.effort` stays fixed so the cache holds.
       const mapped =
-        requestOptions.reasoningEffort === "none"
-          ? model.thinkingLevelMap?.off === undefined
-            ? "none"
-            : model.thinkingLevelMap.off
-          : (model.thinkingLevelMap?.[requestOptions.reasoningEffort] ??
-            requestOptions.reasoningEffort);
+        configurationUpdateEffort === undefined
+          ? resolveReasoningEffort(model, requestOptions.reasoningEffort)
+          : CONFIGURATION_UPDATE_REQUEST_EFFORT;
       if (mapped !== null) {
         body["reasoning"] = {
           effort: mapped,
@@ -644,8 +662,8 @@ export class CodexProviderRuntime {
     );
     const transformed = await options.requestOptions.onPayload?.(payload, options.model);
     const ordinaryRequest = transformed === undefined ? payload : requireJsonRecord(transformed);
-    const request = applyResponsesLite(ordinaryRequest, options.model.id, responsesLiteEnabled);
-    const staticRequest = applyResponsesLite(
+    const request = wireRequestBody(ordinaryRequest, options.model.id, responsesLiteEnabled);
+    const staticRequest = wireRequestBody(
       updateInput(ordinaryRequest, []),
       options.model.id,
       responsesLiteEnabled,
@@ -731,6 +749,15 @@ export class CodexProviderRuntime {
         throw new Error("Codex request history contains an invalid item.");
       return structuredClone(item);
     });
+    // The trailing `configuration_update` sets this request's effort. It stays out of the
+    // compaction request and the checkpoint, and follows the compacted history.
+    const trailingUpdate =
+      configurationUpdateEffort(model, options.reasoningEffort) === undefined
+        ? []
+        : history.splice(-1);
+    if (trailingUpdate.length > 0 && trailingUpdate[0]?.["type"] !== "configuration_update") {
+      throw new Error("Codex request history does not end with its configuration update.");
+    }
     const split = splitUnsampledUserInput({
       branch,
       history,
@@ -756,9 +783,7 @@ export class CodexProviderRuntime {
       history: split.history,
       postCompactionTail: split.tail,
       template: withoutConversationInput(body),
-      instructions: isString(body.instructions)
-        ? body.instructions
-        : requestInstructions(context) || "You are a helpful assistant.",
+      instructions: isString(body.instructions) ? body.instructions : requestInstructions(context),
       grammarToolInputProperties,
       priority: scope.config.fastMode,
       compactionMetadata: responsesCompactionV2Metadata("auto", "context_limit", "pre_turn"),
@@ -787,12 +812,15 @@ export class CodexProviderRuntime {
     );
     this.advanceWindow(sessionId);
     const cacheSessionId = options.cacheRetention === "none" ? undefined : codexCacheKey(sessionId);
-    return withCodexRequestMetadata(updateInput(body, compacted.checkpoint.history), {
-      sessionId: cacheSessionId,
-      request: { kind: "turn" },
-      turnId: agentTurn.turnId,
-      identity: this.metadataIdentity(cacheSessionId, agentTurn, sessionId),
-    });
+    return withCodexRequestMetadata(
+      updateInput(body, [...compacted.checkpoint.history, ...trailingUpdate]),
+      {
+        sessionId: cacheSessionId,
+        request: { kind: "turn" },
+        turnId: agentTurn.turnId,
+        identity: this.metadataIdentity(cacheSessionId, agentTurn, sessionId),
+      },
+    );
   }
 
   stream(
@@ -803,12 +831,14 @@ export class CodexProviderRuntime {
     const context = resolveRequestTranscript(model, input);
     const stream = createAssistantMessageEventStream();
     const requestOptions = transportOptions(options);
+    const updateEffort = configurationUpdateEffort(model, requestOptions.reasoningEffort);
     const output: AssistantMessage = {
       role: "assistant",
       content: [],
       api: CODEX_API,
       provider: model.provider,
       model: model.id,
+      ...(updateEffort === undefined ? {} : { providerThinkingLevel: updateEffort }),
       usage: emptyUsage(),
       stopReason: "pending",
       timestamp: Date.now(),
@@ -853,6 +883,7 @@ export class CodexProviderRuntime {
         cacheSessionId,
         grammarToolInputProperties,
         turnId: agentTurn.turnId,
+        configurationUpdateEffort: updateEffort,
       });
       const transformed = await requestOptions.onPayload?.(body, model);
       let replacementValues: JsonValue[] | undefined;
@@ -899,7 +930,7 @@ export class CodexProviderRuntime {
         );
       }
       const ordinaryBody = body;
-      const staticBody = applyResponsesLite(
+      const staticBody = wireRequestBody(
         updateInput(ordinaryBody, []),
         model.id,
         responsesLiteEnabled,
@@ -909,7 +940,7 @@ export class CodexProviderRuntime {
         applyResponsesLite({}, model.id, responsesLiteEnabled);
         requestBody = replacementValues;
       } else {
-        body = applyResponsesLite(ordinaryBody, model.id, responsesLiteEnabled);
+        body = wireRequestBody(ordinaryBody, model.id, responsesLiteEnabled);
         requestBody = body;
       }
       const cacheDiagnostics = codexCacheDiagnosticContext(
@@ -1292,9 +1323,12 @@ export class CodexProviderRuntime {
     options?: SimpleStreamOptions,
   ): AssistantMessageEventStream {
     if (!options?.apiKey) throw new Error(`No API key for provider: ${model.provider}`);
-    const effort = options?.reasoning ? clampThinkingLevel(model, options.reasoning) : undefined;
+    const effort = options?.reasoning ? clampThinkingLevel(model, options.reasoning) : "off";
     const streamOptions: OpenAICodexResponsesOptions = { ...options };
-    if (effort && effort !== "off") streamOptions.reasoningEffort = effort;
+    // Off is sent as effort `none`, as Pi AI's Codex adapter does, so with
+    // `configuration_update` items switching thinking off keeps the cache.
+    if (effort !== "off") streamOptions.reasoningEffort = effort;
+    else if (model.reasoning) streamOptions.reasoningEffort = "none";
     return this.stream(model, context, streamOptions);
   }
 

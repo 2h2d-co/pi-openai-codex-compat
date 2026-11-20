@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+### Added
+
+- Support `gpt-6.2-sol` and `gpt-6.2-astra` in Responses Lite.
+
+### Changed
+
+- Require Pi `>=1.6.0 <1.7.0`.
+- Send the system prompt as the first developer message in `input` instead of top-level `instructions`, as Pi 1.6.0 and official Codex do. GPT-6.2 places `instructions` after the input, so the system prompt missed the prompt cache on every turn. Existing sessions miss the cache once after the upgrade.
+- On models with mid-conversation effort, such as GPT-6 and GPT-6.2, send thinking-level changes as `configuration_update` input items and keep `reasoning.effort` fixed, as Pi 1.6.0 does. Changing the thinking level no longer invalidates the prompt cache. Thinking level off is sent as effort `none`.
+
 ## 0.0.32 - 2026-11-10
 
 ### Changed

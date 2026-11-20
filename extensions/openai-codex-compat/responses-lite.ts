@@ -14,6 +14,8 @@ const RESPONSES_LITE_MODELS: ReadonlySet<string> = new Set([
   "gpt-6-luna",
   "gpt-6.1-sol",
   "gpt-6.1-terra",
+  "gpt-6.2-sol",
+  "gpt-6.2-astra",
 ]);
 
 function isHostedTool(tool: JsonRecord): boolean {
@@ -109,15 +111,11 @@ export function applyResponsesLite(
   const result = structuredClone(payload);
   const tools = responsesLiteTools(result.tools);
   const input = requestInput.map((item) => prepareInputItem(item));
-  const prefix: JsonRecord[] = [{ type: "additional_tools", role: "developer", tools }];
-  if (isString(result.instructions) && result.instructions.length > 0) {
-    prefix.push({
-      type: "message",
-      role: "developer",
-      content: [{ type: "input_text", text: result.instructions }],
-    });
-  }
-  result.input = [...prefix, ...input];
+  result.input = [
+    { type: "additional_tools", role: "developer", tools },
+    ...promptItems(result.instructions),
+    ...input,
+  ];
   delete result.instructions;
   delete result.tools;
   result.parallel_tool_calls = false;
@@ -127,6 +125,42 @@ export function applyResponsesLite(
   const clientMetadata = isObject(result.client_metadata) ? { ...result.client_metadata } : {};
   clientMetadata[RESPONSES_LITE_WS_METADATA_KEY] = "true";
   result.client_metadata = clientMetadata;
+  return result;
+}
+
+/** The system prompt as the developer message official Codex sends, or nothing when it is empty. */
+function promptItems(instructions: JsonValue | undefined): JsonRecord[] {
+  if (!isString(instructions) || instructions.length === 0) return [];
+  return [
+    { type: "message", role: "developer", content: [{ type: "input_text", text: instructions }] },
+  ];
+}
+
+/**
+ * The request as sent. Codex takes the system prompt as the first developer message in `input`,
+ * after Responses Lite's `additional_tools`, and no top-level `instructions`, as Pi AI's Codex
+ * adapter and official Codex send it. From GPT-6.2 on, Codex places `instructions` after
+ * `input`, so every new turn would miss the prompt cache for the system prompt. Requests are
+ * built with `instructions`, which native compaction templates and cache diagnostics read, and
+ * this projection moves it into `input`.
+ */
+export function wireRequestBody(
+  payload: JsonRecord,
+  modelId: string,
+  liteEnabled = true,
+): JsonRecord {
+  if (usesResponsesLite(modelId, liteEnabled))
+    return applyResponsesLite(payload, modelId, liteEnabled);
+  if (!("instructions" in payload)) return payload;
+  if (!Array.isArray(payload.input)) {
+    throw new Error("A Codex request requires array input.");
+  }
+  const result = structuredClone(payload);
+  delete result.instructions;
+  result.input = [
+    ...promptItems(payload.instructions),
+    ...payload.input.map((item) => structuredClone(item)),
+  ];
   return result;
 }
 

@@ -61,9 +61,10 @@ export function codexCacheDiagnosticContext(
   if (lite) {
     staticPrefix = staticWireBody.input ?? [];
   } else {
+    // The top-level tools, then the system prompt as the first developer message in `input`.
     const prefix: JsonRecord = {};
-    if ("instructions" in ordinaryBody) prefix.instructions = ordinaryBody.instructions;
-    if ("tools" in ordinaryBody) prefix.tools = ordinaryBody.tools;
+    if ("tools" in staticWireBody) prefix.tools = staticWireBody.tools;
+    prefix.input = staticWireBody.input ?? [];
     staticPrefix = prefix;
   }
   const prefixFingerprint = jsonFingerprint(staticPrefix);

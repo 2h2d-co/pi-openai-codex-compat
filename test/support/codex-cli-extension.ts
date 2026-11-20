@@ -10,10 +10,10 @@ import {
 type Marker = "FIRST" | "SECOND";
 
 /**
- * The markers the model sees, in prompt order: the leading prompt travels as
- * `instructions` (or as the Lite developer prefix) and each later prompt
- * change is an inline developer update. `leading` is the first mention and
- * `current` the newest one.
+ * The markers the model sees, in prompt order. The payload extensions receive carries the leading
+ * prompt in `instructions`, which the extension sends as the first developer message (after the
+ * Lite `additional_tools`). Each later prompt change is an inline developer update. `leading` is
+ * the first mention and `current` the newest one.
  */
 function promptMarkers(payload: Record<string, unknown>): { leading: Marker; current: Marker } {
   const input = requireJsonRecords(payload["input"]);

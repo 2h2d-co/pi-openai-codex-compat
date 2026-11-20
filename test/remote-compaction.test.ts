@@ -60,6 +60,7 @@ import {
 } from "../extensions/openai-codex-compat/codex-transport/codex-transport-errors.ts";
 import type { ResponsesOutputMessageItem } from "../extensions/openai-codex-compat/responses-item-schema.ts";
 import { assistantEntry, REPORT_TOOL } from "./codex-provider/codex-provider-harness.ts";
+import { withPromptAsInstructions } from "./support/wire-prompt.ts";
 
 interface TestCompactionResult {
   compaction: {
@@ -194,7 +195,7 @@ function createHarness(branch: SessionEntry[]) {
   const requests: JsonRecord[] = [];
   const requestHeaders: Array<ProviderHeaders | undefined> = [];
   runtime.transport.request = async function* (_model, body, options) {
-    requests.push(structuredClone(requireJsonRecord(body)));
+    requests.push(withPromptAsInstructions(structuredClone(requireJsonRecord(body))));
     requestHeaders.push(options.headers);
     yield* compactionEvents();
   };

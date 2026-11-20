@@ -16,12 +16,23 @@ declares every tool in `additional_tools` items and announces removals as text.
 pair. The copy keeps both options so the wire-equivalence tests hold, but Compat
 always passes `false`: it declares every tool at the top level.
 
-System messages follow Pi AI exactly. Compat passes `includeSystemPrompt: false`
-because the leading system message travels as `instructions`, and forwards the
+System messages follow Pi AI. Pi AI 1.6.0 always serializes the leading system
+message as the first developer item and dropped its `includeSystemPrompt` option.
+The copy keeps that option as an extension-owned addition: Compat passes
+`includeSystemPrompt: false` because it builds requests with the prompt in
+`instructions`, which native compaction templates and cache diagnostics read, and
+moves it to the first developer message when sending. Compat also forwards the
 model's `supportsMidConvoSystemMessages` flag so later system messages render
 inline through `renderSystemMessageUpdate` or collapse into the leading message.
 A system message that lands between a tool call and its results is held until
 after those results, as upstream `transformMessages` does.
+
+The copy also includes Pi AI 1.6.0's `configurationUpdateEffort`: before every
+earlier reply of the same model it replays the thinking level recorded on it
+(`providerThinkingLevel`) as a `configuration_update` item, and it ends the input
+with one for the request's own level. Native reply items replay behind the same
+item. It also carries Pi AI 1.6.0's strict-schema rule that a node without a type
+is not strict.
 
 The optional `namespacedToolNames`, `textContentItemToolResultNames`, and `toolResultImageDetail` paths are extension-owned additions. Without those options, serialization must continue to match Pi AI. `namespacedToolNames` groups only the fixed Codex allowlist into native Responses namespaces and replays namespace/member call identities. `textContentItemToolResultNames` preserves Codex tools such as `web.run` whose successful text output is transported as an `input_text` content-item array instead of Pi's usual plain string. `toolResultImageDetail` overrides the otherwise canonical `auto` detail used for image tool-result content.
 

@@ -180,7 +180,7 @@ class CommandCallComponent implements Component {
     this.text = new Text(this.renderText(this.renderedSessionId), 0, 0);
   }
 
-  render(width: number): string[] {
+  render(width: number): readonly string[] {
     const sessionId = this.resolveSessionId();
     if (sessionId !== this.renderedSessionId) {
       this.renderedSessionId = sessionId;

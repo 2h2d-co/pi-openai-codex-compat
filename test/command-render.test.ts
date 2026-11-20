@@ -175,10 +175,10 @@ test("balances command and apply_patch surface padding", () => {
     () => true,
   ).render(40);
 
-  const leadingBlankLines = (lines: string[]): number => {
+  const leadingBlankLines = (lines: readonly string[]): number => {
     return lines.findIndex((line) => line.trim() !== "");
   };
-  const trailingBlankLines = (lines: string[]): number => {
+  const trailingBlankLines = (lines: readonly string[]): number => {
     return lines.findLastIndex((line) => line.trim() !== "") === -1
       ? lines.length
       : lines.length - 1 - lines.findLastIndex((line) => line.trim() !== "");

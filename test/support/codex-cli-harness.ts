@@ -304,7 +304,7 @@ export async function verifyPackagedCli(
   await turn("FIRST", "alpha", ["verify_release"]);
   await writeFile(join(agent, "SYSTEM.md"), instruction("SECOND"));
   await client.prompt("/release-test-reload");
-  // The leading prompt stays in `instructions`; the reload arrives as an
+  // The leading prompt stays unchanged; the reload arrives as an
   // inline developer update, so the model must follow the newest marker.
   await turn("SECOND", "bravo", ["verify_release"], "FIRST");
   const compacted = await client.compact();
