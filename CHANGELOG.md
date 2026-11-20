@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.0.33 - 2026-11-20
+
 ### Added
 
 - Support `gpt-6.2-sol` and `gpt-6.2-astra` in Responses Lite.
