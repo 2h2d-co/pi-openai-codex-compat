@@ -1,7 +1,7 @@
 import test from "node:test";
 import { verifyPackagedCli } from "./support/codex-cli-harness.ts";
 
-for (const modelId of ["gpt-6-luna", "gpt-6.2-sol"]) {
+for (const modelId of ["gpt-6-luna", "gpt-6.2-sol", "gpt-6.2-astra"]) {
   for (const lite of [false, true]) {
     test(
       `live packaged Pi CLI ${modelId} transcript lifecycle (Lite=${String(lite)})`,

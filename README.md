@@ -690,7 +690,7 @@ npm run test:live:codex
 
 `scripts/test-live.ts` first runs the offline packaged terminal tests. It then
 obtains the local Codex bearer token through the repository Pi and runs the
-tests with `gpt-6-luna` and `gpt-6.2-sol` at medium reasoning effort. It also
+tests with `gpt-6-luna`, `gpt-6.2-sol`, and `gpt-6.2-astra` at medium reasoning effort. It also
 packs the extension and loads that archive through the shipped Pi CLI. Ordinary
 Responses and Responses Lite tests exercise tool calls, prompt reload, native
 compaction, and persisted-session resume against Codex.
