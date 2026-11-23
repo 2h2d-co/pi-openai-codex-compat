@@ -60,6 +60,7 @@ import {
 } from "../extensions/openai-codex-compat/codex-transport/codex-transport-errors.ts";
 import type { ResponsesOutputMessageItem } from "../extensions/openai-codex-compat/responses-item-schema.ts";
 import { assistantEntry, REPORT_TOOL } from "./codex-provider/codex-provider-harness.ts";
+import { allTiersCatalog } from "./support/model-catalog.ts";
 import { withPromptAsInstructions } from "./support/wire-prompt.ts";
 
 interface TestCompactionResult {
@@ -191,7 +192,7 @@ function createHarness(branch: SessionEntry[]) {
   const selected = codexModel();
   const notices: string[] = [];
   const pi = new RemoteCompactionTestApi();
-  const runtime = new CodexProviderRuntime(pi, () => DEFAULT_CONFIG);
+  const runtime = new CodexProviderRuntime(pi, () => DEFAULT_CONFIG, allTiersCatalog());
   const requests: JsonRecord[] = [];
   const requestHeaders: Array<ProviderHeaders | undefined> = [];
   runtime.transport.request = async function* (_model, body, options) {

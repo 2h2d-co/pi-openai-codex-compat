@@ -6,3 +6,4 @@ import "./codex-provider/codex-provider-stream-errors-and-compaction.cases.ts";
 import "./codex-provider/codex-provider-websocket-lifecycle.cases.ts";
 import "./codex-provider/codex-provider-tool-serialization.cases.ts";
 import "./codex-provider/codex-provider-percentage-compaction-and-cache-identity.cases.ts";
+import "./codex-provider/codex-provider-service-tier-gating.cases.ts";

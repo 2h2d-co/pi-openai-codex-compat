@@ -8,8 +8,8 @@
 
 ### Changed
 
-- Send Ultrafast on `gpt-6.2-astra`, `gpt-6-astra`, and `gpt-6.1-sol` as well as `gpt-6.2-sol`, the four models OpenAI offers Ultrafast for. Pro $500 and eligible Enterprise and Edu plans include all four. Pro $200 includes only GPT-6.2 Sol and serves Ultrafast requests to the other three at Standard speed while Pi reports the Ultrafast cost, so give those models a `speedByModel` entry of `fast` or `standard`.
-- Rename the `/codex-settings` **Speed** row to **Default speed**. It edits only `speed`, and its description names the selected model's `speedByModel` entry. The footer shows the tier that requests to the selected model use.
+- Send Fast and Ultrafast only on models whose tiers in the account's Codex model catalog include them, as the Codex CLI does. Ultrafast now reaches every model the plan includes it for, such as GPT-6.2 Astra, GPT-6 Astra, and GPT-6.1 Sol on Pro $500, instead of only GPT-6.2 Sol. A request for a tier the plan lacks runs and is priced at Standard, and a warning names the model once per session. Codex silently served such requests at Standard while Pi reported the faster tier's cost. The extension keeps each account's catalog in `openai-codex-compat-model-catalog.json` in the Pi agent directory.
+- Rename the `/codex-settings` **Speed** row to **Default speed**. It edits only `speed`, and its description names the selected model's `speedByModel` entry and says when the plan lacks the model's speed. The footer shows the tier that requests to the selected model use.
 
 ## 0.0.34 - 2026-11-23
 

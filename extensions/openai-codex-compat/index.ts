@@ -5,6 +5,7 @@ import { requirePiRuntime } from "./pi-runtime.ts";
 import { DEFAULT_CONFIG, loadConfig, type CodexCompatConfig } from "./config.ts";
 import type { ConfigContext } from "./config-context.ts";
 import { registerCodexProvider } from "./codex-provider.ts";
+import { CodexModelCatalog, startSelectedModelCatalogLoad } from "./codex-model-catalog.ts";
 import { installCodexFooter } from "./footer.ts";
 import registerCodexModelPolicy, { codexModelPolicyApi } from "./model-policy.ts";
 import registerOutputLimitContinuation, {
@@ -25,6 +26,7 @@ export {
 
 export default function registerOpenAICodexCompat(pi: ExtensionAPI): void {
   requirePiRuntime(piAi, piCodingAgent, pi);
+  const catalog = new CodexModelCatalog();
   let activeConfig: CodexCompatConfig | undefined;
   let sessionContext: Parameters<typeof loadSessionConfig>[0] | undefined;
   const resolveConfig = (ctx: ConfigContext): CodexCompatConfig => {
@@ -43,10 +45,16 @@ export default function registerOpenAICodexCompat(pi: ExtensionAPI): void {
     sessionContext = ctx;
     activeConfig = undefined;
     activeConfig = resolveConfig(ctx);
-    installCodexFooter(ctx, resolveConfig);
+    installCodexFooter(ctx, resolveConfig, catalog);
+    // Load the account's catalog now, so the footer and settings show the tier requests will use.
+    startSelectedModelCatalogLoad(catalog, ctx);
     if (event.reason !== "reload" && ctx.mode === "tui") {
       ctx.ui.notify("pi-openai-codex-compat loaded · /codex-settings", "info");
     }
+  });
+
+  pi.on("model_select", (_event, ctx) => {
+    startSelectedModelCatalogLoad(catalog, ctx);
   });
 
   const commandTools = registerCodexTools(
@@ -57,7 +65,7 @@ export default function registerOpenAICodexCompat(pi: ExtensionAPI): void {
     resolveApplyPatchDiagnostics,
   );
   registerCodexThreadLineage(codexThreadLineageApi(pi));
-  const codexProvider = registerCodexProvider(pi, resolveConfig);
+  const codexProvider = registerCodexProvider(pi, resolveConfig, catalog);
   const modelPolicy = codexModelPolicyApi(pi);
   registerCodexRequestOptions(pi, resolveConfig);
   registerOutputLimitContinuation(outputLimitContinuationApi(pi));
@@ -65,6 +73,7 @@ export default function registerOpenAICodexCompat(pi: ExtensionAPI): void {
   registerCodexModelPolicy(modelPolicy, resolveConfig, commandTools);
   registerCodexSettings(pi, {
     getConfig: resolveConfig,
+    serviceTiers: (modelId) => catalog.currentServiceTiers(modelId),
     hasPersistentSessions: commandTools.hasPersistentSessions,
     onChange(config, ctx) {
       activeConfig = config;

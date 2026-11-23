@@ -19,6 +19,8 @@ import {
 } from "@earendil-works/pi-ai";
 import { Type } from "typebox";
 import { CodexProviderRuntime } from "../../extensions/openai-codex-compat/codex-provider.ts";
+import type { CodexServiceTierCatalog } from "../../extensions/openai-codex-compat/codex-model-catalog.ts";
+import { allTiersCatalog } from "../support/model-catalog.ts";
 import type { CodexProviderRuntimeApi } from "../../extensions/openai-codex-compat/codex-provider/codex-provider-runtime.ts";
 import type { RuntimeScopeContext } from "../../extensions/openai-codex-compat/codex-provider/codex-provider-contracts.ts";
 import {
@@ -204,8 +206,10 @@ export function createHarness(
   config: CodexCompatConfig = DEFAULT_CONFIG,
   sessionId = "session-1",
   responseRetryPolicy = { maxRetries: 0, baseDelayMs: 0 },
+  catalog: CodexServiceTierCatalog = allTiersCatalog(),
 ) {
   let branch = [...initialBranch];
+  const notices: string[] = [];
   // Native-response and other entries; saved request tools are kept apart.
   const customEntries: Array<{ customType: string; data: unknown }> = [];
   const requestToolsEntries: unknown[] = [];
@@ -228,6 +232,7 @@ export function createHarness(
   const runtime = new CodexProviderRuntime(
     pi,
     () => config,
+    catalog,
     "11111111-1111-4111-8111-111111111111",
     responseRetryPolicy,
   );
@@ -273,7 +278,9 @@ export function createHarness(
     hasUI: true,
     sessionManager: manager,
     ui: {
-      notify() {},
+      notify(message: string) {
+        notices.push(message);
+      },
     },
     isProjectTrusted: () => true,
     getContextUsage: () => ({ tokens: 80_000, contextWindow: 100_000, percent: 80 }),
@@ -286,6 +293,7 @@ export function createHarness(
     customEntries,
     requestToolsEntries,
     compactions,
+    notices,
   };
 }
 

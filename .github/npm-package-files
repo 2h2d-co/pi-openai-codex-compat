@@ -40,6 +40,7 @@ extensions/openai-codex-compat/codex-cache-key.ts
 extensions/openai-codex-compat/codex-identifiers.ts
 extensions/openai-codex-compat/codex-installation.ts
 extensions/openai-codex-compat/codex-metadata.ts
+extensions/openai-codex-compat/codex-model-catalog.ts
 extensions/openai-codex-compat/codex-protocol.ts
 extensions/openai-codex-compat/codex-provider.ts
 extensions/openai-codex-compat/codex-provider/codex-provider-contracts.ts

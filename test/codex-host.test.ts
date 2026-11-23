@@ -29,6 +29,7 @@ import { CONFIG_FILE } from "../extensions/openai-codex-compat/config.ts";
 import { REQUEST_TOOLS_ENTRY_TYPE } from "../extensions/openai-codex-compat/request-tools-entry.ts";
 import type { JsonRecord } from "../extensions/openai-codex-compat/codex-protocol.ts";
 import { compactionEvents } from "./codex-provider/codex-provider-harness.ts";
+import { catalogResponse } from "./support/model-catalog.ts";
 import { withPromptAsInstructions } from "./support/wire-prompt.ts";
 
 const rootDir = resolve(dirname(fileURLToPath(import.meta.url)), "..");
@@ -89,7 +90,9 @@ test("Pi executes done calls and preserves current instructions across reload an
   });
 
   const requests: JsonRecord[] = [];
-  globalThis.fetch = async (_input, init) => {
+  globalThis.fetch = async (input, init) => {
+    const catalog = catalogResponse(input);
+    if (catalog) return catalog;
     const requestBody = init?.body;
     const compressed = new Headers(init?.headers).get("content-encoding") === "zstd";
     const requestText = isString(requestBody)
@@ -349,7 +352,9 @@ for (const mode of ["on", "only"] as const) {
 
     const turns: JsonRecord[] = [];
     const compactions: JsonRecord[] = [];
-    globalThis.fetch = async (_input, init) => {
+    globalThis.fetch = async (input, init) => {
+      const catalog = catalogResponse(input);
+      if (catalog) return catalog;
       const body = init?.body;
       const text = isString(body)
         ? body
@@ -525,7 +530,8 @@ test("tree navigation keeps the configured Codex tools", async (t) => {
     else process.env["PI_CODING_AGENT_DIR"] = previousAgentDir;
     await rm(tempRoot, { recursive: true, force: true });
   });
-  globalThis.fetch = async () =>
+  globalThis.fetch = async (input) =>
+    catalogResponse(input) ??
     sseResponse([
       {
         type: "response.output_item.done",

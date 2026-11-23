@@ -236,9 +236,6 @@ test("applies priority and native request controls", () => {
   });
 });
 
-const ULTRAFAST_MODEL_IDS = ["gpt-6.2-sol", "gpt-6.2-astra", "gpt-6-astra", "gpt-6.1-sol"];
-const OTHER_MODEL_IDS = ["gpt-6-luna", "gpt-6-sol", "gpt-6.1-terra", "gpt-5.6-sol"];
-
 function serviceTier(
   config: Pick<typeof DEFAULT_CONFIG, "speed" | "speedByModel">,
   modelId: string,
@@ -250,20 +247,15 @@ function serviceTier(
   ).service_tier;
 }
 
-test("requests the service tier of each speed, and Ultrafast only on the four Ultrafast models", () => {
+test("requests the service tier of each speed on every model", () => {
   const tier = (speed: "standard" | "fast" | "ultrafast", modelId: string) =>
     serviceTier({ speed, speedByModel: {} }, modelId);
 
-  for (const modelId of [...ULTRAFAST_MODEL_IDS, ...OTHER_MODEL_IDS]) {
+  // The account's model catalog decides later whether the plan includes the tier for the model.
+  for (const modelId of ["gpt-6.2-sol", "gpt-6.2-astra", "gpt-6-luna", "gpt-5.6-sol"]) {
     assert.equal(tier("standard", modelId), undefined, modelId);
     assert.equal(tier("fast", modelId), "priority", modelId);
-  }
-  for (const modelId of ULTRAFAST_MODEL_IDS) {
     assert.equal(tier("ultrafast", modelId), "ultrafast", modelId);
-  }
-  // Like the Codex CLI, Ultrafast on another model falls back to Standard rather than Fast.
-  for (const modelId of OTHER_MODEL_IDS) {
-    assert.equal(tier("ultrafast", modelId), undefined, modelId);
   }
 });
 
@@ -283,9 +275,8 @@ test("a speedByModel entry replaces the default speed for its model only", () =>
   assert.equal(serviceTier(config, "gpt-6.2-astra"), "priority");
   assert.equal(serviceTier(config, "gpt-6-astra"), undefined);
   assert.equal(serviceTier(config, "gpt-6.1-terra"), "priority");
-  // An Ultrafast entry for a model without Ultrafast falls back to Standard, like the default.
-  assert.equal(serviceTier(config, "gpt-6-luna"), undefined);
-  assert.equal(serviceTier(config, "gpt-5.6-sol"), undefined);
+  assert.equal(serviceTier(config, "gpt-6-luna"), "ultrafast");
+  assert.equal(serviceTier(config, "gpt-5.6-sol"), "ultrafast");
 
   const standardDefault = {
     speed: "standard",

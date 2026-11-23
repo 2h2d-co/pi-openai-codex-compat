@@ -29,6 +29,7 @@ import {
   nativeResponseData,
 } from "../extensions/openai-codex-compat/native-history.ts";
 import type { ResponsesOutputMessageItem } from "../extensions/openai-codex-compat/responses-item-schema.ts";
+import { allTiersCatalog } from "./support/model-catalog.ts";
 import { withPromptAsInstructions } from "./support/wire-prompt.ts";
 import {
   accessToken,
@@ -650,6 +651,7 @@ test("restores checkpoint system snapshots and post-checkpoint tool changes afte
       },
     },
     () => DEFAULT_CONFIG,
+    allTiersCatalog(),
     "test-installation",
   );
   runtime.captureScope({

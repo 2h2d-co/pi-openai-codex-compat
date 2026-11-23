@@ -190,6 +190,8 @@ export type CodexTransportOptions = OpenAICodexResponsesOptions & {
   onWebSocketResponseHandle?: (handle: CodexWebSocketResponseHandle) => void;
   onTransportStart?: () => void;
   onTransportDiagnostic?: (diagnostic: CodexTransportDiagnostic) => void;
+  /** Receives the model catalog ETag that a response reports. */
+  onModelsEtag?: (etag: string) => void;
   /**
    * Receives each parsed server event before the transport filters or
    * normalizes it. A rejection must be a `ProviderStreamEventCallbackError`,

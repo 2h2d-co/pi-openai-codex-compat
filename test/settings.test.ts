@@ -54,6 +54,7 @@ test("Codex settings stage edits, block command-session loss, and persist only c
     },
     {
       getConfig: () => current,
+      serviceTiers: () => undefined,
       hasPersistentSessions: () => processes,
       onChange: (config) => {
         current = config;
@@ -197,24 +198,36 @@ test("every configuration key has an editor without stale model lists", () => {
         reasoningSummary: "detailed",
       },
       "gpt-test",
+      new Set(["priority"]),
     ),
     ["fast", "verbosity high", "summary detailed"],
   );
-  // The footer shows the speed a model gets: Ultrafast on other models is Standard, and a
-  // speedByModel entry replaces the default speed.
-  assert.deepEqual(footerSettingLabels({ ...DEFAULT_CONFIG, speed: "ultrafast" }, "gpt-6.2-sol"), [
-    "ultrafast",
-  ]);
-  assert.deepEqual(footerSettingLabels({ ...DEFAULT_CONFIG, speed: "ultrafast" }, "gpt-test"), []);
+  // The footer shows the tier requests to the model use: the account's catalog must list it, and
+  // a speedByModel entry replaces the default speed.
+  const ultrafast = { ...DEFAULT_CONFIG, speed: "ultrafast" } as const;
+  const both = new Set(["priority", "ultrafast"]);
+  const fastOnly = new Set(["priority"]);
+  assert.deepEqual(footerSettingLabels(ultrafast, "gpt-6.2-sol", both), ["ultrafast"]);
+  assert.deepEqual(footerSettingLabels(ultrafast, "gpt-6.2-astra", fastOnly), []);
+  // Without a catalog, Fast stays and Ultrafast waits for the catalog, as in the Codex CLI.
+  assert.deepEqual(footerSettingLabels(ultrafast, "gpt-6.2-sol", undefined), []);
+  assert.deepEqual(
+    footerSettingLabels({ ...DEFAULT_CONFIG, speed: "fast" }, "gpt-test", undefined),
+    ["fast"],
+  );
+  assert.deepEqual(
+    footerSettingLabels({ ...DEFAULT_CONFIG, speed: "fast" }, "gpt-test", new Set()),
+    [],
+  );
   const overrides = {
     ...DEFAULT_CONFIG,
     speed: "ultrafast",
     speedByModel: { "gpt-6.2-astra": "fast", "gpt-6.2-sol": "standard" },
   } as const;
-  assert.deepEqual(footerSettingLabels(overrides, "gpt-6.2-astra"), ["fast"]);
-  assert.deepEqual(footerSettingLabels(overrides, "gpt-6.2-sol"), []);
-  assert.deepEqual(footerSettingLabels(overrides, "gpt-6.1-sol"), ["ultrafast"]);
-  assert.equal(footerModel(model, "high", DEFAULT_CONFIG)?.id, "gpt-test");
+  assert.deepEqual(footerSettingLabels(overrides, "gpt-6.2-astra", fastOnly), ["fast"]);
+  assert.deepEqual(footerSettingLabels(overrides, "gpt-6.2-sol", both), []);
+  assert.deepEqual(footerSettingLabels(overrides, "gpt-6.1-sol", both), ["ultrafast"]);
+  assert.equal(footerModel(model, "high", DEFAULT_CONFIG, () => undefined)?.id, "gpt-test");
 });
 
 const model = {
@@ -434,6 +447,7 @@ test("the Default speed row edits only the default and keeps speedByModel from t
     },
     {
       getConfig: () => current,
+      serviceTiers: (modelId) => (modelId === "gpt-6.2-astra" ? new Set(["priority"]) : undefined),
       onChange: (config) => {
         current = config;
       },

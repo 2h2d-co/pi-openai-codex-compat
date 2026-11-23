@@ -23,6 +23,7 @@ import {
 } from "@earendil-works/pi-coding-agent";
 import type { AssistantMessage, Credential, Model } from "@earendil-works/pi-ai";
 import { getBuiltinModels } from "@earendil-works/pi-ai/providers/all";
+import { CODEX_MODEL_CATALOG_CLIENT_VERSION } from "../extensions/openai-codex-compat/codex-model-catalog.ts";
 import { CONFIG_FILE } from "../extensions/openai-codex-compat/config.ts";
 import { requireBuiltinModelsModule } from "./support/builtin-models-module.ts";
 
@@ -109,10 +110,27 @@ function sse(events: SseEvent[]): string {
 async function startCodexServer(t: TestContext): Promise<{
   baseUrl: string;
   requests: CapturedRequest[];
+  catalogRequests: CapturedRequest[];
 }> {
   const requests: CapturedRequest[] = [];
+  const catalogRequests: CapturedRequest[] = [];
   const server = createServer((request, response) => {
     const requestTask = async () => {
+      if (request.method === "GET" && request.url?.startsWith("/codex/models")) {
+        catalogRequests.push({
+          method: request.method,
+          url: request.url,
+          headers: request.headers,
+          body: {},
+        });
+        response.writeHead(200, { "content-type": "application/json", etag: '"catalog-1"' });
+        response.end(
+          JSON.stringify({
+            models: [{ slug: MODEL_ID, service_tiers: [{ id: "priority", name: "Fast" }] }],
+          }),
+        );
+        return;
+      }
       const chunks: Buffer[] = [];
       for await (const rawChunk of request) {
         const chunk: unknown = rawChunk;
@@ -155,7 +173,7 @@ async function startCodexServer(t: TestContext): Promise<{
   );
   const address = server.address();
   assert.ok(address && hasObjectType(address));
-  return { baseUrl: `http://127.0.0.1:${address.port}`, requests };
+  return { baseUrl: `http://127.0.0.1:${address.port}`, requests, catalogRequests };
 }
 
 async function pointBuiltInCodexAt(baseUrl: string, t: TestContext): Promise<void> {
@@ -287,6 +305,16 @@ test("modifies requests on the canonical OpenAI Codex provider", async (t) => {
 
   await result.session.prompt("exercise request settings", { expandPromptTemplates: false });
 
+  // The account's model catalog lists Fast for the model, so the request keeps the priority tier.
+  assert.equal(server.catalogRequests.length, 1);
+  const catalogRequest = server.catalogRequests[0];
+  assert.ok(catalogRequest);
+  assert.equal(
+    catalogRequest.url,
+    `/codex/models?client_version=${CODEX_MODEL_CATALOG_CLIENT_VERSION}`,
+  );
+  assert.equal(catalogRequest.headers.authorization, `Bearer ${fakeCodexToken()}`);
+  assert.equal(catalogRequest.headers["chatgpt-account-id"], "acct_test");
   assert.equal(server.requests.length, 1);
   const request = server.requests[0];
   assert.ok(request);

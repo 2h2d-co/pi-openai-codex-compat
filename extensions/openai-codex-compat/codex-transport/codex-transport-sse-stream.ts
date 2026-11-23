@@ -14,6 +14,7 @@ import {
 import { isTerminalEvent, normalizeEvent } from "./codex-transport-events.ts";
 import {
   applyTurnStateHeader,
+  captureModelsEtagHeader,
   captureTurnStateHeader,
   compressBody,
   headersToRecord,
@@ -158,6 +159,7 @@ export async function* requestSse(
         combined.cleanup();
       }
       captureTurnStateHeader(response.headers, options.turnState);
+      captureModelsEtagHeader(response.headers, options.onModelsEtag);
       await options.onResponse?.(
         { status: response.status, headers: headersToRecord(response.headers) },
         model,

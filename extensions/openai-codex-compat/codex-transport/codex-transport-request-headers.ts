@@ -25,6 +25,9 @@ export const CODEX_TURN_STATE_HEADER = "x-codex-turn-state";
 
 export const CODEX_ROUTING_HINT_HEADER = "x-codex-routing-hint";
 
+/** The response header that carries the ETag of the account's current model catalog. */
+export const MODELS_ETAG_HEADER = "x-models-etag";
+
 export function nodeOs(): typeof NodeOs | undefined {
   return process.getBuiltinModule?.("node:os");
 }
@@ -85,6 +88,29 @@ export function captureTurnStateEvent(
     }
   }
   return false;
+}
+
+/** Report the model catalog ETag that an SSE response's headers carry. */
+export function captureModelsEtagHeader(
+  headers: Headers,
+  onModelsEtag: ((etag: string) => void) | undefined,
+): void {
+  const etag = headers.get(MODELS_ETAG_HEADER);
+  if (etag) onModelsEtag?.(etag);
+}
+
+/** Report the model catalog ETag that a WebSocket metadata event's headers carry. */
+export function captureModelsEtagEvent(
+  event: JsonRecord,
+  onModelsEtag: ((etag: string) => void) | undefined,
+): void {
+  if (event.type !== "response.metadata" && event.type !== "codex.response.metadata") return;
+  if (!isObject(event["headers"])) return;
+  for (const [name, value] of Object.entries(event["headers"])) {
+    if (name.toLowerCase() === MODELS_ETAG_HEADER && isString(value) && value.length > 0) {
+      onModelsEtag?.(value);
+    }
+  }
 }
 
 export interface TurnStateMetadata {

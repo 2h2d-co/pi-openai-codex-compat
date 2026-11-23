@@ -63,12 +63,17 @@ test("shows the Pi session id and appends settings to the default footer", () =>
       return () => {};
     },
   } satisfies ReadonlyFooterDataProvider;
-  const footer = createCodexFooter(footerData, context, () => ({
-    ...DEFAULT_CONFIG,
-    speed: "fast",
-    textVerbosity: "high",
-    reasoningSummary: "detailed",
-  }));
+  const footer = createCodexFooter(
+    footerData,
+    context,
+    () => ({
+      ...DEFAULT_CONFIG,
+      speed: "fast",
+      textVerbosity: "high",
+      reasoningSummary: "detailed",
+    }),
+    () => new Set(["priority"]),
+  );
   const lines = footer.render(160);
 
   assert.equal(branchSubscriptions, 0);
@@ -213,7 +218,12 @@ test("caches footer history and refreshes session names when the leaf changes", 
     getAvailableProviderCount: () => 1,
     onBranchChange: () => () => {},
   } satisfies ReadonlyFooterDataProvider;
-  const footer = createCodexFooter(footerData, context, () => DEFAULT_CONFIG);
+  const footer = createCodexFooter(
+    footerData,
+    context,
+    () => DEFAULT_CONFIG,
+    () => undefined,
+  );
 
   const first = footer.render(120);
   assert.match(first[0] ?? "", /Initial name/u);

@@ -1,6 +1,7 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { CODEX_PROVIDER } from "./codex-identifiers.ts";
 import { resolveCodexInstallationId } from "./codex-installation.ts";
+import type { CodexServiceTierCatalog } from "./codex-model-catalog.ts";
 import type { ConfigResolver } from "./codex-provider/codex-provider-contracts.ts";
 import {
   CodexProviderRuntime,
@@ -16,8 +17,14 @@ export type CodexProviderApi = CodexProviderRuntimeApi &
 export function registerCodexProvider(
   pi: CodexProviderApi,
   resolveConfig: ConfigResolver,
+  catalog: CodexServiceTierCatalog,
 ): CodexProviderRuntime {
-  const runtime = new CodexProviderRuntime(pi, resolveConfig, resolveCodexInstallationId());
+  const runtime = new CodexProviderRuntime(
+    pi,
+    resolveConfig,
+    catalog,
+    resolveCodexInstallationId(),
+  );
   pi.on("session_start", (_event, ctx) => {
     const base =
       ctx.modelRegistry.getRegisteredNativeProvider(CODEX_PROVIDER) ??

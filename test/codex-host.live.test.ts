@@ -31,6 +31,11 @@ import { isString, requireString } from "../extensions/openai-codex-compat/value
 import { describeFailure, errorLog } from "./support/error-log.ts";
 import { Type } from "typebox";
 import { CONFIG_FILE, type Speed } from "../extensions/openai-codex-compat/config.ts";
+import { CodexModelCatalog } from "../extensions/openai-codex-compat/codex-model-catalog.ts";
+import {
+  DEFAULT_CODEX_BASE_URL,
+  extractAccountId,
+} from "../extensions/openai-codex-compat/codex-transport/codex-transport-request-headers.ts";
 import {
   isJsonValue,
   isObject,
@@ -286,6 +291,8 @@ async function createLivePiHost(
     apiKey?: string;
     speed?: Speed;
     speedByModel?: Record<string, Speed>;
+    /** Receives each extension notice, which the test log also records. */
+    onNotice?: (message: string) => void;
   } = {},
 ): Promise<AgentSession> {
   const tempRoot = await mkdtemp(join(tmpdir(), "pi-codex-live-host-"));
@@ -406,6 +413,7 @@ async function createLivePiHost(
       ...result.session.extensionRunner.getUIContext(),
       notify: (message, level) => {
         errors.notice(message, level);
+        options.onNotice?.(message);
       },
     },
     onError: (error) => {
@@ -845,14 +853,28 @@ test(
   },
 );
 
-// Every plan with Ultrafast includes GPT-6.2 Sol, so only Sol checks that Ultrafast generates faster.
-// Pro $200 serves GPT-6.2 Astra's Ultrafast requests at Standard speed.
+// The account's model catalog decides which models get Ultrafast. Every plan with Ultrafast
+// includes GPT-6.2 Sol, so the Sol test requires it. Pro $200 lacks it on GPT-6.2 Astra, whose
+// Ultrafast requests then run and are priced at Standard.
 for (const modelId of ["gpt-6.2-sol", "gpt-6.2-astra"]) {
   test(
-    `live Pi host ${modelId} sends each speed's tier${modelId === "gpt-6.2-sol" ? " and Ultrafast generates faster than Standard" : ""}`,
+    `live Pi host ${modelId} sends only the speeds the account's catalog lists, and Ultrafast is faster where listed`,
     { skip: !LIVE_TEST_ENABLED, timeout: LIVE_TEST_TIMEOUT_MS },
     async (t) => {
+      const apiKey = liveApiKey();
+      const accountId = extractAccountId(apiKey);
+      const catalog = new CodexModelCatalog({ file: () => undefined });
+      await catalog.load({ accountId, apiKey, baseUrl: DEFAULT_CODEX_BASE_URL });
+      assert.equal(catalog.failure(accountId), undefined);
+      const catalogTiers = catalog.serviceTiers(accountId, modelId);
+      assert.ok(catalogTiers, `The Codex model catalog does not list ${modelId}.`);
+      const listsUltrafast = catalogTiers.has("ultrafast");
+      t.diagnostic(`${modelId} catalog tiers: ${[...catalogTiers].join(", ")}`);
+      if (modelId === "gpt-6.2-sol") {
+        assert.ok(listsUltrafast, "The live tests need a plan with Ultrafast on GPT-6.2 Sol.");
+      }
       const traffic = observeRealWebSocketTraffic(t);
+      const notices: string[] = [];
       const values = Array.from({ length: 200 }, (_, index) => `value-${String(index + 1)}`);
       const prompt = values.map((value) => `<history-item>${value}</history-item>`).join("\n");
       const rates: Partial<Record<Speed, number>> = {};
@@ -863,12 +885,15 @@ for (const modelId of ["gpt-6.2-sol", "gpt-6.2-astra"]) {
         // model's speedByModel entry replaces the Fast default speed.
         [
           "ultrafast",
-          "ultrafast",
-          Date.now() < Date.parse("2027-03-01T08:00:00Z") ? 3 : 6,
+          listsUltrafast ? "ultrafast" : undefined,
+          listsUltrafast ? (Date.now() < Date.parse("2027-03-01T08:00:00Z") ? 3 : 6) : 1,
           { speed: "fast", speedByModel: { [modelId]: "ultrafast" } },
         ],
       ] as const) {
-        const session = await createLivePiHost(t, "text", modelId, [], config);
+        const session = await createLivePiHost(t, "text", modelId, [], {
+          ...config,
+          onNotice: (message) => notices.push(message),
+        });
         let firstText: number | undefined;
         let end: number | undefined;
         session.subscribe((event) => {
@@ -889,7 +914,7 @@ for (const modelId of ["gpt-6.2-sol", "gpt-6.2-astra"]) {
         assert.equal(assistant.stopReason, "stop");
         const text = assistantText(assistant);
         assert.deepEqual(responseLines(text), values);
-        // Codex echoes `default` for every tier, so the request shows the tier that was asked for.
+        // Codex echoes `default` for every tier, so the request shows the tier that was sent.
         const frames = traffic.frames
           .slice(frameStart)
           .filter((frame) => frame["generate"] !== false);
@@ -914,9 +939,17 @@ for (const modelId of ["gpt-6.2-sol", "gpt-6.2-astra"]) {
       t.diagnostic(
         `${modelId} text generation: Standard ${standard.toFixed(0)}, Fast ${fast.toFixed(0)}, and Ultrafast ${ultrafast.toFixed(0)} characters per second`,
       );
-      if (modelId !== "gpt-6.2-sol") return;
-      // Codex silently serves Standard speed when the plan lacks Ultrafast, so only the generation
-      // speed shows that Ultrafast served the request.
+      if (!listsUltrafast) {
+        assert.ok(
+          notices.includes(
+            `Your ChatGPT plan does not include Ultrafast for ${modelId}, so its requests run at Standard speed.`,
+          ),
+          "The plan's missing Ultrafast was announced.",
+        );
+        return;
+      }
+      // Codex echoes `default` for every tier, so only the generation speed shows that Ultrafast
+      // served the request.
       assert.ok(
         ultrafast >= standard * 3,
         `Ultrafast generated ${ultrafast.toFixed(0)} characters per second, Standard ${standard.toFixed(0)}`,

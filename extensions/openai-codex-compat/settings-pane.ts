@@ -35,13 +35,15 @@ import type { ConfigContext } from "./config-context.ts";
 import { selectedRegistryModel } from "./model-context.ts";
 import { isCodexModel } from "./request-options.ts";
 import { usesResponsesLite } from "./responses-lite.ts";
+import type { ServiceTierLookup } from "./footer.ts";
+import { configServiceTier, serviceTierAvailable } from "./service-tier.ts";
 
 export const settingFields: SettingsField[] = [
   {
     id: "speed",
     label: "Default speed",
     description:
-      "Fast uses the priority tier. Ultrafast applies to GPT-6.2 Sol and Astra, GPT-6 Astra, and GPT-6.1 Sol if the plan includes them. speedByModel in the JSON file overrides it per model.",
+      "Fast uses the priority tier. A speed applies to a model only if your plan includes it for that model; other requests run at Standard. speedByModel in the JSON file overrides it per model.",
     choices: [...SPEED_SCHEMA.enum],
   },
   {
@@ -137,9 +139,33 @@ function menuValues(
   return { ...values, autoCompactAtPercent: config.autoCompactAtPercent ?? null };
 }
 
+/** What the Default speed row says about the selected model's speed, before its description. */
+export function speedNote(
+  config: CodexCompatConfig,
+  modelId: string,
+  catalogTiers: ReadonlySet<string> | undefined,
+): string {
+  const notes: string[] = [];
+  if (Object.hasOwn(config.speedByModel, modelId)) {
+    notes.push(`${modelId} uses its speedByModel value, ${config.speedByModel[modelId]}.`);
+  }
+  const tier = configServiceTier(config, modelId);
+  if (tier !== undefined && !serviceTierAvailable(tier, catalogTiers)) {
+    const speed = tier === "ultrafast" ? "Ultrafast" : "Fast";
+    notes.push(
+      catalogTiers === undefined
+        ? `${modelId} runs at Standard until the Codex model catalog shows ${speed} for it.`
+        : `Your plan does not include ${speed} for ${modelId}, so it runs at Standard.`,
+    );
+  }
+  return notes.map((note) => `${note} `).join("");
+}
+
 export type SettingsChangeContext = { model: Model<Api> | undefined; sessionId: string };
 export type SettingsCallbacks = {
   getConfig: (ctx: ConfigContext) => CodexCompatConfig;
+  /** The tiers the account's model catalog lists for a model, or `undefined` if unknown. */
+  serviceTiers: ServiceTierLookup;
   onChange: (config: CodexCompatConfig, ctx: SettingsChangeContext) => void;
   hasPersistentSessions?: () => boolean;
 };
@@ -209,13 +235,13 @@ export default function registerCodexSettings(
         const fields = settingFields.map((field) => {
           const inactive =
             !isCodexModel(model) || (field.id === "responsesLite" && !usesResponsesLite(model.id));
-          const override =
-            field.id === "speed" && model && Object.hasOwn(current.speedByModel, model.id)
-              ? `${model.id} uses its speedByModel value, ${current.speedByModel[model.id]}. `
+          const note =
+            field.id === "speed" && isCodexModel(model)
+              ? speedNote(current, model.id, callbacks.serviceTiers(model.id))
               : "";
           return {
             ...field,
-            description: `${inactive ? "Inactive on this model. " : ""}${override}${field.description}`,
+            description: `${inactive ? "Inactive on this model. " : ""}${note}${field.description}`,
           };
         });
         await ctx.ui.custom(

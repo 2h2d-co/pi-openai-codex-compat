@@ -18,6 +18,7 @@ import {
 import { decodeWebSocketData, isTerminalEvent, normalizeEvent } from "./codex-transport-events.ts";
 import {
   CODEX_WS_REQUEST_START_METADATA_KEY,
+  captureModelsEtagEvent,
   captureTurnStateEvent,
   resolveCodexWebSocketUrl,
   serializedBytes,
@@ -256,6 +257,7 @@ export async function* requestWebSocket(
     for await (const event of parseWebSocket(acquired.socket, options.signal, timeoutMs)) {
       await options.forwardRawEvent?.(event);
       captureTurnStateEvent(event, options.turnState);
+      captureModelsEtagEvent(event, options.onModelsEtag);
       if (event.type === "response.metadata") continue;
       if (
         event.type === "response.created" &&

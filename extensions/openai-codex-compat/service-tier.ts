@@ -1,18 +1,6 @@
 import type { Usage } from "@earendil-works/pi-ai";
 import type { CodexCompatConfig, Speed } from "./config.ts";
 
-/**
- * The models for which OpenAI offers Ultrafast in Codex. The plan decides which of them an account
- * gets: Pro $200 includes only GPT-6.2 Sol, and Pro $500 includes all four. Codex accepts the tier
- * for any model and silently serves Standard speed when the plan does not include the model.
- */
-const ULTRAFAST_MODEL_IDS: ReadonlySet<string> = new Set([
-  "gpt-6.2-sol",
-  "gpt-6.2-astra",
-  "gpt-6-astra",
-  "gpt-6.1-sol",
-]);
-
 // Ultrafast costs 6 times the Standard rate. GPT-6.2 models cost 3 times the Standard rate through
 // February 28, 2027, Pacific time.
 const GPT_6_2_ULTRAFAST_LIST_PRICE_FROM = Date.parse("2027-03-01T00:00:00-08:00");
@@ -22,18 +10,27 @@ export const SPEED_SERVICE_TIERS = ["priority", "ultrafast"] as const;
 
 export type SpeedServiceTier = (typeof SPEED_SERVICE_TIERS)[number];
 
-export function supportsUltrafast(modelId: string): boolean {
-  return ULTRAFAST_MODEL_IDS.has(modelId);
+export function isSpeedServiceTier(value: unknown): value is SpeedServiceTier {
+  return SPEED_SERVICE_TIERS.some((tier) => tier === value);
+}
+
+/** The service tier a speed asks for. Standard asks for none. */
+export function speedServiceTier(speed: Speed): SpeedServiceTier | undefined {
+  if (speed === "fast") return "priority";
+  if (speed === "ultrafast") return "ultrafast";
+  return undefined;
 }
 
 /**
- * The service tier a speed requests on a model. Standard requests no tier. Like the Codex CLI,
- * Ultrafast on a model without Ultrafast requests no tier either.
+ * Whether the account's plan includes a tier for a model, from the tiers its model catalog lists
+ * for the model. Like the Codex CLI without a fetched catalog, an unknown model keeps Fast, and
+ * Ultrafast needs the catalog to list it.
  */
-export function speedServiceTier(speed: Speed, modelId: string): SpeedServiceTier | undefined {
-  if (speed === "fast") return "priority";
-  if (speed === "ultrafast" && supportsUltrafast(modelId)) return "ultrafast";
-  return undefined;
+export function serviceTierAvailable(
+  tier: SpeedServiceTier,
+  catalogTiers: ReadonlySet<string> | undefined,
+): boolean {
+  return catalogTiers === undefined ? tier === "priority" : catalogTiers.has(tier);
 }
 
 /** The configured speed of a model: its `speedByModel` entry, or else the default speed. */
@@ -46,12 +43,22 @@ export function modelSpeed(
     : config.speed;
 }
 
-/** The service tier that the configured speed of a model requests. */
+/** The service tier that the configured speed of a model asks for. */
 export function configServiceTier(
   config: Pick<CodexCompatConfig, "speed" | "speedByModel">,
   modelId: string,
 ): SpeedServiceTier | undefined {
-  return speedServiceTier(modelSpeed(config, modelId), modelId);
+  return speedServiceTier(modelSpeed(config, modelId));
+}
+
+/** The service tier that requests to a model use: the configured one if the plan includes it. */
+export function effectiveServiceTier(
+  config: Pick<CodexCompatConfig, "speed" | "speedByModel">,
+  modelId: string,
+  catalogTiers: ReadonlySet<string> | undefined,
+): SpeedServiceTier | undefined {
+  const tier = configServiceTier(config, modelId);
+  return tier !== undefined && serviceTierAvailable(tier, catalogTiers) ? tier : undefined;
 }
 
 /** The multiple of the Standard rate that a request in `tier` started at `timestamp` costs. */

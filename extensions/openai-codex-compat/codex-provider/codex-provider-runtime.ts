@@ -79,7 +79,13 @@ import {
   type CodexWebSocketResponseHandle,
 } from "../codex-transport.ts";
 import { DEFAULT_CONFIG, type CodexCompatConfig } from "../config.ts";
-import { configServiceTier, type SpeedServiceTier } from "../service-tier.ts";
+import type { CodexCatalogAccount, CodexServiceTierCatalog } from "../codex-model-catalog.ts";
+import {
+  configServiceTier,
+  isSpeedServiceTier,
+  serviceTierAvailable,
+  type SpeedServiceTier,
+} from "../service-tier.ts";
 import {
   nativeResponseData,
   NATIVE_RESPONSE_ENTRY_TYPE,
@@ -190,19 +196,23 @@ export class CodexProviderRuntime {
   private readonly postToolDispositions = new Map<string, CodexPostToolDisposition>();
   private readonly windowNumbers = new Map<string, number>();
   private readonly activeThreadIds = new Map<string, string>();
+  private readonly unavailableTierNotices = new Set<string>();
   private readonly pi: CodexProviderRuntimeApi;
   private readonly resolveConfig: ConfigResolver;
+  private readonly catalog: CodexServiceTierCatalog;
   private readonly installationId: string;
   private readonly responseRetryPolicy: CodexResponseRetryPolicy;
 
   constructor(
     pi: CodexProviderRuntimeApi,
     resolveConfig: ConfigResolver,
+    catalog: CodexServiceTierCatalog,
     installationId: string = randomUUID(),
     responseRetryPolicy: Partial<CodexResponseRetryPolicy> = {},
   ) {
     this.pi = pi;
     this.resolveConfig = resolveConfig;
+    this.catalog = catalog;
     this.installationId = installationId;
     const maxRetries = responseRetryPolicy.maxRetries ?? DEFAULT_RESPONSE_RETRY_POLICY.maxRetries;
     const baseDelayMs =
@@ -618,6 +628,49 @@ export class CodexProviderRuntime {
     return body;
   }
 
+  /**
+   * Like the Codex CLI, drop a Fast or Ultrafast tier that the account's model catalog does not
+   * list for the model. The request then runs, and is priced, at Standard.
+   */
+  private async gateServiceTier(
+    body: JsonRecord,
+    model: Model<Api>,
+    account: CodexCatalogAccount,
+    sessionId: string | undefined,
+    signal: AbortSignal | undefined,
+  ): Promise<JsonRecord> {
+    const tier = body.service_tier;
+    if (!isSpeedServiceTier(tier)) return body;
+    await this.catalog.load(account, signal);
+    if (serviceTierAvailable(tier, this.catalog.serviceTiers(account.accountId, model.id))) {
+      return body;
+    }
+    const gated = { ...body };
+    delete gated.service_tier;
+    this.noticeUnavailableTier(sessionId, account.accountId, model.id, tier);
+    return gated;
+  }
+
+  private noticeUnavailableTier(
+    sessionId: string | undefined,
+    accountId: string,
+    modelId: string,
+    tier: SpeedServiceTier,
+  ): void {
+    const scope = sessionId ? this.scopes.get(sessionId) : undefined;
+    const key = JSON.stringify([sessionId, accountId, modelId, tier]);
+    if (!scope || this.unavailableTierNotices.has(key)) return;
+    this.unavailableTierNotices.add(key);
+    const speed = tier === "ultrafast" ? "Ultrafast" : "Fast";
+    const failure = this.catalog.failure(accountId);
+    scope.notify(
+      failure === undefined
+        ? `Your ChatGPT plan does not include ${speed} for ${modelId}, so its requests run at Standard speed.`
+        : `The OpenAI Codex model catalog could not be loaded (${failure}), so ${modelId} runs at Standard speed instead of ${speed} until it loads.`,
+      "warning",
+    );
+  }
+
   private async performCompaction(options: {
     model: Model<Api>;
     requestOptions: OpenAICodexResponsesOptions;
@@ -638,7 +691,8 @@ export class CodexProviderRuntime {
     const agentTurn = options.agentTurn ?? this.agentTurn(sessionId);
     const responsesLiteEnabled =
       options.responsesLiteEnabled ?? this.responsesLiteEnabled(sessionId);
-    const accountId = validateCodexAuthentication(options.model, options.requestOptions.apiKey);
+    const apiKey = options.requestOptions.apiKey;
+    const accountId = validateCodexAuthentication(options.model, apiKey);
     const payload = withCodexRequestMetadata(
       remoteCompactionPayload({
         template: options.template,
@@ -662,7 +716,16 @@ export class CodexProviderRuntime {
       },
     );
     const transformed = await options.requestOptions.onPayload?.(payload, options.model);
-    const ordinaryRequest = transformed === undefined ? payload : requireJsonRecord(transformed);
+    const ordinaryRequest = await this.gateServiceTier(
+      transformed === undefined ? payload : requireJsonRecord(transformed),
+      options.model,
+      { accountId, apiKey: apiKey ?? "", baseUrl: options.model.baseUrl },
+      sessionId,
+      options.requestOptions.signal,
+    );
+    const serviceTier = isSpeedServiceTier(ordinaryRequest.service_tier)
+      ? ordinaryRequest.service_tier
+      : undefined;
     const request = wireRequestBody(ordinaryRequest, options.model.id, responsesLiteEnabled);
     const staticRequest = wireRequestBody(
       updateInput(ordinaryRequest, []),
@@ -686,12 +749,13 @@ export class CodexProviderRuntime {
           requestKind: "compaction",
           turnState: agentTurn.turnState,
           cacheDiagnostics,
+          onModelsEtag: (etag) => this.catalog.noteModelsEtag(accountId, etag),
           onWebSocketResponseHandle(handle) {
             webSocketResponseHandle = handle;
           },
         }),
         options.model,
-        options.serviceTier,
+        serviceTier,
       );
     } catch (error) {
       if (!options.requestOptions.signal?.aborted) {
@@ -895,6 +959,15 @@ export class CodexProviderRuntime {
           body = requireJsonRecord(transformed, "Codex payload replacement");
         }
       }
+      if (!replacementValues) {
+        body = await this.gateServiceTier(
+          body,
+          model,
+          { accountId, apiKey: requestOptions.apiKey ?? "", baseUrl: model.baseUrl },
+          runtimeSessionId,
+          requestOptions.signal,
+        );
+      }
       // Only agent turns define the prefix native compaction must match. Other
       // requests with the session id, such as Pi's bug-report summary, run
       // outside an agent run and must not replace the turn template or tools.
@@ -986,6 +1059,7 @@ export class CodexProviderRuntime {
         requestKind: "turn" as const,
         turnState: agentTurn.turnState,
         cacheDiagnostics,
+        onModelsEtag: (etag: string) => this.catalog.noteModelsEtag(accountId, etag),
         onContinuationReady(handle: CodexContinuationHandle) {
           continuationHandle = handle;
         },

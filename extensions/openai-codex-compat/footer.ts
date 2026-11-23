@@ -11,7 +11,16 @@ import type { CodexCompatConfig } from "./config.ts";
 import type { ConfigContext, ConfigResolver } from "./config-context.ts";
 import { selectedRegistryModel } from "./model-context.ts";
 import { isCodexModel } from "./request-options.ts";
-import { configServiceTier } from "./service-tier.ts";
+import { effectiveServiceTier } from "./service-tier.ts";
+
+/** The service tiers the account's model catalog lists for a model, or `undefined` if unknown. */
+export type ServiceTierLookup = (modelId: string) => ReadonlySet<string> | undefined;
+
+/** The catalog the footer reads, and re-renders after, when a catalog loads. */
+export type FooterCatalog = {
+  currentServiceTiers: ServiceTierLookup;
+  subscribe: (listener: () => void) => () => void;
+};
 
 export type FooterContext = ConfigContext &
   Pick<ExtensionContext, "getContextUsage" | "mode" | "thinkingLevel"> & {
@@ -41,8 +50,13 @@ export type FooterContext = ConfigContext &
     ui: Pick<ExtensionContext["ui"], "setFooter">;
   };
 
-export function footerSettingLabels(config: CodexCompatConfig, modelId: string): string[] {
-  const serviceTier = configServiceTier(config, modelId);
+export function footerSettingLabels(
+  config: CodexCompatConfig,
+  modelId: string,
+  catalogTiers: ReadonlySet<string> | undefined,
+): string[] {
+  // The footer shows the tier requests use, so a tier the plan lacks for the model is left out.
+  const serviceTier = effectiveServiceTier(config, modelId, catalogTiers);
   return [
     serviceTier === "priority" ? "fast" : serviceTier,
     config.textVerbosity !== "low" ? `verbosity ${config.textVerbosity}` : undefined,
@@ -54,10 +68,11 @@ export function footerModel(
   model: Model<Api> | undefined,
   thinkingLevel: string,
   config: CodexCompatConfig,
+  serviceTiers: ServiceTierLookup,
 ): Model<Api> | undefined {
   if (!model || !isCodexModel(model)) return model;
 
-  const settings = footerSettingLabels(config, model.id);
+  const settings = footerSettingLabels(config, model.id, serviceTiers(model.id));
   if (settings.length === 0) return model;
 
   const reasoning = model.reasoning
@@ -197,15 +212,17 @@ function aggregateFooterEntries(entries: readonly SessionEntry[]): SessionEntry[
 class CachedFooterSession implements FooterSessionAdapter {
   private readonly ctx: FooterContext;
   private readonly resolveConfig: ConfigResolver;
+  private readonly serviceTiers: ServiceTierLookup;
   private snapshot: FooterSessionSnapshot | undefined;
 
   readonly sessionManager: FooterSessionAdapter["sessionManager"];
   readonly modelRuntime: FooterSessionAdapter["modelRuntime"];
   readonly routedModel = undefined;
 
-  constructor(ctx: FooterContext, resolveConfig: ConfigResolver) {
+  constructor(ctx: FooterContext, resolveConfig: ConfigResolver, serviceTiers: ServiceTierLookup) {
     this.ctx = ctx;
     this.resolveConfig = resolveConfig;
+    this.serviceTiers = serviceTiers;
     // Pi's footer caches its statistics by session id, leaf id, entry count, and
     // model. The aggregated snapshot is keyed by the same session and leaf, so
     // both caches refresh together.
@@ -245,7 +262,12 @@ class CachedFooterSession implements FooterSessionAdapter {
   get state(): FooterSessionAdapter["state"] {
     const model = selectedRegistryModel(this.ctx);
     return {
-      model: footerModel(model, this.ctx.thinkingLevel ?? "off", this.resolveConfig(this.ctx)),
+      model: footerModel(
+        model,
+        this.ctx.thinkingLevel ?? "off",
+        this.resolveConfig(this.ctx),
+        this.serviceTiers,
+      ),
       thinkingLevel: this.ctx.thinkingLevel ?? "off",
     };
   }
@@ -289,9 +311,15 @@ function footerRenderKey(
   ctx: FooterContext,
   session: CachedFooterSession,
   resolveConfig: ConfigResolver,
+  serviceTiers: ServiceTierLookup,
 ): string {
   const model = selectedRegistryModel(ctx);
-  const displayModel = footerModel(model, ctx.thinkingLevel ?? "off", resolveConfig(ctx));
+  const displayModel = footerModel(
+    model,
+    ctx.thinkingLevel ?? "off",
+    resolveConfig(ctx),
+    serviceTiers,
+  );
   const usingSubscription = Boolean(
     model &&
     ctx.modelRegistry.isUsingOAuth(model) &&
@@ -321,6 +349,7 @@ class CodexFooter implements Component {
   private readonly footerData: ReadonlyFooterDataProvider;
   private readonly ctx: FooterContext;
   private readonly resolveConfig: ConfigResolver;
+  private readonly serviceTiers: ServiceTierLookup;
   private readonly session: CachedFooterSession;
   private cache: { key: string; lines: string[] } | undefined;
 
@@ -328,8 +357,9 @@ class CodexFooter implements Component {
     footerData: ReadonlyFooterDataProvider,
     ctx: FooterContext,
     resolveConfig: ConfigResolver,
+    serviceTiers: ServiceTierLookup,
   ) {
-    const session = new CachedFooterSession(ctx, resolveConfig);
+    const session = new CachedFooterSession(ctx, resolveConfig, serviceTiers);
     const footer: unknown = Reflect.construct(FooterComponent, [session, footerData]);
     if (!(footer instanceof FooterComponent)) {
       throw new Error("Pi footer construction returned an invalid component.");
@@ -338,13 +368,21 @@ class CodexFooter implements Component {
     this.footerData = footerData;
     this.ctx = ctx;
     this.resolveConfig = resolveConfig;
+    this.serviceTiers = serviceTiers;
     this.session = session;
     // Pi does not expose its live auto-compaction state to extension footers.
     this.footer.setAutoCompactEnabled(false);
   }
 
   render(width: number): string[] {
-    const key = footerRenderKey(width, this.footerData, this.ctx, this.session, this.resolveConfig);
+    const key = footerRenderKey(
+      width,
+      this.footerData,
+      this.ctx,
+      this.session,
+      this.resolveConfig,
+      this.serviceTiers,
+    );
     if (this.cache?.key === key) return this.cache.lines;
 
     const lines = this.footer.render(width);
@@ -366,11 +404,30 @@ export function createCodexFooter(
   footerData: ReadonlyFooterDataProvider,
   ctx: FooterContext,
   resolveConfig: ConfigResolver,
+  serviceTiers: ServiceTierLookup,
 ): Component & { dispose: () => void } {
-  return new CodexFooter(footerData, ctx, resolveConfig);
+  return new CodexFooter(footerData, ctx, resolveConfig, serviceTiers);
 }
 
-export function installCodexFooter(ctx: FooterContext, resolveConfig: ConfigResolver): void {
+export function installCodexFooter(
+  ctx: FooterContext,
+  resolveConfig: ConfigResolver,
+  catalog: FooterCatalog,
+): void {
   if (ctx.mode !== "tui") return;
-  ctx.ui.setFooter((_tui, _theme, footerData) => createCodexFooter(footerData, ctx, resolveConfig));
+  ctx.ui.setFooter((tui, _theme, footerData) => {
+    const footer = createCodexFooter(footerData, ctx, resolveConfig, (modelId) =>
+      catalog.currentServiceTiers(modelId),
+    );
+    // A loaded catalog can change the tier the footer shows.
+    const unsubscribe = catalog.subscribe(() => tui.requestRender());
+    return {
+      render: (width) => footer.render(width),
+      invalidate: () => footer.invalidate(),
+      dispose: () => {
+        unsubscribe();
+        footer.dispose();
+      },
+    };
+  });
 }
