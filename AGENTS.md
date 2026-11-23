@@ -3,7 +3,7 @@
 - This project is a Pi package with a TypeScript extension entrypoint.
 - Pi extensions run with full system permissions; keep side effects explicit and documented.
 - Keep `extensions/index.ts` as a thin public entrypoint; provider, compaction, request-option, and tool behavior belongs in focused modules under `extensions/openai-codex-compat/`.
-- Preserve canonical `openai-codex` assistant history when changing fast-mode request behavior.
+- Preserve canonical `openai-codex` assistant history when changing speed (service-tier) request behavior.
 - Keep `/codex-settings` aligned with `/anthropic-settings`: Enter edits drafts,
   Apply to session persists settings with the session without configuration-file writes, Ctrl+S saves
   and applies, and Escape discards only unapplied drafts. Reopening must show

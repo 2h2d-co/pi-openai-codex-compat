@@ -293,7 +293,7 @@ test("validates direct-stream and compaction authentication before payload hooks
       instructions: "Compact",
       grammarToolInputProperties: new Map(),
       template: {},
-      priority: false,
+      serviceTier: undefined,
       compactionMetadata: MANUAL_COMPACTION_METADATA,
       compactionDecision: { reason: "manual", willRetry: false },
     }),
@@ -334,7 +334,7 @@ test("discards WebSockets when compaction response validation fails", async () =
       instructions: "Compact",
       grammarToolInputProperties: new Map(),
       template: {},
-      priority: false,
+      serviceTier: undefined,
       compactionMetadata: MANUAL_COMPACTION_METADATA,
       compactionDecision: { reason: "manual", willRetry: false },
     }),
@@ -365,7 +365,7 @@ test("advances Codex window metadata after successful direct compaction", async 
     instructions: "Compact",
     grammarToolInputProperties: new Map(),
     template: {},
-    priority: false,
+    serviceTier: undefined,
     compactionMetadata: MANUAL_COMPACTION_METADATA,
     compactionDecision: { reason: "manual", willRetry: false },
   });
@@ -421,6 +421,46 @@ test("prices unsuccessful terminal usage before returning the provider error", a
   assert.ok(Math.abs(message.usage.cost.input - 0.00002) < 1e-12);
   assert.ok(Math.abs(message.usage.cost.output - 0.00002) < 1e-12);
   assert.ok(Math.abs(message.usage.cost.total - 0.00004) < 1e-12);
+});
+
+test("prices Ultrafast responses that Codex echoes as default at OpenAI's Ultrafast rate", async (t) => {
+  for (const [modelId, now, multiplier] of [
+    ["gpt-6.2-sol", "2027-02-28T23:59:59-08:00", 3],
+    ["gpt-6.2-sol", "2027-03-01T00:00:00-08:00", 6],
+    ["gpt-6.1-sol", "2026-11-22T00:00:00Z", 6],
+  ] as const) {
+    t.mock.timers.enable({ apis: ["Date"], now: Date.parse(now) });
+    const user = userEntry("user-1", "hello");
+    const harness = createHarness([user]);
+    harness.runtime.transport.request = async function* () {
+      yield {
+        type: "response.completed",
+        response: {
+          id: "response-ultrafast",
+          status: "completed",
+          // Codex echoes `default` for every requested tier.
+          service_tier: "default",
+          usage: { input_tokens: 10, output_tokens: 5, total_tokens: 15 },
+        },
+      };
+    };
+
+    const message = await harness.runtime
+      .stream(
+        codexModel(modelId),
+        { messages: [user.message] },
+        { apiKey: accessToken(), sessionId: "session-1", serviceTier: "ultrafast" },
+      )
+      .result();
+    t.mock.timers.reset();
+
+    assert.equal(message.stopReason, "stop", message.errorMessage);
+    // 10 input tokens at $1 and 5 output tokens at $2 per million cost $0.00002 at Standard.
+    assert.ok(
+      Math.abs(message.usage.cost.total - 0.00002 * multiplier) < 1e-12,
+      `${modelId} at ${now}`,
+    );
+  }
 });
 
 test("matches Pi AI's fallback message for terminal failures without details", async () => {

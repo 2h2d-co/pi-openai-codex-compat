@@ -30,7 +30,7 @@ import {
 import { isString, requireString } from "../extensions/openai-codex-compat/value-contracts.ts";
 import { describeFailure, errorLog } from "./support/error-log.ts";
 import { Type } from "typebox";
-import { CONFIG_FILE } from "../extensions/openai-codex-compat/config.ts";
+import { CONFIG_FILE, type Speed } from "../extensions/openai-codex-compat/config.ts";
 import {
   isJsonValue,
   isObject,
@@ -284,6 +284,7 @@ async function createLivePiHost(
     compactable?: boolean;
     /** Authenticate with this token instead of the live one. */
     apiKey?: string;
+    speed?: Speed;
   } = {},
 ): Promise<AgentSession> {
   const tempRoot = await mkdtemp(join(tmpdir(), "pi-codex-live-host-"));
@@ -294,7 +295,7 @@ async function createLivePiHost(
   await writeFile(
     join(agentDir, CONFIG_FILE),
     JSON.stringify({
-      fastMode: false,
+      speed: options.speed ?? "standard",
       responsesLite: true,
       applyPatch: false,
       imageGeneration: false,
@@ -839,5 +840,71 @@ test(
       false,
     );
     t.diagnostic(`gpt-6-luna compaction rejection published: ${reason}`);
+  },
+);
+
+test(
+  "live Pi host gpt-6.2-sol sends each speed's tier and Ultrafast generates faster than Standard",
+  { skip: !LIVE_TEST_ENABLED, timeout: LIVE_TEST_TIMEOUT_MS },
+  async (t) => {
+    const traffic = observeRealWebSocketTraffic(t);
+    const values = Array.from({ length: 200 }, (_, index) => `value-${String(index + 1)}`);
+    const prompt = values.map((value) => `<history-item>${value}</history-item>`).join("\n");
+    const rates: Partial<Record<Speed, number>> = {};
+    for (const [speed, serviceTier, multiplier] of [
+      ["standard", undefined, 1],
+      ["fast", "priority", 2],
+      // GPT-6.2 Ultrafast costs 3 times Standard through February 28, 2027, Pacific time.
+      ["ultrafast", "ultrafast", Date.now() < Date.parse("2027-03-01T08:00:00Z") ? 3 : 6],
+    ] as const) {
+      const session = await createLivePiHost(t, "text", "gpt-6.2-sol", [], { speed });
+      let firstText: number | undefined;
+      let end: number | undefined;
+      session.subscribe((event) => {
+        if (event.type === "message_update" && event.assistantMessageEvent.type === "text_delta") {
+          firstText ??= performance.now();
+        }
+        if (event.type === "message_end" && event.message.role === "assistant") {
+          end = performance.now();
+        }
+      });
+      const frameStart = traffic.frames.length;
+      await session.prompt(prompt, { expandPromptTemplates: false });
+
+      const assistant = latestAssistant(session);
+      assert.equal(assistant.stopReason, "stop");
+      const text = assistantText(assistant);
+      assert.deepEqual(responseLines(text), values);
+      // Codex echoes `default` for every tier, so the request shows the tier that was asked for.
+      const frames = traffic.frames
+        .slice(frameStart)
+        .filter((frame) => frame["generate"] !== false);
+      assert.ok(frames.length > 0, "Missing WebSocket response frame");
+      for (const frame of frames) assert.equal(frame["service_tier"], serviceTier, speed);
+      const model = session.model;
+      assert.ok(model);
+      const { usage } = assistant;
+      const standardCost =
+        (usage.input * model.cost.input +
+          usage.output * model.cost.output +
+          usage.cacheRead * model.cost.cacheRead +
+          usage.cacheWrite * model.cost.cacheWrite) /
+        1_000_000;
+      assert.ok(standardCost > 0);
+      assert.ok(Math.abs(usage.cost.total - standardCost * multiplier) < 1e-12, speed);
+      assert.ok(firstText !== undefined && end !== undefined, "The reply text was streamed.");
+      rates[speed] = text.length / (Math.max(end - firstText, 1) / 1_000);
+    }
+    const { standard, fast, ultrafast } = rates;
+    assert.ok(standard !== undefined && fast !== undefined && ultrafast !== undefined);
+    t.diagnostic(
+      `Text generation: Standard ${standard.toFixed(0)}, Fast ${fast.toFixed(0)}, and Ultrafast ${ultrafast.toFixed(0)} characters per second`,
+    );
+    // Codex silently serves Standard speed when the plan lacks Ultrafast, so only the generation
+    // speed shows that Ultrafast served the request.
+    assert.ok(
+      ultrafast >= standard * 3,
+      `Ultrafast generated ${ultrafast.toFixed(0)} characters per second, Standard ${standard.toFixed(0)}`,
+    );
   },
 );

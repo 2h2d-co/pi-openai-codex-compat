@@ -135,7 +135,7 @@ export async function verifyPackagedCli(
       join(agent, "openai-codex-compat.json"),
       JSON.stringify({
         responsesLite: options.lite,
-        fastMode: false,
+        speed: "standard",
         applyPatch: false,
         imageGeneration: false,
         webRun: false,

@@ -17,6 +17,12 @@ import {
   type ResponsesCompactionItem,
   type ResponsesInputItem,
 } from "./responses-item-schema.ts";
+import {
+  applyCostMultiplier,
+  serviceTierCostMultiplier,
+  SPEED_SERVICE_TIERS,
+  type SpeedServiceTier,
+} from "./service-tier.ts";
 
 export const REMOTE_COMPACTION_BETA = "remote_compaction_v2";
 export const RETAINED_CONTEXT_BUDGET = 64_000;
@@ -356,7 +362,7 @@ export function remoteCompactionPayload(options: {
   instructions: string;
   sessionId?: string | undefined;
   fallbackTools?: JsonValue[] | undefined;
-  priority: boolean;
+  serviceTier: SpeedServiceTier | undefined;
 }): JsonRecord {
   const payload = options.template ? structuredClone(options.template) : {};
   const include = Array.isArray(payload.include)
@@ -384,10 +390,10 @@ export function remoteCompactionPayload(options: {
       : { verbosity: "low" };
 
   if (!Array.isArray(payload.tools) && options.fallbackTools) payload.tools = options.fallbackTools;
-  if (options.priority) {
-    payload.service_tier = "priority";
-  } else if (payload.service_tier === "priority") {
-    // A cached request template may still contain this extension's old fast-mode value.
+  if (options.serviceTier) {
+    payload.service_tier = options.serviceTier;
+  } else if (SPEED_SERVICE_TIERS.some((tier) => tier === payload.service_tier)) {
+    // A cached request template may still contain this extension's earlier speed.
     delete payload.service_tier;
   }
   delete payload.messages;
@@ -566,7 +572,8 @@ async function readCompactionStream(
 export function responseUsage(
   model: Model<Api>,
   value: unknown,
-  priority: boolean,
+  serviceTier: SpeedServiceTier | undefined,
+  timestamp: number,
 ): Usage | undefined {
   if (!isObject(value)) return undefined;
   const totalInput = isNumber(value.input_tokens) ? value.input_tokens : 0;
@@ -587,24 +594,16 @@ export function responseUsage(
     cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
   };
   calculateCost(model, usage);
-
-  if (priority) {
-    const multiplier = model.id === "gpt-5.5" ? 2.5 : 2;
-    usage.cost.input *= multiplier;
-    usage.cost.output *= multiplier;
-    usage.cost.cacheRead *= multiplier;
-    usage.cost.cacheWrite *= multiplier;
-    usage.cost.total =
-      usage.cost.input + usage.cost.output + usage.cost.cacheRead + usage.cost.cacheWrite;
-  }
+  applyCostMultiplier(usage, serviceTierCostMultiplier(model.id, serviceTier, timestamp));
   return usage;
 }
 
 export async function collectRemoteCompaction(
   events: AsyncIterable<JsonRecord>,
   accountingModel: Model<Api>,
-  priority: boolean,
+  serviceTier: SpeedServiceTier | undefined,
 ): Promise<RemoteCompactionResponse> {
+  const startedAt = Date.now();
   const compacted: ResponsesCompactionItem[] = [];
   let finished = false;
   let usageValue: unknown;
@@ -652,7 +651,7 @@ export async function collectRemoteCompaction(
     throw new Error("Codex compaction output did not contain encrypted_content.");
   }
 
-  const usage = responseUsage(accountingModel, usageValue, priority);
+  const usage = responseUsage(accountingModel, usageValue, serviceTier, startedAt);
   const result: RemoteCompactionResponse = { item: compactionItem };
   if (usage) result.usage = usage;
   return result;
@@ -663,7 +662,7 @@ export async function requestRemoteCompaction(options: {
   headers: Headers;
   payload: JsonRecord;
   accountingModel: Model<Api>;
-  priority: boolean;
+  serviceTier: SpeedServiceTier | undefined;
   signal?: AbortSignal | undefined;
   fetcher?: typeof fetch | undefined;
 }): Promise<RemoteCompactionResponse> {
@@ -672,6 +671,7 @@ export async function requestRemoteCompaction(options: {
 
   for (let attempt = 0; attempt <= REQUEST_RETRIES; attempt++) {
     try {
+      const startedAt = Date.now();
       const init: RequestInit = {
         method: "POST",
         headers: options.headers,
@@ -705,7 +705,12 @@ export async function requestRemoteCompaction(options: {
       }
 
       const result = await readCompactionStream(response);
-      const usage = responseUsage(options.accountingModel, result.usage, options.priority);
+      const usage = responseUsage(
+        options.accountingModel,
+        result.usage,
+        options.serviceTier,
+        startedAt,
+      );
       const compacted: RemoteCompactionResponse = { item: result.item };
       if (usage) compacted.usage = usage;
       return compacted;

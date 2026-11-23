@@ -65,7 +65,7 @@ test("shows the Pi session id and appends settings to the default footer", () =>
   } satisfies ReadonlyFooterDataProvider;
   const footer = createCodexFooter(footerData, context, () => ({
     ...DEFAULT_CONFIG,
-    fastMode: true,
+    speed: "fast",
     textVerbosity: "high",
     reasoningSummary: "detailed",
   }));

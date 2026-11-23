@@ -101,7 +101,11 @@ for (const mode of ["regular", "fullscreen"]) {
     await wait("No models available");
     terminal.write("/codex-settings\r");
     await wait("Draft changes apply");
-    terminal.write("Fast mode");
+    terminal.write("Speed");
+    await setTimeout(100);
+    terminal.write("\r");
+    await wait("Choose a value");
+    terminal.write("\u001b[B\u001b[B");
     await setTimeout(100);
     terminal.write("\r");
     await wait("draft change");
@@ -115,7 +119,7 @@ for (const mode of ["regular", "fullscreen"]) {
     output = "";
     terminal.write("/codex-settings\r");
     await wait("Session settings shown");
-    await waitMatch(/Fast mode\s+on ~/);
+    await waitMatch(/Speed\s+ultrafast ~/);
     terminal.write("\u001b");
     await setTimeout(150);
     terminal.write("/reload\r");
@@ -123,7 +127,7 @@ for (const mode of ["regular", "fullscreen"]) {
     output = "";
     terminal.write("/codex-settings\r");
     await wait("Session settings shown");
-    await waitMatch(/Fast mode\s+on ~/);
+    await waitMatch(/Speed\s+ultrafast ~/);
     terminal.write("\u001b");
     await setTimeout(150);
     terminal.write("\u0004");
@@ -136,18 +140,23 @@ for (const mode of ["regular", "fullscreen"]) {
     await wait("No models available");
     terminal.write("/codex-settings\r");
     await wait("Session settings shown");
-    await waitMatch(/Fast mode\s+on ~/);
+    await waitMatch(/Speed\s+ultrafast ~/);
     await assert.rejects(readFile(file), { code: "ENOENT" });
     terminal.write("\u0013");
     await wait("Saved and applied");
-    assert.deepEqual(JSON.parse(await readFile(file, "utf8")), { fastMode: true });
+    assert.deepEqual(JSON.parse(await readFile(file, "utf8")), { speed: "ultrafast" });
     terminal.resize(50, 14);
+    await setTimeout(100);
+    // Stage Fast as a draft, then discard it with Escape.
+    terminal.write("\r");
+    await setTimeout(100);
+    terminal.write("\u001b[A");
     await setTimeout(100);
     terminal.write("\r");
     await setTimeout(100);
     terminal.write("\u001b");
     await setTimeout(100);
-    assert.deepEqual(JSON.parse(await readFile(file, "utf8")), { fastMode: true });
+    assert.deepEqual(JSON.parse(await readFile(file, "utf8")), { speed: "ultrafast" });
     terminal.write("\u0004");
     for (let attempt = 0; attempt < 100 && !exited; attempt++) await setTimeout(20);
     assert.ok(exited, "Pi should exit cleanly after the menu closes.");

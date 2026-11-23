@@ -354,7 +354,7 @@ test("switches branch thread metadata while preserving prompt-cache identity", a
     instructions: "Compact",
     grammarToolInputProperties: new Map(),
     template: {},
-    priority: false,
+    serviceTier: undefined,
     compactionMetadata: MANUAL_COMPACTION_METADATA,
     compactionDecision: { reason: "manual", willRetry: false },
   });

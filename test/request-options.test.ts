@@ -17,6 +17,7 @@ import {
 } from "../extensions/openai-codex-compat/request-options.ts";
 
 test("validates and layers Codex compatibility configuration", () => {
+  assert.equal(DEFAULT_CONFIG.speed, "standard");
   assert.equal(DEFAULT_CONFIG.responsesLite, false);
   assert.equal(DEFAULT_CONFIG.applyPatchDebug, false);
   assert.equal(DEFAULT_CONFIG.applyPatchDiagnostics, false);
@@ -27,7 +28,7 @@ test("validates and layers Codex compatibility configuration", () => {
   assert.equal(DEFAULT_CONFIG.webSearch, "disabled");
   assert.deepEqual(
     parseConfig({
-      fastMode: true,
+      speed: "ultrafast",
       responsesLite: false,
       applyPatch: false,
       applyPatchDebug: true,
@@ -40,11 +41,12 @@ test("validates and layers Codex compatibility configuration", () => {
       webSearch: "live",
       textVerbosity: "high",
       reasoningSummary: "detailed",
-      // Removed setting: stale values are ignored.
+      // Removed settings: stale values are ignored.
       reasoningMode: "pro",
+      fastMode: true,
     }),
     {
-      fastMode: true,
+      speed: "ultrafast",
       responsesLite: false,
       applyPatch: false,
       applyPatchDebug: true,
@@ -61,7 +63,7 @@ test("validates and layers Codex compatibility configuration", () => {
   );
   assert.deepEqual(
     parseConfig({
-      fastMode: "yes",
+      speed: true,
       responsesLite: "yes",
       applyPatch: null,
       applyPatchDebug: "yes",
@@ -82,7 +84,7 @@ test("validates and layers Codex compatibility configuration", () => {
   assert.deepEqual(
     resolveConfig(
       {
-        fastMode: true,
+        speed: "fast",
         applyPatch: false,
         applyPatchDebug: true,
         applyPatchDiagnostics: true,
@@ -90,10 +92,11 @@ test("validates and layers Codex compatibility configuration", () => {
         webSearch: "live",
         textVerbosity: "high",
       },
-      { autoCompactAtPercent: null, webSearch: "disabled", fastMode: false },
+      { autoCompactAtPercent: null, webSearch: "disabled", speed: "ultrafast" },
     ),
     {
       ...DEFAULT_CONFIG,
+      speed: "ultrafast",
       applyPatch: false,
       applyPatchDebug: true,
       applyPatchDiagnostics: true,
@@ -105,9 +108,10 @@ test("validates and layers Codex compatibility configuration", () => {
 
 test("parses environment overrides with highest precedence", () => {
   assert.equal(CONFIG_ENVIRONMENT_VARIABLES.webSearch, "PI_OPENAI_CODEX_COMPAT_WEB_SEARCH_MODE");
+  assert.equal(CONFIG_ENVIRONMENT_VARIABLES.speed, "PI_OPENAI_CODEX_COMPAT_SPEED");
 
   const environmentConfig = parseEnvironmentConfig({
-    [CONFIG_ENVIRONMENT_VARIABLES.fastMode]: "on",
+    [CONFIG_ENVIRONMENT_VARIABLES.speed]: " ultrafast ",
     [CONFIG_ENVIRONMENT_VARIABLES.responsesLite]: "off",
     [CONFIG_ENVIRONMENT_VARIABLES.applyPatch]: "0",
     [CONFIG_ENVIRONMENT_VARIABLES.applyPatchDebug]: "on",
@@ -124,7 +128,7 @@ test("parses environment overrides with highest precedence", () => {
   });
 
   assert.deepEqual(environmentConfig, {
-    fastMode: true,
+    speed: "ultrafast",
     responsesLite: false,
     applyPatch: false,
     applyPatchDebug: true,
@@ -141,8 +145,8 @@ test("parses environment overrides with highest precedence", () => {
   });
   assert.deepEqual(
     resolveConfig(
-      { fastMode: false, autoCompactAtPercent: 80 },
-      { fastMode: false, autoCompactAtPercent: 90 },
+      { speed: "standard", autoCompactAtPercent: 80 },
+      { speed: "fast", autoCompactAtPercent: 90 },
       environmentConfig,
     ),
     {
@@ -152,7 +156,7 @@ test("parses environment overrides with highest precedence", () => {
   );
   assert.deepEqual(
     parseEnvironmentConfig({
-      [CONFIG_ENVIRONMENT_VARIABLES.fastMode]: "enabled",
+      [CONFIG_ENVIRONMENT_VARIABLES.speed]: "fast",
       [CONFIG_ENVIRONMENT_VARIABLES.responsesLite]: "disabled",
       [CONFIG_ENVIRONMENT_VARIABLES.applyPatch]: "disabled",
       [CONFIG_ENVIRONMENT_VARIABLES.applyPatchDebug]: "enabled",
@@ -160,7 +164,7 @@ test("parses environment overrides with highest precedence", () => {
       [CONFIG_ENVIRONMENT_VARIABLES.autoCompactAtPercent]: "default",
     }),
     {
-      fastMode: true,
+      speed: "fast",
       responsesLite: false,
       applyPatch: false,
       applyPatchDebug: true,
@@ -181,6 +185,11 @@ test("parses environment overrides with highest precedence", () => {
       }),
     /PI_OPENAI_CODEX_COMPAT_IMAGE_DETAIL/,
   );
+  // The removed boolean values are not speeds.
+  assert.throws(
+    () => parseEnvironmentConfig({ [CONFIG_ENVIRONMENT_VARIABLES.speed]: "on" }),
+    /PI_OPENAI_CODEX_COMPAT_SPEED.*standard, fast, ultrafast/,
+  );
 
   const persisted = withoutEnvironmentOverrides(
     {
@@ -188,9 +197,9 @@ test("parses environment overrides with highest precedence", () => {
       autoCompactAtPercent: 87.5,
       webSearch: "cached",
     },
-    { fastMode: true, autoCompactAtPercent: null },
+    { speed: "fast", autoCompactAtPercent: null },
   );
-  assert.equal(Object.hasOwn(persisted, "fastMode"), false);
+  assert.equal(Object.hasOwn(persisted, "speed"), false);
   assert.equal(Object.hasOwn(persisted, "autoCompactAtPercent"), false);
   assert.equal(persisted.webSearch, "cached");
 });
@@ -206,7 +215,7 @@ test("applies priority and native request controls", () => {
     payload,
     {
       ...DEFAULT_CONFIG,
-      fastMode: true,
+      speed: "fast",
       webSearch: "cached",
     },
     { modelId: "gpt-5.6-sol", supportsImageSearch: true },
@@ -229,6 +238,31 @@ test("applies priority and native request controls", () => {
     format: { type: "json_schema" },
     verbosity: "medium",
   });
+});
+
+test("requests the service tier of each speed, and Ultrafast only on GPT-6.2 Sol", () => {
+  const tier = (speed: "standard" | "fast" | "ultrafast", modelId: string) =>
+    applyCodexRequestOptions(
+      { model: modelId },
+      { ...DEFAULT_CONFIG, speed },
+      { modelId, supportsImageSearch: false },
+    ).service_tier;
+
+  for (const modelId of [
+    "gpt-6.2-sol",
+    "gpt-6.2-astra",
+    "gpt-6-astra",
+    "gpt-6.1-sol",
+    "gpt-6-luna",
+  ]) {
+    assert.equal(tier("standard", modelId), undefined, modelId);
+    assert.equal(tier("fast", modelId), "priority", modelId);
+  }
+  assert.equal(tier("ultrafast", "gpt-6.2-sol"), "ultrafast");
+  // Like the Codex CLI, Ultrafast on another model falls back to Standard rather than Fast.
+  for (const modelId of ["gpt-6.2-astra", "gpt-6-astra", "gpt-6.1-sol", "gpt-6-luna"]) {
+    assert.equal(tier("ultrafast", modelId), undefined, modelId);
+  }
 });
 
 for (const modelId of ["gpt-5.5", "gpt-5.6-sol", "gpt-6-astra", "gpt-6-luna", "gpt-6.1-sol"]) {

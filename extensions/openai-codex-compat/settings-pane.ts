@@ -18,6 +18,7 @@ import {
   CODEX_SHELL_TOOL_SCHEMA,
   IMAGE_DETAIL_SCHEMA,
   REASONING_SUMMARY_SCHEMA,
+  SPEED_SCHEMA,
   TEXT_VERBOSITY_SCHEMA,
   WEB_SEARCH_MODE_SCHEMA,
   globalConfigPath,
@@ -36,10 +37,11 @@ import { usesResponsesLite } from "./responses-lite.ts";
 
 export const settingFields: SettingsField[] = [
   {
-    id: "fastMode",
-    label: "Fast mode",
-    description: "Use the priority service tier and its pricing.",
-    choices: [false, true],
+    id: "speed",
+    label: "Speed",
+    description:
+      "Fast uses the priority tier. Ultrafast applies to GPT-6.2 Sol; other models use Standard. Faster speeds cost more.",
+    choices: [...SPEED_SCHEMA.enum],
   },
   {
     id: "responsesLite",

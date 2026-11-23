@@ -215,7 +215,7 @@ test("modifies requests on the canonical OpenAI Codex provider", async (t) => {
   await writeFile(
     join(agentDir, CONFIG_FILE),
     JSON.stringify({
-      fastMode: true,
+      speed: "fast",
       responsesLite: true,
       applyPatch: false,
       webSearch: "live",

@@ -6,6 +6,13 @@ import type { Static } from "typebox";
 import { Value } from "typebox/value";
 import { isObject } from "./codex-protocol.ts";
 
+/** Standard, Fast (the priority service tier), or Ultrafast (the ultrafast service tier). */
+export const SPEED_SCHEMA = {
+  enum: ["standard", "fast", "ultrafast"],
+} as const;
+
+export type Speed = Static<typeof SPEED_SCHEMA>;
+
 export const WEB_SEARCH_MODE_SCHEMA = {
   enum: ["disabled", "cached", "indexed", "live"],
 } as const;
@@ -45,8 +52,8 @@ export type CodexShellTool = Static<typeof CODEX_SHELL_TOOL_SCHEMA>;
 export const ENV_PREFIX = "PI_OPENAI_CODEX_COMPAT_";
 
 export interface CodexCompatConfig {
-  /** Send OpenAI Codex requests through the priority service tier. */
-  fastMode: boolean;
+  /** Send OpenAI Codex requests through the Fast or Ultrafast service tier. */
+  speed: Speed;
   /** Use Codex's Responses Lite envelope on supported GPT-5.6 models. */
   responsesLite: boolean;
   /** Replace Pi's active edit and write tools with the extension's apply_patch tool. */
@@ -77,7 +84,7 @@ export interface CodexCompatConfig {
 }
 
 export const CONFIG_ENVIRONMENT_VARIABLES = {
-  fastMode: `${ENV_PREFIX}FAST_MODE`,
+  speed: `${ENV_PREFIX}SPEED`,
   responsesLite: `${ENV_PREFIX}RESPONSES_LITE`,
   applyPatch: `${ENV_PREFIX}APPLY_PATCH`,
   applyPatchDebug: `${ENV_PREFIX}APPLY_PATCH_DEBUG`,
@@ -94,7 +101,7 @@ export const CONFIG_ENVIRONMENT_VARIABLES = {
 } as const satisfies Record<keyof CodexCompatConfig, string>;
 
 export type ConfigLayer = {
-  fastMode?: boolean;
+  speed?: Speed;
   responsesLite?: boolean;
   applyPatch?: boolean;
   applyPatchDebug?: boolean;
@@ -112,7 +119,7 @@ export type ConfigLayer = {
 
 export const CONFIG_FILE = "openai-codex-compat.json";
 export const DEFAULT_CONFIG: CodexCompatConfig = {
-  fastMode: false,
+  speed: "standard",
   responsesLite: false,
   applyPatch: true,
   applyPatchDebug: false,
@@ -174,8 +181,8 @@ function environmentEnum<const Schema extends { readonly enum: readonly string[]
 export function parseEnvironmentConfig(environment: Environment = process.env): ConfigLayer {
   const layer: ConfigLayer = {};
 
-  const fastMode = environmentBoolean(environment, CONFIG_ENVIRONMENT_VARIABLES.fastMode);
-  if (fastMode !== undefined) layer.fastMode = fastMode;
+  const speed = environmentEnum(environment, CONFIG_ENVIRONMENT_VARIABLES.speed, SPEED_SCHEMA);
+  if (speed !== undefined) layer.speed = speed;
 
   const responsesLite = environmentBoolean(environment, CONFIG_ENVIRONMENT_VARIABLES.responsesLite);
   if (responsesLite !== undefined) layer.responsesLite = responsesLite;
@@ -275,8 +282,8 @@ export function parseConfig(value: unknown): ConfigLayer {
 
   const layer: ConfigLayer = {};
 
-  const fastMode = value["fastMode"];
-  if (isBoolean(fastMode)) layer.fastMode = fastMode;
+  const speed = value["speed"];
+  if (Value.Check(SPEED_SCHEMA, speed)) layer.speed = speed;
 
   const responsesLite = value["responsesLite"];
   if (isBoolean(responsesLite)) layer.responsesLite = responsesLite;
@@ -364,7 +371,7 @@ export function resolveConfig(
 ): CodexCompatConfig {
   const merged = { ...globalConfig, ...projectConfig, ...environmentConfig };
   const config = { ...DEFAULT_CONFIG };
-  if (isBoolean(merged.fastMode)) config.fastMode = merged.fastMode;
+  if (merged.speed) config.speed = merged.speed;
   if (isBoolean(merged.responsesLite)) config.responsesLite = merged.responsesLite;
   if (isBoolean(merged.applyPatch)) config.applyPatch = merged.applyPatch;
   if (isBoolean(merged.applyPatchDebug)) config.applyPatchDebug = merged.applyPatchDebug;
@@ -411,7 +418,7 @@ export function loadConfig(
 
 export function configLayer(config: CodexCompatConfig): ConfigLayer {
   return {
-    fastMode: config.fastMode,
+    speed: config.speed,
     responsesLite: config.responsesLite,
     applyPatch: config.applyPatch,
     applyPatchDebug: config.applyPatchDebug,

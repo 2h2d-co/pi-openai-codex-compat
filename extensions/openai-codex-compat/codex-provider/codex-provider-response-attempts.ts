@@ -19,6 +19,7 @@ import {
   type ResponsesOutputItem,
 } from "../responses-item-schema.ts";
 import { RESPONSES_TERMINAL_EVENT_TYPE_SCHEMA } from "../responses-event-schema.ts";
+import { applyCostMultiplier, serviceTierCostMultiplier } from "../service-tier.ts";
 import type {
   CodexAttemptCapture,
   CodexPostToolDisposition,
@@ -386,24 +387,13 @@ export function applyServiceTierPricing(
   model: Model<Api>,
   requestedTier: unknown,
   responseTier: string | undefined,
+  timestamp: number,
 ): void {
+  // Codex echoes `default` even for a request it served in the requested tier.
   const resolvedTier =
-    responseTier === "default" && (requestedTier === "priority" || requestedTier === "flex")
+    responseTier === "default" &&
+    (requestedTier === "priority" || requestedTier === "flex" || requestedTier === "ultrafast")
       ? requestedTier
       : (responseTier ?? requestedTier);
-  const multiplier =
-    resolvedTier === "flex"
-      ? 0.5
-      : resolvedTier === "priority"
-        ? model.id === "gpt-5.5"
-          ? 2.5
-          : 2
-        : 1;
-  if (multiplier === 1) return;
-  usage.cost.input *= multiplier;
-  usage.cost.output *= multiplier;
-  usage.cost.cacheRead *= multiplier;
-  usage.cost.cacheWrite *= multiplier;
-  usage.cost.total =
-    usage.cost.input + usage.cost.output + usage.cost.cacheRead + usage.cost.cacheWrite;
+  applyCostMultiplier(usage, serviceTierCostMultiplier(model.id, resolvedTier, timestamp));
 }

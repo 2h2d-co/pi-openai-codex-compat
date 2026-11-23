@@ -11,6 +11,7 @@ import type { CodexCompatConfig } from "./config.ts";
 import type { ConfigContext, ConfigResolver } from "./config-context.ts";
 import { selectedRegistryModel } from "./model-context.ts";
 import { isCodexModel } from "./request-options.ts";
+import { speedServiceTier } from "./service-tier.ts";
 
 export type FooterContext = ConfigContext &
   Pick<ExtensionContext, "getContextUsage" | "mode" | "thinkingLevel"> & {
@@ -40,9 +41,10 @@ export type FooterContext = ConfigContext &
     ui: Pick<ExtensionContext["ui"], "setFooter">;
   };
 
-export function footerSettingLabels(config: CodexCompatConfig): string[] {
+export function footerSettingLabels(config: CodexCompatConfig, modelId: string): string[] {
+  const serviceTier = speedServiceTier(config.speed, modelId);
   return [
-    config.fastMode ? "fast" : undefined,
+    serviceTier === "priority" ? "fast" : serviceTier,
     config.textVerbosity !== "low" ? `verbosity ${config.textVerbosity}` : undefined,
     config.reasoningSummary !== "auto" ? `summary ${config.reasoningSummary}` : undefined,
   ].filter((label): label is string => label !== undefined);
@@ -55,7 +57,7 @@ export function footerModel(
 ): Model<Api> | undefined {
   if (!model || !isCodexModel(model)) return model;
 
-  const settings = footerSettingLabels(config);
+  const settings = footerSettingLabels(config, model.id);
   if (settings.length === 0) return model;
 
   const reasoning = model.reasoning

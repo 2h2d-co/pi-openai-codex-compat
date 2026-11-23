@@ -93,6 +93,7 @@ extensions/openai-codex-compat/responses-item-schema.ts
 extensions/openai-codex-compat/responses-lite.ts
 extensions/openai-codex-compat/responses-replay.ts
 extensions/openai-codex-compat/responses-tool-schema.ts
+extensions/openai-codex-compat/service-tier.ts
 extensions/openai-codex-compat/settings-pane.ts
 extensions/openai-codex-compat/tool-definition-contract.ts
 extensions/openai-codex-compat/tool-runtime.ts

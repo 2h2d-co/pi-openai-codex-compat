@@ -41,6 +41,7 @@ import {
 } from "./codex-transport/codex-transport-errors.ts";
 import { latestRequestTools } from "./request-tools-entry.ts";
 import { selectedRegistryModel } from "./model-context.ts";
+import { speedServiceTier } from "./service-tier.ts";
 
 export type RemoteCompactionContext = Parameters<ConfigResolver>[0] & {
   getContextUsage: ExtensionContext["getContextUsage"];
@@ -325,7 +326,7 @@ export default function registerRemoteCompaction(
         ),
         grammarToolInputProperties,
         template,
-        priority: config.fastMode,
+        serviceTier: speedServiceTier(config.speed, ctx.model.id),
         compactionMetadata: compactionMetadata(event.reason),
         compactionDecision: {
           reason: event.reason,

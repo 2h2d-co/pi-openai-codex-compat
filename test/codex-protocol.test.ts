@@ -357,7 +357,7 @@ test("builds the remote-compaction-v2 request and checkpoint history", () => {
     history: [user("hello")],
     instructions: "system prompt",
     sessionId: "session-1",
-    priority: true,
+    serviceTier: "priority",
   });
 
   assert.deepEqual(requireResponsesInputItems(payload.input).at(-1), {
@@ -372,10 +372,30 @@ test("builds the remote-compaction-v2 request and checkpoint history", () => {
       modelId: codexModel.id,
       history: [user("hello")],
       instructions: "system prompt",
-      priority: false,
+      serviceTier: undefined,
     }).prompt_cache_key,
     undefined,
   );
+  for (const [templateTier, serviceTier, expected] of [
+    ["priority", "ultrafast", "ultrafast"],
+    ["ultrafast", "priority", "priority"],
+    // A cached template keeps no tier from an earlier speed.
+    ["priority", undefined, undefined],
+    ["ultrafast", undefined, undefined],
+    // A tier this extension does not set comes from another source and stays.
+    ["flex", undefined, "flex"],
+  ] as const) {
+    assert.equal(
+      remoteCompactionPayload({
+        template: { service_tier: templateTier },
+        modelId: codexModel.id,
+        history: [user("hello")],
+        instructions: "system prompt",
+        serviceTier,
+      }).service_tier,
+      expected,
+    );
+  }
 
   const installed = installCompactionItem(
     [user("old request"), { type: "message", role: "assistant", content: [] }],
@@ -424,7 +444,7 @@ test("authenticates and parses remote compaction streams with priority pricing",
     headers,
     payload: {},
     accountingModel: codexModel,
-    priority: true,
+    serviceTier: "priority",
     fetcher,
   });
 
@@ -446,8 +466,40 @@ test("accepts compaction output supplied only on the terminal response", async (
     };
   }
 
-  const result = await collectRemoteCompaction(terminalOnly(), codexModel, false);
+  const result = await collectRemoteCompaction(terminalOnly(), codexModel, undefined);
   assert.equal(result.item.encrypted_content, "opaque");
+  assert.ok(Math.abs((result.usage?.cost.total ?? 0) - 0.000012) < 1e-12);
+});
+
+test("prices Ultrafast compaction at 3 times Standard for GPT-6.2 until March 1, 2027, Pacific time", async (t) => {
+  async function* completed(): AsyncGenerator<JsonRecord> {
+    yield {
+      type: "response.completed",
+      response: {
+        status: "completed",
+        output: [{ type: "compaction", id: "cmp_ultrafast", encrypted_content: "opaque" }],
+        usage: { input_tokens: 10, output_tokens: 1, total_tokens: 11 },
+      },
+    };
+  }
+  const standardCost = 0.000012;
+  for (const [modelId, now, multiplier] of [
+    ["gpt-6.2-sol", "2027-02-28T23:59:59-08:00", 3],
+    ["gpt-6.2-sol", "2027-03-01T00:00:00-08:00", 6],
+    ["gpt-6.1-sol", "2026-11-22T00:00:00Z", 6],
+  ] as const) {
+    t.mock.timers.enable({ apis: ["Date"], now: Date.parse(now) });
+    const result = await collectRemoteCompaction(
+      completed(),
+      { ...codexModel, id: modelId },
+      "ultrafast",
+    );
+    t.mock.timers.reset();
+    assert.ok(
+      Math.abs((result.usage?.cost.total ?? 0) - standardCost * multiplier) < 1e-12,
+      `${modelId} at ${now}`,
+    );
+  }
 });
 
 test("attaches HTTP error body read failures to the status error", async () => {
@@ -465,7 +517,7 @@ test("attaches HTTP error body read failures to the status error", async () => {
       headers: new Headers(),
       payload: {},
       accountingModel: codexModel,
-      priority: false,
+      serviceTier: undefined,
       fetcher: async () => response,
     }),
     (error: unknown) => {

@@ -70,7 +70,7 @@ test("Pi executes done calls and preserves current instructions across reload an
     join(agentDir, CONFIG_FILE),
     JSON.stringify({
       applyPatch: false,
-      fastMode: false,
+      speed: "standard",
       imageGeneration: false,
       responsesLite: false,
       webRun: false,
@@ -330,7 +330,7 @@ for (const mode of ["on", "only"] as const) {
       join(agentDir, CONFIG_FILE),
       JSON.stringify({
         applyPatch: false,
-        fastMode: false,
+        speed: "standard",
         imageGeneration: false,
         responsesLite: false,
         webRun: false,

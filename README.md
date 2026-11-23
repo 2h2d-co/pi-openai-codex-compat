@@ -1,10 +1,10 @@
 # pi-openai-codex-compat
 
-OpenAI Codex compatibility for [Pi](https://github.com/earendil-works/pi-mono), combining priority fast mode, native Codex compaction, and Codex-optimized model features in one Pi package.
+OpenAI Codex compatibility for [Pi](https://github.com/earendil-works/pi-mono), combining Fast and Ultrafast speeds, native Codex compaction, and Codex-optimized model features in one Pi package.
 
 ## Features
 
-- **Request-level fast mode**: keeps the canonical `openai-codex` provider id and models selected while adding `service_tier: "priority"` at the request boundary.
+- **Request-level speed**: keeps the canonical `openai-codex` provider id and models selected while adding `service_tier: "priority"` (Fast) or `service_tier: "ultrafast"` (Ultrafast) at the request boundary.
 - **Native compaction**: uses Codex `remote_compaction_v2` for `/compact`, Pi threshold compaction, context-overflow recovery, and an optional percentage threshold.
 - **Codex `apply_patch`**: provides an optional patch tool with the Codex grammar, parser, fuzzy matcher, overwrite semantics, filesystem behavior, model-facing result format, structured history, and diff-oriented TUI rendering. Pi sends it as an OpenAI custom grammar tool when the model supports that protocol and as a normal function tool otherwise.
 - **Codex command tools**: replaces an active Pi `bash` tool with either the persistent `exec_command` + `write_stdin` pair or the one-shot `shell_command` tool. Unified exec is the default and supports optional PTY sessions through `node-pty`.
@@ -43,7 +43,7 @@ Authenticate through Pi if needed:
 /login openai-codex
 ```
 
-**Pi's virtual models are not supported.** The package's features check the selected model, not the model that answers a request. Pi's experimental virtual models, registered with `pi.registerVirtualModel()`, stay selected while Pi routes each request to a physical model. With a virtual model selected, the package deactivates its tools, omits fast mode and the other request controls, and leaves compaction and output-limit continuation to Pi. This holds even for a virtual model listed under `openai-codex` or one that routes every request to an `openai-codex` model. Routed `openai-codex` requests still use the package's transport. Select an `openai-codex` model directly to use the package's features.
+**Pi's virtual models are not supported.** The package's features check the selected model, not the model that answers a request. Pi's experimental virtual models, registered with `pi.registerVirtualModel()`, stay selected while Pi routes each request to a physical model. With a virtual model selected, the package deactivates its tools, omits the speed and the other request controls, and leaves compaction and output-limit continuation to Pi. This holds even for a virtual model listed under `openai-codex` or one that routes every request to an `openai-codex` model. Routed `openai-codex` requests still use the package's transport. Select an `openai-codex` model directly to use the package's features.
 
 ## Compatibility baseline and differences
 
@@ -63,7 +63,7 @@ The compatibility baseline is official Codex CLI `0.149.1`, released August 24, 
 | `apply_patch` diagnostics capture             | Disabled; no separate request or filesystem snapshot artifacts are retained.                                                                                                                                                                                                                                                                                                                                               | Codex owns its rollout diagnostics rather than writing this package's artifact format.                                                        | `applyPatchDiagnostics`: boolean.                                                                                                                                           |
 | Codex tool background                         | Uses a subtle theme-derived surface for extension-owned Codex tools.                                                                                                                                                                                                                                                                                                                                                       | Uses Codex's own TUI activity cells rather than Pi tool rows.                                                                                 | `toolBackground`: `subtle`, `status`, or `none`.                                                                                                                            |
 | Auto-compaction trigger                       | Relies on Pi's reserve-token threshold unless a percentage is configured.                                                                                                                                                                                                                                                                                                                                                  | Tracks Codex's model/token-budget state before and between sampling steps.                                                                    | `autoCompactAtPercent`: percentage or unset. Mid-response percentage boundaries use Pi's bounded compact-and-continue lifecycle, so Pi auto-compaction must remain enabled. |
-| Fast mode                                     | Uses the normal tier.                                                                                                                                                                                                                                                                                                                                                                                                      | Uses the configured Codex service tier.                                                                                                       | `fastMode`: boolean; `true` requests the priority tier.                                                                                                                     |
+| Speed                                         | Uses the Standard tier.                                                                                                                                                                                                                                                                                                                                                                                                    | Uses the configured Codex service tier when the model's catalog entry offers it.                                                              | `speed`: `standard`, `fast`, or `ultrafast`.                                                                                                                                |
 | Responses Lite                                | Disabled; supported models use ordinary Responses.                                                                                                                                                                                                                                                                                                                                                                         | Enabled according to Codex model metadata.                                                                                                    | `responsesLite`: boolean; `true` enables Responses Lite.                                                                                                                    |
 | Text and reasoning request controls           | Sends low text verbosity and automatic reasoning summaries, and omits `reasoning.mode`, which the Codex endpoint rejects. Models with mid-conversation effort, such as GPT-6 and GPT-6.2, keep `reasoning.effort` fixed and receive thinking-level changes as `configuration_update` input items, as Pi AI's Codex adapter and official Codex send them, so a change keeps the prompt cache. Off is sent as effort `none`. | Resolves these controls through Codex configuration, model metadata, and turn state.                                                          | `textVerbosity` and `reasoningSummary`.                                                                                                                                     |
 
@@ -120,7 +120,7 @@ The package implements the Codex-specific pieces that fit a provider compatibili
 - `web.run`;
 - `image_gen.imagegen`;
 - namespaced tool serialization;
-- text verbosity, reasoning summaries/mode, and priority service tier.
+- text verbosity, reasoning summaries/mode, and the priority and ultrafast service tiers.
 
 The following official Codex facilities are not exact equivalents in this package:
 
@@ -173,11 +173,28 @@ For a temporary development run:
 pi --no-extensions -e .
 ```
 
-## Fast mode
+## Speed
 
-Keep using an `openai-codex` model and enable **Fast mode** in `/codex-settings`. The extension adds `service_tier: "priority"` to ordinary and native-compaction requests without introducing another provider id or changing the selected model.
+Keep using an `openai-codex` model and choose a **Speed** in `/codex-settings`:
 
-Fast mode applies to whichever built-in `openai-codex` model is selected. Priority-tier costs are reflected in Pi's usage totals, including when Codex echoes `service_tier: "default"` in its response.
+- `standard` sends no service tier.
+- `fast` adds `service_tier: "priority"` on every model.
+- `ultrafast` adds `service_tier: "ultrafast"` on `gpt-6.2-sol`. On other models it sends no
+  service tier, as the Codex CLI does, so they run at Standard speed.
+
+The extension adds the tier to ordinary and native-compaction requests without introducing
+another provider id or changing the selected model.
+
+Ultrafast needs a ChatGPT plan that includes it for the model. Pro $200 includes Ultrafast for
+GPT-6.2 Sol. Pro $500 and eligible Enterprise and Edu workspaces also include it for GPT-6.2
+Astra, GPT-6 Astra, and GPT-6.1 Sol, which this package does not send Ultrafast for yet. Plus,
+Pro $100, and Business do not include Ultrafast. When the plan lacks it, Codex accepts the request
+and answers at Standard speed without an error, while Pi still reports the Ultrafast cost.
+
+Pi's usage totals report the tier's API price, including when Codex echoes
+`service_tier: "default"` in its response, which it does for every tier. Fast costs 2 times the
+Standard rate. Ultrafast costs 6 times the Standard rate, and GPT-6.2 models cost 3 times the
+Standard rate through February 28, 2027, Pacific time.
 
 ## Configuration
 
@@ -246,13 +263,13 @@ deleted. External editors do not participate in that lock.
 Session overrides retain their original conflict checks across menu reopenings.
 Conflicting external edits remain protected after reload or restart.
 
-The effective settings are printed once when a TUI session starts. The footer shows the current Pi session ID alongside the working directory and optional session name. It shows `fast` only when enabled, and shows text verbosity or reasoning summary only when they differ from their defaults.
+The effective settings are printed once when a TUI session starts. The footer shows the current Pi session ID alongside the working directory and optional session name. It shows `fast` or `ultrafast` when requests to the selected model use that tier, and shows text verbosity or reasoning summary only when they differ from their defaults.
 
 Example:
 
 ```json
 {
-  "fastMode": true,
+  "speed": "fast",
   "responsesLite": true,
   "toolBackground": "subtle",
   "shellTool": "unified_exec",
@@ -273,7 +290,7 @@ Defaults:
 
 | Setting                 | Values                                               | Default        | Behavior                                                                                                                                                                                                                                  |
 | ----------------------- | ---------------------------------------------------- | -------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `fastMode`              | boolean                                              | `false`        | Adds `service_tier: "priority"` to requests while retaining the current `openai-codex` provider and model.                                                                                                                                |
+| `speed`                 | `standard`, `fast`, `ultrafast`                      | `standard`     | Adds `service_tier: "priority"` (`fast`) or, on `gpt-6.2-sol`, `service_tier: "ultrafast"` (`ultrafast`) to requests while retaining the current `openai-codex` provider and model. See [Speed](#speed).                                  |
 | `responsesLite`         | boolean                                              | `false`        | Uses Codex's Responses Lite input envelope on supported models when enabled. By default, those models use ordinary Responses instructions and tools.                                                                                      |
 | `toolBackground`        | `subtle`, `status`, `none`                           | `subtle`       | Controls the shared self-rendered background for command tools, `apply_patch`, `image_gen.imagegen`, and `web.run`. `status` uses Pi's pending/success/error backgrounds; `none` keeps the custom layout transparent.                     |
 | `shellTool`             | `unified_exec`, `shell_command`                      | `unified_exec` | Selects the command surface on `openai-codex` models. The selected Codex command surface replaces Pi `bash` only when `bash` was active.                                                                                                  |
@@ -300,7 +317,7 @@ Every setting can also be overridden for one Pi process with an environment vari
 
 | Setting                 | Environment variable                             |
 | ----------------------- | ------------------------------------------------ |
-| `fastMode`              | `PI_OPENAI_CODEX_COMPAT_FAST_MODE`               |
+| `speed`                 | `PI_OPENAI_CODEX_COMPAT_SPEED`                   |
 | `responsesLite`         | `PI_OPENAI_CODEX_COMPAT_RESPONSES_LITE`          |
 | `toolBackground`        | `PI_OPENAI_CODEX_COMPAT_TOOL_BACKGROUND`         |
 | `shellTool`             | `PI_OPENAI_CODEX_COMPAT_SHELL_TOOL`              |
@@ -436,7 +453,7 @@ Transparent prewarm, requests, continuation, and transport recovery are recorded
 
 Diagnostics intentionally retain exact request, cache-affinity, response, account, and server routing identifiers so a local Pi session file contains enough information to trace retries and cache behavior directly. Prompt and tool contents are still represented by byte counts and SHA-256 fingerprints rather than duplicated into every diagnostic.
 
-Any model switch is rejected while the active branch contains a native Codex checkpoint because checkpoints are model-specific. Navigate to a branch before the checkpoint or start a new session before switching. Toggling fast mode does not change the model id or invalidate the checkpoint.
+Any model switch is rejected while the active branch contains a native Codex checkpoint because checkpoints are model-specific. Navigate to a branch before the checkpoint or start a new session before switching. Changing the speed does not change the model id or invalidate the checkpoint.
 
 Native compaction fails closed for Codex models: a failed compaction is cancelled instead of silently replacing the opaque state with a local text summary. Other providers continue to use Pi's default compaction behavior. `/tree` branch summarization is intentionally not intercepted.
 
@@ -696,6 +713,10 @@ Responses and Responses Lite tests exercise tool calls, prompt reload, native
 compaction, and persisted-session resume against Codex.
 SDK tests verify Responses Lite
 WebSocket history, prewarming, continuation, and the built-in read tool.
+An SDK speed test sends the Standard, Fast, and Ultrafast speeds on `gpt-6.2-sol` and checks
+each request's tier and reported cost. Codex reports `default` as the tier of every response, so
+the test also requires Ultrafast to generate a long reply at least 3 times as fast as Standard.
+It needs a Codex login whose plan includes Ultrafast for GPT-6.2 Sol.
 CLI tests also execute the built-in read tool after resume.
 Terminal tests check interrupted `exec_command` error framing in regular and
 fullscreen mode. A live terminal case blocks a real Codex command call before

@@ -189,14 +189,22 @@ test("every configuration key has an editor without stale model lists", () => {
     undefined,
   );
   assert.deepEqual(
-    footerSettingLabels({
-      ...DEFAULT_CONFIG,
-      fastMode: true,
-      textVerbosity: "high",
-      reasoningSummary: "detailed",
-    }),
+    footerSettingLabels(
+      {
+        ...DEFAULT_CONFIG,
+        speed: "fast",
+        textVerbosity: "high",
+        reasoningSummary: "detailed",
+      },
+      "gpt-test",
+    ),
     ["fast", "verbosity high", "summary detailed"],
   );
+  // The footer shows the speed a model gets: Ultrafast on other models is Standard.
+  assert.deepEqual(footerSettingLabels({ ...DEFAULT_CONFIG, speed: "ultrafast" }, "gpt-6.2-sol"), [
+    "ultrafast",
+  ]);
+  assert.deepEqual(footerSettingLabels({ ...DEFAULT_CONFIG, speed: "ultrafast" }, "gpt-test"), []);
   assert.equal(footerModel(model, "high", DEFAULT_CONFIG)?.id, "gpt-test");
 });
 
@@ -314,7 +322,7 @@ test("toggles image_gen.imagegen and web.run independently on Codex models", () 
   }
 });
 
-test("a session saved with the removed reasoningMode setting resumes with its other settings", async (t) => {
+test("a session saved with the removed reasoningMode and fastMode settings resumes with its other settings", async (t) => {
   const root = await mkdtemp(join(tmpdir(), "codex-settings-stale-"));
   const previous = process.env["PI_CODING_AGENT_DIR"];
   process.env["PI_CODING_AGENT_DIR"] = join(root, "agent");
@@ -326,20 +334,28 @@ test("a session saved with the removed reasoningMode setting resumes with its ot
   });
   const manager = SessionManager.inMemory(root);
   const hash = "b".repeat(64);
-  // The record shape 0.0.18 wrote after "Apply to session", including reasoningMode.
+  // The record shape 0.0.18 wrote after "Apply to session", including reasoningMode, and
+  // fastMode, which speed replaced.
+  const { speed: _speed, ...earlierDefaults } = DEFAULT_CONFIG;
   manager.appendCustomEntry(SESSION_SETTINGS_TYPE, {
     version: 1,
     sessionId: manager.getSessionId(),
-    values: { ...DEFAULT_CONFIG, fastMode: true, reasoningMode: "pro" },
-    changes: { fastMode: [true], reasoningMode: ["pro"] },
+    values: { ...earlierDefaults, fastMode: true, reasoningMode: "pro", textVerbosity: "high" },
+    changes: { fastMode: [true], reasoningMode: ["pro"], textVerbosity: ["high"] },
     file: join(root, "agent", CONFIG_FILE),
-    observed: { fastMode: [hash, hash], reasoningMode: [hash, hash] },
+    observed: {
+      fastMode: [hash, hash],
+      reasoningMode: [hash, hash],
+      textVerbosity: [hash, hash],
+    },
   });
   const config = loadSessionConfig({
     cwd: root,
     isProjectTrusted: () => false,
     sessionManager: manager,
   });
-  assert.equal(config.fastMode, true);
+  assert.equal(config.textVerbosity, "high");
+  assert.equal(config.speed, "standard");
+  assert.equal(Object.hasOwn(config, "fastMode"), false);
   assert.equal(Object.hasOwn(config, "reasoningMode"), false);
 });
