@@ -29,6 +29,7 @@ import {
   loadConfig,
   configLayer,
   type CodexCompatConfig,
+  type MenuConfig,
 } from "./config.ts";
 import type { ConfigContext } from "./config-context.ts";
 import { selectedRegistryModel } from "./model-context.ts";
@@ -38,9 +39,9 @@ import { usesResponsesLite } from "./responses-lite.ts";
 export const settingFields: SettingsField[] = [
   {
     id: "speed",
-    label: "Speed",
+    label: "Default speed",
     description:
-      "Fast uses the priority tier. Ultrafast applies to GPT-6.2 Sol; other models use Standard. Faster speeds cost more.",
+      "Fast uses the priority tier. Ultrafast applies to GPT-6.2 Sol and Astra, GPT-6 Astra, and GPT-6.1 Sol if the plan includes them. speedByModel in the JSON file overrides it per model.",
     choices: [...SPEED_SCHEMA.enum],
   },
   {
@@ -127,6 +128,15 @@ export const settingFields: SettingsField[] = [
     format: (value) => (value === null ? "Pi default" : `${value}%`),
   },
 ];
+
+/** The values `/codex-settings` shows and edits. `speedByModel` is set only in JSON files. */
+function menuValues(
+  config: CodexCompatConfig,
+): Omit<MenuConfig, "autoCompactAtPercent"> & { autoCompactAtPercent: number | null } {
+  const { speedByModel: _speedByModel, ...values } = config;
+  return { ...values, autoCompactAtPercent: config.autoCompactAtPercent ?? null };
+}
+
 export type SettingsChangeContext = { model: Model<Api> | undefined; sessionId: string };
 export type SettingsCallbacks = {
   getConfig: (ctx: ConfigContext) => CodexCompatConfig;
@@ -184,10 +194,8 @@ export default function registerCodexSettings(
         const store = new SettingsStore(
           globalConfigPath(),
           trusted ? projectConfigPath(ctx.cwd) : undefined,
-          (global, project) => {
-            const config = resolveConfig(parseConfig(global), parseConfig(project), environment);
-            return { ...config, autoCompactAtPercent: config.autoCompactAtPercent ?? null };
-          },
+          (global, project) =>
+            menuValues(resolveConfig(parseConfig(global), parseConfig(project), environment)),
           locked,
           (data) => ({ ...parseConfig(data) }),
         );
@@ -201,9 +209,13 @@ export default function registerCodexSettings(
         const fields = settingFields.map((field) => {
           const inactive =
             !isCodexModel(model) || (field.id === "responsesLite" && !usesResponsesLite(model.id));
+          const override =
+            field.id === "speed" && model && Object.hasOwn(current.speedByModel, model.id)
+              ? `${model.id} uses its speedByModel value, ${current.speedByModel[model.id]}. `
+              : "";
           return {
             ...field,
-            description: `${inactive ? "Inactive on this model. " : ""}${field.description}`,
+            description: `${inactive ? "Inactive on this model. " : ""}${override}${field.description}`,
           };
         });
         await ctx.ui.custom(
@@ -211,7 +223,7 @@ export default function registerCodexSettings(
             title: "Codex Settings",
             store,
             snapshot,
-            current: { ...current, autoCompactAtPercent: current.autoCompactAtPercent ?? null },
+            current: menuValues(current),
             session: sessionState,
             fields,
             status: () =>
@@ -237,7 +249,10 @@ export default function registerCodexSettings(
               }
             },
             apply: (values, nextSession) => {
-              const config = resolveConfig(parseConfig(values), {}, environment);
+              const config = {
+                ...resolveConfig(parseConfig(values), {}, environment),
+                speedByModel: current.speedByModel,
+              };
               pi.appendEntry(
                 SESSION_SETTINGS_TYPE,
                 sessionSettingsEntry(sessionId, values, nextSession, locked),

@@ -6,7 +6,7 @@ import { resolveFileConfig, type ConfigResolver } from "./config-context.ts";
 import { isObject, type JsonRecord } from "./codex-protocol.ts";
 import { selectedRegistryModel } from "./model-context.ts";
 import { splitNamespacedToolName, WEB_RUN_TOOL_NAME } from "./namespaced-tools.ts";
-import { speedServiceTier } from "./service-tier.ts";
+import { configServiceTier } from "./service-tier.ts";
 
 export type CodexRequestOptionsApi = Pick<ExtensionAPI, "on">;
 
@@ -50,7 +50,7 @@ export function applyCodexRequestOptions(
 ): JsonRecord {
   const result = structuredClone(payload);
 
-  const serviceTier = speedServiceTier(config.speed, options.modelId);
+  const serviceTier = configServiceTier(config, options.modelId);
   if (serviceTier) result.service_tier = serviceTier;
 
   const text = isObject(result.text) ? result.text : {};

@@ -236,29 +236,116 @@ test("applies priority and native request controls", () => {
   });
 });
 
-test("requests the service tier of each speed, and Ultrafast only on GPT-6.2 Sol", () => {
-  const tier = (speed: "standard" | "fast" | "ultrafast", modelId: string) =>
-    applyCodexRequestOptions(
-      { model: modelId },
-      { ...DEFAULT_CONFIG, speed },
-      { modelId, supportsImageSearch: false },
-    ).service_tier;
+const ULTRAFAST_MODEL_IDS = ["gpt-6.2-sol", "gpt-6.2-astra", "gpt-6-astra", "gpt-6.1-sol"];
+const OTHER_MODEL_IDS = ["gpt-6-luna", "gpt-6-sol", "gpt-6.1-terra", "gpt-5.6-sol"];
 
-  for (const modelId of [
-    "gpt-6.2-sol",
-    "gpt-6.2-astra",
-    "gpt-6-astra",
-    "gpt-6.1-sol",
-    "gpt-6-luna",
-  ]) {
+function serviceTier(
+  config: Pick<typeof DEFAULT_CONFIG, "speed" | "speedByModel">,
+  modelId: string,
+): unknown {
+  return applyCodexRequestOptions(
+    { model: modelId },
+    { ...DEFAULT_CONFIG, ...config },
+    { modelId, supportsImageSearch: false },
+  ).service_tier;
+}
+
+test("requests the service tier of each speed, and Ultrafast only on the four Ultrafast models", () => {
+  const tier = (speed: "standard" | "fast" | "ultrafast", modelId: string) =>
+    serviceTier({ speed, speedByModel: {} }, modelId);
+
+  for (const modelId of [...ULTRAFAST_MODEL_IDS, ...OTHER_MODEL_IDS]) {
     assert.equal(tier("standard", modelId), undefined, modelId);
     assert.equal(tier("fast", modelId), "priority", modelId);
   }
-  assert.equal(tier("ultrafast", "gpt-6.2-sol"), "ultrafast");
+  for (const modelId of ULTRAFAST_MODEL_IDS) {
+    assert.equal(tier("ultrafast", modelId), "ultrafast", modelId);
+  }
   // Like the Codex CLI, Ultrafast on another model falls back to Standard rather than Fast.
-  for (const modelId of ["gpt-6.2-astra", "gpt-6-astra", "gpt-6.1-sol", "gpt-6-luna"]) {
+  for (const modelId of OTHER_MODEL_IDS) {
     assert.equal(tier("ultrafast", modelId), undefined, modelId);
   }
+});
+
+test("a speedByModel entry replaces the default speed for its model only", () => {
+  const config = {
+    speed: "ultrafast",
+    speedByModel: {
+      "gpt-6.2-astra": "fast",
+      "gpt-6-astra": "standard",
+      "gpt-6-luna": "ultrafast",
+      "gpt-6.1-terra": "fast",
+    },
+  } as const;
+
+  assert.equal(serviceTier(config, "gpt-6.2-sol"), "ultrafast");
+  assert.equal(serviceTier(config, "gpt-6.1-sol"), "ultrafast");
+  assert.equal(serviceTier(config, "gpt-6.2-astra"), "priority");
+  assert.equal(serviceTier(config, "gpt-6-astra"), undefined);
+  assert.equal(serviceTier(config, "gpt-6.1-terra"), "priority");
+  // An Ultrafast entry for a model without Ultrafast falls back to Standard, like the default.
+  assert.equal(serviceTier(config, "gpt-6-luna"), undefined);
+  assert.equal(serviceTier(config, "gpt-5.6-sol"), undefined);
+
+  const standardDefault = {
+    speed: "standard",
+    speedByModel: { "gpt-6.2-sol": "ultrafast" },
+  } as const;
+  assert.equal(serviceTier(standardDefault, "gpt-6.2-sol"), "ultrafast");
+  assert.equal(serviceTier(standardDefault, "gpt-6.2-astra"), undefined);
+  // Inherited object properties are not entries.
+  assert.equal(serviceTier(standardDefault, "constructor"), undefined);
+  assert.equal(serviceTier({ speed: "fast", speedByModel: {} }, "toString"), "priority");
+});
+
+test("keeps the valid speedByModel entries of a configuration file", () => {
+  assert.deepEqual(
+    parseConfig({
+      speedByModel: {
+        "gpt-6.2-sol": "ultrafast",
+        "gpt-6.2-astra": "fast",
+        "gpt-6-astra": "standard",
+        "gpt-6.1-sol": "priority",
+        "gpt-6-luna": true,
+        "": "fast",
+      },
+    }),
+    {
+      speedByModel: {
+        "gpt-6.2-sol": "ultrafast",
+        "gpt-6.2-astra": "fast",
+        "gpt-6-astra": "standard",
+      },
+    },
+  );
+  assert.deepEqual(parseConfig({ speedByModel: {} }), { speedByModel: {} });
+  assert.deepEqual(parseConfig({ speedByModel: ["ultrafast"] }), {});
+  assert.deepEqual(parseConfig({ speedByModel: "ultrafast" }), {});
+  assert.deepEqual(parseConfig({ speedByModel: null }), {});
+});
+
+test("merges speedByModel entries model by model, and the environment sets only the default", () => {
+  const environmentConfig = parseEnvironmentConfig({
+    [CONFIG_ENVIRONMENT_VARIABLES.speed]: "fast",
+  });
+  const config = resolveConfig(
+    { speed: "standard", speedByModel: { "gpt-6.2-sol": "ultrafast", "gpt-6.2-astra": "fast" } },
+    { speedByModel: { "gpt-6.2-astra": "ultrafast", "gpt-6-astra": "standard" } },
+    environmentConfig,
+  );
+
+  assert.equal(config.speed, "fast");
+  assert.deepEqual(config.speedByModel, {
+    "gpt-6.2-sol": "ultrafast",
+    "gpt-6.2-astra": "ultrafast",
+    "gpt-6-astra": "standard",
+  });
+  // An entry wins over the default speed from every source, including the environment.
+  assert.equal(serviceTier(config, "gpt-6.2-sol"), "ultrafast");
+  assert.equal(serviceTier(config, "gpt-6-astra"), undefined);
+  assert.equal(serviceTier(config, "gpt-6.1-sol"), "priority");
+  assert.equal(Object.hasOwn(CONFIG_ENVIRONMENT_VARIABLES, "speedByModel"), false);
+  assert.deepEqual(resolveConfig({}, {}).speedByModel, {});
 });
 
 for (const modelId of ["gpt-5.5", "gpt-5.6-sol", "gpt-6-astra", "gpt-6-luna", "gpt-6.1-sol"]) {

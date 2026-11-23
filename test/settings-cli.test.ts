@@ -119,7 +119,7 @@ for (const mode of ["regular", "fullscreen"]) {
     output = "";
     terminal.write("/codex-settings\r");
     await wait("Session settings shown");
-    await waitMatch(/Speed\s+ultrafast ~/);
+    await waitMatch(/Default speed\s+ultrafast ~/);
     terminal.write("\u001b");
     await setTimeout(150);
     terminal.write("/reload\r");
@@ -127,7 +127,7 @@ for (const mode of ["regular", "fullscreen"]) {
     output = "";
     terminal.write("/codex-settings\r");
     await wait("Session settings shown");
-    await waitMatch(/Speed\s+ultrafast ~/);
+    await waitMatch(/Default speed\s+ultrafast ~/);
     terminal.write("\u001b");
     await setTimeout(150);
     terminal.write("\u0004");
@@ -140,7 +140,7 @@ for (const mode of ["regular", "fullscreen"]) {
     await wait("No models available");
     terminal.write("/codex-settings\r");
     await wait("Session settings shown");
-    await waitMatch(/Speed\s+ultrafast ~/);
+    await waitMatch(/Default speed\s+ultrafast ~/);
     await assert.rejects(readFile(file), { code: "ENOENT" });
     terminal.write("\u0013");
     await wait("Saved and applied");

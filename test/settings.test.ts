@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, mkdir, readFile, rm } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -200,11 +200,20 @@ test("every configuration key has an editor without stale model lists", () => {
     ),
     ["fast", "verbosity high", "summary detailed"],
   );
-  // The footer shows the speed a model gets: Ultrafast on other models is Standard.
+  // The footer shows the speed a model gets: Ultrafast on other models is Standard, and a
+  // speedByModel entry replaces the default speed.
   assert.deepEqual(footerSettingLabels({ ...DEFAULT_CONFIG, speed: "ultrafast" }, "gpt-6.2-sol"), [
     "ultrafast",
   ]);
   assert.deepEqual(footerSettingLabels({ ...DEFAULT_CONFIG, speed: "ultrafast" }, "gpt-test"), []);
+  const overrides = {
+    ...DEFAULT_CONFIG,
+    speed: "ultrafast",
+    speedByModel: { "gpt-6.2-astra": "fast", "gpt-6.2-sol": "standard" },
+  } as const;
+  assert.deepEqual(footerSettingLabels(overrides, "gpt-6.2-astra"), ["fast"]);
+  assert.deepEqual(footerSettingLabels(overrides, "gpt-6.2-sol"), []);
+  assert.deepEqual(footerSettingLabels(overrides, "gpt-6.1-sol"), ["ultrafast"]);
   assert.equal(footerModel(model, "high", DEFAULT_CONFIG)?.id, "gpt-test");
 });
 
@@ -358,4 +367,113 @@ test("a session saved with the removed reasoningMode and fastMode settings resum
   assert.equal(config.speed, "standard");
   assert.equal(Object.hasOwn(config, "fastMode"), false);
   assert.equal(Object.hasOwn(config, "reasoningMode"), false);
+});
+
+test("the Default speed row edits only the default and keeps speedByModel from the JSON file", async (t) => {
+  const root = await mkdtemp(join(tmpdir(), "codex-settings-speed-"));
+  const previous = process.env["PI_CODING_AGENT_DIR"];
+  process.env["PI_CODING_AGENT_DIR"] = join(root, "agent");
+  await mkdir(join(root, "agent"));
+  t.after(async () => {
+    if (previous === undefined) delete process.env["PI_CODING_AGENT_DIR"];
+    else process.env["PI_CODING_AGENT_DIR"] = previous;
+    await rm(root, { recursive: true, force: true });
+  });
+  const file = join(root, "agent", CONFIG_FILE);
+  const speedByModel = { "gpt-6.2-astra": "standard", "gpt-6.2-sol": "ultrafast" };
+  await writeFile(file, JSON.stringify({ speed: "fast", speedByModel }));
+  initTheme("dark", false);
+  const astra = { ...model, id: "gpt-6.2-astra" };
+  const manager = SessionManager.inMemory(root);
+  let command: CodexSettingsHandler | undefined;
+  let component: Component | undefined;
+  let report: (text: string) => void = () => {};
+  let opened: () => void = () => {};
+  const ready = new Promise<void>((resolve) => {
+    opened = resolve;
+  });
+  const ctx: CodexSettingsContext = {
+    cwd: root,
+    mode: "tui",
+    model: astra,
+    modelRegistry: { find: (_provider, id) => (id === astra.id ? astra : undefined) },
+    sessionManager: manager,
+    isProjectTrusted: () => false,
+    isIdle: () => true,
+    waitForIdle: async () => {},
+    ui: {
+      notify: (message) => assert.fail(message),
+      custom: (factory) =>
+        new Promise((resolve) => {
+          component = factory(
+            {
+              requestRender: () => {
+                report(component?.render(160).join("\n") ?? "");
+              },
+            },
+            { fg: (_color, text) => text, bold: (text) => text },
+            getKeybindings(),
+            resolve,
+          );
+          component.render(160);
+          opened();
+        }),
+    },
+  };
+  let current = loadSessionConfig(ctx);
+  assert.equal(current.speed, "fast");
+  assert.deepEqual(current.speedByModel, speedByModel);
+  registerCodexSettings(
+    {
+      appendEntry: (type, data) => {
+        manager.appendCustomEntry(type, data);
+      },
+      registerCommand: (_name, entry) => {
+        command = entry.handler;
+      },
+    },
+    {
+      getConfig: () => current,
+      onChange: (config) => {
+        current = config;
+      },
+    },
+  );
+  assert.ok(command);
+  const pending = command("", ctx);
+  await ready;
+  assert.ok(component);
+  component.handleInput?.("Default speed");
+  const screen = component.render(160).join("\n");
+  assert.match(screen, /Default speed\s+fast/);
+  // The selected model's own entry decides its speed, so the row says so.
+  assert.match(screen, /gpt-6\.2-astra uses its speedByModel value, standard\./);
+  component.handleInput?.("\r");
+  component.handleInput?.("\u001b[B");
+  component.handleInput?.("\r");
+  const applied = new Promise<void>((resolve) => {
+    report = (text) => {
+      if (text.includes("Applied to session")) resolve();
+    };
+  });
+  component.handleInput?.("\t");
+  component.handleInput?.("\t");
+  component.handleInput?.("\r");
+  await applied;
+  assert.equal(current.speed, "ultrafast");
+  assert.deepEqual(current.speedByModel, speedByModel);
+  const saved = new Promise<void>((resolve) => {
+    report = (text) => {
+      if (text.includes("Saved and applied")) resolve();
+    };
+  });
+  component.handleInput?.("\u0013");
+  await saved;
+  assert.deepEqual(JSON.parse(await readFile(file, "utf8")), { speed: "ultrafast", speedByModel });
+  assert.deepEqual(current.speedByModel, speedByModel);
+  component.handleInput?.("\u001b");
+  await pending;
+  const reloaded = loadSessionConfig(ctx);
+  assert.equal(reloaded.speed, "ultrafast");
+  assert.deepEqual(reloaded.speedByModel, speedByModel);
 });

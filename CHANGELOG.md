@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+### Added
+
+- Add the `speedByModel` setting, which gives individual models their own speed and replaces the default `speed` for them. Only the JSON configuration files set it. For example, `"speed": "fast"` with `"speedByModel": { "gpt-6.2-sol": "ultrafast" }` requests Ultrafast on GPT-6.2 Sol and Fast on every other model.
+
+### Changed
+
+- Send Ultrafast on `gpt-6.2-astra`, `gpt-6-astra`, and `gpt-6.1-sol` as well as `gpt-6.2-sol`, the four models OpenAI offers Ultrafast for. Pro $500 and eligible Enterprise and Edu plans include all four. Pro $200 includes only GPT-6.2 Sol and serves Ultrafast requests to the other three at Standard speed while Pi reports the Ultrafast cost, so give those models a `speedByModel` entry of `fast` or `standard`.
+- Rename the `/codex-settings` **Speed** row to **Default speed**. It edits only `speed`, and its description names the selected model's `speedByModel` entry. The footer shows the tier that requests to the selected model use.
+
 ## 0.0.34 - 2026-11-23
 
 ### Added

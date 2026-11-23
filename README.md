@@ -63,7 +63,7 @@ The compatibility baseline is official Codex CLI `0.149.1`, released August 24, 
 | `apply_patch` diagnostics capture             | Disabled; no separate request or filesystem snapshot artifacts are retained.                                                                                                                                                                                                                                                                                                                                               | Codex owns its rollout diagnostics rather than writing this package's artifact format.                                                        | `applyPatchDiagnostics`: boolean.                                                                                                                                           |
 | Codex tool background                         | Uses a subtle theme-derived surface for extension-owned Codex tools.                                                                                                                                                                                                                                                                                                                                                       | Uses Codex's own TUI activity cells rather than Pi tool rows.                                                                                 | `toolBackground`: `subtle`, `status`, or `none`.                                                                                                                            |
 | Auto-compaction trigger                       | Relies on Pi's reserve-token threshold unless a percentage is configured.                                                                                                                                                                                                                                                                                                                                                  | Tracks Codex's model/token-budget state before and between sampling steps.                                                                    | `autoCompactAtPercent`: percentage or unset. Mid-response percentage boundaries use Pi's bounded compact-and-continue lifecycle, so Pi auto-compaction must remain enabled. |
-| Speed                                         | Uses the Standard tier.                                                                                                                                                                                                                                                                                                                                                                                                    | Uses the configured Codex service tier when the model's catalog entry offers it.                                                              | `speed`: `standard`, `fast`, or `ultrafast`.                                                                                                                                |
+| Speed                                         | Uses the Standard tier.                                                                                                                                                                                                                                                                                                                                                                                                    | Uses the configured Codex service tier when the model's catalog entry offers it.                                                              | `speed`: `standard`, `fast`, or `ultrafast`, and `speedByModel` for individual models.                                                                                      |
 | Responses Lite                                | Disabled; supported models use ordinary Responses.                                                                                                                                                                                                                                                                                                                                                                         | Enabled according to Codex model metadata.                                                                                                    | `responsesLite`: boolean; `true` enables Responses Lite.                                                                                                                    |
 | Text and reasoning request controls           | Sends low text verbosity and automatic reasoning summaries, and omits `reasoning.mode`, which the Codex endpoint rejects. Models with mid-conversation effort, such as GPT-6 and GPT-6.2, keep `reasoning.effort` fixed and receive thinking-level changes as `configuration_update` input items, as Pi AI's Codex adapter and official Codex send them, so a change keeps the prompt cache. Off is sent as effort `none`. | Resolves these controls through Codex configuration, model metadata, and turn state.                                                          | `textVerbosity` and `reasoningSummary`.                                                                                                                                     |
 
@@ -175,21 +175,41 @@ pi --no-extensions -e .
 
 ## Speed
 
-Keep using an `openai-codex` model and choose a **Speed** in `/codex-settings`:
+Keep using an `openai-codex` model and choose a **Default speed** in `/codex-settings`:
 
 - `standard` sends no service tier.
 - `fast` adds `service_tier: "priority"` on every model.
-- `ultrafast` adds `service_tier: "ultrafast"` on `gpt-6.2-sol`. On other models it sends no
-  service tier, as the Codex CLI does, so they run at Standard speed.
+- `ultrafast` adds `service_tier: "ultrafast"` on `gpt-6.2-sol`, `gpt-6.2-astra`, `gpt-6-astra`,
+  and `gpt-6.1-sol`. On other models it sends no service tier, as the Codex CLI does, so they run
+  at Standard speed.
 
 The extension adds the tier to ordinary and native-compaction requests without introducing
 another provider id or changing the selected model.
 
-Ultrafast needs a ChatGPT plan that includes it for the model. Pro $200 includes Ultrafast for
-GPT-6.2 Sol. Pro $500 and eligible Enterprise and Edu workspaces also include it for GPT-6.2
-Astra, GPT-6 Astra, and GPT-6.1 Sol, which this package does not send Ultrafast for yet. Plus,
-Pro $100, and Business do not include Ultrafast. When the plan lacks it, Codex accepts the request
-and answers at Standard speed without an error, while Pi still reports the Ultrafast cost.
+Ultrafast needs a ChatGPT plan that includes it for the model. Pro $200 includes Ultrafast only for
+GPT-6.2 Sol. Pro $500 and eligible Enterprise and Edu workspaces include it for all four models.
+Plus, Pro $100, and Business do not include Ultrafast. When the plan lacks it, Codex accepts the
+request and answers at Standard speed without an error, while Pi still reports the Ultrafast cost.
+
+The `speedByModel` setting gives individual models their own speed. It maps a model id to
+`standard`, `fast`, or `ultrafast`, and only the JSON configuration files set it. A model's entry
+replaces the default speed, whether the default comes from a file, the environment, or
+`/codex-settings`. Other models keep the default speed. With Pro $200, for example, the following
+configuration requests Ultrafast on GPT-6.2 Sol and Fast on every other model:
+
+```json
+{
+  "speed": "fast",
+  "speedByModel": { "gpt-6.2-sol": "ultrafast" }
+}
+```
+
+With `speed` set to `ultrafast` instead, set the other three Ultrafast models to `fast` or
+`standard`. Otherwise their requests pay the Ultrafast price and run at Standard speed.
+
+The **Default speed** row in `/codex-settings` edits only `speed`. When the selected model has a
+`speedByModel` entry, the row's description names that entry. The footer shows the tier that
+requests to the selected model use.
 
 Pi's usage totals report the tier's API price, including when Codex echoes
 `service_tier: "default"` in its response, which it does for every tier. Fast costs 2 times the
@@ -263,13 +283,14 @@ deleted. External editors do not participate in that lock.
 Session overrides retain their original conflict checks across menu reopenings.
 Conflicting external edits remain protected after reload or restart.
 
-The effective settings are printed once when a TUI session starts. The footer shows the current Pi session ID alongside the working directory and optional session name. It shows `fast` or `ultrafast` when requests to the selected model use that tier, and shows text verbosity or reasoning summary only when they differ from their defaults.
+The effective settings are printed once when a TUI session starts. The footer shows the current Pi session ID alongside the working directory and optional session name. It shows `fast` or `ultrafast` when requests to the selected model use that tier, after any `speedByModel` entry for the model, and shows text verbosity or reasoning summary only when they differ from their defaults.
 
 Example:
 
 ```json
 {
   "speed": "fast",
+  "speedByModel": { "gpt-6.2-sol": "ultrafast" },
   "responsesLite": true,
   "toolBackground": "subtle",
   "shellTool": "unified_exec",
@@ -288,22 +309,23 @@ Example:
 
 Defaults:
 
-| Setting                 | Values                                               | Default        | Behavior                                                                                                                                                                                                                                  |
-| ----------------------- | ---------------------------------------------------- | -------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `speed`                 | `standard`, `fast`, `ultrafast`                      | `standard`     | Adds `service_tier: "priority"` (`fast`) or, on `gpt-6.2-sol`, `service_tier: "ultrafast"` (`ultrafast`) to requests while retaining the current `openai-codex` provider and model. See [Speed](#speed).                                  |
-| `responsesLite`         | boolean                                              | `false`        | Uses Codex's Responses Lite input envelope on supported models when enabled. By default, those models use ordinary Responses instructions and tools.                                                                                      |
-| `toolBackground`        | `subtle`, `status`, `none`                           | `subtle`       | Controls the shared self-rendered background for command tools, `apply_patch`, `image_gen.imagegen`, and `web.run`. `status` uses Pi's pending/success/error backgrounds; `none` keeps the custom layout transparent.                     |
-| `shellTool`             | `unified_exec`, `shell_command`                      | `unified_exec` | Selects the command surface on `openai-codex` models. The selected Codex command surface replaces Pi `bash` only when `bash` was active.                                                                                                  |
-| `applyPatch`            | boolean                                              | `true`         | On selected `openai-codex` models, uses the extension's `apply_patch` tool instead of Pi's active `edit` and `write` tools. Other providers always use their normal Pi tool set.                                                          |
-| `applyPatchDebug`       | boolean                                              | `false`        | Shows the exact model-facing tool result while a completed `apply_patch` result is collapsed. Expanded results continue to show the normal visual summary and complete diffs.                                                             |
-| `applyPatchDiagnostics` | boolean                                              | `false`        | Persists failed patch requests with pre-execution text snapshots or binary metadata for every instruction, outcomes, and trace identifiers. See [`apply_patch`](#apply_patch) for storage and sensitivity details.                        |
-| `imageGeneration`       | boolean                                              | `true`         | Enables the extension-owned `image_gen.imagegen` tool on selected `openai-codex` models.                                                                                                                                                  |
-| `imageDetail`           | `auto`, `low`, `high`, `original`                    | `auto`         | Sets `input_image.detail` when an image tool result is sent back to the model. It does not change `gpt-image-2` generation quality.                                                                                                       |
-| `webRun`                | boolean                                              | `false`        | Enables the extension-owned `web.run` tool on selected `openai-codex` models. When active, it replaces hosted `web_search` in the Responses tool list.                                                                                    |
-| `autoCompactAtPercent`  | number greater than `0` and at most `100`, or `null` | unset          | Adds provider-boundary compaction independently of Pi's normal reserve-token threshold. Mid-response boundaries require Pi auto-compaction. A project value of `null` disables a global percentage threshold.                             |
-| `webSearch`             | `disabled`, `cached`, `indexed`, `live`              | `disabled`     | Controls hosted search and standalone-search external access. `disabled` removes hosted search but leaves an independently enabled `web.run` in cached-only mode; `indexed` prefers indexed content; `live` permits live external access. |
-| `textVerbosity`         | `low`, `medium`, `high`                              | `low`          | Sets Responses API `text.verbosity`.                                                                                                                                                                                                      |
-| `reasoningSummary`      | `auto`, `concise`, `detailed`, `off`                 | `auto`         | Sets `reasoning.summary` when reasoning is enabled; `off` omits the summary parameter.                                                                                                                                                    |
+| Setting                 | Values                                                | Default        | Behavior                                                                                                                                                                                                                                  |
+| ----------------------- | ----------------------------------------------------- | -------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `speed`                 | `standard`, `fast`, `ultrafast`                       | `standard`     | The default speed. Adds `service_tier: "priority"` (`fast`) or, on the four Ultrafast models, `service_tier: "ultrafast"` (`ultrafast`) to requests while retaining the current `openai-codex` provider and model. See [Speed](#speed).   |
+| `speedByModel`          | object of model id to `standard`, `fast`, `ultrafast` | `{}`           | Replaces the default speed for each listed model. Only JSON files set it. A project entry replaces the global entry for the same model. See [Speed](#speed).                                                                              |
+| `responsesLite`         | boolean                                               | `false`        | Uses Codex's Responses Lite input envelope on supported models when enabled. By default, those models use ordinary Responses instructions and tools.                                                                                      |
+| `toolBackground`        | `subtle`, `status`, `none`                            | `subtle`       | Controls the shared self-rendered background for command tools, `apply_patch`, `image_gen.imagegen`, and `web.run`. `status` uses Pi's pending/success/error backgrounds; `none` keeps the custom layout transparent.                     |
+| `shellTool`             | `unified_exec`, `shell_command`                       | `unified_exec` | Selects the command surface on `openai-codex` models. The selected Codex command surface replaces Pi `bash` only when `bash` was active.                                                                                                  |
+| `applyPatch`            | boolean                                               | `true`         | On selected `openai-codex` models, uses the extension's `apply_patch` tool instead of Pi's active `edit` and `write` tools. Other providers always use their normal Pi tool set.                                                          |
+| `applyPatchDebug`       | boolean                                               | `false`        | Shows the exact model-facing tool result while a completed `apply_patch` result is collapsed. Expanded results continue to show the normal visual summary and complete diffs.                                                             |
+| `applyPatchDiagnostics` | boolean                                               | `false`        | Persists failed patch requests with pre-execution text snapshots or binary metadata for every instruction, outcomes, and trace identifiers. See [`apply_patch`](#apply_patch) for storage and sensitivity details.                        |
+| `imageGeneration`       | boolean                                               | `true`         | Enables the extension-owned `image_gen.imagegen` tool on selected `openai-codex` models.                                                                                                                                                  |
+| `imageDetail`           | `auto`, `low`, `high`, `original`                     | `auto`         | Sets `input_image.detail` when an image tool result is sent back to the model. It does not change `gpt-image-2` generation quality.                                                                                                       |
+| `webRun`                | boolean                                               | `false`        | Enables the extension-owned `web.run` tool on selected `openai-codex` models. When active, it replaces hosted `web_search` in the Responses tool list.                                                                                    |
+| `autoCompactAtPercent`  | number greater than `0` and at most `100`, or `null`  | unset          | Adds provider-boundary compaction independently of Pi's normal reserve-token threshold. Mid-response boundaries require Pi auto-compaction. A project value of `null` disables a global percentage threshold.                             |
+| `webSearch`             | `disabled`, `cached`, `indexed`, `live`               | `disabled`     | Controls hosted search and standalone-search external access. `disabled` removes hosted search but leaves an independently enabled `web.run` in cached-only mode; `indexed` prefers indexed content; `live` permits live external access. |
+| `textVerbosity`         | `low`, `medium`, `high`                               | `low`          | Sets Responses API `text.verbosity`.                                                                                                                                                                                                      |
+| `reasoningSummary`      | `auto`, `concise`, `detailed`, `off`                  | `auto`         | Sets `reasoning.summary` when reasoning is enabled; `off` omits the summary parameter.                                                                                                                                                    |
 
 Responses Lite supports exactly `gpt-5.6-sol`, `gpt-5.6-terra`, `gpt-5.6-luna`,
 `gpt-6-astra`, `gpt-6-sol`, `gpt-6-luna`, `gpt-6.1-sol`, `gpt-6.1-terra`, `gpt-6.2-sol`, and
@@ -313,7 +335,7 @@ Invalid JSON setting values are ignored and invalid JSON does not prevent Pi fro
 starting. The settings pane reports malformed JSON instead of overwriting it.
 Project configuration is read only when the project is trusted.
 
-Every setting can also be overridden for one Pi process with an environment variable:
+Every setting except `speedByModel` can also be overridden for one Pi process with an environment variable:
 
 | Setting                 | Environment variable                             |
 | ----------------------- | ------------------------------------------------ |
@@ -713,10 +735,13 @@ Responses and Responses Lite tests exercise tool calls, prompt reload, native
 compaction, and persisted-session resume against Codex.
 SDK tests verify Responses Lite
 WebSocket history, prewarming, continuation, and the built-in read tool.
-An SDK speed test sends the Standard, Fast, and Ultrafast speeds on `gpt-6.2-sol` and checks
-each request's tier and reported cost. Codex reports `default` as the tier of every response, so
-the test also requires Ultrafast to generate a long reply at least 3 times as fast as Standard.
-It needs a Codex login whose plan includes Ultrafast for GPT-6.2 Sol.
+SDK speed tests send the Standard, Fast, and Ultrafast speeds on `gpt-6.2-sol` and
+`gpt-6.2-astra` and check each request's tier and reported cost. The Ultrafast request sets the
+model's `speedByModel` entry over a Fast default. Codex reports `default` as the tier of every
+response, so the `gpt-6.2-sol` test also requires Ultrafast to generate a long reply at least 3
+times as fast as Standard. It needs a Codex login whose plan includes Ultrafast for GPT-6.2 Sol.
+The `gpt-6.2-astra` test does not check speed, because Pro $200 serves its Ultrafast requests at
+Standard speed.
 CLI tests also execute the built-in read tool after resume.
 Terminal tests check interrupted `exec_command` error framing in regular and
 fullscreen mode. A live terminal case blocks a real Codex command call before

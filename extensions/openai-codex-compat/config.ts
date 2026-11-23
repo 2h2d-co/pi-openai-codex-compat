@@ -13,6 +13,9 @@ export const SPEED_SCHEMA = {
 
 export type Speed = Static<typeof SPEED_SCHEMA>;
 
+/** Speeds for individual models, keyed by model id. */
+export type SpeedByModel = Readonly<Record<string, Speed>>;
+
 export const WEB_SEARCH_MODE_SCHEMA = {
   enum: ["disabled", "cached", "indexed", "live"],
 } as const;
@@ -52,8 +55,10 @@ export type CodexShellTool = Static<typeof CODEX_SHELL_TOOL_SCHEMA>;
 export const ENV_PREFIX = "PI_OPENAI_CODEX_COMPAT_";
 
 export interface CodexCompatConfig {
-  /** Send OpenAI Codex requests through the Fast or Ultrafast service tier. */
+  /** The speed of OpenAI Codex requests to models without an entry in `speedByModel`. */
   speed: Speed;
+  /** Speeds that replace the default speed for individual models. Only configuration files set it. */
+  speedByModel: SpeedByModel;
   /** Use Codex's Responses Lite envelope on supported GPT-5.6 models. */
   responsesLite: boolean;
   /** Replace Pi's active edit and write tools with the extension's apply_patch tool. */
@@ -83,6 +88,9 @@ export interface CodexCompatConfig {
   reasoningSummary: ReasoningSummary;
 }
 
+/** The settings that `/codex-settings` and environment variables control. */
+export type MenuConfig = Omit<CodexCompatConfig, "speedByModel">;
+
 export const CONFIG_ENVIRONMENT_VARIABLES = {
   speed: `${ENV_PREFIX}SPEED`,
   responsesLite: `${ENV_PREFIX}RESPONSES_LITE`,
@@ -98,10 +106,11 @@ export const CONFIG_ENVIRONMENT_VARIABLES = {
   webSearch: `${ENV_PREFIX}WEB_SEARCH_MODE`,
   textVerbosity: `${ENV_PREFIX}TEXT_VERBOSITY`,
   reasoningSummary: `${ENV_PREFIX}REASONING_SUMMARY`,
-} as const satisfies Record<keyof CodexCompatConfig, string>;
+} as const satisfies Record<keyof MenuConfig, string>;
 
 export type ConfigLayer = {
   speed?: Speed;
+  speedByModel?: SpeedByModel;
   responsesLite?: boolean;
   applyPatch?: boolean;
   applyPatchDebug?: boolean;
@@ -120,6 +129,7 @@ export type ConfigLayer = {
 export const CONFIG_FILE = "openai-codex-compat.json";
 export const DEFAULT_CONFIG: CodexCompatConfig = {
   speed: "standard",
+  speedByModel: {},
   responsesLite: false,
   applyPatch: true,
   applyPatchDebug: false,
@@ -285,6 +295,17 @@ export function parseConfig(value: unknown): ConfigLayer {
   const speed = value["speed"];
   if (Value.Check(SPEED_SCHEMA, speed)) layer.speed = speed;
 
+  const speedByModel = value["speedByModel"];
+  if (isObject(speedByModel)) {
+    // Keep each valid entry, so one invalid entry does not discard the others.
+    layer.speedByModel = Object.fromEntries(
+      Object.entries(speedByModel).filter(
+        (entry): entry is [string, Speed] =>
+          entry[0].length > 0 && Value.Check(SPEED_SCHEMA, entry[1]),
+      ),
+    );
+  }
+
   const responsesLite = value["responsesLite"];
   if (isBoolean(responsesLite)) layer.responsesLite = responsesLite;
 
@@ -372,6 +393,12 @@ export function resolveConfig(
   const merged = { ...globalConfig, ...projectConfig, ...environmentConfig };
   const config = { ...DEFAULT_CONFIG };
   if (merged.speed) config.speed = merged.speed;
+  // A later layer replaces earlier entries model by model.
+  config.speedByModel = {
+    ...globalConfig.speedByModel,
+    ...projectConfig.speedByModel,
+    ...environmentConfig.speedByModel,
+  };
   if (isBoolean(merged.responsesLite)) config.responsesLite = merged.responsesLite;
   if (isBoolean(merged.applyPatch)) config.applyPatch = merged.applyPatch;
   if (isBoolean(merged.applyPatchDebug)) config.applyPatchDebug = merged.applyPatchDebug;
@@ -419,6 +446,7 @@ export function loadConfig(
 export function configLayer(config: CodexCompatConfig): ConfigLayer {
   return {
     speed: config.speed,
+    speedByModel: config.speedByModel,
     responsesLite: config.responsesLite,
     applyPatch: config.applyPatch,
     applyPatchDebug: config.applyPatchDebug,

@@ -1,12 +1,17 @@
 import type { Usage } from "@earendil-works/pi-ai";
-import type { Speed } from "./config.ts";
+import type { CodexCompatConfig, Speed } from "./config.ts";
 
 /**
- * Models that the Ultrafast speed sends through the ultrafast service tier. Codex accepts the tier
- * for any model and silently serves Standard speed when the account's plan does not include
- * Ultrafast for that model.
+ * The models for which OpenAI offers Ultrafast in Codex. The plan decides which of them an account
+ * gets: Pro $200 includes only GPT-6.2 Sol, and Pro $500 includes all four. Codex accepts the tier
+ * for any model and silently serves Standard speed when the plan does not include the model.
  */
-const ULTRAFAST_MODEL_IDS: ReadonlySet<string> = new Set(["gpt-6.2-sol"]);
+const ULTRAFAST_MODEL_IDS: ReadonlySet<string> = new Set([
+  "gpt-6.2-sol",
+  "gpt-6.2-astra",
+  "gpt-6-astra",
+  "gpt-6.1-sol",
+]);
 
 // Ultrafast costs 6 times the Standard rate. GPT-6.2 models cost 3 times the Standard rate through
 // February 28, 2027, Pacific time.
@@ -29,6 +34,24 @@ export function speedServiceTier(speed: Speed, modelId: string): SpeedServiceTie
   if (speed === "fast") return "priority";
   if (speed === "ultrafast" && supportsUltrafast(modelId)) return "ultrafast";
   return undefined;
+}
+
+/** The configured speed of a model: its `speedByModel` entry, or else the default speed. */
+export function modelSpeed(
+  config: Pick<CodexCompatConfig, "speed" | "speedByModel">,
+  modelId: string,
+): Speed {
+  return Object.hasOwn(config.speedByModel, modelId)
+    ? (config.speedByModel[modelId] ?? config.speed)
+    : config.speed;
+}
+
+/** The service tier that the configured speed of a model requests. */
+export function configServiceTier(
+  config: Pick<CodexCompatConfig, "speed" | "speedByModel">,
+  modelId: string,
+): SpeedServiceTier | undefined {
+  return speedServiceTier(modelSpeed(config, modelId), modelId);
 }
 
 /** The multiple of the Standard rate that a request in `tier` started at `timestamp` costs. */

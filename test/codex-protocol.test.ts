@@ -486,6 +486,9 @@ test("prices Ultrafast compaction at 3 times Standard for GPT-6.2 until March 1,
   for (const [modelId, now, multiplier] of [
     ["gpt-6.2-sol", "2027-02-28T23:59:59-08:00", 3],
     ["gpt-6.2-sol", "2027-03-01T00:00:00-08:00", 6],
+    ["gpt-6.2-astra", "2027-02-28T23:59:59-08:00", 3],
+    ["gpt-6.2-astra", "2027-03-01T00:00:00-08:00", 6],
+    ["gpt-6-astra", "2026-11-22T00:00:00Z", 6],
     ["gpt-6.1-sol", "2026-11-22T00:00:00Z", 6],
   ] as const) {
     t.mock.timers.enable({ apis: ["Date"], now: Date.parse(now) });

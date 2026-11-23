@@ -215,7 +215,9 @@ test("modifies requests on the canonical OpenAI Codex provider", async (t) => {
   await writeFile(
     join(agentDir, CONFIG_FILE),
     JSON.stringify({
-      speed: "fast",
+      // The model's entry replaces the default speed.
+      speed: "standard",
+      speedByModel: { [MODEL_ID]: "fast", "gpt-6-luna": "standard" },
       responsesLite: true,
       applyPatch: false,
       webSearch: "live",

@@ -79,7 +79,7 @@ import {
   type CodexWebSocketResponseHandle,
 } from "../codex-transport.ts";
 import { DEFAULT_CONFIG, type CodexCompatConfig } from "../config.ts";
-import { speedServiceTier, type SpeedServiceTier } from "../service-tier.ts";
+import { configServiceTier, type SpeedServiceTier } from "../service-tier.ts";
 import {
   nativeResponseData,
   NATIVE_RESPONSE_ENTRY_TYPE,
@@ -786,7 +786,7 @@ export class CodexProviderRuntime {
       template: withoutConversationInput(body),
       instructions: isString(body.instructions) ? body.instructions : requestInstructions(context),
       grammarToolInputProperties,
-      serviceTier: speedServiceTier(scope.config.speed, model.id),
+      serviceTier: configServiceTier(scope.config, model.id),
       compactionMetadata: responsesCompactionV2Metadata("auto", "context_limit", "pre_turn"),
       compactionDecision: { reason: "provider-boundary", willRetry: true },
       agentTurn,
