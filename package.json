@@ -1,6 +1,6 @@
 {
   "name": "pi-openai-codex-compat",
-  "version": "0.0.34",
+  "version": "0.0.35",
   "description": "OpenAI Codex compatibility for Pi with native compaction, Fast and Ultrafast speeds, and Codex-optimized capabilities",
   "keywords": [
     "pi-package"
