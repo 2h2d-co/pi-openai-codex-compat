@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.0.35 - 2026-11-23
+
 ### Added
 
 - Add the `speedByModel` setting, which gives individual models their own speed and replaces the default `speed` for them. Only the JSON configuration files set it. For example, `"speed": "fast"` with `"speedByModel": { "gpt-6.2-sol": "ultrafast" }` requests Ultrafast on GPT-6.2 Sol and Fast on every other model.
