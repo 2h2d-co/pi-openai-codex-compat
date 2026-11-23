@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.0.34 - 2026-11-23
+
 ### Added
 
 - Add the Ultrafast speed. With `speed` set to `ultrafast`, `gpt-6.2-sol` requests use Codex's Ultrafast service tier, and other models use Standard, as in the Codex CLI. Pi's cost totals price Ultrafast at OpenAI's rate: 3 times the Standard rate for GPT-6.2 through February 28, 2027, Pacific time, and 6 times from March 1, 2027. Ultrafast needs a ChatGPT plan that includes it for GPT-6.2 Sol, such as Pro $200.
