@@ -1,10 +1,4 @@
-import {
-  calculateCost,
-  hasApi,
-  type Api,
-  type AssistantMessage,
-  type Model,
-} from "@earendil-works/pi-ai";
+import { hasApi, type Api, type Model } from "@earendil-works/pi-ai";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { CODEX_API, CODEX_PROVIDER } from "./codex-identifiers.ts";
 import type { CodexCompatConfig, WebSearchMode } from "./config.ts";
@@ -87,23 +81,6 @@ export function applyCodexRequestOptions(
   }
 
   return result;
-}
-
-/** Recompute cost from canonical rates so payload-only priority mode cannot be undercounted. */
-export function applyPriorityPricing(
-  message: AssistantMessage,
-  model: Model<Api>,
-): AssistantMessage {
-  const usage = structuredClone(message.usage);
-  calculateCost(model, usage);
-  const multiplier = model.id === "gpt-5.5" ? 2.5 : 2;
-  usage.cost.input *= multiplier;
-  usage.cost.output *= multiplier;
-  usage.cost.cacheRead *= multiplier;
-  usage.cost.cacheWrite *= multiplier;
-  usage.cost.total =
-    usage.cost.input + usage.cost.output + usage.cost.cacheRead + usage.cost.cacheWrite;
-  return { ...message, usage };
 }
 
 export default function registerCodexRequestOptions(

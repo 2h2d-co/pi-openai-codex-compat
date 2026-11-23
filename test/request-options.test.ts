@@ -1,7 +1,6 @@
 import { requireJsonRecords } from "../extensions/openai-codex-compat/codex-protocol.ts";
 import assert from "node:assert/strict";
 import test from "node:test";
-import type { Api, AssistantMessage, Model } from "@earendil-works/pi-ai";
 import {
   CONFIG_ENVIRONMENT_VARIABLES,
   DEFAULT_CONFIG,
@@ -11,10 +10,7 @@ import {
   withoutEnvironmentOverrides,
 } from "../extensions/openai-codex-compat/config.ts";
 import type { JsonRecord } from "../extensions/openai-codex-compat/codex-protocol.ts";
-import {
-  applyCodexRequestOptions,
-  applyPriorityPricing,
-} from "../extensions/openai-codex-compat/request-options.ts";
+import { applyCodexRequestOptions } from "../extensions/openai-codex-compat/request-options.ts";
 
 test("validates and layers Codex compatibility configuration", () => {
   assert.equal(DEFAULT_CONFIG.speed, "standard");
@@ -330,40 +326,4 @@ test("uses standalone web.run instead of hosted web_search when available", () =
       tools: [{ type: "function", name: "run" }],
     },
   ]);
-});
-
-test("recomputes canonical priority-tier costs after payload modification", () => {
-  const model = {
-    id: "gpt-5.5",
-    name: "GPT-5.5",
-    api: "openai-codex-responses",
-    provider: "openai-codex",
-    baseUrl: "https://chatgpt.com/backend-api",
-    reasoning: true,
-    input: ["text"],
-    cost: { input: 5, output: 30, cacheRead: 0.5, cacheWrite: 0 },
-    contextWindow: 100_000,
-    maxTokens: 10_000,
-  } satisfies Model<Api>;
-  const message = {
-    role: "assistant",
-    content: [],
-    api: "openai-codex-responses",
-    provider: "openai-codex",
-    model: model.id,
-    usage: {
-      input: 10,
-      output: 5,
-      cacheRead: 0,
-      cacheWrite: 0,
-      totalTokens: 15,
-      cost: { input: 999, output: 999, cacheRead: 999, cacheWrite: 999, total: 3996 },
-    },
-    stopReason: "stop",
-    timestamp: Date.now(),
-  } satisfies AssistantMessage;
-
-  const priced = applyPriorityPricing(message, model);
-  assert.equal(priced.usage.cost.total, 0.0005);
-  assert.equal(message.usage.cost.total, 3996);
 });
