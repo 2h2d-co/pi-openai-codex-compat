@@ -45,6 +45,7 @@ import {
   convertResponsesMessages as copiedConvertResponsesMessages,
   convertResponsesTools,
 } from "../extensions/openai-codex-compat/vendor/pi-ai/openai-responses-serialization.ts";
+import { isString } from "../extensions/openai-codex-compat/value-contracts.ts";
 
 const model: Model<Api> = {
   id: "gpt-test",
@@ -504,6 +505,88 @@ test("sends a placeholder for whitespace-only tool output, as Pi AI does", () =>
   const outputs = copied.filter((item) => item["type"] === "custom_tool_call_output");
   assert.equal(outputs.length, 1);
   assert.equal(outputs[0]?.["output"], "(no tool output)");
+});
+
+test("replays a tool call name that Codex rejects as a stable placeholder, and other names like Pi AI", () => {
+  // Another model put a shell command in a call's name field, and Pi answered the call "not found".
+  // Codex accepts 1 to 128 letters, digits, `_`, `.`, and `-`.
+  const names = [
+    "ls -la src/ && cat package.json</arg_value>",
+    "a".repeat(129),
+    "a".repeat(128),
+    "files.list",
+    "lookup_value-2",
+  ];
+  const foreignContext: Context = {
+    messages: [
+      { role: "user", content: "List the project files.", timestamp: 0 },
+      ...names.flatMap((name, index): Context["messages"] => [
+        {
+          ...assistantMessage,
+          provider: "local-glm",
+          api: "openai-completions",
+          model: "glm-test",
+          content: [{ type: "toolCall", id: `call_${String(index)}`, name, arguments: {} }],
+        },
+        {
+          role: "toolResult",
+          toolCallId: `call_${String(index)}`,
+          toolName: name,
+          content: [{ type: "text", text: `Tool ${name} not found` }],
+          isError: true,
+          timestamp: 2,
+        },
+      ]),
+    ],
+    tools: [applyPatchTool],
+  };
+  const original = JSON.stringify(foreignContext);
+
+  const copied = copiedConvertResponsesMessages(model, foreignContext, allowedProviders, options);
+  const calls = copied.filter((item) => item["type"] === "function_call");
+  const replayedNames = calls.map((call) => call["name"]);
+  const [placeholder, longPlaceholder] = replayedNames;
+  assert.ok(isString(placeholder) && isString(longPlaceholder));
+  assert.match(placeholder, /^invalid_tool_name_[0-9a-z]+$/);
+  assert.match(longPlaceholder, /^invalid_tool_name_[0-9a-z]+$/);
+  assert.notEqual(placeholder, longPlaceholder);
+  assert.deepEqual(replayedNames.slice(2), names.slice(2));
+  // Each call still pairs with its "not found" result.
+  assert.deepEqual(
+    calls.map((call) => call["call_id"]),
+    copied.filter((item) => item["type"] === "function_call_output").map((item) => item["call_id"]),
+  );
+
+  // The placeholders are the only difference from Pi AI, and they are the same on every request.
+  const reference = requireJsonRecords(
+    JSON.parse(
+      JSON.stringify(
+        referenceConvertResponsesMessages(
+          model,
+          normalizeContext(foreignContext),
+          allowedProviders,
+          options,
+        ),
+      ),
+    ),
+  );
+  const placeholders = new Map([
+    [names[0], placeholder],
+    [names[1], longPlaceholder],
+  ]);
+  assert.deepEqual(
+    copied,
+    reference.map((item) =>
+      item["type"] === "function_call" && isString(item["name"]) && placeholders.has(item["name"])
+        ? { ...item, name: placeholders.get(item["name"]) }
+        : item,
+    ),
+  );
+  assert.deepEqual(
+    copiedConvertResponsesMessages(model, foreignContext, allowedProviders, options),
+    copied,
+  );
+  assert.equal(JSON.stringify(foreignContext), original);
 });
 
 test("configures image detail for image tool-result history", () => {

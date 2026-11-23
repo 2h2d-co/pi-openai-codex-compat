@@ -34,6 +34,8 @@ with one for the request's own level. Native reply items replay behind the same
 item. It also carries Pi AI 1.6.0's strict-schema rule that a node without a type
 is not strict.
 
+The copy replays a function call name that Codex rejects as `invalid_tool_name_<hash>`, which Pi AI does not. Codex accepts a replayed name only when it has 1 to 128 letters, digits, `_`, `.`, or `-`. Another model can return a call whose name breaks that rule, such as a whole shell command. Pi answers such a call "not found", and replaying its name unchanged would make every later Codex request fail. The hash keeps the placeholder stable across requests, and the `call_id` still pairs the call with its result. Valid names serialize exactly as in Pi AI.
+
 The optional `namespacedToolNames`, `textContentItemToolResultNames`, and `toolResultImageDetail` paths are extension-owned additions. Without those options, serialization must continue to match Pi AI. `namespacedToolNames` groups only the fixed Codex allowlist into native Responses namespaces and replays namespace/member call identities. `textContentItemToolResultNames` preserves Codex tools such as `web.run` whose successful text output is transported as an `input_text` content-item array instead of Pi's usual plain string. `toolResultImageDetail` overrides the otherwise canonical `auto` detail used for image tool-result content.
 
 The local copy is necessary because Pi's extension loader does not expose `@earendil-works/pi-ai/api/openai-responses-shared` to extensions.

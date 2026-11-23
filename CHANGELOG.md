@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Fixed
+
+- Keep a session usable on Codex after another model returned a tool call whose name Codex rejects, such as a whole shell command. Every later request failed with an invalid `input[N].name`, and retrying resent the same history. Such a name, longer than 128 characters or with characters other than letters, digits, `_`, `.`, and `-`, is now replayed as `invalid_tool_name_<hash>`, still paired with its result. Reported by [@jwiegley](https://github.com/jwiegley) in [#66](https://github.com/2h2d-co/pi-openai-codex-compat/issues/66), who also proposed the fix.
+
 ## 0.0.35 - 2026-11-23
 
 ### Added

@@ -755,6 +755,8 @@ Ultrafast for the model, the request must send it, and Ultrafast must generate a
 least 3 times as fast as Standard, because Codex reports `default` as the tier of every response.
 Otherwise the request must run and be priced at Standard, and the warning must name the model.
 The tests need a Codex login whose plan includes Ultrafast for GPT-6.2 Sol.
+An SDK test on `gpt-6-luna` continues a session whose history holds another model's tool call
+with a name Codex rejects, and checks that the request replays it under a placeholder name.
 CLI tests also execute the built-in read tool after resume.
 Terminal tests check interrupted `exec_command` error framing in regular and
 fullscreen mode. A live terminal case blocks a real Codex command call before

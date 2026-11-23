@@ -96,6 +96,19 @@ function shortHash(value: string): string {
   return (low >>> 0).toString(36) + (high >>> 0).toString(36);
 }
 
+/** Codex rejects a request whose replayed function call name does not match this pattern. */
+const CODEX_FUNCTION_CALL_NAME = /^[a-zA-Z0-9_.-]{1,128}$/;
+
+/**
+ * The name a function call is replayed with. Another model can return a call whose name is no
+ * tool name, such as a whole shell command, and Pi answers it "not found". Codex would reject every
+ * later request that replays that name, so it is replayed as a stable placeholder instead. The
+ * call_id still pairs the call with its result.
+ */
+function replayedFunctionCallName(name: string): string {
+  return CODEX_FUNCTION_CALL_NAME.test(name) ? name : `invalid_tool_name_${shortHash(name)}`;
+}
+
 function sanitizeSurrogates(text: string): string {
   return text.replace(
     /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/g,
@@ -929,7 +942,7 @@ export function convertResponsesMessages(
           } else {
             const functionCall: ResponsesItem = {
               type: "function_call",
-              name: namespaced?.name ?? block.name,
+              name: namespaced?.name ?? replayedFunctionCallName(block.name),
               arguments: JSON.stringify(block.arguments),
             };
             if (itemId !== undefined) functionCall["id"] = itemId;

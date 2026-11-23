@@ -730,6 +730,72 @@ for (const codemode of ["on", "only"] as const) {
   );
 }
 
+// Another model can return a call whose name is no tool name, such as a whole shell command, and
+// Pi answers it "not found". Codex rejects every request that replays such a name unchanged.
+test(
+  "live Pi host gpt-6-luna continues a session whose history holds a tool call name Codex rejects",
+  { skip: !LIVE_TEST_ENABLED, timeout: LIVE_TEST_TIMEOUT_MS },
+  async (t) => {
+    const traffic = observeRealWebSocketTraffic(t);
+    const invalidName = `cd /tmp/project && ${"grep -rn marker src/ && ".repeat(8)}ls</arg_value>`;
+    assert.ok(invalidName.length > 128);
+    const sessionManager = SessionManager.inMemory(tmpdir());
+    sessionManager.appendMessage({
+      role: "user",
+      content: "List the project files.",
+      timestamp: Date.now(),
+    });
+    sessionManager.appendMessage({
+      role: "assistant",
+      content: [{ type: "toolCall", id: "call_local_1", name: invalidName, arguments: {} }],
+      api: "openai-completions",
+      provider: "local-model",
+      model: "local-test",
+      usage: {
+        input: 0,
+        output: 0,
+        cacheRead: 0,
+        cacheWrite: 0,
+        totalTokens: 0,
+        cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+      },
+      stopReason: "toolUse",
+      timestamp: Date.now(),
+    });
+    sessionManager.appendMessage({
+      role: "toolResult",
+      toolCallId: "call_local_1",
+      toolName: invalidName,
+      content: [{ type: "text", text: `Tool ${invalidName} not found` }],
+      isError: true,
+      timestamp: Date.now(),
+    });
+    const session = await createLivePiHost(t, "text", "gpt-6-luna", [], { sessionManager });
+
+    await session.prompt("<history-item>after-invalid-name</history-item>", {
+      expandPromptTemplates: false,
+    });
+    const assistant = latestAssistant(session);
+    assert.equal(assistant.stopReason, "stop");
+    assert.deepEqual(responseLines(assistantText(assistant)), ["after-invalid-name"]);
+    // The request replayed the call under a placeholder name, paired with its result.
+    const items = traffic.frames.flatMap((frame) =>
+      Array.isArray(frame["input"]) ? requireJsonRecords(frame["input"]) : [],
+    );
+    const calls = items.filter((item) => item.type === "function_call");
+    assert.ok(calls.length > 0, "No request replayed the tool call");
+    for (const call of calls) {
+      assert.equal(call["call_id"], "call_local_1");
+      assert.match(requireString(call["name"], "replayed name"), /^invalid_tool_name_[0-9a-z]+$/);
+    }
+    assert.ok(
+      items.some(
+        (item) => item.type === "function_call_output" && item["call_id"] === "call_local_1",
+      ),
+    );
+  },
+);
+
 for (const modelId of ["gpt-6.2-sol", "gpt-6.2-astra"]) {
   test(
     `live Pi host ${modelId} keeps a request-local system message at its anchor`,
