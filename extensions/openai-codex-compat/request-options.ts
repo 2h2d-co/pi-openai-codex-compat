@@ -5,7 +5,11 @@ import type { CodexCompatConfig, WebSearchMode } from "./config.ts";
 import { resolveFileConfig, type ConfigResolver } from "./config-context.ts";
 import { isObject, type JsonRecord } from "./codex-protocol.ts";
 import { selectedRegistryModel } from "./model-context.ts";
-import { splitNamespacedToolName, WEB_RUN_TOOL_NAME } from "./namespaced-tools.ts";
+import {
+  splitNamespacedToolName,
+  WEB_RUN_TOOL_NAME,
+  withoutCodexNamespacedTools,
+} from "./namespaced-tools.ts";
 import { configServiceTier } from "./service-tier.ts";
 
 export type CodexRequestOptionsApi = Pick<ExtensionAPI, "on">;
@@ -89,10 +93,15 @@ export default function registerCodexRequestOptions(
 ): void {
   pi.on("before_provider_request", (event, ctx) => {
     const model = selectedRegistryModel(ctx);
-    if (!isCodexModel(model) || !isObject(event.payload)) return undefined;
+    if (!isObject(event.payload)) return undefined;
+    // No request may declare a dotted name as a plain tool; see withoutCodexNamespacedTools. This
+    // extension's transport has already turned the names into namespaces here, so this changes
+    // only a request that another transport built.
+    const sendable = withoutCodexNamespacedTools(event.payload);
+    if (!isCodexModel(model)) return sendable;
 
     const config = resolveConfig(ctx);
-    return applyCodexRequestOptions(event.payload, config, {
+    return applyCodexRequestOptions(sendable ?? event.payload, config, {
       modelId: model.id,
       supportsImageSearch: model.input.includes("image"),
     });
