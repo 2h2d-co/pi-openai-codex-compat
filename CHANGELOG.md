@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Fixed
+
+- Keep `web.run` and `image_gen.imagegen` out of requests this extension's Codex transport did not build. A Codex request that started while Pi was still running `session_start` handlers was built by Pi's own provider, which declared the dotted names as plain function tools, and Codex refused it with an invalid `input[N].tools[M].name`. The names are now removed from any such request, whichever provider builds it.
+
 ## 0.0.36 - 2026-11-23
 
 ### Fixed
