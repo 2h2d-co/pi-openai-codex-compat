@@ -429,7 +429,7 @@ call to lower that budget, but never to raise the Pi cap. When output is
 truncated, the complete raw output for that interaction is stored in a
 temporary log file and its absolute path is included in the tool result.
 Persistent PTY support uses the pinned
-`node-pty` `1.2.0-beta.15` prebuilds on supported macOS, Linux, and Windows
+`node-pty` `1.2.0-beta.18` prebuilds on supported macOS, Linux, and Windows
 architectures.
 
 The schemas intentionally omit Codex execution environments, sandbox
