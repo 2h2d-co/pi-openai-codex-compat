@@ -6,7 +6,7 @@ import { syncBuiltinESMExports } from "node:module";
 import { tmpdir } from "node:os";
 import { join, relative } from "node:path";
 import test from "node:test";
-import { DEFAULT_MAX_BYTES } from "@earendil-works/pi-coding-agent";
+import { DEFAULT_MAX_BYTES, formatSize } from "@earendil-works/pi-coding-agent";
 import {
   CommandOutputAccumulator,
   CommandOutputSpool,
@@ -143,4 +143,49 @@ for (const writer of writers) {
       );
     }
   }
+}
+
+for (const scenario of [
+  { name: "a final over-long line", lineBytes: 60 * 1024, after: "\n", outputLines: 1 },
+  {
+    name: "an over-long line before blank lines",
+    lineBytes: 60 * 1024,
+    after: "\n\n \n",
+    outputLines: 3,
+  },
+  {
+    name: "an over-long line beyond the retained tail before blank lines",
+    lineBytes: 300 * 1024,
+    after: "\n\n",
+    outputLines: 2,
+  },
+]) {
+  test(`shows the end and full size of ${scenario.name}`, async (t) => {
+    const directory = await mkdtemp(join(tmpdir(), "pi-command-output-test-"));
+    t.after(() => rm(directory, { recursive: true, force: true }));
+    const output = new CommandOutputAccumulator(relative(tmpdir(), join(directory, "output")));
+    t.after(() => output.discard());
+    output.append("a\n");
+    // Chunks split the line, as a process's output does.
+    const line = "x".repeat(scenario.lineBytes - 1) + "y";
+    for (let start = 0; start < line.length; start += 16 * 1024) {
+      output.append(line.slice(start, start + 16 * 1024));
+    }
+    output.append(scenario.after);
+    output.finish();
+
+    const snapshot = output.snapshot({ persistIfTruncated: true });
+    const truncation = snapshot.details.truncation;
+    assert.equal(truncation?.lastLinePartial, true);
+    assert.equal(truncation.outputLines, scenario.outputLines);
+    assert.match(snapshot.text, /^x+y\n/);
+    assert.ok(
+      snapshot.text.endsWith(
+        `[Showing last ${formatSize(truncation.outputBytes)} of line 2 (line is ${formatSize(
+          scenario.lineBytes,
+        )}). Full output: ${snapshot.details.fullOutputPath}]`,
+      ),
+      snapshot.text.slice(-200),
+    );
+  });
 }

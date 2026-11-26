@@ -101,12 +101,13 @@ function modelOutputByteLimit(maxOutputTokens: number | undefined): number {
 function truncationNotice(
   truncation: TruncationResult,
   fullOutputPath: string,
-  lastLineBytes: number,
+  partialLineBytes: number,
 ): string {
   const startLine = truncation.totalLines - truncation.outputLines + 1;
   const endLine = truncation.totalLines;
   if (truncation.lastLinePartial) {
-    return `[Showing last ${formatSize(truncation.outputBytes)} of line ${endLine} (line is ${formatSize(lastLineBytes)}). Full output: ${fullOutputPath}]`;
+    // The partial line is the first output line. Only blank lines can follow it.
+    return `[Showing last ${formatSize(truncation.outputBytes)} of line ${startLine} (line is ${formatSize(partialLineBytes)}). Full output: ${fullOutputPath}]`;
   }
   if (truncation.truncatedBy === "lines") {
     return `[Showing lines ${startLine}-${endLine} of ${truncation.totalLines}. Full output: ${fullOutputPath}]`;
@@ -131,6 +132,11 @@ export class CommandOutputAccumulator {
   private completedLines = 0;
   private totalLines = 0;
   private currentLineBytes = 0;
+  /** Whether the open line holds only whitespace so far. */
+  private currentLineBlank = true;
+  private lastCompletedLineBytes = 0;
+  /** Bytes of the last completed line that holds more than whitespace. */
+  private lastContentLineBytes = 0;
   private hasOpenLine = false;
   private finished = false;
   private tempFilePath: string | undefined;
@@ -213,7 +219,7 @@ export class CommandOutputAccumulator {
         text = `${text}${text ? "\n\n" : ""}${truncationNotice(
           effectiveTruncation,
           fullOutputPath,
-          this.currentLineBytes,
+          this.partialLineBytes(effectiveTruncation),
         )}`;
         details.fullOutputPath = fullOutputPath;
       }
@@ -274,22 +280,33 @@ export class CommandOutputAccumulator {
     this.tailBytes += bytes;
     if (this.tailBytes > DEFAULT_MAX_BYTES * 4) this.trimTail();
 
-    let newlines = 0;
-    let lastNewline = -1;
-    for (let index = text.indexOf("\n"); index !== -1; index = text.indexOf("\n", index + 1)) {
-      newlines++;
-      lastNewline = index;
+    let start = 0;
+    for (let index = text.indexOf("\n"); index !== -1; index = text.indexOf("\n", start)) {
+      this.extendOpenLine(text.slice(start, index));
+      this.completedLines++;
+      this.lastCompletedLineBytes = this.currentLineBytes;
+      if (!this.currentLineBlank) this.lastContentLineBytes = this.currentLineBytes;
+      this.currentLineBytes = 0;
+      this.currentLineBlank = true;
+      start = index + 1;
     }
-    if (newlines === 0) {
-      this.currentLineBytes += bytes;
-      this.hasOpenLine = true;
-    } else {
-      this.completedLines += newlines;
-      const tail = text.slice(lastNewline + 1);
-      this.currentLineBytes = byteLength(tail);
-      this.hasOpenLine = tail.length > 0;
-    }
+    this.extendOpenLine(text.slice(start));
+    this.hasOpenLine = this.currentLineBytes > 0;
     this.totalLines = this.completedLines + (this.hasOpenLine ? 1 : 0);
+  }
+
+  private extendOpenLine(text: string): void {
+    this.currentLineBytes += byteLength(text);
+    if (this.currentLineBlank && text.trim().length > 0) this.currentLineBlank = false;
+  }
+
+  /**
+   * Full size of the line `truncateTail` keeps only the end of. It is the last line, or the last
+   * line with content when blank lines follow it.
+   */
+  private partialLineBytes(truncation: TruncationResult): number {
+    if (truncation.outputLines > 1) return this.lastContentLineBytes;
+    return this.hasOpenLine ? this.currentLineBytes : this.lastCompletedLineBytes;
   }
 
   private trimTail(): void {
@@ -312,10 +329,16 @@ export class CommandOutputAccumulator {
     this.tailBytes = byteLength(this.tailText);
   }
 
+  /**
+   * The retained tail without the partial first line that trimming left. When only blank lines
+   * remain without it, the tail is the end of one over-long line followed by blank lines, so keep
+   * that line's end, as Pi 1.6.1 does.
+   */
   private snapshotText(): string {
     if (this.tailStartsAtLineBoundary) return this.tailText;
     const firstNewline = this.tailText.indexOf("\n");
-    return firstNewline === -1 ? this.tailText : this.tailText.slice(firstNewline + 1);
+    const clipped = firstNewline === -1 ? this.tailText : this.tailText.slice(firstNewline + 1);
+    return clipped.trim().length === 0 ? this.tailText : clipped;
   }
 
   private shouldUseTempFile(): boolean {
