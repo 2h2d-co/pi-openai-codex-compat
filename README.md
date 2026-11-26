@@ -742,7 +742,7 @@ npm run test:live:codex
 
 `scripts/test-live.ts` first runs the offline packaged terminal tests. It then
 obtains the local Codex bearer token through the repository Pi and runs the
-tests with `gpt-6-luna`, `gpt-6.2-sol`, and `gpt-6.2-astra` at medium reasoning effort. It also
+tests with `gpt-6.2-sol` and `gpt-6.2-astra` at medium reasoning effort. It also
 packs the extension and loads that archive through the shipped Pi CLI. Ordinary
 Responses and Responses Lite tests exercise tool calls, prompt reload, native
 compaction, and persisted-session resume against Codex.
@@ -755,13 +755,13 @@ Ultrafast for the model, the request must send it, and Ultrafast must generate a
 least 3 times as fast as Standard, because Codex reports `default` as the tier of every response.
 Otherwise the request must run and be priced at Standard, and the warning must name the model.
 The tests need a Codex login whose plan includes Ultrafast for GPT-6.2 Sol.
-An SDK test on `gpt-6-luna` continues a session whose history holds another model's tool call
+An SDK test on `gpt-6.2-sol` continues a session whose history holds another model's tool call
 with a name Codex rejects, and checks that the request replays it under a placeholder name.
 CLI tests also execute the built-in read tool after resume.
 Terminal tests check interrupted `exec_command` error framing in regular and
 fullscreen mode. A live terminal case blocks a real Codex command call before
 execution and checks that Pi's metadata-free error retains its tool box.
-Six additional CLI cases replay grammar-tool history with `gpt-6-luna` in both
+Six additional CLI cases replay grammar-tool history with `gpt-6.2-sol` in both
 response formats. They cover foreign-provider history, different-model history,
 and calls previously recorded as function calls.
 Test credentials stay in memory and child-process environments. Test sessions

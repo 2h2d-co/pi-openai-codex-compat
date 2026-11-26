@@ -241,7 +241,7 @@ function observeRealWebSocketTraffic(t: TestContext): ObservedWebSocketTraffic {
 
 /**
  * The conversation input of a `response.create` frame. The session's thinking level stays
- * medium, so GPT-6 and GPT-6.2 turn requests send it as `reasoning.effort`, and no frame carries
+ * medium, so GPT-6.2 turn requests send it as `reasoning.effort`, and no frame carries
  * a `configuration_update` item. Prewarm and compaction frames are not checked for an effort: a
  * compaction after a resume has no turn request whose settings it could copy.
  */
@@ -428,7 +428,7 @@ async function createLivePiHost(
   return result.session;
 }
 
-for (const modelId of ["gpt-6-luna", "gpt-6.2-sol", "gpt-6.2-astra"]) {
+for (const modelId of ["gpt-6.2-sol", "gpt-6.2-astra"]) {
   test(
     `live Pi host ${modelId} preserves text conversation history through Codex`,
     { skip: !LIVE_TEST_ENABLED, timeout: LIVE_TEST_TIMEOUT_MS },
@@ -664,7 +664,7 @@ for (const codemode of ["on", "only"] as const) {
           return { content: [{ type: "text", text: "unused" }], details: {} };
         },
       });
-      const session = await createLivePiHost(t, "text", "gpt-6-luna", [lookup], { codemode });
+      const session = await createLivePiHost(t, "text", "gpt-6.2-sol", [lookup], { codemode });
       await session.prompt("<history-item>text-alpha</history-item>", {
         expandPromptTemplates: false,
       });
@@ -716,7 +716,7 @@ for (const codemode of ["on", "only"] as const) {
 
       // A fresh extension load, as after a resume, has no turn request yet. Its
       // compaction declares the tools the session saved for the last turn.
-      const resumed = await createLivePiHost(t, "text", "gpt-6-luna", [lookup], {
+      const resumed = await createLivePiHost(t, "text", "gpt-6.2-sol", [lookup], {
         codemode,
         sessionManager: session.sessionManager,
       });
@@ -734,7 +734,7 @@ for (const codemode of ["on", "only"] as const) {
 // Another model can return a call whose name is no tool name, such as a whole shell command, and
 // Pi answers it "not found". Codex rejects every request that replays such a name unchanged.
 test(
-  "live Pi host gpt-6-luna continues a session whose history holds a tool call name Codex rejects",
+  "live Pi host gpt-6.2-sol continues a session whose history holds a tool call name Codex rejects",
   { skip: !LIVE_TEST_ENABLED, timeout: LIVE_TEST_TIMEOUT_MS },
   async (t) => {
     const traffic = observeRealWebSocketTraffic(t);
@@ -771,7 +771,7 @@ test(
       isError: true,
       timestamp: Date.now(),
     });
-    const session = await createLivePiHost(t, "text", "gpt-6-luna", [], { sessionManager });
+    const session = await createLivePiHost(t, "text", "gpt-6.2-sol", [], { sessionManager });
 
     await session.prompt("<history-item>after-invalid-name</history-item>", {
       expandPromptTemplates: false,
@@ -875,10 +875,10 @@ for (const modelId of ["gpt-6.2-sol", "gpt-6.2-astra"]) {
 }
 
 test(
-  "live Pi host gpt-6-luna publishes a reason without provider text when Codex rejects compaction",
+  "live Pi host gpt-6.2-sol publishes a reason without provider text when Codex rejects compaction",
   { skip: !LIVE_TEST_ENABLED, timeout: LIVE_TEST_TIMEOUT_MS },
   async (t) => {
-    const session = await createLivePiHost(t, "text", "gpt-6-luna", [], { compactable: true });
+    const session = await createLivePiHost(t, "text", "gpt-6.2-sol", [], { compactable: true });
     await session.prompt("<history-item>text-alpha</history-item>", {
       expandPromptTemplates: false,
     });
@@ -887,7 +887,7 @@ test(
     // carries an invalid signature. Codex rejects the compaction request before any work.
     const [header, claims] = liveApiKey().split(".");
     const cancellations: unknown[] = [];
-    const resumed = await createLivePiHost(t, "text", "gpt-6-luna", [], {
+    const resumed = await createLivePiHost(t, "text", "gpt-6.2-sol", [], {
       compactable: true,
       sessionManager: session.sessionManager,
       apiKey: `${header}.${claims}.invalid-signature`,
@@ -916,7 +916,7 @@ test(
       resumed.sessionManager.getBranch().some((entry) => entry.type === "compaction"),
       false,
     );
-    t.diagnostic(`gpt-6-luna compaction rejection published: ${reason}`);
+    t.diagnostic(`gpt-6.2-sol compaction rejection published: ${reason}`);
   },
 );
 

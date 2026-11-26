@@ -1,7 +1,7 @@
 import test from "node:test";
 import { verifyPackagedCli } from "./support/codex-cli-harness.ts";
 
-for (const modelId of ["gpt-6-luna", "gpt-6.2-sol", "gpt-6.2-astra"]) {
+for (const modelId of ["gpt-6.2-sol", "gpt-6.2-astra"]) {
   for (const lite of [false, true]) {
     test(
       `live packaged Pi CLI ${modelId} transcript lifecycle (Lite=${String(lite)})`,
@@ -19,7 +19,7 @@ for (const replay of ["function", "foreign", "model"] as const) {
     test(
       `live packaged Pi CLI resumes ${replay} grammar history (Lite=${String(lite)})`,
       { skip: process.env["PI_CODEX_LIVE_TEST"] !== "1", timeout: 120_000 },
-      async (t) => verifyPackagedCli(t, { live: true, lite, modelId: "gpt-6-luna", replay }),
+      async (t) => verifyPackagedCli(t, { live: true, lite, modelId: "gpt-6.2-sol", replay }),
     );
   }
 }
