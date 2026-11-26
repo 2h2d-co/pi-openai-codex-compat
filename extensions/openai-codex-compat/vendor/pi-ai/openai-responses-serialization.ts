@@ -928,9 +928,14 @@ export function convertResponsesMessages(
           if (isDifferentModel || !itemId?.startsWith(itemIdPrefix)) {
             itemId = undefined;
           }
+          // Replay calls with status "completed", as OpenAI returns them. A full replay after the
+          // Codex WebSocket closes must match the history the backend kept, or GPT-6.2 drops the
+          // reasoning that follows the call (`prefix_mismatch`). A stream that ends with an
+          // unfinished call fails, and failed messages are not replayed.
           if (customInputProperty !== undefined) {
             const customToolCall: ResponsesItem = {
               type: "custom_tool_call",
+              status: "completed",
               name: block.name,
               input: sanitizeSurrogates(
                 getGrammarToolInput(block.name, block.arguments, customInputProperty),
@@ -942,6 +947,7 @@ export function convertResponsesMessages(
           } else {
             const functionCall: ResponsesItem = {
               type: "function_call",
+              status: "completed",
               name: namespaced?.name ?? replayedFunctionCallName(block.name),
               arguments: JSON.stringify(block.arguments),
             };

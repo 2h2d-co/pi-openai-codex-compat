@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+### Changed
+
+- Require Pi `>=1.6.1 <1.7.0`.
+
+### Fixed
+
+- Send the session's first thinking level as `reasoning.effort` on GPT-6, GPT-6.1, and GPT-6.2, and a `configuration_update` item only where the level changes, as Pi 1.6.1 does. Requests sent `medium` and carried every level in `configuration_update` items, which Codex applies only partly above medium, so high and xhigh reasoned less. A level change still keeps the prompt cache.
+- Replay tool calls with `status: "completed"`, as Codex returns them. When the WebSocket connection had closed and the whole history was sent again, it no longer matched the history Codex kept, and GPT-6.2 dropped the reasoning that followed a tool call.
+
 ## 0.0.36 - 2026-11-23
 
 ### Fixed

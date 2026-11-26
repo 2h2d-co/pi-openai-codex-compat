@@ -31,10 +31,12 @@ export function stableResponsesJson(value: unknown): string {
 /** Normalize completed provider output into the item shape replayed on the next request. */
 export function normalizeReplayItem(item: JsonRecord): JsonRecord {
   const normalized = structuredClone(item);
-  if (normalized.type === "message") {
+  if (
+    normalized.type === "message" ||
+    normalized.type === "function_call" ||
+    normalized.type === "custom_tool_call"
+  ) {
     normalized["status"] = "completed";
-  } else if (normalized.type === "function_call" || normalized.type === "custom_tool_call") {
-    delete normalized["status"];
   }
   return normalized;
 }

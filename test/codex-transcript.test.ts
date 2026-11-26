@@ -959,6 +959,7 @@ test("sends thinking levels as configuration updates on models with mid-conversa
     for (const [reasoning, effort] of [
       ["low", "low"],
       [undefined, "none"],
+      ["high", "high"],
     ] as const) {
       const harness = createHarness(entries(stored));
       let request: JsonRecord | undefined;
@@ -979,17 +980,15 @@ test("sends thinking levels as configuration updates on models with mid-conversa
       const input = requireJsonRecords(request.input);
       const updates = input.filter((item) => item.type === "configuration_update");
       if (supportsMidConvoEffort) {
-        // The effort stays fixed. Each earlier reply replays its recorded level, and the
-        // request's own level ends the input, so earlier input never changes.
+        // The first reply's level is the request effort, so it stays fixed across turns. Only
+        // a different level for this request ends the input, so earlier input never changes.
         assert.equal(result.providerThinkingLevel, effort);
-        assert.deepEqual(request["reasoning"], { effort: "medium", summary: "auto" });
-        assert.deepEqual(updates, [
-          { type: "configuration_update", reasoning: { effort: "high" } },
-          { type: "configuration_update", reasoning: { effort } },
-        ]);
-        const first = input.indexOf(updates[0] ?? {});
-        assert.match(JSON.stringify(input[first + 1]), /first reply/);
-        assert.equal(input.at(-1), updates[1]);
+        assert.deepEqual(request["reasoning"], { effort: "high", summary: "auto" });
+        assert.deepEqual(
+          updates,
+          effort === "high" ? [] : [{ type: "configuration_update", reasoning: { effort } }],
+        );
+        if (effort !== "high") assert.equal(input.at(-1), updates[0]);
       } else {
         assert.equal(result.providerThinkingLevel, undefined);
         assert.deepEqual(request["reasoning"], { effort, summary: "auto" });
@@ -997,6 +996,66 @@ test("sends thinking levels as configuration updates on models with mid-conversa
       }
     }
   }
+});
+
+test("sends a configuration update only where the thinking level changes", async () => {
+  const reply = (id: string, parent: string, text: string, level: string): Message => ({
+    ...assistantEntry(id, parent, text).message,
+    providerThinkingLevel: level,
+  });
+  const model = {
+    ...codexModel(),
+    compat: { supportsOpenAIGrammarTools: true, supportsMidConvoEffort: true },
+  };
+  const request = async (stored: Message[], reasoning: "low" | "medium") => {
+    const harness = createHarness(entries(stored));
+    let body: JsonRecord | undefined;
+    harness.runtime.transport.request = async function* (_model, sent) {
+      body = withPromptAsInstructions(structuredClone(requireJsonRecord(sent)));
+      yield* textEvents("done");
+    };
+    const result = await harness.runtime
+      .streamSimple(model, normalizeContext({ messages: stored }), {
+        apiKey: accessToken(),
+        sessionId: "session-1",
+        transport: "sse",
+        reasoning,
+      })
+      .result();
+    assert.equal(result.stopReason, "stop", result.errorMessage);
+    assert.ok(body);
+    return body;
+  };
+
+  // Without an earlier reply, the request's own level is the request effort.
+  const first = await request([initial, FIRST_REQUEST], "low");
+  assert.deepEqual(first["reasoning"], { effort: "low", summary: "auto" });
+  assert.doesNotMatch(JSON.stringify(first["input"]), /configuration_update/);
+
+  const later = await request(
+    [
+      initial,
+      FIRST_REQUEST,
+      reply("high-1", "user", "first high reply", "high"),
+      { role: "user", content: "second request", timestamp: 5 },
+      reply("high-2", "user", "second high reply", "high"),
+      { role: "user", content: "third request", timestamp: 7 },
+      reply("medium-1", "user", "medium reply", "medium"),
+      NEXT_REQUEST,
+    ],
+    "medium",
+  );
+  assert.deepEqual(later["reasoning"], { effort: "high", summary: "auto" });
+  const input = requireJsonRecords(later["input"]);
+  const updates = input.flatMap((item, index) =>
+    item.type === "configuration_update" ? [{ index, item }] : [],
+  );
+  assert.deepEqual(
+    updates.map(({ item }) => item),
+    [{ type: "configuration_update", reasoning: { effort: "medium" } }],
+  );
+  assert.match(JSON.stringify(input[(updates[0]?.index ?? 0) + 1]), /medium reply/);
+  assert.match(JSON.stringify(input.at(-1)), /next request/);
 });
 
 test("keeps the request's configuration update out of percentage compaction and after the checkpoint", async () => {
@@ -1033,17 +1092,18 @@ test("keeps the request's configuration update out of percentage compaction and 
     requireJsonRecords(request?.["input"]).flatMap((item) =>
       item.type === "configuration_update" ? [item["reasoning"]] : [],
     );
-  // The compaction request replays the earlier reply's level and ends with its trigger.
-  assert.deepEqual(updates(requests[0]), [{ effort: "high" }]);
+  // The compaction request keeps the turn's effort, which is the earlier reply's level, and
+  // ends with its trigger instead of the turn's own level.
+  assert.deepEqual(requests[0]?.["reasoning"], { effort: "high", summary: "auto" });
+  assert.deepEqual(updates(requests[0]), []);
   assert.equal(requireJsonRecords(requests[0]?.["input"]).at(-1)?.type, "compaction_trigger");
-  // The continuation follows the checkpoint and ends with the request's own level.
+  // No reply follows the checkpoint, so the continuation sends the request's own level as
+  // its effort.
   const continued = requireJsonRecords(requests[1]?.["input"]);
+  assert.deepEqual(requests[1]?.["reasoning"], { effort: "low", summary: "auto" });
+  assert.deepEqual(updates(requests[1]), []);
   assert.match(JSON.stringify(continued), /opaque-state/);
-  assert.deepEqual(continued.at(-1), {
-    type: "configuration_update",
-    reasoning: { effort: "low" },
-  });
-  assert.match(JSON.stringify(continued.at(-2)), /unsampled request/);
+  assert.match(JSON.stringify(continued.at(-1)), /unsampled request/);
   // The checkpoint stores no request-specific level.
   assert.doesNotMatch(JSON.stringify(harness.compactions), /configuration_update/);
 });

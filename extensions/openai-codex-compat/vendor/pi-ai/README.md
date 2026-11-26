@@ -31,8 +31,15 @@ The copy also includes Pi AI 1.6.0's `configurationUpdateEffort`: before every
 earlier reply of the same model it replays the thinking level recorded on it
 (`providerThinkingLevel`) as a `configuration_update` item, and it ends the input
 with one for the request's own level. Native reply items replay behind the same
-item. It also carries Pi AI 1.6.0's strict-schema rule that a node without a type
-is not strict.
+item. Pi AI 1.6.1 adds `effortBaseline: "initial"`: the first of these levels
+becomes `reasoning.effort`, and a later item stays only where the level changes.
+The copy omits that option. Compat applies the same rule to the finished request
+input through `withEffortBaseline` in
+[`compaction-checkpoint.ts`](../../compaction-checkpoint.ts), because checkpoint
+history and an overflow-recovered prefix join the serialized items outside this
+copy. Tool calls replay with `status: "completed"`, as in Pi AI 1.6.1. The copy
+also carries Pi AI 1.6.0's strict-schema rule that a node without a type is not
+strict.
 
 The copy replays a function call name that Codex rejects as `invalid_tool_name_<hash>`, which Pi AI does not. Codex accepts a replayed name only when it has 1 to 128 letters, digits, `_`, `.`, or `-`. Another model can return a call whose name breaks that rule, such as a whole shell command. Pi answers such a call "not found", and replaying its name unchanged would make every later Codex request fail. The hash keeps the placeholder stable across requests, and the `call_id` still pairs the call with its result. Valid names serialize exactly as in Pi AI.
 

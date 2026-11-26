@@ -35,6 +35,7 @@ import {
   resolveRequestTranscript,
   responsesCompatibility,
   searchCheckpoint,
+  withEffortBaseline,
   type CheckpointData,
   type CompactionDecision,
   type GrammarToolInputProperties,
@@ -170,9 +171,6 @@ export const DEFAULT_RESPONSE_RETRY_POLICY: CodexResponseRetryPolicy = {
 export type CodexProviderRuntimeApi = Pick<ExtensionAPI, "appendEntry" | "getAllTools">;
 
 type CodexCompactionResult = { checkpoint: CheckpointData; usage?: Usage };
-
-/** Fixed `reasoning.effort` while `configuration_update` items carry the thinking level, as in Pi AI. */
-const CONFIGURATION_UPDATE_REQUEST_EFFORT = "medium";
 
 type BuildRequestBodyOptions = {
   model: Model<Api>;
@@ -575,6 +573,15 @@ export class CodexProviderRuntime {
     // checkpoint drops such history anyway. A mid-session tool change costs one
     // cache miss.
     const currentTools = getCurrentTools(context.messages);
+    const { input, effortBaseline } = withEffortBaseline(
+      this.wireHistory(
+        model,
+        context,
+        grammarToolInputProperties,
+        runtimeSessionId,
+        configurationUpdateEffort,
+      ),
+    );
     // The leading system message is the prompt; later system messages travel
     // inline in `input` (or collapsed into the leading message by
     // resolveRequestTranscript), as Pi AI's Codex adapter does. `wireRequestBody`
@@ -584,13 +591,7 @@ export class CodexProviderRuntime {
       store: false,
       stream: true,
       instructions: requestInstructions(context),
-      input: this.wireHistory(
-        model,
-        context,
-        grammarToolInputProperties,
-        runtimeSessionId,
-        configurationUpdateEffort,
-      ),
+      input,
       text: { verbosity: requestOptions.textVerbosity ?? "low" },
       include: ["reasoning.encrypted_content"],
       tool_choice: requestOptions.toolChoice ?? "auto",
@@ -611,11 +612,9 @@ export class CodexProviderRuntime {
     if (requestOptions.serviceTier !== undefined) body.service_tier = requestOptions.serviceTier;
     if (currentTools.length > 0) body.tools = requestTools(model, currentTools);
     if (requestOptions.reasoningEffort !== undefined) {
-      // With `configuration_update` items, `reasoning.effort` stays fixed so the cache holds.
+      // With `configuration_update` items, the first effort stays fixed so the cache holds.
       const mapped =
-        configurationUpdateEffort === undefined
-          ? resolveReasoningEffort(model, requestOptions.reasoningEffort)
-          : CONFIGURATION_UPDATE_REQUEST_EFFORT;
+        effortBaseline ?? resolveReasoningEffort(model, requestOptions.reasoningEffort);
       if (mapped !== null) {
         body["reasoning"] = {
           effort: mapped,
@@ -814,15 +813,9 @@ export class CodexProviderRuntime {
         throw new Error("Codex request history contains an invalid item.");
       return structuredClone(item);
     });
-    // The trailing `configuration_update` sets this request's effort. It stays out of the
-    // compaction request and the checkpoint, and follows the compacted history.
-    const trailingUpdate =
-      configurationUpdateEffort(model, options.reasoningEffort) === undefined
-        ? []
-        : history.splice(-1);
-    if (trailingUpdate.length > 0 && trailingUpdate[0]?.["type"] !== "configuration_update") {
-      throw new Error("Codex request history does not end with its configuration update.");
-    }
+    // A trailing `configuration_update` changes this request's effort. It stays out of the
+    // compaction request and the checkpoint.
+    if (history.at(-1)?.["type"] === "configuration_update") history.pop();
     const split = splitUnsampledUserInput({
       branch,
       history,
@@ -877,15 +870,19 @@ export class CodexProviderRuntime {
     );
     this.advanceWindow(sessionId);
     const cacheSessionId = options.cacheRetention === "none" ? undefined : codexCacheKey(sessionId);
-    return withCodexRequestMetadata(
-      updateInput(body, [...compacted.checkpoint.history, ...trailingUpdate]),
-      {
-        sessionId: cacheSessionId,
-        request: { kind: "turn" },
-        turnId: agentTurn.turnId,
-        identity: this.metadataIdentity(cacheSessionId, agentTurn, sessionId),
-      },
-    );
+    // No reply follows the compaction item yet, so this request's own effort becomes the
+    // baseline, as it will be for the next request built from the checkpoint.
+    const requestEffort = configurationUpdateEffort(model, options.reasoningEffort);
+    const compactedBody = updateInput(body, compacted.checkpoint.history);
+    if (requestEffort !== undefined && isObject(compactedBody["reasoning"])) {
+      compactedBody["reasoning"] = { ...compactedBody["reasoning"], effort: requestEffort };
+    }
+    return withCodexRequestMetadata(compactedBody, {
+      sessionId: cacheSessionId,
+      request: { kind: "turn" },
+      turnId: agentTurn.turnId,
+      identity: this.metadataIdentity(cacheSessionId, agentTurn, sessionId),
+    });
   }
 
   stream(

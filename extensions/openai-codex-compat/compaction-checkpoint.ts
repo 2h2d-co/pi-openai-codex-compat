@@ -34,6 +34,7 @@ import {
 } from "./namespaced-tools.ts";
 import {
   RESPONSES_COMPACTION_ITEM_SCHEMA,
+  RESPONSES_CONFIGURATION_UPDATE_ITEM_SCHEMA,
   RESPONSES_INPUT_ITEM_SCHEMA,
   type ResponsesCompactionItem,
   type ResponsesInputItem,
@@ -108,9 +109,9 @@ export function resolveReasoningEffort(model: Model<Api>, effort: ReasoningEffor
 
 /**
  * The effort to send in `configuration_update` items, or undefined to send it as
- * `reasoning.effort`. Models with mid-conversation effort keep `reasoning.effort` fixed and
- * carry thinking-level changes in the input, as Pi AI's Codex adapter and official Codex do, so a
- * change keeps the prompt cache.
+ * `reasoning.effort`. Models with mid-conversation effort carry thinking-level changes in the
+ * input, as Pi AI's Codex adapter and official Codex do, so a change keeps the prompt cache.
+ * {@link withEffortBaseline} then turns the first of those items into `reasoning.effort`.
  */
 export function configurationUpdateEffort(
   model: Model<Api>,
@@ -120,6 +121,38 @@ export function configurationUpdateEffort(
     return undefined;
   }
   return resolveReasoningEffort(model, effort) ?? undefined;
+}
+
+/**
+ * Pi AI's `effortBaseline: "initial"` rule, applied to a finished request input that carries a
+ * `configuration_update` item before every earlier reply and one for the request's own effort.
+ * The first item's effort becomes the request's `reasoning.effort`, and the item is dropped. A
+ * later item stays only where the effort changes. The first effort stays the same across turns,
+ * so `reasoning.effort` and the cached prefix stay fixed. On the Codex backend, a fixed `medium`
+ * with a higher update item reasoned less than that effort sent as `reasoning.effort` (Pi
+ * #12361). Pi AI applies the rule inside its serializer. Compat adds checkpoint history and an
+ * overflow-recovered prefix outside the serializer, so it applies the rule to the whole input.
+ */
+export function withEffortBaseline(input: readonly ResponsesInputItem[]): {
+  input: ResponsesInputItem[];
+  effortBaseline: string | undefined;
+} {
+  let effortBaseline: string | undefined;
+  let previousEffort: string | undefined;
+  const result: ResponsesInputItem[] = [];
+  for (const item of input) {
+    if (Value.Check(RESPONSES_CONFIGURATION_UPDATE_ITEM_SCHEMA, item)) {
+      const effort = item.reasoning.effort;
+      if (effort === previousEffort) continue;
+      previousEffort = effort;
+      if (effortBaseline === undefined) {
+        effortBaseline = effort;
+        continue;
+      }
+    }
+    result.push(structuredClone(item));
+  }
+  return { input: result, effortBaseline };
 }
 
 /**

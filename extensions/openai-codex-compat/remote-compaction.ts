@@ -14,7 +14,7 @@ import {
   type OpenAICodexResponsesOptions,
   type ProviderHeaders,
 } from "@earendil-works/pi-ai";
-import { addRemoteCompactionFeature, type JsonRecord } from "./codex-protocol.ts";
+import { addRemoteCompactionFeature, isObject, type JsonRecord } from "./codex-protocol.ts";
 import { CODEX_API, CODEX_PROVIDER } from "./codex-identifiers.ts";
 import {
   branchInstructions,
@@ -26,6 +26,7 @@ import {
   requestTools,
   responsesCompatibility,
   searchCheckpoint,
+  withEffortBaseline,
   type GrammarToolInputProperties,
 } from "./compaction-checkpoint.ts";
 import { APPLY_PATCH_INPUT_PROPERTY, APPLY_PATCH_TOOL_NAME } from "./apply-patch.ts";
@@ -286,25 +287,29 @@ export default function registerRemoteCompaction(
         saved?.grammarToolInputProperties ??
         fallbackGrammarToolInputProperties(ctx.model, transcript ?? [], pi.getActiveTools());
       // Replay the effort of earlier replies as turn requests do, so the compaction request
-      // shares their cached prefix. The trailing update sets a turn's own effort, and a
-      // compaction request ends with its trigger instead.
-      const updateEffort = configurationUpdateEffort(
-        ctx.model,
-        matching?.requestOptions.reasoningEffort,
+      // shares their cached prefix and `reasoning.effort`. A trailing update changes a turn's
+      // own effort, and a compaction request ends with its trigger instead.
+      const { input: history, effortBaseline } = withEffortBaseline(
+        providerHistory({
+          branch: event.branchEntries,
+          wireModel: ctx.model,
+          grammarToolInputProperties,
+          imageDetail: config.imageDetail,
+          recoverLatestOverflowPrefix: event.reason === "overflow" && event.willRetry,
+          configurationUpdateEffort: configurationUpdateEffort(
+            ctx.model,
+            matching?.requestOptions.reasoningEffort,
+          ),
+        }),
       );
-      const history = providerHistory({
-        branch: event.branchEntries,
-        wireModel: ctx.model,
-        grammarToolInputProperties,
-        imageDetail: config.imageDetail,
-        recoverLatestOverflowPrefix: event.reason === "overflow" && event.willRetry,
-        configurationUpdateEffort: updateEffort,
-      });
-      if (updateEffort !== undefined) history.pop();
+      if (history.at(-1)?.["type"] === "configuration_update") history.pop();
       const template: JsonRecord = {
         ...matching?.payload,
         tools: saved?.tools ?? requestTools(ctx.model, getCurrentTools(transcript ?? [])),
       };
+      if (effortBaseline !== undefined && isObject(template["reasoning"])) {
+        template["reasoning"] = { ...template["reasoning"], effort: effortBaseline };
+      }
       const requestOptions: OpenAICodexResponsesOptions = {
         ...matching?.requestOptions,
         apiKey: authentication.apiKey,

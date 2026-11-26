@@ -1,6 +1,7 @@
 import {
   requireJsonRecord,
   requireJsonRecords,
+  requireResponsesInputItems,
 } from "../extensions/openai-codex-compat/codex-protocol.ts";
 import assert from "node:assert/strict";
 import { mkdtemp, rm } from "node:fs/promises";
@@ -29,10 +30,12 @@ import {
 import {
   convertResponsesMessages as referenceConvertResponsesMessages,
   convertResponsesTools as referenceConvertResponsesTools,
+  prepareResponsesPrompt as referencePrepareResponsesPrompt,
 } from "@earendil-works/pi-ai/api/openai-responses-shared";
 import {
   encodeSessionEntries,
   requestTools,
+  withEffortBaseline,
 } from "../extensions/openai-codex-compat/compaction-checkpoint.ts";
 import { IMAGE_GENERATION_PARAMETERS } from "../extensions/openai-codex-compat/image-generation-schema.ts";
 import {
@@ -165,7 +168,11 @@ const allowedProviders = new Set(["openai", "openai-codex", "opencode"]);
 function referenceWithoutLeadingPrompt(
   ...args: Parameters<typeof referenceConvertResponsesMessages>
 ): unknown {
-  const items: unknown = JSON.parse(JSON.stringify(referenceConvertResponsesMessages(...args)));
+  return withoutLeadingPrompt(referenceConvertResponsesMessages(...args));
+}
+
+function withoutLeadingPrompt(input: unknown): unknown {
+  const items: unknown = JSON.parse(JSON.stringify(input));
   assert.ok(Array.isArray(items));
   const index = items.findIndex(
     (item: unknown) =>
@@ -769,6 +776,7 @@ test("round-trips namespaced calls and deferred namespaced definitions", () => {
 
   assert.deepEqual(converted[0], {
     type: "function_call",
+    status: "completed",
     id: "fc_web",
     call_id: "call_web",
     namespace: "web",
@@ -1029,6 +1037,82 @@ test("sends thinking levels as configuration updates like Pi AI", () => {
     ),
     false,
   );
+});
+
+test("starts reasoning effort at the first recorded level like Pi AI", () => {
+  const reply = (text: string, timestamp: number, overrides: Partial<AssistantMessage>) =>
+    ({
+      ...assistantMessage,
+      content: [{ type: "text", text }],
+      stopReason: "stop",
+      timestamp,
+      ...overrides,
+    }) satisfies AssistantMessage;
+  const user = (content: string, timestamp: number) =>
+    ({ role: "user", content, timestamp }) as const;
+  const initial = { role: "system", content: "initial", timestamp: 0 } as const;
+  for (const scenario of [
+    {
+      name: "no earlier reply",
+      messages: [initial, user("first", 1)],
+      effort: "low",
+      baseline: "low",
+      updates: [],
+    },
+    {
+      name: "unchanged level",
+      messages: [
+        initial,
+        user("first", 1),
+        reply("high reply", 2, { providerThinkingLevel: "high" }),
+        user("second", 3),
+      ],
+      effort: "high",
+      baseline: "high",
+      updates: [],
+    },
+    {
+      name: "changed levels",
+      messages: [
+        initial,
+        user("first", 1),
+        reply("first high reply", 2, { providerThinkingLevel: "high" }),
+        user("second", 3),
+        // Only replies of the same model replay their level.
+        reply("other model reply", 4, { model: "gpt-other", providerThinkingLevel: "low" }),
+        user("third", 5),
+        reply("second high reply", 6, { providerThinkingLevel: "high" }),
+        user("fourth", 7),
+        reply("medium reply", 8, { providerThinkingLevel: "medium" }),
+        user("fifth", 9),
+      ],
+      effort: "none",
+      baseline: "high",
+      updates: ["medium", "none"],
+    },
+  ]) {
+    const transcript = normalizeContext({ messages: scenario.messages });
+    const updateOptions = { ...options, configurationUpdateEffort: scenario.effort };
+    const copied = withEffortBaseline(
+      requireResponsesInputItems(
+        copiedConvertResponsesMessages(model, transcript, allowedProviders, updateOptions),
+      ),
+    );
+    const reference = referencePrepareResponsesPrompt(model, transcript, allowedProviders, {
+      ...updateOptions,
+      effortBaseline: "initial",
+    });
+    assert.deepEqual(copied.input, withoutLeadingPrompt(reference.input), scenario.name);
+    assert.equal(copied.effortBaseline, reference.requestEffortBaseline, scenario.name);
+    assert.equal(copied.effortBaseline, scenario.baseline, scenario.name);
+    assert.deepEqual(
+      copied.input.flatMap((item) =>
+        item["type"] === "configuration_update" ? [requireJsonRecord(item["reasoning"])] : [],
+      ),
+      scenario.updates.map((effort) => ({ effort })),
+      scenario.name,
+    );
+  }
 });
 
 test("replays the recorded thinking level before native reply items", () => {

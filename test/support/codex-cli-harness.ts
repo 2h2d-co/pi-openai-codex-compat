@@ -292,7 +292,13 @@ export async function verifyPackagedCli(
     );
     assert.ok(observation?.type === "custom");
     assert.deepEqual(requireJsonRecord(observation.data)["replay"], [
-      { type: "custom_tool_call", call_id: "call_replay", name: "replay_probe", input: "probe" },
+      {
+        type: "custom_tool_call",
+        status: "completed",
+        call_id: "call_replay",
+        name: "replay_probe",
+        input: "probe",
+      },
       { type: "custom_tool_call_output", call_id: "call_replay", output: "probe accepted" },
     ]);
     await client.stop();

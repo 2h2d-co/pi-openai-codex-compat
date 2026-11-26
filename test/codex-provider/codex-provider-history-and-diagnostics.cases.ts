@@ -116,6 +116,7 @@ test("preserves flat default tool calls in Responses Lite continuations", async 
   assert.deepEqual(replayItems, [
     {
       type: "function_call",
+      status: "completed",
       id: "fc_report",
       call_id: "call_report",
       name: "report",

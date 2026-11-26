@@ -240,21 +240,21 @@ function observeRealWebSocketTraffic(t: TestContext): ObservedWebSocketTraffic {
 }
 
 /**
- * The conversation input of a `response.create` frame. GPT-6 and GPT-6.2 generated requests end
- * with a `configuration_update` item for the session's medium thinking level, which is checked
- * and left out of the result. Prewarm and compaction frames carry none.
+ * The conversation input of a `response.create` frame. The session's thinking level stays
+ * medium, so GPT-6 and GPT-6.2 generated requests send it as `reasoning.effort` and carry no
+ * `configuration_update` item.
  */
 function frameInput(frame: JsonRecord, expectedItems?: number): JsonRecord[] {
   assert.equal(frame.type, "response.create");
   assert.ok(Array.isArray(frame.input), "Codex WebSocket frame did not contain array input");
   assert.equal(frame.input.every(isObject), true);
-  let input = requireJsonRecords(frame.input);
-  if (frame["generate"] !== false && input.at(-1)?.["type"] !== "compaction_trigger") {
-    assert.deepEqual(input.at(-1), {
-      type: "configuration_update",
-      reasoning: { effort: "medium" },
-    });
-    input = input.slice(0, -1);
+  const input = requireJsonRecords(frame.input);
+  assert.equal(
+    input.some((item) => item["type"] === "configuration_update"),
+    false,
+  );
+  if (frame["generate"] !== false) {
+    assert.equal(requireJsonRecord(frame["reasoning"])["effort"], "medium");
   }
   if (expectedItems !== undefined) assert.equal(input.length, expectedItems);
   return input;
