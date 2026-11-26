@@ -241,8 +241,9 @@ function observeRealWebSocketTraffic(t: TestContext): ObservedWebSocketTraffic {
 
 /**
  * The conversation input of a `response.create` frame. The session's thinking level stays
- * medium, so GPT-6 and GPT-6.2 generated requests send it as `reasoning.effort` and carry no
- * `configuration_update` item.
+ * medium, so GPT-6 and GPT-6.2 turn requests send it as `reasoning.effort`, and no frame carries
+ * a `configuration_update` item. Prewarm and compaction frames are not checked for an effort: a
+ * compaction after a resume has no turn request whose settings it could copy.
  */
 function frameInput(frame: JsonRecord, expectedItems?: number): JsonRecord[] {
   assert.equal(frame.type, "response.create");
@@ -253,7 +254,7 @@ function frameInput(frame: JsonRecord, expectedItems?: number): JsonRecord[] {
     input.some((item) => item["type"] === "configuration_update"),
     false,
   );
-  if (frame["generate"] !== false) {
+  if (frame["generate"] !== false && input.at(-1)?.["type"] !== "compaction_trigger") {
     assert.equal(requireJsonRecord(frame["reasoning"])["effort"], "medium");
   }
   if (expectedItems !== undefined) assert.equal(input.length, expectedItems);
