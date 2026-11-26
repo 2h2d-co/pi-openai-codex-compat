@@ -165,6 +165,40 @@ function reasoningText(item: JsonRecord): string {
     : "";
 }
 
+/**
+ * Record the reasoning items the backend removed from the input, as Pi AI does, so Pi's
+ * reasoning-drop notice reports them. Removals at a turn boundary are expected and left out.
+ */
+function appendReasoningRemovals(output: AssistantMessage, transformations: unknown): void {
+  if (!Array.isArray(transformations)) return;
+  const removals = transformations
+    .filter(isObject)
+    .filter(
+      (transformation) =>
+        transformation.type === "reasoning" &&
+        transformation["action"] === "removed" &&
+        transformation["reason"] !== "turn_boundary",
+    );
+  if (removals.length === 0) return;
+  output.diagnostics = [
+    ...(output.diagnostics ?? []),
+    {
+      type: "openai_input_transformations",
+      timestamp: Date.now(),
+      details: {
+        transformations: removals.map((removal) => {
+          const fields: Record<string, string> = { type: "reasoning", action: "removed" };
+          for (const key of ["id", "reason"]) {
+            const value = removal[key];
+            if (isString(value)) fields[key] = value;
+          }
+          return fields;
+        }),
+      },
+    },
+  ];
+}
+
 function normalizeCodexStatus(status: unknown): CodexResponseStatus | undefined {
   return Value.Check(CODEX_RESPONSE_STATUS_SCHEMA, status) ? status : undefined;
 }
@@ -389,6 +423,7 @@ export async function processCodexStream(
 
   const finalize = (response: JsonRecord): void => {
     terminal = true;
+    appendReasoningRemovals(output, response["input_transformations"]);
     if (isString(response.id)) output.responseId = response.id;
     const usage = isObject(response.usage) ? response.usage : undefined;
     if (usage) {

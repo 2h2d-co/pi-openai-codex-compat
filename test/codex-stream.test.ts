@@ -7,8 +7,9 @@ import {
   type AssistantMessageEventStream,
   type Model,
 } from "@earendil-works/pi-ai";
+import { processResponsesStream as referenceProcessResponsesStream } from "@earendil-works/pi-ai/api/openai-responses-shared";
 import { processCodexStream } from "../extensions/openai-codex-compat/codex-stream.ts";
-import type { JsonRecord } from "../extensions/openai-codex-compat/codex-protocol.ts";
+import type { JsonRecord, JsonValue } from "../extensions/openai-codex-compat/codex-protocol.ts";
 
 const model = {
   id: "gpt-test",
@@ -45,6 +46,23 @@ function output(): AssistantMessage {
 
 async function* events(values: JsonRecord[]): AsyncGenerator<JsonRecord> {
   yield* values;
+}
+
+type ReferenceStreamEvent =
+  Parameters<typeof referenceProcessResponsesStream>[0] extends AsyncIterable<infer Event>
+    ? Event
+    : never;
+
+function isReferenceStreamEvent(value: JsonRecord): value is JsonRecord & ReferenceStreamEvent {
+  return typeof value.type === "string";
+}
+
+/** The same events typed for Pi AI's stream processor, which reads only the fields it needs. */
+async function* referenceEvents(values: JsonRecord[]): AsyncGenerator<ReferenceStreamEvent> {
+  for (const value of values) {
+    assert.ok(isReferenceStreamEvent(value));
+    yield value;
+  }
 }
 
 test("parses reasoning and grammar tool calls into canonical Pi content", async () => {
@@ -637,4 +655,69 @@ test("matches Pi AI's missing terminal response error", async () => {
     processCodexStream(events([]), output(), createAssistantMessageEventStream(), model, new Map()),
     /OpenAI Responses stream ended before a terminal response event/,
   );
+});
+
+test("records reasoning the backend removed from the input like Pi AI", async () => {
+  const transformations: JsonValue[] = [
+    { type: "reasoning", id: "rs_dropped", action: "removed", reason: "prefix_mismatch" },
+    { type: "reasoning", id: "rs_turn", action: "removed", reason: "turn_boundary" },
+    { type: "reasoning", id: "rs_kept", action: "kept", reason: "prefix_mismatch" },
+    { type: "message", id: "msg_removed", action: "removed", reason: "prefix_mismatch" },
+    "malformed",
+  ];
+  const terminal = (inputTransformations: JsonValue[] | undefined): JsonRecord[] => [
+    {
+      type: "response.completed",
+      response: {
+        id: "resp_transformed",
+        status: "completed",
+        usage: { input_tokens: 1, output_tokens: 1, total_tokens: 2 },
+        ...(inputTransformations === undefined
+          ? {}
+          : { input_transformations: structuredClone(inputTransformations) }),
+      },
+    },
+  ];
+  const withoutTimestamps = (message: AssistantMessage) =>
+    (message.diagnostics ?? []).map(({ timestamp, ...diagnostic }) => {
+      assert.equal(typeof timestamp, "number");
+      return diagnostic;
+    });
+
+  for (const inputTransformations of [transformations, transformations.slice(1, 2), undefined]) {
+    const copied = output();
+    await processCodexStream(
+      events(terminal(inputTransformations)),
+      copied,
+      createAssistantMessageEventStream(),
+      model,
+      new Map(),
+    );
+    const reference = output();
+    await referenceProcessResponsesStream(
+      referenceEvents(terminal(inputTransformations)),
+      reference,
+      createAssistantMessageEventStream(),
+      model,
+    );
+    assert.deepEqual(withoutTimestamps(copied), withoutTimestamps(reference));
+  }
+  const message = output();
+  await processCodexStream(
+    events(terminal(transformations)),
+    message,
+    createAssistantMessageEventStream(),
+    model,
+    new Map(),
+  );
+  assert.deepEqual(withoutTimestamps(message), [
+    {
+      type: "openai_input_transformations",
+      details: {
+        transformations: [
+          { type: "reasoning", id: "rs_dropped", action: "removed", reason: "prefix_mismatch" },
+        ],
+      },
+    },
+  ]);
 });
