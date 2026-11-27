@@ -65,6 +65,8 @@ The detailed `apply_patch` contracts remain normative:
 - **Retries and compaction must preserve canonical Pi history.**
 - **Transport recovery remains bounded rather than approximating Codex's
   unbounded connection-error category.**
+- **Requests omit the turn id.** Codex rate-limits bursts of requests that
+  carry one.
 
 ### `apply_patch`
 
@@ -194,8 +196,9 @@ The detailed `apply_patch` contracts remain normative:
 ### P-009 — Send only truthful metadata
 
 - **Our choice:** Send Pi-derived installation, session, thread, branch,
-  window, turn, source, sandbox, request-kind, and compaction metadata. Omit
-  parent-agent, parent-turn, workspace Git, plugin, and Code Mode metadata.
+  window, source, sandbox, request-kind, and compaction metadata. Omit
+  parent-agent, parent-turn, workspace Git, plugin, and Code Mode metadata,
+  and the turn id under P-014.
 - **Official Codex:** Sends those extra values when its runtime owns them.
 - **Why:** Missing data is more accurate than fabricated lineage.
 - **Revisit only if:** Pi gains an equivalent lifecycle and exposes it here.
@@ -264,6 +267,26 @@ The detailed `apply_patch` contracts remain normative:
   under P-008.
 - **Revisit only if:** The package implements Code Mode with nested tool
   dispatch and structured result adaptation.
+
+### P-014 — Omit the turn id
+
+- **Our choice:** Send no `turn_id`, neither in `client_metadata` nor in the
+  `x-codex-turn-metadata` JSON. All other metadata is still sent.
+- **Official Codex:** Sends a turn id in both places, shared by every request
+  of a turn, with an empty id on prewarm.
+- **Why:** Codex answers a burst of requests that carry a turn id, such as
+  ten turns in 25 seconds, with HTTP 429 `turn_rate_limit_exceeded` and
+  "Codex is at capacity". Its requested delay ranges from 15 to 546
+  seconds, and a delay over Pi's 60-second retry limit fails the turn.
+  While such a limit is active, a request without the turn id succeeds.
+  Removing any other field, or only one of the two turn id copies, does not
+  help. Replayed history items that carry a turn id in their own `metadata`
+  do not trigger the limit. Without the turn id, Codex also omits the
+  `metadata` and `internal_chat_message_metadata_passthrough` objects from
+  output items, so tool calls round-trip through Pi messages without native
+  overrides. Pi AI's own Codex provider sends no Codex metadata at all.
+- **Revisit only if:** Codex stops limiting turns this way, or it requires a
+  turn id.
 
 ## Detailed `apply_patch` decisions
 

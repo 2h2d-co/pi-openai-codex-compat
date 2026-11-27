@@ -219,6 +219,8 @@ function observeRealWebSocketTraffic(t: TestContext): ObservedWebSocketTraffic {
       const parsed: unknown = JSON.parse(data);
       assert.ok(isObject(parsed), "Codex WebSocket request must be a JSON object");
       assert.equal(requireJsonRecord(parsed["reasoning"])["mode"], undefined);
+      // A turn id makes Codex rate-limit bursts of turns, so no request carries one.
+      assert.doesNotMatch(JSON.stringify(parsed["client_metadata"] ?? {}), /turn_id/);
       traffic.frames.push(structuredClone(parsed));
       super.send(data);
     }
@@ -597,13 +599,15 @@ for (const modelId of ["gpt-6.2-sol", "gpt-6.2-astra"]) {
       }
       assert.ok(traffic.frames.length >= values.length + 1);
       assert.ok(traffic.connections >= 1);
+      // Without a turn id, Codex returns tool calls without metadata objects, so they round-trip
+      // through Pi's messages and no native override is stored.
       assert.equal(
         session.sessionManager
           .getBranch()
           .some(
             (entry) => entry.type === "custom" && entry.customType === NATIVE_RESPONSE_ENTRY_TYPE,
           ),
-        true,
+        false,
       );
       t.diagnostic(`tool cache observations: ${JSON.stringify(cache)}`);
     },

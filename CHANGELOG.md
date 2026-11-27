@@ -10,6 +10,7 @@
 
 ### Fixed
 
+- Send no turn id to Codex. Codex answered a burst of turns that carried one, such as ten in 25 seconds, with HTTP 429 `turn_rate_limit_exceeded` ("Codex is at capacity") and a retry delay of up to nine minutes, so the turns failed. Official Codex sends a turn id, and Pi's built-in Codex provider does not. Without it, Codex also returns tool calls that Pi's session messages hold exactly, so the session no longer stores a separate copy of each one.
 - Send the session's first thinking level as `reasoning.effort` on GPT-6, GPT-6.1, and GPT-6.2, and a `configuration_update` item only where the level changes, as Pi 1.6.1 does. Requests sent `medium` and carried every level in `configuration_update` items, which Codex applies only partly above medium, so high and xhigh reasoned less. A level change still keeps the prompt cache.
 - Replay tool calls with `status: "completed"`, as Codex returns them. When the WebSocket connection had closed and the whole history was sent again, it no longer matched the history Codex kept, and GPT-6.2 dropped the reasoning that followed a tool call.
 - Show Pi's reasoning-drop notice when Codex removes reasoning items from the input, as Pi's built-in Codex provider does.

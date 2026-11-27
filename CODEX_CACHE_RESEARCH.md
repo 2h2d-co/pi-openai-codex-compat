@@ -163,12 +163,11 @@ For a root Pi session, `session_id`, `thread_id`, `prompt_cache_key`, and the re
 
 ### `client_metadata`
 
-The extension now sends the official flat projections:
+The extension now sends the official flat projections except `turn_id`, which Codex rate-limits (see P-014 in `OFFICIAL_CODEX_CLI_RELEASES.md`):
 
 - `x-codex-installation-id`: a stable UUID persisted across Pi sessions;
 - `session_id`;
 - `thread_id`;
-- `turn_id`;
 - `x-codex-window-id`, initially `<thread-id>:0`;
 - `x-codex-turn-metadata`, a JSON snapshot.
 
@@ -177,7 +176,6 @@ The turn-metadata snapshot includes:
 - `installation_id`;
 - `session_id`;
 - `thread_id`;
-- `turn_id`;
 - `window_id`;
 - `request_kind`: `prewarm`, `turn`, or `compaction`;
 - `thread_source: "user"` for normal Pi sessions;
@@ -222,8 +220,8 @@ model=<model>;tier=<service-tier>
 
 The hint is sent only on this package's first-party `openai-codex` Responses path. It is not added to sibling image-generation or standalone-search requests.
 
-The live 0.146 capture also found non-model-visible metadata differences. The extension now matches
-the first three captured fields:
+The live 0.146 capture also found non-model-visible metadata differences. The extension matched
+the first three captured fields, and later dropped the turn id from every request:
 
 - prewarm uses an empty-string `turn_id`;
 - prewarm omits `turn_started_at_unix_ms`;

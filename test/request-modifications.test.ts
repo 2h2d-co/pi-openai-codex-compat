@@ -363,7 +363,7 @@ test("modifies requests on the canonical OpenAI Codex provider", async (t) => {
   assert.equal(requestDetails?.["responseId"], "resp_text");
   assert.ok(isString(requestDetails?.["sessionId"]));
   assert.ok(isString(requestDetails?.["promptCacheKey"]));
-  assert.ok(isString(requestDetails?.["turnId"]));
+  assert.equal(requestDetails?.["turnId"], undefined);
   assert.equal(cacheDetails?.["envelope"], "responses_lite");
   assert.equal(cacheDetails?.["staticInputItems"], 2);
   assert.deepEqual(requestDetails?.["usage"], {

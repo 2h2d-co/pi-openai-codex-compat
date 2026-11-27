@@ -225,7 +225,6 @@ export function transportRequestDiagnostic(options: {
   }
   if (isString(metadata?.["session_id"])) details.clientSessionId = metadata["session_id"];
   if (isString(metadata?.["thread_id"])) details.threadId = metadata["thread_id"];
-  if (isString(metadata?.["turn_id"])) details.turnId = metadata["turn_id"];
   if (isString(metadata?.[CODEX_INSTALLATION_ID_METADATA_KEY])) {
     details.installationId = metadata[CODEX_INSTALLATION_ID_METADATA_KEY];
   }

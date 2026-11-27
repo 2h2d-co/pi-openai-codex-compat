@@ -11,14 +11,13 @@ import {
   withCodexRequestMetadata,
 } from "../extensions/openai-codex-compat/codex-metadata.ts";
 
-test("adds Codex session, thread, turn, and request-kind metadata", () => {
+test("adds Codex session, thread, and request-kind metadata without a turn id", () => {
   const installationId = "11111111-1111-4111-8111-111111111111";
   const payload = withCodexRequestMetadata(
     { input: [], client_metadata: { retained: "value" } },
     {
       sessionId: "session-1",
       request: { kind: "turn" },
-      turnId: "turn-1",
       identity: {
         installationId,
         windowNumber: 2,
@@ -34,7 +33,7 @@ test("adds Codex session, thread, turn, and request-kind metadata", () => {
   assert.equal(metadata["retained"], "value");
   assert.equal(metadata["session_id"], "session-1");
   assert.equal(metadata["thread_id"], "session-1");
-  assert.equal(metadata["turn_id"], "turn-1");
+  assert.equal(metadata["turn_id"], undefined);
   assert.equal(metadata[CODEX_INSTALLATION_ID_METADATA_KEY], installationId);
   assert.equal(metadata[CODEX_WINDOW_ID_HEADER], "session-1:2");
 
@@ -44,7 +43,7 @@ test("adds Codex session, thread, turn, and request-kind metadata", () => {
   assert.equal(turn["installation_id"], installationId);
   assert.equal(turn["session_id"], "session-1");
   assert.equal(turn["thread_id"], "session-1");
-  assert.equal(turn["turn_id"], metadata["turn_id"]);
+  assert.equal(turn["turn_id"], undefined);
   assert.equal(turn["window_id"], "session-1:2");
   assert.equal(turn["request_kind"], "turn");
   assert.equal(turn["thread_source"], "user");
@@ -56,6 +55,7 @@ test("adds Codex session, thread, turn, and request-kind metadata", () => {
   assert.equal(headers.get("thread-id"), "session-1");
   assert.equal(headers.get(CODEX_WINDOW_ID_HEADER), "session-1:2");
   assert.equal(headers.get(CODEX_TURN_METADATA_HEADER), metadata[CODEX_TURN_METADATA_HEADER]);
+  assert.doesNotMatch([...headers.values()].join("\n"), /turn_id/);
 });
 
 test("adds the official nested metadata to compaction requests only", () => {
@@ -65,7 +65,6 @@ test("adds the official nested metadata to compaction requests only", () => {
     {
       sessionId: "session-1",
       request: { kind: "compaction", compaction },
-      turnId: "turn-1",
       identity: { installationId: "11111111-1111-4111-8111-111111111111" },
     },
   );
@@ -87,7 +86,6 @@ test("adds the official nested metadata to compaction requests only", () => {
     {
       sessionId: "session-1",
       request: { kind: "turn" },
-      turnId: "turn-2",
       identity: { installationId: "11111111-1111-4111-8111-111111111111" },
     },
   );
@@ -106,7 +104,6 @@ test("projects branch thread and fork lineage without changing session identity"
     {
       sessionId: "session-1",
       request: { kind: "turn" },
-      turnId: "turn-1",
       identity: {
         installationId: "11111111-1111-4111-8111-111111111111",
         threadId: "thread-2",
@@ -147,7 +144,6 @@ test("omits a prewarm start timestamp when the startup turn has not begun", () =
     {
       sessionId: "session-1",
       request: { kind: "prewarm" },
-      turnId: "",
       identity: {
         installationId: "11111111-1111-4111-8111-111111111111",
         threadSource: "user",
@@ -156,11 +152,9 @@ test("omits a prewarm start timestamp when the startup turn has not begun", () =
     },
   );
   const metadata = requireJsonRecord(payload["client_metadata"]);
-  assert.equal(metadata["turn_id"], "");
   const turn = requireJsonRecord(
     JSON.parse(requireString(metadata[CODEX_TURN_METADATA_HEADER], "turn metadata")),
   );
-  assert.equal(turn["turn_id"], "");
   assert.equal(turn["request_kind"], "prewarm");
   assert.equal(turn["turn_started_at_unix_ms"], undefined);
 });

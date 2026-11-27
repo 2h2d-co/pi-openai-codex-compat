@@ -131,7 +131,6 @@ export type CodexTransportRequestDiagnostic = {
     accountId: string;
     clientSessionId?: string;
     threadId?: string;
-    turnId?: string;
     installationId?: string;
     windowId?: string;
     routingHint?: string;

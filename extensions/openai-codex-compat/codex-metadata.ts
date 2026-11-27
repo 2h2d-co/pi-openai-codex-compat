@@ -33,7 +33,6 @@ export type CodexMetadataIdentity = {
 export type CodexMetadataOptions = {
   sessionId: string | undefined;
   request: CodexMetadataRequest;
-  turnId?: string;
   identity?: CodexMetadataIdentity;
 };
 
@@ -43,7 +42,6 @@ type CodexClientMetadata = {
   [CODEX_INSTALLATION_ID_METADATA_KEY]: string;
   session_id: string;
   thread_id: string;
-  turn_id: string;
   [CODEX_WINDOW_ID_HEADER]: string;
   [CODEX_TURN_METADATA_HEADER]: string;
 };
@@ -70,7 +68,6 @@ interface TurnMetadata {
   installation_id: string;
   session_id: string;
   thread_id: string;
-  turn_id: string;
   window_id: string;
   request_kind: CodexMetadataRequest["kind"];
   forked_from_thread_id?: string;
@@ -82,17 +79,15 @@ interface TurnMetadata {
 
 function turnMetadata(options: {
   sessionId: string;
-  turnId: string;
   request: CodexMetadataRequest;
   identity: CodexMetadataIdentity;
 }): string {
-  const { sessionId, turnId, request, identity } = options;
+  const { sessionId, request, identity } = options;
   const threadId = identity.threadId ?? sessionId;
   const metadata: TurnMetadata = {
     installation_id: identity.installationId,
     session_id: sessionId,
     thread_id: threadId,
-    turn_id: turnId,
     window_id: windowId(sessionId, identity),
     request_kind: request.kind,
   };
@@ -108,19 +103,24 @@ function turnMetadata(options: {
   return JSON.stringify(metadata);
 }
 
+/**
+ * Official Codex's request metadata without its turn id. Codex rejects requests that carry a turn
+ * id, in `client_metadata` or in the turn-metadata JSON, with HTTP 429
+ * `turn_rate_limit_exceeded` after a short burst of turns, such as ten in 25 seconds. Requests
+ * without one are not limited this way.
+ */
 export function codexClientMetadata(
   options: CodexMetadataOptions,
 ): CodexClientMetadata | undefined {
-  const { sessionId, request, turnId = uuidv7(), identity = EPHEMERAL_METADATA_IDENTITY } = options;
+  const { sessionId, request, identity = EPHEMERAL_METADATA_IDENTITY } = options;
   if (!sessionId) return undefined;
   const threadId = identity.threadId ?? sessionId;
   return {
     [CODEX_INSTALLATION_ID_METADATA_KEY]: identity.installationId,
     session_id: sessionId,
     thread_id: threadId,
-    turn_id: turnId,
     [CODEX_WINDOW_ID_HEADER]: windowId(sessionId, identity),
-    [CODEX_TURN_METADATA_HEADER]: turnMetadata({ sessionId, turnId, request, identity }),
+    [CODEX_TURN_METADATA_HEADER]: turnMetadata({ sessionId, request, identity }),
   };
 }
 

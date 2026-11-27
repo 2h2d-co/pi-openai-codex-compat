@@ -85,10 +85,6 @@ test("continues response.completed end_turn false without synthetic input", asyn
   assert.equal(secondInput.at(-1)?.type, "message");
   assert.equal(secondInput.at(-1)?.role, "assistant");
   assert.match(JSON.stringify(secondInput.at(-1)), /first phase/);
-  assert.equal(
-    requireJsonRecord(firstRequest["client_metadata"])["turn_id"],
-    requireJsonRecord(secondRequest["client_metadata"])["turn_id"],
-  );
   assert.equal(harness.customEntries.length, 1);
   assert.match(JSON.stringify(harness.customEntries[0]?.data), /first phase.*second phase/);
 });

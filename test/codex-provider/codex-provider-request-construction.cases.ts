@@ -158,7 +158,8 @@ test("prewarms only the static prefix before its first WebSocket turn", async ()
     "prewarm turn metadata",
   );
   assert.match(prewarmTurnMetadata, /"request_kind":"prewarm"/);
-  assert.equal(prewarmMetadata["turn_id"], "");
+  assert.equal(prewarmMetadata["turn_id"], undefined);
+  assert.doesNotMatch(prewarmTurnMetadata, /turn_id/);
   assert.doesNotMatch(prewarmTurnMetadata, /turn_started_at_unix_ms/);
   assert.equal(requests.length, 1);
   const request = requests[0];
@@ -166,7 +167,11 @@ test("prewarms only the static prefix before its first WebSocket turn", async ()
   assert.ok(Array.isArray(request.input));
   assert.equal(request.input.length, 1);
   const requestMetadata = requireJsonRecord(request["client_metadata"]);
-  assert.notEqual(requestMetadata["turn_id"], "");
+  assert.equal(requestMetadata["turn_id"], undefined);
+  assert.doesNotMatch(
+    requireString(requestMetadata["x-codex-turn-metadata"], "request turn metadata"),
+    /turn_id/,
+  );
   assert.equal(prewarmCacheDiagnostics?.["prewarmMode"], "static");
   assert.equal(prewarmCacheDiagnostics?.["staticInputItems"], 0);
 });
@@ -287,14 +292,13 @@ test("uses ordinary Responses when Responses Lite is disabled", async () => {
   assert.equal(cacheDiagnostics?.["staticInputItems"], 1);
 });
 
-test("reuses one turn id throughout an agent run", async () => {
+test("omits the turn id from every request of every agent run", async () => {
   const user = userEntry("user-1", "hello");
   const harness = createHarness([user]);
-  const turnIds: string[] = [];
+  const metadataRecords: JsonRecord[] = [];
   harness.runtime.transport.request = async function* (_model, body) {
-    const metadata = requireJsonRecord(requireJsonRecord(body)["client_metadata"]);
-    turnIds.push(requireString(metadata["turn_id"], "turn id"));
-    yield* textEvents("hello back", `response-${String(turnIds.length)}`);
+    metadataRecords.push(requireJsonRecord(requireJsonRecord(body)["client_metadata"]));
+    yield* textEvents("hello back", `response-${String(metadataRecords.length)}`);
   };
   const context = { messages: [user.message] };
   const options = {
@@ -311,9 +315,14 @@ test("reuses one turn id throughout an agent run", async () => {
   await harness.runtime.streamSimple(codexModel(), context, options).result();
   harness.runtime.endAgentTurn(harness.extensionContext);
 
-  assert.equal(turnIds.length, 3);
-  assert.equal(turnIds[0], turnIds[1]);
-  assert.notEqual(turnIds[1], turnIds[2]);
+  assert.equal(metadataRecords.length, 3);
+  for (const metadata of metadataRecords) {
+    assert.equal(metadata["turn_id"], undefined);
+    assert.doesNotMatch(
+      requireString(metadata["x-codex-turn-metadata"], "turn metadata"),
+      /turn_id/,
+    );
+  }
 });
 
 test("switches branch thread metadata while preserving prompt-cache identity", async () => {

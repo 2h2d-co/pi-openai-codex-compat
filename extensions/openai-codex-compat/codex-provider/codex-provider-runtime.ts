@@ -179,7 +179,6 @@ type BuildRequestBodyOptions = {
   runtimeSessionId: string | undefined;
   cacheSessionId: string | undefined;
   grammarToolInputProperties: GrammarToolInputProperties;
-  turnId: string;
   /** Effort of the reply in `configuration_update` items; see `configurationUpdateEffort`. */
   configurationUpdateEffort: string | undefined;
 };
@@ -424,7 +423,6 @@ export class CodexProviderRuntime {
     const prewarmBody = withCodexRequestMetadata(options.body, {
       sessionId: cacheSessionId,
       request: { kind: "prewarm" },
-      turnId: "",
       identity: this.metadataIdentity(cacheSessionId, undefined, sessionId),
     });
     try {
@@ -564,7 +562,6 @@ export class CodexProviderRuntime {
       runtimeSessionId,
       cacheSessionId,
       grammarToolInputProperties,
-      turnId,
       configurationUpdateEffort,
     } = options;
     // Every request declares the complete current tool set at the top level,
@@ -602,7 +599,6 @@ export class CodexProviderRuntime {
     body = withCodexRequestMetadata(body, {
       sessionId: cacheSessionId,
       request: { kind: "turn" },
-      turnId,
       identity: this.metadataIdentity(
         cacheSessionId,
         this.activeAgentTurns.get(runtimeSessionId ?? ""),
@@ -706,7 +702,6 @@ export class CodexProviderRuntime {
         sessionId:
           options.requestOptions.cacheRetention === "none" ? undefined : codexCacheKey(sessionId),
         request: { kind: "compaction", compaction: options.compactionMetadata },
-        turnId: agentTurn.turnId,
         identity: this.metadataIdentity(
           options.requestOptions.cacheRetention === "none" ? undefined : codexCacheKey(sessionId),
           agentTurn,
@@ -880,7 +875,6 @@ export class CodexProviderRuntime {
     return withCodexRequestMetadata(compactedBody, {
       sessionId: cacheSessionId,
       request: { kind: "turn" },
-      turnId: agentTurn.turnId,
       identity: this.metadataIdentity(cacheSessionId, agentTurn, sessionId),
     });
   }
@@ -944,7 +938,6 @@ export class CodexProviderRuntime {
         runtimeSessionId,
         cacheSessionId,
         grammarToolInputProperties,
-        turnId: agentTurn.turnId,
         configurationUpdateEffort: updateEffort,
       });
       const transformed = await requestOptions.onPayload?.(body, model);

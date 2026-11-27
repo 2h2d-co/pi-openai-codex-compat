@@ -40,7 +40,7 @@ first-party contract in these areas:
 | WebSocket marker | Send `client_metadata.ws_request_header_x_openai_internal_codex_responses_lite = "true"` in each `response.create` body, without putting the Lite HTTP header on the handshake.                                                                 |
 | WebSocket timing | Stamp each outgoing body with `client_metadata.x-codex-ws-stream-request-start-ms`.                                                                                                                                                             |
 | Static prewarm   | Send `generate: false` with only `additional_tools` and the developer-instruction item, then continue with the dynamic input through `previous_response_id`.                                                                                    |
-| Prewarm metadata | Use the startup turn id `""` and omit `turn_started_at_unix_ms`; generated turns retain their real turn id and start time.                                                                                                                      |
+| Prewarm metadata | Omit `turn_started_at_unix_ms`; generated turns retain their start time. No request carries a turn id (P-014).                                                                                                                                  |
 | Compaction       | Apply the same Lite envelope, all-turn reasoning context, disabled parallel calls, and transport marker to native compaction requests.                                                                                                          |
 
 Malformed members inside an explicit `functions` namespace now fail closed instead of producing a
